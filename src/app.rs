@@ -238,6 +238,13 @@ pub(crate) struct TerminalSelectionDrag {
     pub(crate) section_id: SectionId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HoveredTerminalLink {
+    pub(crate) section_id: SectionId,
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToastKind {
     Success,
@@ -353,6 +360,8 @@ pub struct ThreeColumnApp {
     pub(crate) focus_handle: FocusHandle,
     /// Last rendered terminal viewport geometry for pointer selection.
     pub(crate) terminal_viewport: Option<TerminalViewport>,
+    /// Hovered terminal link cell, if any.
+    pub(crate) hovered_terminal_link: Option<HoveredTerminalLink>,
     /// Active terminal mouse selection drag, if any.
     pub(crate) terminal_selection_drag: Option<TerminalSelectionDrag>,
     /// Whether the refresh timer has been started.
@@ -737,7 +746,9 @@ fn replace_custom_text(
         .filter(|range| range.start != range.end)
         .unwrap_or(*cursor..*cursor);
     let replacement_range = range_utf16
-        .map(|range| utf16_range_to_byte_range(current_text, clamp_utf16_range(current_text, range)))
+        .map(|range| {
+            utf16_range_to_byte_range(current_text, clamp_utf16_range(current_text, range))
+        })
         .unwrap_or(current_selection);
 
     current_text.replace_range(replacement_range.clone(), &replacement);
@@ -754,10 +765,7 @@ fn clamp_utf16_range(text: &str, range: std::ops::Range<usize>) -> std::ops::Ran
     range.start.min(max)..range.end.min(max)
 }
 
-fn utf16_range_to_byte_range(
-    text: &str,
-    range: std::ops::Range<usize>,
-) -> std::ops::Range<usize> {
+fn utf16_range_to_byte_range(text: &str, range: std::ops::Range<usize>) -> std::ops::Range<usize> {
     utf16_offset_to_byte(text, range.start)..utf16_offset_to_byte(text, range.end)
 }
 
@@ -1062,6 +1070,7 @@ impl ThreeColumnApp {
             changed_files_list_snapshots: HashMap::new(),
             focus_handle: cx.focus_handle(),
             terminal_viewport: None,
+            hovered_terminal_link: None,
             terminal_selection_drag: None,
             refresh_timer_started: false,
             active_git_action: None,
@@ -2123,8 +2132,11 @@ impl ThreeColumnApp {
         }
 
         if self.update_terminal_selection_drag(ev, cx) {
+            self.set_hovered_terminal_link(None, cx);
             return;
         }
+
+        self.update_hovered_terminal_link(ev, cx);
 
         let Some((kind, last_x)) = self.drag else {
             return;
@@ -2323,6 +2335,7 @@ impl ThreeColumnApp {
 
     pub(crate) fn clear_terminal_viewport(&mut self) {
         self.terminal_viewport = None;
+        self.hovered_terminal_link = None;
         self.terminal_selection_drag = None;
     }
 
@@ -2379,6 +2392,46 @@ impl ThreeColumnApp {
         terminal.update_selection(row, col);
         cx.notify();
         true
+    }
+
+    fn set_hovered_terminal_link(
+        &mut self,
+        hovered: Option<HoveredTerminalLink>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.hovered_terminal_link == hovered {
+            return false;
+        }
+
+        self.hovered_terminal_link = hovered;
+        cx.notify();
+        true
+    }
+
+    fn update_hovered_terminal_link(
+        &mut self,
+        ev: &MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let hovered = if ev.dragging() || self.terminal_selection_drag.is_some() {
+            None
+        } else {
+            self.terminal_cell_at_position(ev.position)
+                .and_then(|(section_id, row, col)| {
+                    let state = self.section_states.get(&section_id)?;
+                    let tab = state.tabs.get(state.active_tab)?;
+                    let terminal = tab.terminal.as_ref()?;
+                    terminal
+                        .link_hint_at_viewport_cell(row, col)
+                        .map(|_| HoveredTerminalLink {
+                            section_id,
+                            row,
+                            col,
+                        })
+                })
+        };
+
+        self.set_hovered_terminal_link(hovered, cx)
     }
 
     fn tick_toasts(&mut self) -> bool {

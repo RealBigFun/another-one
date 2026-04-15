@@ -8,16 +8,18 @@ use gpui::{
     ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity, Font, FontFallbacks,
     FontFeatures, FontStyle, FontWeight as GpuiFontWeight, GlobalElementId, InspectorElementId,
     KeyDownEvent, Keystroke, LayoutId, MouseButton, MouseDownEvent, Pixels, ScrollWheelEvent,
-    SharedString, TextRun, Window,
+    SharedString, TextRun, UnderlineStyle, Window,
 };
 
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::Point as TerminalPoint;
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 
 use crate::app::ThreeColumnApp;
 use crate::layout::*;
+use crate::left_sidebar::open_external_url;
 
 // ── Colour helpers ───────────────────────────────────────────────────
 
@@ -117,6 +119,7 @@ struct RenderCell {
     bg: gpui::Hsla,
     bold: bool,
     italic: bool,
+    underline: bool,
     width: usize,
 }
 
@@ -159,6 +162,10 @@ fn selection_type_for_click_count(click_count: usize) -> SelectionType {
     }
 }
 
+fn point_in_range(point: TerminalPoint, start: TerminalPoint, end: TerminalPoint) -> bool {
+    point >= start && point <= end
+}
+
 #[derive(Clone)]
 struct PaintRect {
     line: usize,
@@ -187,6 +194,7 @@ struct PaintTextRun {
     fg: gpui::Hsla,
     bold: bool,
     italic: bool,
+    underline: bool,
 }
 
 impl PaintTextRun {
@@ -199,6 +207,7 @@ impl PaintTextRun {
             fg: cell.fg,
             bold: cell.bold,
             italic: cell.italic,
+            underline: cell.underline,
         }
     }
 
@@ -208,6 +217,7 @@ impl PaintTextRun {
             && self.fg == cell.fg
             && self.bold == cell.bold
             && self.italic == cell.italic
+            && self.underline == cell.underline
     }
 
     fn append(&mut self, cell: &RenderCell) {
@@ -248,7 +258,11 @@ impl PaintTextRun {
             },
             color: self.fg,
             background_color: None,
-            underline: None,
+            underline: self.underline.then_some(UnderlineStyle {
+                thickness: px(1.0),
+                color: Some(self.fg),
+                wavy: false,
+            }),
             strikethrough: None,
         };
         let shaped = window.text_system().shape_line(
@@ -681,9 +695,18 @@ impl ThreeColumnApp {
 
         let section_state = self.section_states.get(section_id);
         let active_tab = section_state.and_then(|s| s.tabs.get(s.active_tab));
+        let active_terminal = active_tab.and_then(|t| t.terminal.as_ref());
         let term_arc = active_tab
             .and_then(|t| t.terminal.as_ref())
             .map(|t| t.term.clone());
+        let hovered_link = self
+            .hovered_terminal_link
+            .as_ref()
+            .filter(|hover| &hover.section_id == section_id)
+            .and_then(|hover| {
+                active_terminal
+                    .and_then(|terminal| terminal.link_hint_at_viewport_cell(hover.row, hover.col))
+            });
 
         let Some(term_arc) = term_arc else {
             self.clear_terminal_viewport();
@@ -778,6 +801,9 @@ impl ThreeColumnApp {
                 let is_selected = selection.is_some_and(|selection| {
                     selection.contains_cell(&indexed, point, cursor_shape)
                 });
+                let is_hovered_link = hovered_link.as_ref().is_some_and(|hovered_link| {
+                    point_in_range(point, hovered_link.start, hovered_link.end)
+                });
 
                 let mut text = String::new();
                 text.push(if cell.c == '\0' { ' ' } else { cell.c });
@@ -798,6 +824,7 @@ impl ThreeColumnApp {
                     bg,
                     bold,
                     italic,
+                    underline: is_hovered_link,
                     width,
                 };
 
@@ -866,6 +893,7 @@ impl ThreeColumnApp {
                     bg: effective_bg,
                     bold: rendered_cell.bold,
                     italic: rendered_cell.italic,
+                    underline: rendered_cell.underline,
                     width: rendered_cell.width,
                 };
 
@@ -920,6 +948,10 @@ impl ThreeColumnApp {
             .flex()
             .flex_col()
             .track_focus(&self.focus_handle)
+            .when(hovered_link.is_some(), |div| div.cursor_pointer())
+            .tooltip(move |_window, cx| {
+                Self::action_tooltip_view("Select terminal text. Cmd-click a link to open it", cx)
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
@@ -991,6 +1023,16 @@ impl ThreeColumnApp {
         let Some(terminal) = tab.terminal.as_ref() else {
             return;
         };
+
+        if ev.modifiers.platform {
+            if let Some(url) = terminal.link_at_viewport_cell(row, col) {
+                if let Err(err) = open_external_url(&url) {
+                    this.show_error_toast(err, cx);
+                }
+                cx.stop_propagation();
+                return;
+            }
+        }
 
         terminal.clear_selection();
         terminal.begin_selection(row, col, selection_type_for_click_count(ev.click_count));

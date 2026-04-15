@@ -17,11 +17,16 @@ use alacritty_terminal::event::{Event as AlacEvent, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{self, Config as TermConfig};
 use alacritty_terminal::vte;
 
 /// Default scrollback history lines.
 const DEFAULT_SCROLL_HISTORY: usize = 10_000;
+const URL_BOUNDARY_CHARS: &str = " \t\r\n\"'`<>[]{}()";
+const URL_TRIM_CHARS: &[char] = &[
+    '.', ',', ';', ':', '!', '?', '"', '\'', '`', ')', ']', '}', '>',
+];
 
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
@@ -56,6 +61,13 @@ impl Dimensions for TermSize {
 }
 
 // ── Public terminal instance ─────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalLinkHint {
+    pub url: String,
+    pub start: Point,
+    pub end: Point,
+}
 
 pub struct TerminalInstance {
     /// Shared terminal state (grid + VT state). Lock to read grid for rendering.
@@ -350,6 +362,19 @@ impl TerminalInstance {
         }
     }
 
+    /// Resolve a hyperlink or URL at the given visible viewport cell.
+    pub fn link_at_viewport_cell(&self, row: usize, col: usize) -> Option<String> {
+        self.link_hint_at_viewport_cell(row, col)
+            .map(|hint| hint.url)
+    }
+
+    /// Resolve a hyperlink or URL plus its terminal range at the given visible viewport cell.
+    pub fn link_hint_at_viewport_cell(&self, row: usize, col: usize) -> Option<TerminalLinkHint> {
+        let term = self.term.lock().ok()?;
+        let point = viewport_point(&term, row, col)?;
+        link_at_point(&term, point)
+    }
+
     // ── Private ──────────────────────────────────────────────────────
 
     fn reader_loop(
@@ -391,4 +416,190 @@ fn viewport_point(term: &term::Term<Listener>, row: usize, col: usize) -> Option
     let display_offset = term.grid().display_offset() as i32;
 
     Some(Point::new(Line(row as i32 - display_offset), Column(col)))
+}
+
+fn link_at_point(term: &term::Term<Listener>, point: Point) -> Option<TerminalLinkHint> {
+    let cell = &term.grid()[point];
+    if let Some(hyperlink) = cell.hyperlink() {
+        let start = hyperlink_start(term, point, &hyperlink);
+        let end = hyperlink_end(term, point, &hyperlink);
+        return Some(TerminalLinkHint {
+            url: hyperlink.uri().to_owned(),
+            start,
+            end,
+        });
+    }
+
+    if cell
+        .flags
+        .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+        || is_url_boundary(cell.c)
+    {
+        return None;
+    }
+
+    let start = url_start(term, point);
+    let end = url_end(term, point);
+    normalize_url_candidate(term.bounds_to_string(start, end)).map(|url| TerminalLinkHint {
+        url,
+        start,
+        end,
+    })
+}
+
+fn url_start(term: &term::Term<Listener>, mut point: Point) -> Point {
+    while let Some(prev) = wrapped_prev_point(term, point) {
+        let cell = &term.grid()[prev];
+        if cell
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            || is_url_boundary(cell.c)
+        {
+            break;
+        }
+        point = prev;
+    }
+
+    point
+}
+
+fn url_end(term: &term::Term<Listener>, mut point: Point) -> Point {
+    while let Some(next) = wrapped_next_point(term, point) {
+        let cell = &term.grid()[next];
+        if cell
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            || is_url_boundary(cell.c)
+        {
+            break;
+        }
+        point = next;
+    }
+
+    point
+}
+
+fn hyperlink_start(
+    term: &term::Term<Listener>,
+    mut point: Point,
+    hyperlink: &alacritty_terminal::term::cell::Hyperlink,
+) -> Point {
+    while let Some(prev) = wrapped_prev_point(term, point) {
+        let cell = &term.grid()[prev];
+        if cell.hyperlink().as_ref() != Some(hyperlink) {
+            break;
+        }
+        point = prev;
+    }
+
+    point
+}
+
+fn hyperlink_end(
+    term: &term::Term<Listener>,
+    mut point: Point,
+    hyperlink: &alacritty_terminal::term::cell::Hyperlink,
+) -> Point {
+    while let Some(next) = wrapped_next_point(term, point) {
+        let cell = &term.grid()[next];
+        if cell.hyperlink().as_ref() != Some(hyperlink) {
+            break;
+        }
+        point = next;
+    }
+
+    point
+}
+
+fn wrapped_prev_point(term: &term::Term<Listener>, point: Point) -> Option<Point> {
+    if point.column > Column(0) {
+        return Some(Point::new(point.line, point.column - Column(1)));
+    }
+
+    let previous_line = point.line - 1i32;
+    if previous_line < term.topmost_line() {
+        return None;
+    }
+
+    let last_column = term.last_column();
+    term.grid()[previous_line][last_column]
+        .flags
+        .contains(Flags::WRAPLINE)
+        .then_some(Point::new(previous_line, last_column))
+}
+
+fn wrapped_next_point(term: &term::Term<Listener>, point: Point) -> Option<Point> {
+    let last_column = term.last_column();
+    if point.column < last_column {
+        return Some(Point::new(point.line, point.column + Column(1)));
+    }
+
+    if point.line >= term.bottommost_line() || !term.grid()[point].flags.contains(Flags::WRAPLINE) {
+        return None;
+    }
+
+    Some(Point::new(point.line + 1i32, Column(0)))
+}
+
+fn is_url_boundary(c: char) -> bool {
+    c.is_whitespace() || URL_BOUNDARY_CHARS.contains(c)
+}
+
+fn normalize_url_candidate(candidate: String) -> Option<String> {
+    let candidate = candidate.trim();
+    let candidate = candidate.trim_start_matches(|c| URL_BOUNDARY_CHARS.contains(c));
+    let candidate = candidate.trim_end_matches(URL_TRIM_CHARS);
+    if candidate.is_empty() {
+        return None;
+    }
+
+    if has_uri_scheme(candidate) {
+        return Some(candidate.to_string());
+    }
+
+    candidate
+        .strip_prefix("www.")
+        .map(|_| format!("https://{candidate}"))
+}
+
+fn has_uri_scheme(candidate: &str) -> bool {
+    let Some((scheme, _)) = candidate.split_once(':') else {
+        return false;
+    };
+
+    !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_uri_scheme, normalize_url_candidate};
+
+    #[test]
+    fn normalizes_trailing_terminal_punctuation() {
+        assert_eq!(
+            normalize_url_candidate("https://example.com/docs).".into()),
+            Some("https://example.com/docs".into())
+        );
+    }
+
+    #[test]
+    fn normalizes_www_urls() {
+        assert_eq!(
+            normalize_url_candidate("www.example.com/path".into()),
+            Some("https://www.example.com/path".into())
+        );
+    }
+
+    #[test]
+    fn rejects_plain_text() {
+        assert_eq!(normalize_url_candidate("not-a-link".into()), None);
+    }
+
+    #[test]
+    fn accepts_custom_uri_schemes() {
+        assert!(has_uri_scheme("vscode://file/test.rs"));
+    }
 }
