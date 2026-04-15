@@ -45,6 +45,7 @@ enum ChangedFilesListEntry {
 
 #[derive(Clone)]
 struct ChangedFilesRowSnapshot {
+    path: SharedString,
     file_name: SharedString,
     parent_dir: Option<SharedString>,
     staged_status: char,
@@ -288,6 +289,16 @@ impl ThreeColumnApp {
         }
 
         button.child(svg().path(icon_path).size(px(16.)).text_color(icon_color))
+    }
+
+    fn changed_file_action_pending(icon_color: gpui::Hsla) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(28.))
+            .h(px(28.))
+            .child(Self::toolbar_spinner(icon_color, 14.))
     }
 
     fn git_toolbar_button(
@@ -882,6 +893,7 @@ impl ThreeColumnApp {
             let has_unstaged_changes = changed.has_unstaged_changes();
 
             rows.push(ChangedFilesRowSnapshot {
+                path: SharedString::from(changed.path.clone()),
                 file_name: SharedString::from(file_name),
                 parent_dir,
                 staged_status,
@@ -976,6 +988,9 @@ impl ThreeColumnApp {
         let row_hover = gpui::white().opacity(0.04);
         let action_hover = gpui::white().opacity(0.08);
         let action_icon = hsla(0., 0., 0.72, 1.);
+        let actions_busy = self.changed_files_actions_busy(project_id);
+        let file_pending = self.changed_files_file_pending(project_id, row.path.as_ref());
+        let project_mutations_pending = self.changed_files_project_mutations_pending(project_id);
         let (additions, deletions, status, status_color, can_stage, can_unstage) = match group {
             ChangeGroup::Staged => (
                 row.staged_additions,
@@ -1010,45 +1025,55 @@ impl ThreeColumnApp {
             stats = stats.child(Self::git_diff_badge(deletions, false, 12.));
         }
         stats = match group {
-            ChangeGroup::Staged => stats.child(div().child(Self::changed_file_action_button(
-                ("changed-file-unstage", file_index),
-                "assets/icons/icons__minus.svg",
-                can_unstage,
-                action_hover,
-                action_icon,
-                Some("Unstage file"),
-                move |this, _ev, _window, cx| {
-                    if let Some(changed) =
-                        this.changed_file_for_action(&unstage_project_id, file_index)
-                    {
-                        this.unstage_changed_file(&unstage_project_id, &changed, cx);
-                    }
-                    cx.notify();
-                },
-                cx,
-            ))),
-            ChangeGroup::Uncommitted => stats
-                .child(div().child(Self::changed_file_action_button(
-                    ("changed-file-stage", file_index),
-                    "assets/icons/icons__plus.svg",
-                    can_stage,
+            ChangeGroup::Staged => stats.child(div().child(if file_pending {
+                Self::changed_file_action_pending(action_icon).into_any_element()
+            } else {
+                Self::changed_file_action_button(
+                    ("changed-file-unstage", file_index),
+                    "assets/icons/icons__minus.svg",
+                    can_unstage && !actions_busy,
                     action_hover,
                     action_icon,
-                    Some("Stage File"),
+                    Some("Unstage file"),
                     move |this, _ev, _window, cx| {
                         if let Some(changed) =
-                            this.changed_file_for_action(&stage_project_id, file_index)
+                            this.changed_file_for_action(&unstage_project_id, file_index)
                         {
-                            this.stage_changed_file(&stage_project_id, &changed);
+                            this.unstage_changed_file(&unstage_project_id, &changed, cx);
                         }
                         cx.notify();
                     },
                     cx,
-                )))
+                )
+                .into_any_element()
+            })),
+            ChangeGroup::Uncommitted => stats
+                .child(div().child(if file_pending {
+                    Self::changed_file_action_pending(action_icon).into_any_element()
+                } else {
+                    Self::changed_file_action_button(
+                        ("changed-file-stage", file_index),
+                        "assets/icons/icons__plus.svg",
+                        can_stage && !actions_busy,
+                        action_hover,
+                        action_icon,
+                        Some("Stage File"),
+                        move |this, _ev, _window, cx| {
+                            if let Some(changed) =
+                                this.changed_file_for_action(&stage_project_id, file_index)
+                            {
+                                this.stage_changed_file(&stage_project_id, &changed, cx);
+                            }
+                            cx.notify();
+                        },
+                        cx,
+                    )
+                    .into_any_element()
+                }))
                 .child(div().child(Self::changed_file_action_button(
                     ("changed-file-discard", file_index),
                     "assets/icons/icons__discard.svg",
-                    true,
+                    !actions_busy && !project_mutations_pending,
                     action_hover,
                     action_icon,
                     Some("Discard File Changes"),
@@ -1147,6 +1172,10 @@ impl ThreeColumnApp {
         let action_icon = hsla(0., 0., 0.72, 1.);
         let header_hover = gpui::white().opacity(0.03);
         let collapsed = self.collapsed_change_sections.contains(section_key);
+        let actions_busy = self.changed_files_actions_busy(project_id);
+        let project_mutations_pending = self.changed_files_project_mutations_pending(project_id);
+        let stage_all_pending = self.changed_files_stage_all_pending(project_id);
+        let unstage_all_pending = self.changed_files_unstage_all_pending(project_id);
 
         let section_actions = match group {
             ChangeGroup::Staged => {
@@ -1155,23 +1184,28 @@ impl ThreeColumnApp {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .child(Self::changed_file_action_button(
-                        SharedString::from(format!(
-                            "changed-section-action-{}-staged-unstage",
-                            project_id
-                        )),
-                        "assets/icons/icons__minus.svg",
-                        true,
-                        action_hover,
-                        action_icon,
-                        Some("Unstage all files in this section"),
-                        move |this, _ev, _window, cx| {
-                            cx.stop_propagation();
-                            this.unstage_all_changes(&unstage_project_id, cx);
-                            cx.notify();
-                        },
-                        cx,
-                    ))
+                    .child(if unstage_all_pending {
+                        Self::changed_file_action_pending(action_icon).into_any_element()
+                    } else {
+                        Self::changed_file_action_button(
+                            SharedString::from(format!(
+                                "changed-section-action-{}-staged-unstage",
+                                project_id
+                            )),
+                            "assets/icons/icons__minus.svg",
+                            !actions_busy,
+                            action_hover,
+                            action_icon,
+                            Some("Unstage all files in this section"),
+                            move |this, _ev, _window, cx| {
+                                cx.stop_propagation();
+                                this.unstage_all_changes(&unstage_project_id, cx);
+                                cx.notify();
+                            },
+                            cx,
+                        )
+                        .into_any_element()
+                    })
             }
             ChangeGroup::Uncommitted => {
                 let stage_project_id = project_id.to_string();
@@ -1182,30 +1216,35 @@ impl ThreeColumnApp {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .child(Self::changed_file_action_button(
-                        SharedString::from(format!(
-                            "changed-section-action-{}-changes-stage",
-                            project_id
-                        )),
-                        "assets/icons/icons__plus.svg",
-                        true,
-                        action_hover,
-                        action_icon,
-                        Some("Stage All Changes"),
-                        move |this, _ev, _window, cx| {
-                            cx.stop_propagation();
-                            this.stage_all_changes(&stage_project_id);
-                            cx.notify();
-                        },
-                        cx,
-                    ))
+                    .child(if stage_all_pending {
+                        Self::changed_file_action_pending(action_icon).into_any_element()
+                    } else {
+                        Self::changed_file_action_button(
+                            SharedString::from(format!(
+                                "changed-section-action-{}-changes-stage",
+                                project_id
+                            )),
+                            "assets/icons/icons__plus.svg",
+                            !actions_busy,
+                            action_hover,
+                            action_icon,
+                            Some("Stage All Changes"),
+                            move |this, _ev, _window, cx| {
+                                cx.stop_propagation();
+                                this.stage_all_changes(&stage_project_id, cx);
+                                cx.notify();
+                            },
+                            cx,
+                        )
+                        .into_any_element()
+                    })
                     .child(Self::changed_file_action_button(
                         SharedString::from(format!(
                             "changed-section-action-{}-changes-discard",
                             project_id
                         )),
                         "assets/icons/icons__discard.svg",
-                        true,
+                        !actions_busy && !project_mutations_pending,
                         action_hover,
                         action_icon,
                         Some("Discard All Changes"),

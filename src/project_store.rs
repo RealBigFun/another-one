@@ -357,15 +357,45 @@ fn read_project_git_metadata(path: &Path) -> ProjectGitMetadata {
     }
 }
 
+fn git_command(path: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(path);
+    command
+}
+
+fn git_status_ok(path: &Path, args: &[&str]) -> bool {
+    git_command(path)
+        .args(args)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn git_stdout(path: &Path, args: &[&str]) -> Option<String> {
+    let output = git_command(path).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!stdout.is_empty()).then_some(stdout)
+}
+
+fn append_changed_paths(command: &mut Command, changed: &ChangedFile) {
+    if let Some(original_path) = changed.original_path.as_deref() {
+        command.arg(original_path);
+    }
+    command.arg(&changed.path);
+}
+
 /// Return changed files for the repo rooted at `path`.
 pub fn list_changed_files(path: &Path) -> Vec<ChangedFile> {
     let mut changed = Vec::new();
     let staged_stats = git_numstat_by_path(path, true);
     let unstaged_stats = git_numstat_by_path(path, false);
 
-    let Ok(output) = Command::new("git")
+    let Ok(output) = git_command(path)
         .args(["status", "--porcelain", "--untracked-files=all"])
-        .current_dir(path)
         .output()
     else {
         return changed;
@@ -413,34 +443,45 @@ pub fn list_changed_files(path: &Path) -> Vec<ChangedFile> {
 }
 
 /// Stage a changed file in the repo rooted at `path`.
-pub fn stage_changed_file(path: &Path, changed: &ChangedFile) -> bool {
-    let mut cmd = Command::new("git");
+pub fn stage_changed_file(path: &Path, changed: &ChangedFile) -> Result<(), String> {
+    let mut cmd = git_command(path);
     cmd.arg("add").arg("-A").arg("--");
-    if let Some(original_path) = changed.original_path.as_deref() {
-        cmd.arg(original_path);
+    append_changed_paths(&mut cmd, changed);
+    let output = cmd
+        .output()
+        .map_err(|error| format!("Could not stage {}: {error}", changed.path))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format_git_command_failure(
+            &format!("Could not stage {}", changed.path),
+            &output,
+        ))
     }
-    cmd.arg(&changed.path);
-    cmd.current_dir(path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
 }
 
 /// Stage every change in the repo rooted at `path`.
-pub fn stage_all_changes(path: &Path) -> bool {
-    Command::new("git")
+pub fn stage_all_changes(path: &Path) -> Result<(), String> {
+    let output = git_command(path)
         .args(["add", "-A"])
-        .current_dir(path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .output()
+        .map_err(|error| format!("Could not stage changes: {error}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format_git_command_failure(
+            "Could not stage changes",
+            &output,
+        ))
+    }
 }
 
 /// Unstage every currently staged change in the repo rooted at `path`.
 pub fn unstage_all_changes(path: &Path) -> Result<(), String> {
-    let restore_output = Command::new("git")
+    let restore_output = git_command(path)
         .args(["restore", "--staged", "--", "."])
-        .current_dir(path)
         .output()
         .map_err(|error| format!("Could not unstage staged changes: {error}"))?;
 
@@ -448,9 +489,8 @@ pub fn unstage_all_changes(path: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let reset_output = Command::new("git")
+    let reset_output = git_command(path)
         .args(["reset", "HEAD", "--", "."])
-        .current_dir(path)
         .output()
         .map_err(|error| format!("Could not unstage staged changes: {error}"))?;
 
@@ -467,12 +507,9 @@ pub fn unstage_all_changes(path: &Path) -> Result<(), String> {
 /// Unstage a changed file in the repo rooted at `path`.
 pub fn unstage_changed_file(path: &Path, changed: &ChangedFile) -> Result<(), String> {
     let error_prefix = format!("Could not unstage {}", changed.path);
-    let mut restore = Command::new("git");
+    let mut restore = git_command(path);
     restore.args(["restore", "--staged", "--"]);
-    if let Some(original_path) = changed.original_path.as_deref() {
-        restore.arg(original_path);
-    }
-    restore.arg(&changed.path).current_dir(path);
+    append_changed_paths(&mut restore, changed);
 
     let restore_output = restore
         .output()
@@ -482,12 +519,9 @@ pub fn unstage_changed_file(path: &Path, changed: &ChangedFile) -> Result<(), St
         return Ok(());
     }
 
-    let mut reset = Command::new("git");
+    let mut reset = git_command(path);
     reset.args(["reset", "HEAD", "--"]);
-    if let Some(original_path) = changed.original_path.as_deref() {
-        reset.arg(original_path);
-    }
-    reset.arg(&changed.path).current_dir(path);
+    append_changed_paths(&mut reset, changed);
 
     let reset_output = reset
         .output()
@@ -537,56 +571,27 @@ fn is_git_index_lock_error(stderr: &str, stdout: &str) -> bool {
 
 /// Switch the repo rooted at `path` to `branch`.
 pub fn switch_branch(path: &Path, branch: &str) -> bool {
-    if Command::new("git")
-        .args(["switch", branch])
-        .current_dir(path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
-    if Command::new("git")
-        .args(["checkout", branch])
-        .current_dir(path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-    {
-        return true;
+    for args in [&["switch", branch][..], &["checkout", branch][..]] {
+        if git_status_ok(path, args) {
+            return true;
+        }
     }
 
     let Some((_, local_branch_name)) = branch.split_once('/') else {
         return false;
     };
 
-    if Command::new("git")
-        .args(["switch", local_branch_name])
-        .current_dir(path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-    {
-        return true;
+    for args in [
+        &["switch", local_branch_name][..],
+        &["switch", "--track", branch][..],
+        &["checkout", "--track", branch][..],
+    ] {
+        if git_status_ok(path, args) {
+            return true;
+        }
     }
 
-    if Command::new("git")
-        .args(["switch", "--track", branch])
-        .current_dir(path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
-    Command::new("git")
-        .args(["checkout", "--track", branch])
-        .current_dir(path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    false
 }
 
 #[cfg(test)]
@@ -749,7 +754,7 @@ pub fn create_task_worktree(
     let branch_name = unique_branch_name(repo_path, &slug)?;
     let worktree_path = unique_worktree_path(repo_path, project_name, &slug);
 
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args([
             "worktree",
             "add",
@@ -758,7 +763,6 @@ pub fn create_task_worktree(
             worktree_path.to_string_lossy().as_ref(),
             &base_branch,
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|error| format!("Failed to create worktree: {error}"))?;
 
@@ -779,14 +783,13 @@ pub fn create_task_worktree(
 }
 
 pub fn remove_task_worktree(repo_path: &Path, worktree_path: &Path) -> Result<(), String> {
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args([
             "worktree",
             "remove",
             "--force",
             worktree_path.to_string_lossy().as_ref(),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|error| format!("Could not delete the worktree: {error}"))?;
 
@@ -805,9 +808,8 @@ pub fn delete_local_branch(repo_path: &Path, branch_name: &str) -> Result<(), St
         return Ok(());
     }
 
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args(["branch", "-D", branch_name])
-        .current_dir(repo_path)
         .output()
         .map_err(|error| format!("Could not delete the local branch: {error}"))?;
 
@@ -827,12 +829,9 @@ pub fn revert_changed_file(path: &Path, changed: &ChangedFile) -> bool {
         return remove_untracked_path(&path.join(&changed.path));
     }
 
-    let mut restore = Command::new("git");
+    let mut restore = git_command(path);
     restore.args(["restore", "--source=HEAD", "--staged", "--worktree", "--"]);
-    if let Some(original_path) = changed.original_path.as_deref() {
-        restore.arg(original_path);
-    }
-    restore.arg(&changed.path).current_dir(path);
+    append_changed_paths(&mut restore, changed);
 
     if restore
         .status()
@@ -842,12 +841,9 @@ pub fn revert_changed_file(path: &Path, changed: &ChangedFile) -> bool {
         return true;
     }
 
-    let mut checkout = Command::new("git");
+    let mut checkout = git_command(path);
     checkout.args(["checkout", "--"]);
-    if let Some(original_path) = changed.original_path.as_deref() {
-        checkout.arg(original_path);
-    }
-    checkout.arg(&changed.path).current_dir(path);
+    append_changed_paths(&mut checkout, changed);
 
     checkout
         .status()
@@ -861,13 +857,12 @@ fn detect_branches(path: &Path) -> Vec<Branch> {
     let current_branch = git_current_branch(path);
     let mut local_branch_names = HashSet::new();
 
-    let Ok(out) = Command::new("git")
+    let Ok(out) = git_command(path)
         .args([
             "for-each-ref",
             "--format=%(HEAD)|%(refname:short)|%(committerdate:relative)",
             "refs/heads",
         ])
-        .current_dir(path)
         .output()
     else {
         return fallback_branches(path, default_branch, current_branch);
@@ -923,13 +918,12 @@ fn detect_branches(path: &Path) -> Vec<Branch> {
         });
     }
 
-    if let Ok(out) = Command::new("git")
+    if let Ok(out) = git_command(path)
         .args([
             "for-each-ref",
             "--format=%(refname:short)|%(committerdate:relative)",
             "refs/remotes",
         ])
-        .current_dir(path)
         .output()
     {
         if out.status.success() {
@@ -1005,69 +999,37 @@ fn fallback_branches(
 /// then fall back to checking if main or master exists.
 fn git_default_branch(path: &Path) -> Option<String> {
     // Try origin/HEAD first.
-    if let Ok(out) = Command::new("git")
-        .args(["symbolic-ref", "refs/remotes/origin/HEAD", "--short"])
-        .current_dir(path)
-        .output()
-    {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            // e.g. "origin/main" → "main"
-            if let Some(name) = s.strip_prefix("origin/") {
+    if let Some(remote_head) = git_stdout(
+        path,
+        &["symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
+    ) {
+        if let Some(name) = remote_head.strip_prefix("origin/") {
+            return Some(name.to_string());
+        }
+    }
+
+    // Fall back: check if 'main' or 'master' branch exists.
+    if let Some(branches) = git_stdout(path, &["branch", "--list", "main", "master"]) {
+        for line in branches.lines() {
+            let name = line.trim().trim_start_matches('*').trim();
+            if name == "main" || name == "master" {
                 return Some(name.to_string());
             }
         }
     }
 
-    // Fall back: check if 'main' or 'master' branch exists.
-    if let Ok(out) = Command::new("git")
-        .args(["branch", "--list", "main", "master"])
-        .current_dir(path)
-        .output()
-    {
-        if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            for line in text.lines() {
-                let name = line.trim().trim_start_matches('*').trim();
-                if name == "main" || name == "master" {
-                    return Some(name.to_string());
-                }
-            }
-        }
-    }
-
     // Last resort: current branch
-    if let Ok(out) = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(path)
-        .output()
-    {
-        if out.status.success() {
-            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !name.is_empty() && name != "HEAD" {
-                return Some(name);
-            }
-        }
-    }
-
-    None
+    git_current_branch(path)
 }
 
 fn git_current_branch(path: &Path) -> Option<String> {
-    if let Ok(out) = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(path)
-        .output()
-    {
-        if out.status.success() {
-            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !name.is_empty() && name != "HEAD" {
-                return Some(name);
-            }
+    git_stdout(path, &["rev-parse", "--abbrev-ref", "HEAD"]).and_then(|name| {
+        if name == "HEAD" {
+            None
+        } else {
+            Some(name)
         }
-    }
-
-    None
+    })
 }
 
 fn slugify_task_name(task_name: &str) -> String {
@@ -1110,24 +1072,20 @@ fn unique_branch_name(repo_path: &Path, base_slug: &str) -> Result<String, Strin
 }
 
 fn branch_exists_anywhere(repo_path: &Path, branch_name: &str) -> Result<bool, String> {
-    if Command::new("git")
-        .args([
+    if git_status_ok(
+        repo_path,
+        &[
             "show-ref",
             "--verify",
             "--quiet",
             &format!("refs/heads/{branch_name}"),
-        ])
-        .current_dir(repo_path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-    {
+        ],
+    ) {
         return Ok(true);
     }
 
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args(["for-each-ref", "--format=%(refname:short)", "refs/remotes"])
-        .current_dir(repo_path)
         .output()
         .map_err(|error| format!("Failed to inspect remote branches: {error}"))?;
 
@@ -1167,9 +1125,8 @@ fn unique_worktree_path(repo_path: &Path, project_name: &str, slug: &str) -> Pat
 /// Compares the working tree + staged changes against the branch tip.
 fn git_diff_stat(path: &Path, _branch: &str) -> (i32, i32) {
     // `git diff --stat` of working tree against HEAD.
-    if let Ok(out) = Command::new("git")
+    if let Ok(out) = git_command(path)
         .args(["diff", "--shortstat", "HEAD"])
-        .current_dir(path)
         .output()
     {
         if out.status.success() {
@@ -1201,23 +1158,13 @@ fn parse_shortstat(s: &str) -> (i32, i32) {
 
 /// Get the relative date of the last commit on a branch.
 fn git_last_commit_relative(path: &Path, branch: &str) -> String {
-    if let Ok(out) = Command::new("git")
-        .args(["log", "-1", "--format=%cr", branch])
-        .current_dir(path)
-        .output()
-    {
-        if out.status.success() {
-            return String::from_utf8_lossy(&out.stdout).trim().to_string();
-        }
-    }
-    String::new()
+    git_stdout(path, &["log", "-1", "--format=%cr", branch]).unwrap_or_default()
 }
 
 fn git_ahead_count(path: &Path, branch: &str) -> usize {
     let upstream = format!("{branch}@{{upstream}}");
-    if let Ok(out) = Command::new("git")
+    if let Ok(out) = git_command(path)
         .args(["rev-list", "--count", &format!("{upstream}..{branch}")])
-        .current_dir(path)
         .output()
     {
         if out.status.success() {
@@ -1252,16 +1199,12 @@ fn parse_status_line(line: &str) -> Option<(char, char, Option<String>, String)>
 
 fn git_numstat_by_path(path: &Path, staged: bool) -> HashMap<String, (i32, i32)> {
     let mut stats = HashMap::new();
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command(path);
     cmd.arg("diff");
     if staged {
         cmd.arg("--cached");
     }
-    let Ok(output) = cmd
-        .args(["--numstat", "--no-renames"])
-        .current_dir(path)
-        .output()
-    else {
+    let Ok(output) = cmd.args(["--numstat", "--no-renames"]).output() else {
         return stats;
     };
 
@@ -1321,17 +1264,7 @@ fn remove_untracked_path(path: &Path) -> bool {
 /// Detect if the given path is a git worktree (not the main working tree).
 /// Returns the worktree name if so.
 pub fn detect_worktree_name(path: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .current_dir(path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let git_dir = git_stdout(path, &["rev-parse", "--git-dir"])?;
     // A worktree's git-dir looks like: /path/to/main/.git/worktrees/<name>
     if let Some(pos) = git_dir.find(".git/worktrees/") {
         let after = &git_dir[pos + ".git/worktrees/".len()..];
@@ -1344,22 +1277,7 @@ pub fn detect_worktree_name(path: &Path) -> Option<String> {
 }
 
 fn detect_repo_common_dir(path: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--git-common-dir"])
-        .current_dir(path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let candidate = PathBuf::from(raw);
+    let candidate = PathBuf::from(git_stdout(path, &["rev-parse", "--git-common-dir"])?);
     let absolute = if candidate.is_absolute() {
         candidate
     } else {

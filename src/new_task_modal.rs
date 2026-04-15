@@ -1408,7 +1408,9 @@ impl ThreeColumnApp {
         let trailing_clipped = visible_range.end < task_name.len();
         let visible_start = visible_range.start;
         let visible_task_name = task_name[visible_range.clone()].to_string();
-        let local_cursor = cursor.saturating_sub(visible_start).min(visible_task_name.len());
+        let local_cursor = cursor
+            .saturating_sub(visible_start)
+            .min(visible_task_name.len());
         let visible_selection = selected
             .as_ref()
             .and_then(|range| intersect_byte_ranges(range.clone(), visible_range.clone()))

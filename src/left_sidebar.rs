@@ -2624,8 +2624,7 @@ fn delete_sidebar_task_name_word_backward(state: &mut SidebarTaskRenameState) {
         return;
     }
 
-    let start =
-        previous_sidebar_task_name_word_boundary(&state.task_name, state.task_name_cursor);
+    let start = previous_sidebar_task_name_word_boundary(&state.task_name, state.task_name_cursor);
     replace_sidebar_task_name_range(state, start..state.task_name_cursor, "");
 }
 

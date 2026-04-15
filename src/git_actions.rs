@@ -45,9 +45,21 @@ pub fn execute_toolbar_git_action(
     }
 }
 
-pub fn find_github_repo_url(repo_path: &Path) -> Option<String> {
+fn toolbar_action_outcome(
+    toast_message: impl Into<String>,
+    warning: bool,
+    refresh_git_state: bool,
+) -> ToolbarActionOutcome {
+    ToolbarActionOutcome {
+        toast_message: toast_message.into(),
+        warning,
+        refresh_git_state,
+    }
+}
+
+fn git_stdout(repo_path: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
+        .args(args)
         .current_dir(repo_path)
         .output()
         .ok()?;
@@ -56,7 +68,17 @@ pub fn find_github_repo_url(repo_path: &Path) -> Option<String> {
         return None;
     }
 
-    normalize_github_remote(String::from_utf8_lossy(&output.stdout).trim())
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!stdout.is_empty()).then_some(stdout)
+}
+
+pub fn find_github_repo_url(repo_path: &Path) -> Option<String> {
+    git_stdout(repo_path, &["remote", "get-url", "origin"])
+        .and_then(|remote| normalize_github_remote(&remote))
+}
+
+fn github_https_url(path: &str) -> String {
+    format!("https://github.com/{}", path.trim_end_matches(".git"))
 }
 
 fn normalize_github_remote(remote: &str) -> Option<String> {
@@ -65,35 +87,15 @@ fn normalize_github_remote(remote: &str) -> Option<String> {
         return None;
     }
 
-    if let Some(path) = remote.strip_prefix("git@github.com:") {
-        return Some(format!(
-            "https://github.com/{}",
-            path.trim_end_matches(".git")
-        ));
-    }
-
-    if let Some(path) = remote.strip_prefix("ssh://git@github.com/") {
-        return Some(format!(
-            "https://github.com/{}",
-            path.trim_end_matches(".git")
-        ));
-    }
-
-    if let Some(path) = remote.strip_prefix("https://github.com/") {
-        return Some(format!(
-            "https://github.com/{}",
-            path.trim_end_matches(".git")
-        ));
-    }
-
-    if let Some(path) = remote.strip_prefix("http://github.com/") {
-        return Some(format!(
-            "https://github.com/{}",
-            path.trim_end_matches(".git")
-        ));
-    }
-
-    None
+    [
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "https://github.com/",
+        "http://github.com/",
+    ]
+    .into_iter()
+    .find_map(|prefix| remote.strip_prefix(prefix))
+    .map(github_https_url)
 }
 
 fn commit_with_ai(
@@ -110,11 +112,11 @@ fn commit_with_ai(
 
     if push_after {
         match push_branch(repo_path, false) {
-            Ok(_) => Ok(ToolbarActionOutcome {
-                toast_message: format!("Committed and pushed: {}", generated.subject),
-                warning: false,
-                refresh_git_state: true,
-            }),
+            Ok(_) => Ok(toolbar_action_outcome(
+                format!("Committed and pushed: {}", generated.subject),
+                false,
+                true,
+            )),
             Err(error) => Err(ToolbarActionError {
                 message: format!(
                     "Committed staged changes as \"{}\", but push failed. {}",
@@ -124,11 +126,11 @@ fn commit_with_ai(
             }),
         }
     } else {
-        Ok(ToolbarActionOutcome {
-            toast_message: format!("Committed staged changes: {}", generated.subject),
-            warning: false,
-            refresh_git_state: true,
-        })
+        Ok(toolbar_action_outcome(
+            format!("Committed staged changes: {}", generated.subject),
+            false,
+            true,
+        ))
     }
 }
 
@@ -166,15 +168,15 @@ fn push_branch(repo_path: &Path, force: bool) -> Result<ToolbarActionOutcome, To
         )));
     }
 
-    Ok(ToolbarActionOutcome {
-        toast_message: if force {
-            "Force-pushed the current branch with lease.".to_string()
+    Ok(toolbar_action_outcome(
+        if force {
+            "Force-pushed the current branch with lease."
         } else {
-            "Pushed the current branch to its remote.".to_string()
+            "Pushed the current branch to its remote."
         },
-        warning: force,
-        refresh_git_state: false,
-    })
+        force,
+        false,
+    ))
 }
 
 fn create_pull_request(
@@ -218,16 +220,16 @@ fn create_pull_request(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let url = extract_url(&stdout);
 
-    Ok(ToolbarActionOutcome {
-        toast_message: match (draft, url.as_deref()) {
+    Ok(toolbar_action_outcome(
+        match (draft, url.as_deref()) {
             (true, Some(url)) => format!("Created draft pull request: {url}"),
             (false, Some(url)) => format!("Created pull request: {url}"),
             (true, None) => "Created draft pull request.".to_string(),
             (false, None) => "Created pull request.".to_string(),
         },
-        warning: false,
-        refresh_git_state: false,
-    })
+        false,
+        false,
+    ))
 }
 
 impl ToolbarActionError {
@@ -499,22 +501,7 @@ fn git_commit(repo_path: &Path, message: &GeneratedCommitMessage) -> Result<(), 
 }
 
 fn git_current_branch(repo_path: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo_path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if branch.is_empty() || branch == "HEAD" {
-        None
-    } else {
-        Some(branch)
-    }
+    git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|branch| branch != "HEAD")
 }
 
 fn command_failure(prefix: &str, output: &Output) -> String {
@@ -578,4 +565,34 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
     }
 
     fallbacks.iter().find(|path| path.is_file()).cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_github_remote, parse_commit_message};
+
+    #[test]
+    fn normalizes_supported_github_remote_formats() {
+        assert_eq!(
+            normalize_github_remote("git@github.com:owner/repo.git").as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+        assert_eq!(
+            normalize_github_remote("ssh://git@github.com/owner/repo/").as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+        assert_eq!(
+            normalize_github_remote("http://github.com/owner/repo").as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+    }
+
+    #[test]
+    fn parse_commit_message_trims_fences_and_blank_lines() {
+        let message = parse_commit_message("```feat: simplify parser\n\nKeeps behavior.\n```")
+            .expect("commit message should parse");
+
+        assert_eq!(message.subject, "feat: simplify parser");
+        assert_eq!(message.body.as_deref(), Some("Keeps behavior."));
+    }
 }

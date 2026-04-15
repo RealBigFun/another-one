@@ -1,7 +1,7 @@
 //! Application state, core event handlers, animation, and `Render` impl.
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -146,6 +146,50 @@ struct GitActionReply {
     refresh_git_state: bool,
     toast_kind: ToastKind,
     toast_message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChangedFilesGitMutation {
+    StageFile { changed: ChangedFile },
+    UnstageFile { changed: ChangedFile },
+    StageAll,
+    UnstageAll,
+}
+
+impl ChangedFilesGitMutation {
+    fn stages_file(&self, path: &str) -> bool {
+        matches!(self, Self::StageFile { changed } if changed.path == path)
+    }
+
+    fn unstages_file(&self, path: &str) -> bool {
+        matches!(self, Self::UnstageFile { changed } if changed.path == path)
+    }
+
+    fn stages_all(&self) -> bool {
+        matches!(self, Self::StageAll)
+    }
+
+    fn unstages_all(&self) -> bool {
+        matches!(self, Self::UnstageAll)
+    }
+}
+
+struct ChangedFilesGitMutationReply {
+    project_id: String,
+    result: Result<ProjectGitState, String>,
+}
+
+#[derive(Clone)]
+struct PendingChangedFilesGitMutations {
+    confirmed_files: Option<Arc<[ChangedFile]>>,
+    in_flight: Option<ChangedFilesGitMutation>,
+    queued: VecDeque<ChangedFilesGitMutation>,
+}
+
+impl PendingChangedFilesGitMutations {
+    fn mutations(&self) -> impl Iterator<Item = &ChangedFilesGitMutation> {
+        self.in_flight.iter().chain(self.queued.iter())
+    }
 }
 
 struct TaskCreationReply {
@@ -370,6 +414,12 @@ pub struct ThreeColumnApp {
     pub(crate) active_git_action: Option<crate::git_actions::ToolbarGitAction>,
     /// Receiver for the in-flight toolbar git action result.
     git_action_receiver: Option<mpsc::Receiver<GitActionReply>>,
+    /// Pending right-sidebar git mutations keyed by project id.
+    pending_changed_files_git_mutations: HashMap<String, PendingChangedFilesGitMutations>,
+    /// Sender for background right-sidebar git mutation replies.
+    changed_files_git_mutation_sender: mpsc::Sender<ChangedFilesGitMutationReply>,
+    /// Receiver for background right-sidebar git mutation replies.
+    changed_files_git_mutation_receiver: mpsc::Receiver<ChangedFilesGitMutationReply>,
     /// Whether an automatic git refresh is already running.
     pub(crate) git_refresh_in_flight: bool,
     /// Receiver for the in-flight automatic git refresh result.
@@ -1009,6 +1059,8 @@ impl ThreeColumnApp {
         let left_sidebar_open = store.ui.left_sidebar_open;
         let (terminal_spawn_sender, terminal_spawn_receiver) = mpsc::channel();
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
+        let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
+            mpsc::channel();
         let expanded = store.ui.expanded_project_ids.clone().unwrap_or_else(|| {
             let mut expanded = HashSet::new();
             if let Some(first) = store.projects.first() {
@@ -1075,6 +1127,9 @@ impl ThreeColumnApp {
             refresh_timer_started: false,
             active_git_action: None,
             git_action_receiver: None,
+            pending_changed_files_git_mutations: HashMap::new(),
+            changed_files_git_mutation_sender,
+            changed_files_git_mutation_receiver,
             git_refresh_in_flight: false,
             git_refresh_receiver: None,
             task_creation_receiver: None,
@@ -1308,6 +1363,12 @@ impl ThreeColumnApp {
             Ok(reply) => {
                 self.git_refresh_in_flight = false;
                 self.git_refresh_receiver = None;
+                if self
+                    .pending_changed_files_git_mutations
+                    .contains_key(&reply.project_id)
+                {
+                    return false;
+                }
                 self.last_git_status_refresh = Instant::now();
                 if reply.include_metadata {
                     self.last_git_metadata_refresh = self.last_git_status_refresh;
@@ -1350,6 +1411,13 @@ impl ThreeColumnApp {
         else {
             return;
         };
+
+        if self
+            .pending_changed_files_git_mutations
+            .contains_key(&project_id)
+        {
+            return;
+        }
 
         let include_metadata = metadata_due;
         self.git_refresh_in_flight = true;
@@ -1566,6 +1634,283 @@ impl ThreeColumnApp {
             .unwrap_or_else(|| Arc::from(Vec::<ChangedFile>::new()))
     }
 
+    fn set_changed_files_snapshot(
+        &mut self,
+        project_id: &str,
+        changed_files: Arc<[ChangedFile]>,
+    ) -> bool {
+        if self.changed_files.get(project_id) == Some(&changed_files) {
+            return false;
+        }
+
+        self.changed_files_list_snapshots.remove(project_id);
+        self.changed_files
+            .insert(project_id.to_string(), changed_files);
+        true
+    }
+
+    fn empty_changed_files() -> Arc<[ChangedFile]> {
+        Arc::from(Vec::<ChangedFile>::new())
+    }
+
+    fn optimistic_stage_status(changed: &ChangedFile) -> char {
+        match changed.index_status {
+            ' ' | '?' => match changed.worktree_status {
+                '?' => 'A',
+                ' ' => 'M',
+                other => other,
+            },
+            other => other,
+        }
+    }
+
+    fn optimistic_unstage_worktree_status(changed: &ChangedFile) -> char {
+        match changed.worktree_status {
+            ' ' => match changed.index_status {
+                '?' => '?',
+                ' ' => 'M',
+                other => other,
+            },
+            other => other,
+        }
+    }
+
+    fn optimistic_stage_changed_file(changed: &mut ChangedFile) {
+        changed.staged_additions += changed.unstaged_additions;
+        changed.staged_deletions += changed.unstaged_deletions;
+        changed.unstaged_additions = 0;
+        changed.unstaged_deletions = 0;
+        changed.index_status = Self::optimistic_stage_status(changed);
+        changed.worktree_status = ' ';
+        changed.untracked = false;
+    }
+
+    fn optimistic_unstage_changed_file(changed: &mut ChangedFile) {
+        let worktree_status = Self::optimistic_unstage_worktree_status(changed);
+        let became_untracked =
+            changed.index_status == 'A' && !changed.untracked && changed.original_path.is_none();
+
+        changed.unstaged_additions += changed.staged_additions;
+        changed.unstaged_deletions += changed.staged_deletions;
+        changed.staged_additions = 0;
+        changed.staged_deletions = 0;
+        changed.index_status = ' ';
+
+        if became_untracked {
+            changed.worktree_status = '?';
+            changed.untracked = true;
+        } else {
+            changed.worktree_status = worktree_status;
+            changed.untracked = changed.worktree_status == '?';
+        }
+    }
+
+    fn apply_optimistic_mutation(
+        changed_files: &mut Vec<ChangedFile>,
+        mutation: &ChangedFilesGitMutation,
+    ) -> bool {
+        let mut changed_any = false;
+
+        match mutation {
+            ChangedFilesGitMutation::StageFile { changed } => {
+                if let Some(file) = changed_files
+                    .iter_mut()
+                    .find(|file| file.path == changed.path)
+                {
+                    Self::optimistic_stage_changed_file(file);
+                    changed_any = true;
+                }
+            }
+            ChangedFilesGitMutation::UnstageFile { changed } => {
+                if let Some(file) = changed_files
+                    .iter_mut()
+                    .find(|file| file.path == changed.path)
+                {
+                    Self::optimistic_unstage_changed_file(file);
+                    changed_any = true;
+                }
+            }
+            ChangedFilesGitMutation::StageAll => {
+                for file in changed_files {
+                    if file.can_stage() {
+                        Self::optimistic_stage_changed_file(file);
+                        changed_any = true;
+                    }
+                }
+            }
+            ChangedFilesGitMutation::UnstageAll => {
+                for file in changed_files {
+                    if file.can_unstage() {
+                        Self::optimistic_unstage_changed_file(file);
+                        changed_any = true;
+                    }
+                }
+            }
+        }
+
+        changed_any
+    }
+
+    fn reapply_pending_changed_files(
+        base_files: &Arc<[ChangedFile]>,
+        pending: &PendingChangedFilesGitMutations,
+    ) -> Arc<[ChangedFile]> {
+        let mut next_files = base_files.as_ref().to_vec();
+        let mut changed_any = false;
+
+        for mutation in pending.mutations() {
+            changed_any |= Self::apply_optimistic_mutation(&mut next_files, mutation);
+        }
+
+        if !changed_any {
+            return base_files.clone();
+        }
+
+        next_files.retain(|file| file.has_staged_changes() || file.has_unstaged_changes());
+        Arc::from(next_files)
+    }
+
+    fn spawn_changed_files_git_mutation(
+        &self,
+        project_id: &str,
+        project_path: std::path::PathBuf,
+        mutation: ChangedFilesGitMutation,
+    ) {
+        let reply_project_id = project_id.to_string();
+        let tx = self.changed_files_git_mutation_sender.clone();
+        std::thread::spawn(move || {
+            let result = match mutation {
+                ChangedFilesGitMutation::StageFile { changed } => {
+                    crate::project_store::stage_changed_file(&project_path, &changed)
+                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
+                }
+                ChangedFilesGitMutation::UnstageFile { changed } => {
+                    crate::project_store::unstage_changed_file(&project_path, &changed)
+                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
+                }
+                ChangedFilesGitMutation::StageAll => {
+                    crate::project_store::stage_all_changes(&project_path)
+                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
+                }
+                ChangedFilesGitMutation::UnstageAll => {
+                    crate::project_store::unstage_all_changes(&project_path)
+                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
+                }
+            };
+
+            let _ = tx.send(ChangedFilesGitMutationReply {
+                project_id: reply_project_id,
+                result,
+            });
+        });
+    }
+
+    fn project_path(&self, project_id: &str) -> Option<std::path::PathBuf> {
+        self.project_store
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .map(|project| project.path.clone())
+    }
+
+    pub(crate) fn changed_files_actions_busy(&self, _project_id: &str) -> bool {
+        self.active_git_action.is_some()
+    }
+
+    pub(crate) fn changed_files_stage_all_pending(&self, project_id: &str) -> bool {
+        self.pending_changed_files_git_mutations
+            .get(project_id)
+            .is_some_and(|pending| pending.mutations().any(ChangedFilesGitMutation::stages_all))
+    }
+
+    pub(crate) fn changed_files_unstage_all_pending(&self, project_id: &str) -> bool {
+        self.pending_changed_files_git_mutations
+            .get(project_id)
+            .is_some_and(|pending| {
+                pending
+                    .mutations()
+                    .any(ChangedFilesGitMutation::unstages_all)
+            })
+    }
+
+    pub(crate) fn changed_files_file_pending(&self, project_id: &str, path: &str) -> bool {
+        self.pending_changed_files_git_mutations
+            .get(project_id)
+            .is_some_and(|pending| {
+                pending.mutations().any(|mutation| {
+                    mutation.stages_all()
+                        || mutation.unstages_all()
+                        || mutation.stages_file(path)
+                        || mutation.unstages_file(path)
+                })
+            })
+    }
+
+    pub(crate) fn changed_files_project_mutations_pending(&self, project_id: &str) -> bool {
+        self.pending_changed_files_git_mutations
+            .contains_key(project_id)
+    }
+
+    fn start_changed_files_git_mutation(
+        &mut self,
+        project_id: &str,
+        mutation: ChangedFilesGitMutation,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.active_git_action.is_some() {
+            return false;
+        }
+
+        let Some(project_path) = self.project_path(project_id) else {
+            self.show_error_toast("Could not find the selected project.", cx);
+            return false;
+        };
+
+        let current_files = self
+            .changed_files
+            .get(project_id)
+            .cloned()
+            .unwrap_or_else(Self::empty_changed_files);
+        let mut start_now = None;
+        let optimistic_files = {
+            let pending = self
+                .pending_changed_files_git_mutations
+                .entry(project_id.to_string())
+                .or_insert_with(|| PendingChangedFilesGitMutations {
+                    confirmed_files: Some(current_files.clone()),
+                    in_flight: None,
+                    queued: VecDeque::new(),
+                });
+
+            if pending.confirmed_files.is_none() {
+                pending.confirmed_files = Some(current_files.clone());
+            }
+
+            if pending.in_flight.is_none() {
+                pending.in_flight = Some(mutation.clone());
+                start_now = pending.in_flight.clone();
+            } else {
+                pending.queued.push_back(mutation.clone());
+            }
+
+            let base_files = pending
+                .confirmed_files
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(Self::empty_changed_files);
+            Self::reapply_pending_changed_files(&base_files, pending)
+        };
+
+        self.set_changed_files_snapshot(project_id, optimistic_files);
+
+        if let Some(mutation) = start_now {
+            self.spawn_changed_files_git_mutation(project_id, project_path, mutation);
+        }
+
+        cx.notify();
+        true
+    }
+
     pub(crate) fn start_toolbar_git_action(
         &mut self,
         action: crate::git_actions::ToolbarGitAction,
@@ -1660,6 +2005,69 @@ impl ThreeColumnApp {
                 true
             }
         }
+    }
+
+    fn drain_changed_files_git_mutations(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut should_notify = false;
+
+        while let Ok(reply) = self.changed_files_git_mutation_receiver.try_recv() {
+            let pending = self
+                .pending_changed_files_git_mutations
+                .remove(&reply.project_id);
+            should_notify = true;
+
+            match reply.result {
+                Ok(state) => {
+                    let Some(mut pending) = pending else {
+                        should_notify |= self.apply_project_git_state(&reply.project_id, state);
+                        self.last_git_status_refresh = Instant::now();
+                        continue;
+                    };
+
+                    let confirmed_files: Arc<[ChangedFile]> =
+                        Arc::from(state.changed_files.clone());
+                    pending.confirmed_files = Some(confirmed_files.clone());
+                    pending.in_flight = pending.queued.pop_front();
+
+                    if let Some(next_mutation) = pending.in_flight.clone() {
+                        let optimistic_files =
+                            Self::reapply_pending_changed_files(&confirmed_files, &pending);
+                        should_notify |=
+                            self.set_changed_files_snapshot(&reply.project_id, optimistic_files);
+                        if let Some(project_path) = self.project_path(&reply.project_id) {
+                            self.pending_changed_files_git_mutations
+                                .insert(reply.project_id.clone(), pending);
+                            self.spawn_changed_files_git_mutation(
+                                &reply.project_id,
+                                project_path,
+                                next_mutation,
+                            );
+                        } else {
+                            should_notify |= self.apply_project_git_state(&reply.project_id, state);
+                            self.show_error_toast(
+                                "Could not continue the queued git actions for the selected project.",
+                                cx,
+                            );
+                        }
+                    } else {
+                        should_notify |= self.apply_project_git_state(&reply.project_id, state);
+                        self.last_git_status_refresh = Instant::now();
+                    }
+                }
+                Err(error) => {
+                    if let Some(previous_files) =
+                        pending.and_then(|pending| pending.confirmed_files)
+                    {
+                        should_notify |=
+                            self.set_changed_files_snapshot(&reply.project_id, previous_files);
+                    }
+                    self.mark_git_refresh_stale();
+                    self.show_error_toast(error, cx);
+                }
+            }
+        }
+
+        should_notify
     }
 
     fn drain_task_creation(&mut self, cx: &mut Context<Self>) -> bool {
@@ -1865,64 +2273,27 @@ impl ThreeColumnApp {
         should_notify
     }
 
-    pub(crate) fn stage_changed_file(&mut self, project_id: &str, changed: &ChangedFile) -> bool {
-        let Some(project_path) = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .map(|project| project.path.clone())
-        else {
-            return false;
-        };
-
-        let staged = crate::project_store::stage_changed_file(&project_path, changed);
-        if staged {
-            self.refresh_project_git_state(project_id);
-        }
-        staged
+    pub(crate) fn stage_changed_file(
+        &mut self,
+        project_id: &str,
+        changed: &ChangedFile,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.start_changed_files_git_mutation(
+            project_id,
+            ChangedFilesGitMutation::StageFile {
+                changed: changed.clone(),
+            },
+            cx,
+        )
     }
 
-    pub(crate) fn stage_all_changes(&mut self, project_id: &str) -> bool {
-        let Some(project_path) = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .map(|project| project.path.clone())
-        else {
-            return false;
-        };
-
-        let staged = crate::project_store::stage_all_changes(&project_path);
-        if staged {
-            self.refresh_project_git_state(project_id);
-        }
-        staged
+    pub(crate) fn stage_all_changes(&mut self, project_id: &str, cx: &mut Context<Self>) -> bool {
+        self.start_changed_files_git_mutation(project_id, ChangedFilesGitMutation::StageAll, cx)
     }
 
     pub(crate) fn unstage_all_changes(&mut self, project_id: &str, cx: &mut Context<Self>) -> bool {
-        let Some(project_path) = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .map(|project| project.path.clone())
-        else {
-            self.show_error_toast("Could not find the selected project.", cx);
-            return false;
-        };
-
-        match crate::project_store::unstage_all_changes(&project_path) {
-            Ok(()) => {
-                self.refresh_project_git_state(project_id);
-                true
-            }
-            Err(error) => {
-                self.show_error_toast(error, cx);
-                false
-            }
-        }
+        self.start_changed_files_git_mutation(project_id, ChangedFilesGitMutation::UnstageAll, cx)
     }
 
     pub(crate) fn unstage_changed_file(
@@ -1931,27 +2302,13 @@ impl ThreeColumnApp {
         changed: &ChangedFile,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(project_path) = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .map(|project| project.path.clone())
-        else {
-            self.show_error_toast("Could not find the selected project.", cx);
-            return false;
-        };
-
-        match crate::project_store::unstage_changed_file(&project_path, changed) {
-            Ok(()) => {
-                self.refresh_project_git_state(project_id);
-                true
-            }
-            Err(error) => {
-                self.show_error_toast(error, cx);
-                false
-            }
-        }
+        self.start_changed_files_git_mutation(
+            project_id,
+            ChangedFilesGitMutation::UnstageFile {
+                changed: changed.clone(),
+            },
+            cx,
+        )
     }
 
     pub(crate) fn revert_changed_file(&mut self, project_id: &str, changed: &ChangedFile) -> bool {
@@ -2808,6 +3165,7 @@ impl Render for ThreeColumnApp {
                             let mut should_notify = this.flush_pending_terminal_resizes();
                             should_notify |= this.should_notify_active_terminal();
                             should_notify |= this.drain_git_action(cx);
+                            should_notify |= this.drain_changed_files_git_mutations(cx);
                             should_notify |= this.drain_git_refresh();
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_project_add(cx);
