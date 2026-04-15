@@ -1,0 +1,2740 @@
+//! Left sidebar content: project groups, default branches, and worktrees.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::process::Command;
+
+use gpui::{
+    div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, ClipboardItem, Context, KeyDownEvent,
+    MouseButton, MouseDownEvent, PathPromptOptions, SharedString, Window,
+};
+
+use crate::app::{
+    SectionId, SectionState, SidebarTaskDeleteConfirmState, SidebarTaskMenuState,
+    SidebarTaskRenameState, ThreeColumnApp,
+};
+use crate::project_store::{Branch, Project};
+use crate::theme;
+
+const PROJECT_ROW_H: f32 = 34.;
+const BRANCH_ROW_H: f32 = 44.;
+const LIST_TOP_PAD: f32 = 4.;
+const LIST_GAP: f32 = 2.;
+const MENU_W: f32 = 316.;
+const TASK_MENU_W: f32 = 248.;
+const TASK_MENU_H: f32 = 152.;
+
+#[derive(Clone)]
+struct SidebarTaskEntry {
+    project_id: String,
+    project_path: PathBuf,
+    task_id: Option<String>,
+    task_name: String,
+    is_worktree: bool,
+    branch: Branch,
+}
+
+#[derive(Clone)]
+struct SidebarGroup {
+    root_project: Project,
+    child_entries: Vec<SidebarTaskEntry>,
+}
+
+impl ThreeColumnApp {
+    fn sidebar_group_key(project: &Project) -> String {
+        project
+            .repo_common_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| format!("project:{}", project.id))
+    }
+
+    fn sidebar_branch_for_project(project: &Project, prefer_default: bool) -> Option<Branch> {
+        if prefer_default {
+            project
+                .branches
+                .iter()
+                .find(|branch| branch.is_default)
+                .or_else(|| project.branches.iter().find(|branch| branch.is_current))
+                .or_else(|| project.branches.first())
+                .cloned()
+        } else {
+            project
+                .branches
+                .iter()
+                .find(|branch| branch.is_current)
+                .or_else(|| project.branches.first())
+                .cloned()
+        }
+    }
+
+    fn sidebar_branch_named(project: &Project, branch_name: &str) -> Branch {
+        project
+            .branches
+            .iter()
+            .find(|branch| branch.name == branch_name)
+            .cloned()
+            .or_else(|| Self::sidebar_branch_for_project(project, false))
+            .unwrap_or_else(|| Branch {
+                name: branch_name.to_string(),
+                lines_added: 0,
+                lines_removed: 0,
+                ahead_count: 0,
+                last_commit_relative: String::new(),
+                is_default: false,
+                is_current: false,
+            })
+    }
+
+    fn sidebar_root_project_for_project(&self, project_id: &str) -> Option<Project> {
+        let project = self
+            .project_store
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)?;
+        let group_key = Self::sidebar_group_key(project);
+
+        self.project_store
+            .projects
+            .iter()
+            .find(|candidate| {
+                Self::sidebar_group_key(candidate) == group_key && candidate.worktree_name.is_none()
+            })
+            .cloned()
+            .or_else(|| Some(project.clone()))
+    }
+
+    fn sidebar_task_is_pinned(
+        &self,
+        project_id: &str,
+        task_id: Option<&str>,
+        is_worktree: bool,
+    ) -> bool {
+        if is_worktree {
+            self.project_store
+                .ui
+                .pinned_worktree_project_ids
+                .contains(project_id)
+        } else {
+            task_id.is_some_and(|task_id| {
+                self.project_store
+                    .ui
+                    .pinned_direct_task_ids
+                    .contains(task_id)
+            })
+        }
+    }
+
+    fn sidebar_task_entry_is_pinned(&self, entry: &SidebarTaskEntry) -> bool {
+        self.sidebar_task_is_pinned(
+            &entry.project_id,
+            entry.task_id.as_deref(),
+            entry.is_worktree,
+        )
+    }
+
+    fn sidebar_groups(&self) -> Vec<SidebarGroup> {
+        let mut order = Vec::new();
+        let mut grouped_indices: HashMap<String, Vec<usize>> = HashMap::new();
+
+        for (index, project) in self.project_store.projects.iter().enumerate() {
+            let key = Self::sidebar_group_key(project);
+            grouped_indices
+                .entry(key.clone())
+                .and_modify(|indices| indices.push(index))
+                .or_insert_with(|| {
+                    order.push(key);
+                    vec![index]
+                });
+        }
+
+        let mut groups = Vec::new();
+        for key in order {
+            let Some(indices) = grouped_indices.get(&key) else {
+                continue;
+            };
+
+            let root_index = indices
+                .iter()
+                .copied()
+                .find(|index| self.project_store.projects[*index].worktree_name.is_none())
+                .unwrap_or(indices[0]);
+            let root_project = self.project_store.projects[root_index].clone();
+
+            let mut child_entries = Vec::new();
+            if let Some(tasks) = self.project_store.direct_tasks.get(&root_project.id) {
+                for task in tasks {
+                    child_entries.push(SidebarTaskEntry {
+                        project_id: root_project.id.clone(),
+                        project_path: root_project.path.clone(),
+                        task_id: Some(task.id.clone()),
+                        task_name: task.name.clone(),
+                        is_worktree: false,
+                        branch: Self::sidebar_branch_named(&root_project, &task.branch_name),
+                    });
+                }
+            }
+
+            for index in indices {
+                if *index == root_index {
+                    continue;
+                }
+
+                let project = &self.project_store.projects[*index];
+                if let Some(branch) = Self::sidebar_branch_for_project(project, false) {
+                    let display_name = self
+                        .project_store
+                        .worktree_task_names
+                        .get(&project.id)
+                        .cloned()
+                        .unwrap_or_else(|| branch.name.clone());
+                    child_entries.push(SidebarTaskEntry {
+                        project_id: project.id.clone(),
+                        project_path: project.path.clone(),
+                        task_id: None,
+                        task_name: display_name,
+                        is_worktree: true,
+                        branch,
+                    });
+                }
+            }
+
+            child_entries.sort_by_key(|entry| !self.sidebar_task_entry_is_pinned(entry));
+
+            groups.push(SidebarGroup {
+                root_project,
+                child_entries,
+            });
+        }
+
+        groups
+    }
+
+    fn project_group_member_ids(&self, root_project_id: &str) -> Vec<String> {
+        let Some(root_project) = self
+            .project_store
+            .projects
+            .iter()
+            .find(|project| project.id == root_project_id)
+        else {
+            return Vec::new();
+        };
+        let group_key = Self::sidebar_group_key(root_project);
+
+        self.project_store
+            .projects
+            .iter()
+            .filter(|project| Self::sidebar_group_key(project) == group_key)
+            .map(|project| project.id.clone())
+            .collect()
+    }
+
+    fn project_group_remove_confirm(
+        &self,
+        root_project_id: &str,
+    ) -> Option<crate::app::ProjectRemoveConfirmState> {
+        let root_project = self
+            .project_store
+            .projects
+            .iter()
+            .find(|project| project.id == root_project_id)?;
+        let project_ids = self.project_group_member_ids(root_project_id);
+        let open_task_count = self
+            .project_store
+            .direct_tasks
+            .get(root_project_id)
+            .map_or(0, Vec::len)
+            + project_ids.len().saturating_sub(1);
+
+        Some(crate::app::ProjectRemoveConfirmState {
+            project_name: root_project.name.clone(),
+            project_ids,
+            open_task_count,
+        })
+    }
+
+    fn fallback_section_after_project_removal(&self) -> Option<(SectionId, PathBuf)> {
+        let project = self.project_store.projects.first()?;
+        let branch = project.branches.first()?;
+        Some((
+            SectionId::new(&project.id, &branch.name),
+            project.path.clone(),
+        ))
+    }
+
+    fn remove_project_group_ids(&mut self, project_ids: &[String], cx: &mut Context<Self>) {
+        let project_id_set: std::collections::HashSet<String> =
+            project_ids.iter().cloned().collect();
+        let removed_direct_task_ids: std::collections::HashSet<String> = self
+            .project_store
+            .direct_tasks
+            .iter()
+            .filter(|(project_id, _)| project_id_set.contains(*project_id))
+            .flat_map(|(_, tasks)| tasks.iter().map(|task| task.id.clone()))
+            .collect();
+
+        self.project_store
+            .projects
+            .retain(|project| !project_id_set.contains(&project.id));
+        self.project_store
+            .direct_tasks
+            .retain(|project_id, _| !project_id_set.contains(project_id));
+        self.project_store
+            .worktree_task_names
+            .retain(|project_id, _| !project_id_set.contains(project_id));
+        self.project_store
+            .ui
+            .pinned_worktree_project_ids
+            .retain(|project_id| !project_id_set.contains(project_id));
+        self.project_store
+            .ui
+            .pinned_direct_task_ids
+            .retain(|task_id| !removed_direct_task_ids.contains(task_id));
+        self.changed_files
+            .retain(|project_id, _| !project_id_set.contains(project_id));
+        self.section_states
+            .retain(|section_id, _| !project_id_set.contains(&section_id.project_id));
+        self.project_github_links
+            .retain(|project_id, _| !project_id_set.contains(project_id));
+        self.project_github_link_checked
+            .retain(|project_id| !project_id_set.contains(project_id));
+        self.expanded_projects
+            .retain(|project_id| !project_id_set.contains(project_id));
+        self.project_store
+            .set_expanded_projects(&self.expanded_projects);
+
+        if self
+            .active_section
+            .as_ref()
+            .is_some_and(|section| project_id_set.contains(&section.project_id))
+        {
+            self.active_section = None;
+        }
+        if self
+            .project_menu_project
+            .as_ref()
+            .is_some_and(|project_id| project_id_set.contains(project_id))
+        {
+            self.project_menu_project = None;
+        }
+        if self
+            .hovered_project
+            .as_ref()
+            .is_some_and(|project_id| project_id_set.contains(project_id))
+        {
+            self.hovered_project = None;
+        }
+        if self
+            .new_task_modal
+            .as_ref()
+            .is_some_and(|state| project_id_set.contains(&state.project_id))
+        {
+            self.new_task_modal = None;
+        }
+        if self
+            .discard_confirm
+            .as_ref()
+            .is_some_and(|(project_id, _)| project_id_set.contains(project_id))
+        {
+            self.discard_confirm = None;
+        }
+        if self
+            .sidebar_task_rename
+            .as_ref()
+            .is_some_and(|state| project_id_set.contains(&state.project_id))
+        {
+            self.sidebar_task_rename = None;
+        }
+        if self
+            .sidebar_task_last_click
+            .as_ref()
+            .is_some_and(|(project_id, _, _)| project_id_set.contains(project_id))
+        {
+            self.sidebar_task_last_click = None;
+        }
+        if self
+            .hovered_sidebar_task
+            .as_ref()
+            .is_some_and(|(project_id, _)| project_id_set.contains(project_id))
+        {
+            self.hovered_sidebar_task = None;
+        }
+        if self
+            .sidebar_task_menu
+            .as_ref()
+            .is_some_and(|menu| project_id_set.contains(&menu.project_id))
+        {
+            self.sidebar_task_menu = None;
+        }
+        if self
+            .sidebar_task_delete_confirm
+            .as_ref()
+            .is_some_and(|confirm| project_id_set.contains(&confirm.project_id))
+        {
+            self.sidebar_task_delete_confirm = None;
+        }
+        self.project_github_link_requests
+            .retain(|project_id| !project_id_set.contains(project_id));
+        self.project_remove_confirm = None;
+        self.project_store.save();
+
+        if self.active_section.is_none() {
+            if let Some((section_id, cwd)) = self.fallback_section_after_project_removal() {
+                if !self.section_states.contains_key(&section_id) {
+                    self.section_states
+                        .insert(section_id.clone(), SectionState::with_cwd(Some(cwd)));
+                }
+                self.active_section = Some(section_id);
+            }
+        }
+
+        cx.notify();
+    }
+
+    pub(crate) fn request_remove_project_group(
+        &mut self,
+        root_project_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(confirm) = self.project_group_remove_confirm(root_project_id) else {
+            return;
+        };
+
+        self.project_menu_project = None;
+        self.sidebar_task_menu = None;
+
+        if confirm.open_task_count == 0 {
+            self.remove_project_group_ids(&confirm.project_ids, cx);
+            self.show_success_toast(
+                format!("Removed {} from the sidebar.", confirm.project_name),
+                cx,
+            );
+            return;
+        }
+
+        self.project_remove_confirm = Some(confirm);
+        cx.notify();
+    }
+
+    pub(crate) fn confirm_remove_project_group(&mut self, cx: &mut Context<Self>) {
+        let Some(confirm) = self.project_remove_confirm.clone() else {
+            return;
+        };
+
+        self.remove_project_group_ids(&confirm.project_ids, cx);
+        self.show_success_toast(
+            format!(
+                "Removed {} and its open tasks from the sidebar.",
+                confirm.project_name
+            ),
+            cx,
+        );
+    }
+
+    fn restore_view_after_task_removal(&mut self, preferred_project_id: &str) {
+        if self.active_section.is_some() || self.active_project_page.is_some() {
+            return;
+        }
+
+        if self
+            .project_store
+            .projects
+            .iter()
+            .any(|project| project.id == preferred_project_id)
+        {
+            self.active_project_page = Some(preferred_project_id.to_string());
+            return;
+        }
+
+        if let Some((section_id, cwd)) = self.fallback_section_after_project_removal() {
+            if !self.section_states.contains_key(&section_id) {
+                self.section_states
+                    .insert(section_id.clone(), SectionState::with_cwd(Some(cwd)));
+            }
+            self.active_section = Some(section_id);
+        }
+    }
+
+    fn set_sidebar_task_pinned(
+        &mut self,
+        project_id: &str,
+        task_id: Option<&str>,
+        is_worktree: bool,
+        pinned: bool,
+    ) -> bool {
+        let changed = if is_worktree {
+            self.project_store.set_worktree_pinned(project_id, pinned)
+        } else if let Some(task_id) = task_id {
+            self.project_store.set_direct_task_pinned(task_id, pinned)
+        } else {
+            false
+        };
+
+        if changed {
+            self.project_store.save();
+        }
+
+        changed
+    }
+
+    fn open_sidebar_task_menu(
+        &mut self,
+        project_id: &str,
+        row_id: &str,
+        task_id: Option<&str>,
+        task_name: &str,
+        branch_name: &str,
+        is_worktree: bool,
+        ev: &MouseDownEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let root_project_id = self
+            .sidebar_root_project_for_project(project_id)
+            .map(|project| project.id)
+            .unwrap_or_else(|| project_id.to_string());
+
+        self.commit_sidebar_task_rename(cx);
+        self.project_menu_project = None;
+        self.sidebar_task_last_click = None;
+        self.hovered_sidebar_task = Some((project_id.to_string(), row_id.to_string()));
+        self.sidebar_task_menu = Some(SidebarTaskMenuState {
+            project_id: project_id.to_string(),
+            root_project_id,
+            row_id: row_id.to_string(),
+            task_id: task_id.map(str::to_string),
+            task_name: task_name.to_string(),
+            branch_name: branch_name.to_string(),
+            is_worktree,
+            anchor_x: f32::from(ev.position.x),
+            anchor_y: f32::from(ev.position.y),
+        });
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn build_sidebar_task_delete_confirm(
+        &self,
+        project_id: &str,
+        task_id: Option<&str>,
+        task_name: &str,
+        branch_name: &str,
+        is_worktree: bool,
+    ) -> Option<SidebarTaskDeleteConfirmState> {
+        let project = self
+            .project_store
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)?
+            .clone();
+        let root_project = self.sidebar_root_project_for_project(project_id)?;
+
+        Some(SidebarTaskDeleteConfirmState {
+            project_id: project_id.to_string(),
+            root_project_id: root_project.id,
+            task_id: task_id.map(str::to_string),
+            task_name: task_name.to_string(),
+            branch_name: branch_name.to_string(),
+            project_path: project.path,
+            repo_path: root_project.path,
+            is_worktree,
+        })
+    }
+
+    fn delete_direct_sidebar_task(
+        &mut self,
+        project_id: &str,
+        task_id: &str,
+        task_name: &str,
+        preferred_project_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let was_active_task = self
+            .active_section
+            .as_ref()
+            .is_some_and(|section| section.task_id.as_deref() == Some(task_id));
+
+        if self
+            .project_store
+            .remove_direct_task(project_id, task_id)
+            .is_none()
+        {
+            self.show_error_toast("Could not find the selected task.", cx);
+            return;
+        }
+
+        self.sidebar_task_menu = None;
+        self.sidebar_task_last_click = None;
+        self.hovered_sidebar_task = None;
+        if self.sidebar_task_rename.as_ref().is_some_and(|rename| {
+            rename.project_id == project_id && rename.row_id == task_id && !rename.is_worktree
+        }) {
+            self.sidebar_task_rename = None;
+        }
+        self.section_states
+            .retain(|section_id, _| section_id.task_id.as_deref() != Some(task_id));
+        if was_active_task {
+            self.active_section = None;
+            self.active_project_page = None;
+        }
+        self.restore_view_after_task_removal(preferred_project_id);
+        self.project_store.save();
+        self.show_success_toast(format!("Deleted task {}.", task_name), cx);
+        cx.notify();
+    }
+
+    pub(crate) fn request_sidebar_task_delete(
+        &mut self,
+        project_id: &str,
+        task_id: Option<&str>,
+        task_name: &str,
+        branch_name: &str,
+        is_worktree: bool,
+        preferred_project_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_task_menu = None;
+        self.sidebar_task_last_click = None;
+
+        if is_worktree {
+            let Some(confirm) = self.build_sidebar_task_delete_confirm(
+                project_id,
+                task_id,
+                task_name,
+                branch_name,
+                is_worktree,
+            ) else {
+                self.show_error_toast("Could not find the selected worktree.", cx);
+                return;
+            };
+            self.sidebar_task_delete_confirm = Some(confirm);
+            cx.notify();
+            return;
+        }
+
+        let Some(task_id) = task_id else {
+            self.show_error_toast("Could not find the selected task.", cx);
+            return;
+        };
+
+        self.delete_direct_sidebar_task(project_id, task_id, task_name, preferred_project_id, cx);
+    }
+
+    pub(crate) fn confirm_sidebar_task_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(confirm) = self.sidebar_task_delete_confirm.clone() else {
+            return;
+        };
+
+        if !confirm.is_worktree {
+            self.sidebar_task_delete_confirm = None;
+            let Some(task_id) = confirm.task_id.as_deref() else {
+                self.show_error_toast("Could not find the selected task.", cx);
+                return;
+            };
+            self.delete_direct_sidebar_task(
+                &confirm.project_id,
+                task_id,
+                &confirm.task_name,
+                &confirm.root_project_id,
+                cx,
+            );
+            return;
+        }
+
+        let was_active_project = self
+            .active_section
+            .as_ref()
+            .is_some_and(|section| section.project_id == confirm.project_id);
+
+        match crate::project_store::remove_task_worktree(&confirm.repo_path, &confirm.project_path)
+        {
+            Ok(()) => {
+                if let Err(error) = crate::project_store::delete_local_branch(
+                    &confirm.repo_path,
+                    &confirm.branch_name,
+                ) {
+                    self.show_warning_toast(error, cx);
+                }
+
+                self.sidebar_task_delete_confirm = None;
+                self.remove_project_group_ids(&[confirm.project_id.clone()], cx);
+                if was_active_project
+                    && self
+                        .project_store
+                        .projects
+                        .iter()
+                        .any(|project| project.id == confirm.root_project_id)
+                {
+                    self.active_section = None;
+                    self.active_project_page = Some(confirm.root_project_id.clone());
+                }
+                self.show_success_toast(format!("Deleted worktree {}.", confirm.task_name), cx);
+                cx.notify();
+            }
+            Err(error) => {
+                self.show_error_toast(error, cx);
+            }
+        }
+    }
+
+    pub(crate) fn handle_global_key_down(
+        &mut self,
+        ev: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.new_task_modal.is_some() {
+            self.handle_new_task_modal_key_down(ev, cx);
+            return;
+        }
+
+        if self.sidebar_task_menu.is_some() && ev.keystroke.key.as_str() == "escape" {
+            self.sidebar_task_menu = None;
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+
+        let _ = self.handle_sidebar_task_rename_key_down(ev, cx);
+    }
+
+    fn handle_sidebar_task_rename_key_down(
+        &mut self,
+        ev: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.sidebar_task_rename.is_none() {
+            return false;
+        }
+
+        cx.stop_propagation();
+
+        match ev.keystroke.key.as_str() {
+            "escape" => {
+                self.cancel_sidebar_task_rename(cx);
+                return true;
+            }
+            "enter" => {
+                self.commit_sidebar_task_rename(cx);
+                return true;
+            }
+            _ => {}
+        }
+
+        let Some(state) = self.sidebar_task_rename.as_mut() else {
+            return true;
+        };
+
+        let modifiers = ev.keystroke.modifiers;
+        match ev.keystroke.key.as_str() {
+            "backspace" => {
+                if modifiers.platform {
+                    delete_sidebar_task_name_to_start(state);
+                } else if modifiers.alt {
+                    delete_sidebar_task_name_word_backward(state);
+                } else {
+                    delete_sidebar_task_name_backward(state);
+                }
+                cx.notify();
+                return true;
+            }
+            "delete" => {
+                delete_sidebar_task_name_forward(state);
+                cx.notify();
+                return true;
+            }
+            "left" => {
+                move_sidebar_task_name_cursor(state, SidebarCursorDirection::Left, modifiers.shift);
+                cx.notify();
+                return true;
+            }
+            "right" => {
+                move_sidebar_task_name_cursor(
+                    state,
+                    SidebarCursorDirection::Right,
+                    modifiers.shift,
+                );
+                cx.notify();
+                return true;
+            }
+            "home" => {
+                move_sidebar_task_name_cursor_to_edge(state, false, modifiers.shift);
+                cx.notify();
+                return true;
+            }
+            "end" => {
+                move_sidebar_task_name_cursor_to_edge(state, true, modifiers.shift);
+                cx.notify();
+                return true;
+            }
+            "up" | "down" | "tab" => return true,
+            _ => {}
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "a" {
+            state.task_name_cursor = state.task_name.len();
+            state.task_name_selection_anchor = Some(0);
+            cx.notify();
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "c" {
+            if let Some(range) = selected_sidebar_task_name_range(state) {
+                cx.write_to_clipboard(ClipboardItem::new_string(
+                    state.task_name[range].to_string(),
+                ));
+            }
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "x" {
+            if let Some(range) = selected_sidebar_task_name_range(state) {
+                cx.write_to_clipboard(ClipboardItem::new_string(
+                    state.task_name[range.clone()].to_string(),
+                ));
+                replace_sidebar_task_name_range(state, range, "");
+                cx.notify();
+            }
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "v" {
+            if let Some(text) = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .map(sanitize_sidebar_task_name_input)
+            {
+                insert_sidebar_task_name_text(state, &text);
+                cx.notify();
+            }
+            return true;
+        }
+
+        if modifiers.control || modifiers.platform || modifiers.function {
+            return false;
+        }
+
+        if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+            insert_sidebar_task_name_text(state, key_char);
+            cx.notify();
+            return true;
+        }
+
+        false
+    }
+
+    fn begin_sidebar_task_rename(
+        &mut self,
+        project_id: &str,
+        row_id: &str,
+        task_name: &str,
+        is_worktree: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_task_last_click = None;
+        self.sidebar_task_rename = Some(SidebarTaskRenameState {
+            project_id: project_id.to_string(),
+            row_id: row_id.to_string(),
+            is_worktree,
+            original_name: task_name.to_string(),
+            task_name: task_name.to_string(),
+            task_name_cursor: task_name.len(),
+            task_name_selection_anchor: Some(0),
+        });
+        cx.notify();
+    }
+
+    fn commit_sidebar_task_rename(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(rename) = self.sidebar_task_rename.take() else {
+            return false;
+        };
+        self.sidebar_task_last_click = None;
+
+        let next_name = sanitize_sidebar_task_name_input(rename.task_name)
+            .trim()
+            .to_string();
+        let final_name = if next_name.is_empty() {
+            rename.original_name.clone()
+        } else {
+            next_name
+        };
+
+        if final_name != rename.original_name {
+            let mut did_change = false;
+            if rename.is_worktree {
+                self.project_store
+                    .worktree_task_names
+                    .insert(rename.project_id.clone(), final_name);
+                did_change = true;
+            } else if let Some(task) = self
+                .project_store
+                .direct_tasks
+                .get_mut(&rename.project_id)
+                .and_then(|tasks| tasks.iter_mut().find(|task| task.id == rename.row_id))
+            {
+                task.name = final_name;
+                did_change = true;
+            }
+
+            if did_change {
+                self.project_store.save();
+            }
+        }
+
+        cx.notify();
+        true
+    }
+
+    fn cancel_sidebar_task_rename(&mut self, cx: &mut Context<Self>) {
+        if self.sidebar_task_rename.take().is_some() {
+            self.sidebar_task_last_click = None;
+            cx.notify();
+        }
+    }
+
+    fn sidebar_task_is_being_renamed(&self, project_id: &str, row_id: &str) -> bool {
+        self.sidebar_task_rename
+            .as_ref()
+            .is_some_and(|state| state.project_id == project_id && state.row_id == row_id)
+    }
+
+    fn project_row(
+        project: &Project,
+        github_url: Option<String>,
+        active: bool,
+        has_children: bool,
+        expanded: bool,
+        hovered: bool,
+        menu_open: bool,
+        _window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let color = theme::project_color(&project.id);
+        let first_char: String = project
+            .name
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_uppercase()
+            .collect();
+        let name: SharedString = project.name.clone().into();
+        let pid = project.id.clone();
+
+        let text_col = hsla(0., 0., 0.90, 1.);
+        let hover_bg = gpui::white().opacity(0.06);
+        let active_bg = gpui::white().opacity(0.03);
+        let active_border = gpui::white().opacity(0.18);
+        let chevron_col = hsla(0., 0., 0.55, 1.);
+        let controls_visible = hovered || menu_open;
+        let pid_hover = pid.clone();
+        let pid_row = pid.clone();
+        let pid_toggle = pid.clone();
+        let pid_menu = pid.clone();
+        let pid_plus = pid.clone();
+        let github_url_for_icon = github_url.clone();
+
+        let row = div()
+            .id(SharedString::from(format!("project-{}", &pid)))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .px(px(10.))
+            .py(px(5.))
+            .rounded_md()
+            .border_1()
+            .border_color(if active {
+                active_border
+            } else {
+                gpui::transparent_black()
+            })
+            .when(active, |d| d.bg(active_bg))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .tooltip(move |_window, cx| {
+                Self::action_tooltip_view("Open this project's overview page", cx)
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    this.commit_sidebar_task_rename(cx);
+                    this.sidebar_task_menu = None;
+                    this.project_menu_project = None;
+                    this.active_project_page = Some(pid_row.clone());
+                    this.active_section = None;
+                    cx.notify();
+                }),
+            )
+            .on_hover(cx.listener(move |this, is_hovered, _, cx| {
+                if *is_hovered {
+                    this.hovered_project = Some(pid_hover.clone());
+                } else if this.hovered_project.as_deref() == Some(pid_hover.as_str()) {
+                    this.hovered_project = None;
+                }
+                cx.notify();
+            }));
+
+        row.child(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(24.))
+                .h(px(24.))
+                .rounded(px(5.))
+                .bg(rgb(color))
+                .text_color(gpui::white())
+                .text_size(rems(12. / 16.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(first_char),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .flex_1()
+                .min_w(px(0.))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .flex_shrink()
+                        .min_w(px(0.))
+                        .text_sm()
+                        .text_color(text_col)
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .truncate()
+                        .child(name),
+                )
+                .when(has_children, |row| {
+                    row.child(
+                        div()
+                            .id(SharedString::from(format!("project-chevron-{}", &pid)))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(20.))
+                            .h(px(20.))
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(gpui::white().opacity(0.08)))
+                            .tooltip(move |_window, cx| {
+                                Self::action_tooltip_view(
+                                    "Show or hide tasks and worktrees for this project",
+                                    cx,
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    this.commit_sidebar_task_rename(cx);
+                                    this.sidebar_task_menu = None;
+                                    this.project_menu_project = None;
+                                    this.toggle_project_expansion(&pid_toggle, window, cx);
+                                }),
+                            )
+                            .child(
+                                svg()
+                                    .path(if expanded {
+                                        "assets/icons/icons__chevron-down.svg"
+                                    } else {
+                                        "assets/icons/icons__chevron-right.svg"
+                                    })
+                                    .size(px(12.))
+                                    .text_color(chevron_col),
+                            ),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(2.))
+                .flex_none()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("project-dots-{}", &pid)))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(24.))
+                        .h(px(24.))
+                        .rounded_md()
+                        .cursor_pointer()
+                        .opacity(if controls_visible { 1. } else { 0. })
+                        .hover(move |s| s.bg(gpui::white().opacity(0.08)))
+                        .tooltip(move |_window, cx| {
+                            Self::action_tooltip_view("Open project menu", cx)
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                cx.stop_propagation();
+                                this.commit_sidebar_task_rename(cx);
+                                this.sidebar_task_menu = None;
+                                this.hovered_project = Some(pid_menu.clone());
+                                this.project_menu_project = if this.project_menu_project.as_deref()
+                                    == Some(pid_menu.as_str())
+                                {
+                                    None
+                                } else {
+                                    Some(pid_menu.clone())
+                                };
+                                cx.notify();
+                            }),
+                        )
+                        .child(
+                            svg()
+                                .path("assets/icons/icons__ellipsis.svg")
+                                .size(px(14.))
+                                .text_color(chevron_col),
+                        ),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!("project-github-{}", &pid)))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(24.))
+                        .h(px(24.))
+                        .rounded_md()
+                        .cursor_pointer()
+                        .opacity(if github_url_for_icon.is_some() {
+                            1.
+                        } else {
+                            0.
+                        })
+                        .when(github_url_for_icon.is_some(), |d| {
+                            d.hover(move |s| s.bg(gpui::white().opacity(0.08)))
+                                .tooltip(move |_window, cx| {
+                                    Self::action_tooltip_view("Open this project's GitHub link", cx)
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                        cx.stop_propagation();
+                                        this.sidebar_task_menu = None;
+                                        if let Some(github_url) = github_url.clone() {
+                                            if let Err(err) = open_external_url(&github_url) {
+                                                this.show_error_toast(err, cx);
+                                            }
+                                        }
+                                    }),
+                                )
+                        })
+                        .child(
+                            svg()
+                                .path("assets/icons/icons__github.svg")
+                                .size(px(14.))
+                                .text_color(chevron_col),
+                        ),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!("project-plus-{}", &pid)))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(24.))
+                        .h(px(24.))
+                        .rounded_md()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(gpui::white().opacity(0.08)))
+                        .tooltip(move |_window, cx| {
+                            Self::action_tooltip_view("Add a task or worktree to this project", cx)
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                this.focus_handle.focus(window);
+                                this.commit_sidebar_task_rename(cx);
+                                this.sidebar_task_menu = None;
+                                this.open_new_task_modal(&pid_plus);
+                                cx.notify();
+                            }),
+                        )
+                        .child(
+                            svg()
+                                .path("assets/icons/icons__plus.svg")
+                                .size(px(14.))
+                                .text_color(chevron_col),
+                        ),
+                ),
+        )
+    }
+
+    fn branch_row(
+        &self,
+        entry: &SidebarTaskEntry,
+        is_active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let text_col = hsla(0., 0., 0.80, 1.);
+        let muted_col = hsla(0., 0., 0.50, 1.);
+        let green = hsla(138. / 360., 0.50, 0.74, 1.);
+        let red = hsla(352. / 360., 0.52, 0.76, 1.);
+        let hover_bg = gpui::white().opacity(0.05);
+        let active_bg = gpui::white().opacity(0.03);
+        let active_border = gpui::white().opacity(0.18);
+        let edit_border = hsla(220. / 360., 0.55, 0.60, 1.);
+        let edit_bg = gpui::black().opacity(0.14);
+        let delete_hover_bg = hsla(0., 0.40, 0.34, 0.24);
+        let delete_icon_col = hsla(0., 0.72, 0.72, 1.);
+
+        let project_id = entry.project_id.clone();
+        let project_path = entry.project_path.clone();
+        let task_id = entry.task_id.clone();
+        let branch_name = entry.branch.name.clone();
+        let task_name = entry.task_name.clone();
+        let is_worktree = entry.is_worktree;
+        let row_id = task_id.clone().unwrap_or_else(|| branch_name.clone());
+        let root_project_id = self
+            .sidebar_root_project_for_project(&project_id)
+            .map(|project| project.id)
+            .unwrap_or_else(|| project_id.clone());
+        let meta_indent = 20.;
+        let meta = [
+            (entry.task_name != entry.branch.name).then(|| entry.branch.name.clone()),
+            (!entry.branch.last_commit_relative.is_empty())
+                .then(|| entry.branch.last_commit_relative.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" • ");
+        let meta: SharedString = meta.into();
+        let rename_state = self
+            .sidebar_task_rename
+            .as_ref()
+            .filter(|state| state.project_id == project_id && state.row_id == row_id);
+        let is_editing = rename_state.is_some();
+        let is_pinned = self.sidebar_task_entry_is_pinned(entry);
+        let is_hovered = self.hovered_sidebar_task.as_ref().is_some_and(
+            |(hovered_project_id, hovered_row_id)| {
+                hovered_project_id == &project_id && hovered_row_id == &row_id
+            },
+        );
+        let menu_open = self
+            .sidebar_task_menu
+            .as_ref()
+            .is_some_and(|menu| menu.project_id == project_id && menu.row_id == row_id);
+        let show_delete_action = !is_editing && (is_hovered || menu_open);
+        let row_tooltip = if task_id.is_some() || is_worktree {
+            "Open this task in the terminal. Double-click to rename it or right-click for more actions."
+        } else {
+            "Open this task in the terminal"
+        };
+        let task_label: AnyElement = if let Some(rename) = rename_state {
+            div()
+                .id(SharedString::from(format!(
+                    "task-rename-{}-{}",
+                    project_id, rename.row_id
+                )))
+                .flex()
+                .items_center()
+                .flex_1()
+                .min_w(px(0.))
+                .h(px(28.))
+                .px(px(8.))
+                .rounded_sm()
+                .border_1()
+                .border_color(edit_border)
+                .bg(edit_bg)
+                .cursor_text()
+                .tooltip(move |_window, cx| {
+                    Self::action_tooltip_view(
+                        "Rename this task. Press Enter to save or Escape to cancel.",
+                        cx,
+                    )
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_this, _ev: &MouseDownEvent, _window, cx| {
+                        cx.stop_propagation();
+                    }),
+                )
+                .child(Self::render_sidebar_task_name_content(
+                    rename.task_name.clone().into(),
+                    rename.task_name_cursor,
+                    selected_sidebar_task_name_range(rename),
+                ))
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .min_w(px(0.))
+                .flex_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(text_col)
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .truncate()
+                        .child(SharedString::from(task_name.clone())),
+                )
+                .when(is_pinned, |row| {
+                    row.child(
+                        svg()
+                            .flex_shrink_0()
+                            .path("assets/icons/icons__pin-off.svg")
+                            .size(px(11.))
+                            .text_color(muted_col),
+                    )
+                })
+                .into_any_element()
+        };
+
+        let mut right_controls = div().flex().flex_row().items_center().gap(px(6.));
+
+        if entry.branch.lines_added > 0 || entry.branch.lines_removed > 0 {
+            let added_text: SharedString = format!("+{}", entry.branch.lines_added).into();
+            let removed_text: SharedString = format!("-{}", entry.branch.lines_removed).into();
+            right_controls = right_controls.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(4.))
+                    .text_xs()
+                    .child(div().text_color(green).child(added_text))
+                    .child(div().text_color(red).child(removed_text)),
+            );
+        }
+
+        let delete_project_id = project_id.clone();
+        let delete_task_id = task_id.clone();
+        let delete_task_name = task_name.clone();
+        let delete_branch_name = branch_name.clone();
+        let delete_preferred_project_id = root_project_id.clone();
+        let delete_tooltip = if is_worktree {
+            "Delete this worktree task"
+        } else {
+            "Delete this direct task"
+        };
+
+        right_controls = right_controls.child(
+            div()
+                .id(SharedString::from(format!("task-delete-{}", row_id)))
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(22.))
+                .h(px(22.))
+                .rounded_sm()
+                .opacity(if show_delete_action { 1. } else { 0. })
+                .when(show_delete_action, |button| {
+                    button
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(delete_hover_bg))
+                        .tooltip(move |_window, cx| Self::action_tooltip_view(delete_tooltip, cx))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                cx.stop_propagation();
+                                this.request_sidebar_task_delete(
+                                    &delete_project_id,
+                                    delete_task_id.as_deref(),
+                                    &delete_task_name,
+                                    &delete_branch_name,
+                                    is_worktree,
+                                    &delete_preferred_project_id,
+                                    cx,
+                                );
+                            }),
+                        )
+                })
+                .child(
+                    svg()
+                        .path("assets/icons/icons__trash.svg")
+                        .size(px(13.))
+                        .text_color(delete_icon_col),
+                ),
+        );
+
+        let top_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(6.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .child(
+                        svg()
+                            .flex_shrink_0()
+                            .path("assets/icons/icons__git-branch.svg")
+                            .size(px(14.))
+                            .text_color(muted_col),
+                    )
+                    .child(task_label)
+                    .when(entry.is_worktree, |row| {
+                        row.child(
+                            svg()
+                                .flex_shrink_0()
+                                .path("assets/icons/icons__git-split.svg")
+                                .size(px(13.))
+                                .text_color(muted_col),
+                        )
+                    })
+                    .when(entry.is_worktree && entry.branch.is_default, |row| {
+                        row.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_color(muted_col)
+                                .text_size(rems(12. / 16.))
+                                .child("★"),
+                        )
+                    }),
+            )
+            .child(right_controls);
+
+        let row_project_id = project_id.clone();
+        let row_id_for_hover = row_id.clone();
+        let left_click_project_id = project_id.clone();
+        let left_click_row_id = row_id.clone();
+        let left_click_task_id = task_id.clone();
+        let left_click_branch_name = branch_name.clone();
+        let left_click_task_name = task_name.clone();
+        let right_click_project_id = project_id.clone();
+        let right_click_row_id = row_id.clone();
+        let right_click_task_id = task_id.clone();
+        let right_click_task_name = task_name.clone();
+        let right_click_branch_name = branch_name.clone();
+        let right_click_is_worktree = is_worktree;
+
+        let mut container = div()
+            .id(SharedString::from(format!(
+                "task-{}-{}",
+                entry.project_id,
+                entry
+                    .task_id
+                    .as_deref()
+                    .unwrap_or(entry.branch.name.as_str())
+            )))
+            .flex()
+            .flex_col()
+            .pl(px(18.))
+            .pr(px(10.))
+            .py(px(4.))
+            .mx(px(2.))
+            .rounded_md()
+            .border_1()
+            .border_color(if is_active {
+                active_border
+            } else {
+                gpui::transparent_black()
+            })
+            .when(is_editing, |d| d.cursor_text())
+            .when(!is_editing, |d| d.cursor_pointer())
+            .when(is_active, |d| d.bg(active_bg))
+            .hover(move |s| if is_editing { s } else { s.bg(hover_bg) })
+            .tooltip(move |_window, cx| Self::action_tooltip_view(row_tooltip, cx))
+            .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                if *is_hovered {
+                    this.hovered_sidebar_task =
+                        Some((row_project_id.clone(), row_id_for_hover.clone()));
+                } else if this.sidebar_task_menu.as_ref().is_some_and(|menu| {
+                    menu.project_id == row_project_id && menu.row_id == row_id_for_hover
+                }) {
+                    // Keep the action affordances visible while the context menu is open.
+                } else if this.hovered_sidebar_task.as_ref().is_some_and(
+                    |(hovered_project_id, hovered_row_id)| {
+                        hovered_project_id == &row_project_id && hovered_row_id == &row_id_for_hover
+                    },
+                ) {
+                    this.hovered_sidebar_task = None;
+                }
+                cx.notify();
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                    let now = std::time::Instant::now();
+                    let repeated_click = this.sidebar_task_last_click.as_ref().is_some_and(
+                        |(last_project_id, last_row_id, last_click_at)| {
+                            last_project_id == &left_click_project_id
+                                && last_row_id == &left_click_row_id
+                                && now.duration_since(*last_click_at)
+                                    <= crate::app::SIDEBAR_TASK_DOUBLE_CLICK_THRESHOLD
+                        },
+                    );
+                    this.sidebar_task_last_click = Some((
+                        left_click_project_id.clone(),
+                        left_click_row_id.clone(),
+                        now,
+                    ));
+                    this.sidebar_task_menu = None;
+
+                    if repeated_click {
+                        cx.stop_propagation();
+                        this.focus_handle.focus(window);
+                        this.begin_sidebar_task_rename(
+                            &left_click_project_id,
+                            &left_click_row_id,
+                            &left_click_task_name,
+                            is_worktree,
+                            cx,
+                        );
+                        return;
+                    }
+
+                    if this
+                        .sidebar_task_is_being_renamed(&left_click_project_id, &left_click_row_id)
+                    {
+                        cx.stop_propagation();
+                        return;
+                    }
+
+                    this.commit_sidebar_task_rename(cx);
+                    let sid = left_click_task_id
+                        .as_ref()
+                        .map(|task_id| {
+                            SectionId::for_task(
+                                &left_click_project_id,
+                                &left_click_branch_name,
+                                task_id,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            SectionId::new(&left_click_project_id, &left_click_branch_name)
+                        });
+                    if !this.section_states.contains_key(&sid) {
+                        this.section_states.insert(
+                            sid.clone(),
+                            SectionState::with_cwd(Some(project_path.clone())),
+                        );
+                    }
+                    this.active_section = Some(sid);
+                    this.active_project_page = None;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, ev: &MouseDownEvent, _window, cx| {
+                    this.open_sidebar_task_menu(
+                        &right_click_project_id,
+                        &right_click_row_id,
+                        right_click_task_id.as_deref(),
+                        &right_click_task_name,
+                        &right_click_branch_name,
+                        right_click_is_worktree,
+                        ev,
+                        cx,
+                    );
+                }),
+            )
+            .child(top_row);
+
+        if !meta.is_empty() {
+            container = container.child(
+                div()
+                    .pl(px(meta_indent))
+                    .text_xs()
+                    .text_color(muted_col)
+                    .truncate()
+                    .child(meta),
+            );
+        }
+
+        container
+    }
+
+    fn project_menu_panel(&self, target_id: &str, cx: &mut Context<Self>) -> impl IntoElement {
+        let remove_target_id = target_id.to_string();
+        let remove_requires_confirm = self
+            .project_group_remove_confirm(target_id)
+            .map(|confirm| confirm.open_task_count > 0)
+            .unwrap_or(false);
+        let bg = rgb(0x2b2d31);
+        let border = gpui::black().opacity(0.35);
+        let title_col = hsla(0., 0., 0.92, 1.);
+        let body_col = hsla(0., 0., 0.78, 1.);
+        let muted_col = hsla(0., 0., 0.58, 1.);
+        let danger_col = hsla(0.0, 0.78, 0.68, 1.);
+        let hover_bg = gpui::white().opacity(0.06);
+
+        div()
+            .w(px(MENU_W))
+            .rounded_md()
+            .bg(bg)
+            .border_1()
+            .border_color(border)
+            .shadow_md()
+            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .px(px(14.))
+                    .pt(px(10.))
+                    .pb(px(6.))
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(muted_col)
+                    .child("Sort worktrees by"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(38.))
+                    .px(px(14.))
+                    .hover(move |s| s.bg(hover_bg))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(div().w(px(16.)).text_color(title_col).child("◉"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(title_col)
+                                    .child("Recent activity"),
+                            ),
+                    )
+                    .child(div()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(38.))
+                    .px(px(14.))
+                    .hover(move |s| s.bg(hover_bg))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(div().w(px(16.)).text_color(muted_col).child("○"))
+                            .child(div().text_sm().text_color(body_col).child("Most activity")),
+                    )
+                    .child(div()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(38.))
+                    .px(px(14.))
+                    .hover(move |s| s.bg(hover_bg))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(div().w(px(16.)).text_color(muted_col).child("○"))
+                            .child(div().text_sm().text_color(body_col).child("Manual")),
+                    )
+                    .child(div()),
+            )
+            .child(div().h(px(1.)).mx(px(14.)).bg(gpui::white().opacity(0.06)))
+            .child(
+                div()
+                    .id(SharedString::from("project-menu-remove"))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(42.))
+                    .px(px(14.))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(gpui::white().opacity(0.06)))
+                    .tooltip(move |_window, cx| {
+                        Self::action_tooltip_view(
+                            if remove_requires_confirm {
+                                "Remove this project and its open tasks from the sidebar"
+                            } else {
+                                "Remove this project from the sidebar"
+                            },
+                            cx,
+                        )
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                            this.request_remove_project_group(&remove_target_id, cx);
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__trash.svg")
+                            .size(px(15.))
+                            .text_color(danger_col),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(danger_col)
+                            .child("Remove Project"),
+                    ),
+            )
+    }
+
+    fn project_menu_top(&self, target_id: &str) -> f32 {
+        let mut top = 36. + LIST_TOP_PAD;
+        for group in self.sidebar_groups() {
+            if group.root_project.id == target_id {
+                return top;
+            }
+
+            top += PROJECT_ROW_H + LIST_GAP;
+            if self.expanded_projects.contains(&group.root_project.id) {
+                top += (BRANCH_ROW_H + LIST_GAP) * group.child_entries.len() as f32;
+            }
+        }
+        top
+    }
+
+    pub(crate) fn project_menu_overlay(&self, sw: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.sidebar_is_open() || self.project_menu_project.is_none() {
+            return div().id("project-menu-popover");
+        }
+
+        let target_id = self.project_menu_project.as_deref().unwrap();
+        let menu_top = self.project_menu_top(target_id);
+
+        div()
+            .id("project-menu-popover")
+            .absolute()
+            .left(px(sw - 4.))
+            .top(px(menu_top))
+            .on_mouse_down_out(cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                this.project_menu_project = None;
+                cx.notify();
+            }))
+            .child(self.project_menu_panel(target_id, cx))
+    }
+
+    fn sidebar_task_menu_item(
+        button_id: SharedString,
+        icon_path: &'static str,
+        label: SharedString,
+        tooltip_label: &'static str,
+        text_color: gpui::Hsla,
+        hover_bg: gpui::Hsla,
+        on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(button_id)
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .h(px(38.))
+            .px(px(14.))
+            .cursor_pointer()
+            .hover(move |style| style.bg(hover_bg))
+            .tooltip(move |_window, cx| Self::action_tooltip_view(tooltip_label, cx))
+            .on_mouse_down(MouseButton::Left, cx.listener(on_click))
+            .child(svg().path(icon_path).size(px(15.)).text_color(text_color))
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(text_color)
+                    .child(label),
+            )
+    }
+
+    fn sidebar_task_menu_panel(
+        &self,
+        menu: &SidebarTaskMenuState,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let bg = rgb(0x2b2d31);
+        let border = gpui::black().opacity(0.35);
+        let text_col = hsla(0., 0., 0.92, 1.);
+        let danger_col = hsla(0., 0.78, 0.72, 1.);
+        let hover_bg = gpui::white().opacity(0.06);
+        let danger_hover_bg = hsla(0., 0.45, 0.34, 0.26);
+        let is_pinned = self.sidebar_task_is_pinned(
+            &menu.project_id,
+            menu.task_id.as_deref(),
+            menu.is_worktree,
+        );
+
+        let pin_project_id = menu.project_id.clone();
+        let pin_task_id = menu.task_id.clone();
+        let pin_is_worktree = menu.is_worktree;
+        let next_pinned = !is_pinned;
+        let pin_label: SharedString = if is_pinned { "Unpin" } else { "Pin" }.into();
+        let pin_tooltip = if is_pinned {
+            "Unpin this task and return it to the normal task order"
+        } else {
+            "Pin this task to keep it at the top of the task list"
+        };
+
+        let new_task_project_id = menu.root_project_id.clone();
+        let new_task_branch_name = menu.branch_name.clone();
+
+        let rename_project_id = menu.project_id.clone();
+        let rename_row_id = menu.row_id.clone();
+        let rename_task_name = menu.task_name.clone();
+        let rename_is_worktree = menu.is_worktree;
+
+        let delete_project_id = menu.project_id.clone();
+        let delete_task_id = menu.task_id.clone();
+        let delete_task_name = menu.task_name.clone();
+        let delete_branch_name = menu.branch_name.clone();
+        let delete_is_worktree = menu.is_worktree;
+        let delete_preferred_project_id = menu.root_project_id.clone();
+        let delete_tooltip = if menu.is_worktree {
+            "Delete this worktree task and remove its local branch"
+        } else {
+            "Delete this direct task from the sidebar"
+        };
+
+        div()
+            .w(px(TASK_MENU_W))
+            .rounded_md()
+            .bg(bg)
+            .border_1()
+            .border_color(border)
+            .shadow_md()
+            .occlude()
+            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(Self::sidebar_task_menu_item(
+                "sidebar-task-menu-pin".into(),
+                "assets/icons/icons__pin-off.svg",
+                pin_label,
+                pin_tooltip,
+                text_col,
+                hover_bg,
+                move |this, _ev, _window, cx| {
+                    this.sidebar_task_menu = None;
+                    this.set_sidebar_task_pinned(
+                        &pin_project_id,
+                        pin_task_id.as_deref(),
+                        pin_is_worktree,
+                        next_pinned,
+                    );
+                    cx.stop_propagation();
+                    cx.notify();
+                },
+                cx,
+            ))
+            .child(Self::sidebar_task_menu_item(
+                "sidebar-task-menu-new-task".into(),
+                "assets/icons/icons__git-worktree.svg",
+                "New task from current branch".into(),
+                "Create a new task using this task's current branch as the starting point",
+                text_col,
+                hover_bg,
+                move |this, _ev, _window, cx| {
+                    this.sidebar_task_menu = None;
+                    this.focus_handle.focus(_window);
+                    this.open_new_task_modal_with_branch(
+                        &new_task_project_id,
+                        &new_task_branch_name,
+                    );
+                    cx.stop_propagation();
+                    cx.notify();
+                },
+                cx,
+            ))
+            .child(Self::sidebar_task_menu_item(
+                "sidebar-task-menu-rename".into(),
+                "assets/icons/icons__edit.svg",
+                "Rename".into(),
+                "Rename this task inline",
+                text_col,
+                hover_bg,
+                move |this, _ev, window, cx| {
+                    this.sidebar_task_menu = None;
+                    this.focus_handle.focus(window);
+                    this.begin_sidebar_task_rename(
+                        &rename_project_id,
+                        &rename_row_id,
+                        &rename_task_name,
+                        rename_is_worktree,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                },
+                cx,
+            ))
+            .child(Self::sidebar_task_menu_item(
+                "sidebar-task-menu-delete".into(),
+                "assets/icons/icons__trash.svg",
+                "Delete".into(),
+                delete_tooltip,
+                danger_col,
+                danger_hover_bg,
+                move |this, _ev, _window, cx| {
+                    this.request_sidebar_task_delete(
+                        &delete_project_id,
+                        delete_task_id.as_deref(),
+                        &delete_task_name,
+                        &delete_branch_name,
+                        delete_is_worktree,
+                        &delete_preferred_project_id,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                },
+                cx,
+            ))
+    }
+
+    pub(crate) fn sidebar_task_menu_overlay(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(menu) = self.sidebar_task_menu.as_ref() else {
+            return div().id("sidebar-task-menu-popover");
+        };
+
+        let window_w = f32::from(window.bounds().size.width);
+        let window_h = f32::from(window.bounds().size.height);
+        let left = (menu.anchor_x + 4.0).min((window_w - TASK_MENU_W - 8.0).max(8.0));
+        let top = (menu.anchor_y + 4.0).min((window_h - TASK_MENU_H - 8.0).max(8.0));
+
+        div()
+            .id("sidebar-task-menu-popover")
+            .absolute()
+            .left(px(left.max(8.0)))
+            .top(px(top.max(8.0)))
+            .on_mouse_down_out(cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                this.sidebar_task_menu = None;
+                cx.notify();
+            }))
+            .child(self.sidebar_task_menu_panel(menu, cx))
+    }
+
+    pub(crate) fn sidebar_task_delete_confirm_modal(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(confirm) = self.sidebar_task_delete_confirm.clone() else {
+            return div().id("sidebar-task-delete-confirm-overlay");
+        };
+
+        let title_col = hsla(0., 0., 0.92, 1.);
+        let body_col = hsla(0., 0., 0.74, 1.);
+        let border = gpui::white().opacity(0.08);
+        let btn_bg = gpui::white().opacity(0.08);
+        let btn_hover = gpui::white().opacity(0.14);
+        let danger_bg = hsla(0., 0.62, 0.50, 1.);
+        let danger_hover = hsla(0., 0.62, 0.58, 1.);
+        let message: SharedString = format!(
+            "Delete worktree \"{}\" and remove the local branch \"{}\"?",
+            confirm.task_name, confirm.branch_name
+        )
+        .into();
+
+        div()
+            .id("sidebar-task-delete-confirm-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.50))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.sidebar_task_delete_confirm = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _window, cx| {
+                if this.sidebar_task_delete_confirm.is_none() {
+                    return;
+                }
+
+                match ev.keystroke.key.as_str() {
+                    "escape" => {
+                        this.sidebar_task_delete_confirm = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    "enter" => {
+                        this.confirm_sidebar_task_delete(cx);
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            }))
+            .child(
+                div()
+                    .w(px(364.))
+                    .rounded_lg()
+                    .bg(rgb(0x2b2d31))
+                    .border_1()
+                    .border_color(border)
+                    .shadow_lg()
+                    .overflow_hidden()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .px(px(20.))
+                            .pt(px(20.))
+                            .pb(px(12.))
+                            .child(
+                                div()
+                                    .text_size(rems(14. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(title_col)
+                                    .child("Confirm Worktree Deletion"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .text_color(body_col)
+                                    .child(message),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(11. / 16.))
+                                    .text_color(hsla(0., 0., 0.54, 1.))
+                                    .child("This permanently removes the worktree folder from disk. Any uncommitted changes inside it will be lost."),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(8.))
+                            .px(px(20.))
+                            .pb(px(16.))
+                            .pt(px(8.))
+                            .child(
+                                div()
+                                    .id("sidebar-task-delete-confirm-cancel")
+                                    .cursor_pointer()
+                                    .px(px(14.))
+                                    .py(px(6.))
+                                    .rounded_md()
+                                    .bg(btn_bg)
+                                    .hover(move |style| style.bg(btn_hover))
+                                    .tooltip(move |_window, cx| {
+                                        Self::action_tooltip_view(
+                                            "Close without deleting the worktree",
+                                            cx,
+                                        )
+                                    })
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(title_col)
+                                    .child("Cancel")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            this.sidebar_task_delete_confirm = None;
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("sidebar-task-delete-confirm-ok")
+                                    .cursor_pointer()
+                                    .px(px(14.))
+                                    .py(px(6.))
+                                    .rounded_md()
+                                    .bg(danger_bg)
+                                    .hover(move |style| style.bg(danger_hover))
+                                    .tooltip(move |_window, cx| {
+                                        Self::action_tooltip_view(
+                                            "Permanently delete this worktree task",
+                                            cx,
+                                        )
+                                    })
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(title_col)
+                                    .child("Delete")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            this.confirm_sidebar_task_delete(cx);
+                                            cx.stop_propagation();
+                                        }),
+                                    ),
+                            ),
+                    ),
+            )
+    }
+
+    pub(crate) fn project_remove_confirm_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(confirm) = self.project_remove_confirm.clone() else {
+            return div().id("project-remove-confirm-overlay");
+        };
+
+        let title_col = hsla(0., 0., 0.92, 1.);
+        let body_col = hsla(0., 0., 0.74, 1.);
+        let border = gpui::white().opacity(0.08);
+        let btn_bg = gpui::white().opacity(0.08);
+        let btn_hover = gpui::white().opacity(0.14);
+        let danger_bg = hsla(0., 0.62, 0.50, 1.);
+        let danger_hover = hsla(0., 0.62, 0.58, 1.);
+        let task_label = if confirm.open_task_count == 1 {
+            "1 open task".to_string()
+        } else {
+            format!("{} open tasks", confirm.open_task_count)
+        };
+        let message: SharedString = format!(
+            "\"{}\" still has {}. Remove the project and its tasks from the sidebar?",
+            confirm.project_name, task_label
+        )
+        .into();
+
+        div()
+            .id("project-remove-confirm-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.50))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.project_remove_confirm = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _window, cx| {
+                if this.project_remove_confirm.is_none() {
+                    return;
+                }
+                match ev.keystroke.key.as_str() {
+                    "escape" => {
+                        this.project_remove_confirm = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    "enter" => {
+                        this.confirm_remove_project_group(cx);
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            }))
+            .child(
+                div()
+                    .w(px(344.))
+                    .rounded_lg()
+                    .bg(rgb(0x2b2d31))
+                    .border_1()
+                    .border_color(border)
+                    .shadow_lg()
+                    .overflow_hidden()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .px(px(20.))
+                            .pt(px(20.))
+                            .pb(px(12.))
+                            .child(
+                                div()
+                                    .text_size(rems(14. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(title_col)
+                                    .child("Confirm Project Removal"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .text_color(body_col)
+                                    .child(message),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(11. / 16.))
+                                    .text_color(hsla(0., 0., 0.54, 1.))
+                                    .child("This only removes them from the sidebar. Files and worktrees stay on disk."),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(8.))
+                            .px(px(20.))
+                            .pb(px(16.))
+                            .pt(px(8.))
+                            .child(
+                                div()
+                                    .id("project-remove-confirm-cancel")
+                                    .cursor_pointer()
+                                    .px(px(14.))
+                                    .py(px(6.))
+                                    .rounded_md()
+                                    .bg(btn_bg)
+                                    .hover(move |style| style.bg(btn_hover))
+                                    .tooltip(move |_window, cx| {
+                                        Self::action_tooltip_view(
+                                            "Close without removing the project",
+                                            cx,
+                                        )
+                                    })
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(title_col)
+                                    .child("Cancel")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            this.project_remove_confirm = None;
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("project-remove-confirm-ok")
+                                    .cursor_pointer()
+                                    .px(px(14.))
+                                    .py(px(6.))
+                                    .rounded_md()
+                                    .bg(danger_bg)
+                                    .hover(move |style| style.bg(danger_hover))
+                                    .tooltip(move |_window, cx| {
+                                        Self::action_tooltip_view(
+                                            "Remove this project group from the sidebar",
+                                            cx,
+                                        )
+                                    })
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(title_col)
+                                    .child("Remove")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            this.confirm_remove_project_group(cx);
+                                            cx.stop_propagation();
+                                        }),
+                                    ),
+                            ),
+                    ),
+            )
+    }
+
+    pub(crate) fn on_add_project(
+        &mut self,
+        _ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        let handle = cx.entity().clone();
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add Project Folder".into()),
+        });
+        window
+            .spawn(&**cx, async move |async_cx| {
+                if let Ok(Ok(Some(paths))) = receiver.await {
+                    if let Some(path) = paths.first() {
+                        let _ = handle.update(async_cx, |this, cx| {
+                            this.begin_add_project(path.clone(), cx);
+                        });
+                    }
+                }
+            })
+            .detach();
+    }
+
+    pub fn sidebar_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let bg = theme::chrome_bg(window);
+        let header_col = hsla(0., 0., 0.50, 1.);
+
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
+            .bg(bg)
+            .overflow_hidden()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.commit_sidebar_task_rename(cx);
+                    this.sidebar_task_menu = None;
+                }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .h(px(36.))
+                    .px(px(10.))
+                    .border_b_1()
+                    .border_color(gpui::black().opacity(0.08))
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(header_col)
+                            .child("PROJECTS"),
+                    ),
+            );
+
+        let list = {
+            let mut list_div = div().flex().flex_col().py(px(4.)).px(px(4.)).gap(px(2.));
+            for group in self.sidebar_groups() {
+                self.request_project_github_link_lookup(
+                    &group.root_project.id,
+                    &group.root_project.path,
+                );
+                let root_id = &group.root_project.id;
+                let expanded = self.project_expand_target(root_id);
+                let expand_progress = self.project_expand_progress(root_id);
+                let active = self
+                    .active_project_page
+                    .as_deref()
+                    .is_some_and(|project_id| project_id == root_id);
+                let hovered = self
+                    .hovered_project
+                    .as_deref()
+                    .is_some_and(|id| id == root_id);
+                let menu_open = self
+                    .project_menu_project
+                    .as_deref()
+                    .is_some_and(|id| id == root_id);
+
+                list_div = list_div.child(div().child(Self::project_row(
+                    &group.root_project,
+                    self.project_github_links.get(root_id).cloned(),
+                    active,
+                    !group.child_entries.is_empty(),
+                    expanded,
+                    hovered,
+                    menu_open,
+                    window,
+                    cx,
+                )));
+
+                if expand_progress > 0.001 {
+                    let is_animating = self.project_expand_animations.contains_key(root_id);
+                    let full_height = if group.child_entries.is_empty() {
+                        0.0
+                    } else {
+                        (BRANCH_ROW_H + LIST_GAP) * group.child_entries.len() as f32
+                    };
+                    let animated_height = (full_height * expand_progress).max(0.);
+                    let mut children = div().opacity((0.5 + 0.5 * expand_progress).min(1.));
+
+                    if is_animating {
+                        children = children.overflow_hidden().h(px(animated_height));
+                    }
+
+                    let mut child_list = div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(LIST_GAP))
+                        .pt(px((1.0 - expand_progress) * 4.0));
+                    for entry in &group.child_entries {
+                        let is_active = self.active_section.as_ref().is_some_and(|section| {
+                            if let Some(task_id) = entry.task_id.as_deref() {
+                                section.task_id.as_deref() == Some(task_id)
+                            } else {
+                                section.project_id == entry.project_id
+                                    && section.branch_name == entry.branch.name
+                                    && section.task_id.is_none()
+                            }
+                        });
+                        child_list = child_list.child(self.branch_row(entry, is_active, cx));
+                    }
+
+                    children = children.child(child_list);
+                    list_div = list_div.child(children);
+                }
+            }
+            list_div
+        };
+        if self.project_store.projects.is_empty() {
+            let empty_col = hsla(0., 0., 0.40, 1.);
+            col = col.child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .text_color(empty_col)
+                    .child("Click + to add a project"),
+            );
+        } else {
+            col = col.child(
+                div()
+                    .id("left-sidebar-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(list),
+            );
+        }
+
+        col
+    }
+
+    fn render_sidebar_task_name_content(
+        task_name: SharedString,
+        cursor: usize,
+        selection: Option<std::ops::Range<usize>>,
+    ) -> impl IntoElement {
+        let text_col = hsla(0., 0., 0.92, 1.);
+        let placeholder_col = hsla(0., 0., 0.55, 1.);
+        let cursor = cursor.min(task_name.len());
+        let selection =
+            selection.map(|range| range.start.min(task_name.len())..range.end.min(task_name.len()));
+
+        if task_name.is_empty() {
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(0.))
+                .text_size(rems(13. / 16.))
+                .child(div().w(px(1.)).h(px(16.)).mr(px(1.)).bg(text_col))
+                .child(div().text_color(placeholder_col).child("Task name"));
+        }
+
+        let selected = selection.filter(|range| range.start < range.end);
+        let selected_contains_cursor = selected
+            .as_ref()
+            .is_some_and(|range| range.start <= cursor && cursor <= range.end);
+
+        let (prefix_end, selected_end) = if let Some(range) = selected.as_ref() {
+            (range.start.min(cursor), range.end.min(task_name.len()))
+        } else {
+            (cursor.min(task_name.len()), cursor.min(task_name.len()))
+        };
+
+        let prefix = task_name[..prefix_end].to_string();
+        let middle = if let Some(range) = selected.as_ref() {
+            task_name[range.clone()].to_string()
+        } else {
+            String::new()
+        };
+        let suffix_start = if selected_contains_cursor {
+            selected_end
+        } else {
+            cursor.min(task_name.len())
+        };
+        let between = if selected.as_ref().is_some_and(|range| range.end < cursor) {
+            task_name[selected_end..cursor.min(task_name.len())].to_string()
+        } else {
+            String::new()
+        };
+        let trailing = task_name[suffix_start..].to_string();
+
+        let mut row = div()
+            .flex()
+            .items_center()
+            .gap(px(0.))
+            .text_size(rems(13. / 16.));
+
+        if !prefix.is_empty() {
+            row = row.child(div().text_color(text_col).child(prefix));
+        }
+
+        if selected.as_ref().is_some_and(|range| range.end < cursor) && !middle.is_empty() {
+            row = row.child(
+                div()
+                    .px(px(1.))
+                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .text_color(text_col)
+                    .child(middle.clone()),
+            );
+        }
+
+        row = row.child(div().w(px(1.)).h(px(16.)).bg(text_col));
+
+        if selected_contains_cursor && !middle.is_empty() {
+            row = row.child(
+                div()
+                    .px(px(1.))
+                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .text_color(text_col)
+                    .child(middle.clone()),
+            );
+        }
+
+        if !between.is_empty() {
+            row = row.child(div().text_color(text_col).child(between));
+        }
+
+        if selected.as_ref().is_some_and(|range| range.start > cursor) && !middle.is_empty() {
+            row = row.child(
+                div()
+                    .px(px(1.))
+                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .text_color(text_col)
+                    .child(middle),
+            );
+        }
+
+        if !trailing.is_empty() {
+            row = row.child(div().text_color(text_col).child(trailing));
+        }
+
+        row
+    }
+}
+
+enum SidebarCursorDirection {
+    Left,
+    Right,
+}
+
+fn sanitize_sidebar_task_name_input(text: String) -> String {
+    text.replace(['\n', '\r', '\t'], " ")
+}
+
+fn selected_sidebar_task_name_range(
+    state: &SidebarTaskRenameState,
+) -> Option<std::ops::Range<usize>> {
+    let anchor = state.task_name_selection_anchor?;
+    if anchor == state.task_name_cursor {
+        None
+    } else if anchor < state.task_name_cursor {
+        Some(anchor..state.task_name_cursor)
+    } else {
+        Some(state.task_name_cursor..anchor)
+    }
+}
+
+fn previous_sidebar_task_name_boundary(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .rev()
+        .find_map(|(index, _)| (index < cursor).then_some(index))
+        .unwrap_or(0)
+}
+
+fn next_sidebar_task_name_boundary(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .find_map(|(index, _)| (index > cursor).then_some(index))
+        .unwrap_or(text.len())
+}
+
+fn replace_sidebar_task_name_range(
+    state: &mut SidebarTaskRenameState,
+    range: std::ops::Range<usize>,
+    new_text: &str,
+) {
+    state.task_name.replace_range(range.clone(), new_text);
+    state.task_name_cursor = range.start + new_text.len();
+    state.task_name_selection_anchor = None;
+}
+
+fn insert_sidebar_task_name_text(state: &mut SidebarTaskRenameState, text: &str) {
+    let range = selected_sidebar_task_name_range(state)
+        .unwrap_or(state.task_name_cursor..state.task_name_cursor);
+    replace_sidebar_task_name_range(state, range, text);
+}
+
+fn delete_sidebar_task_name_backward(state: &mut SidebarTaskRenameState) {
+    if let Some(range) = selected_sidebar_task_name_range(state) {
+        replace_sidebar_task_name_range(state, range, "");
+        return;
+    }
+
+    if state.task_name_cursor == 0 {
+        return;
+    }
+
+    let start = previous_sidebar_task_name_boundary(&state.task_name, state.task_name_cursor);
+    replace_sidebar_task_name_range(state, start..state.task_name_cursor, "");
+}
+
+fn previous_sidebar_task_name_word_boundary(text: &str, cursor: usize) -> usize {
+    let mut idx = cursor;
+    while idx > 0 {
+        let start = previous_sidebar_task_name_boundary(text, idx);
+        let ch = text[start..idx].chars().next().unwrap_or_default();
+        if !ch.is_whitespace() {
+            break;
+        }
+        idx = start;
+    }
+
+    while idx > 0 {
+        let start = previous_sidebar_task_name_boundary(text, idx);
+        let ch = text[start..idx].chars().next().unwrap_or_default();
+        if is_sidebar_task_name_word_char(ch) {
+            idx = start;
+        } else {
+            break;
+        }
+    }
+
+    idx
+}
+
+fn is_sidebar_task_name_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || matches!(ch, '_' | '-')
+}
+
+fn delete_sidebar_task_name_word_backward(state: &mut SidebarTaskRenameState) {
+    if let Some(range) = selected_sidebar_task_name_range(state) {
+        replace_sidebar_task_name_range(state, range, "");
+        return;
+    }
+
+    if state.task_name_cursor == 0 {
+        return;
+    }
+
+    let start =
+        previous_sidebar_task_name_word_boundary(&state.task_name, state.task_name_cursor);
+    replace_sidebar_task_name_range(state, start..state.task_name_cursor, "");
+}
+
+fn delete_sidebar_task_name_to_start(state: &mut SidebarTaskRenameState) {
+    if let Some(range) = selected_sidebar_task_name_range(state) {
+        replace_sidebar_task_name_range(state, range, "");
+        return;
+    }
+
+    if state.task_name_cursor == 0 {
+        return;
+    }
+
+    replace_sidebar_task_name_range(state, 0..state.task_name_cursor, "");
+}
+
+fn delete_sidebar_task_name_forward(state: &mut SidebarTaskRenameState) {
+    if let Some(range) = selected_sidebar_task_name_range(state) {
+        replace_sidebar_task_name_range(state, range, "");
+        return;
+    }
+
+    if state.task_name_cursor >= state.task_name.len() {
+        return;
+    }
+
+    let end = next_sidebar_task_name_boundary(&state.task_name, state.task_name_cursor);
+    replace_sidebar_task_name_range(state, state.task_name_cursor..end, "");
+}
+
+fn move_sidebar_task_name_cursor(
+    state: &mut SidebarTaskRenameState,
+    direction: SidebarCursorDirection,
+    extend_selection: bool,
+) {
+    let next_cursor = match direction {
+        SidebarCursorDirection::Left => {
+            if let Some(range) = selected_sidebar_task_name_range(state) {
+                if extend_selection {
+                    previous_sidebar_task_name_boundary(&state.task_name, state.task_name_cursor)
+                } else {
+                    range.start
+                }
+            } else {
+                previous_sidebar_task_name_boundary(&state.task_name, state.task_name_cursor)
+            }
+        }
+        SidebarCursorDirection::Right => {
+            if let Some(range) = selected_sidebar_task_name_range(state) {
+                if extend_selection {
+                    next_sidebar_task_name_boundary(&state.task_name, state.task_name_cursor)
+                } else {
+                    range.end
+                }
+            } else {
+                next_sidebar_task_name_boundary(&state.task_name, state.task_name_cursor)
+            }
+        }
+    };
+
+    if extend_selection {
+        if state.task_name_selection_anchor.is_none() {
+            state.task_name_selection_anchor = Some(state.task_name_cursor);
+        }
+    } else {
+        state.task_name_selection_anchor = None;
+    }
+
+    state.task_name_cursor = next_cursor;
+}
+
+fn move_sidebar_task_name_cursor_to_edge(
+    state: &mut SidebarTaskRenameState,
+    to_end: bool,
+    extend_selection: bool,
+) {
+    if extend_selection && state.task_name_selection_anchor.is_none() {
+        state.task_name_selection_anchor = Some(state.task_name_cursor);
+    }
+    if !extend_selection {
+        state.task_name_selection_anchor = None;
+    }
+    state.task_name_cursor = if to_end { state.task_name.len() } else { 0 };
+}
+
+pub(crate) fn open_external_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    };
+
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("Could not open the GitHub link: {err}"))
+}
