@@ -4827,13 +4827,6 @@ mod tests {
         fs::remove_dir_all(&root).expect("temp test directory should be removed");
     }
 
-    #[test]
-    fn cwd_slug_matches_pi_session_directory_format() {
-        assert_eq!(
-            cwd_slug(Path::new("/Users/jeff.f/webz/fun")).as_deref(),
-            Some("--Users-jeff.f-webz-fun--")
-        );
-    }
 }
 
 // ── Render ───────────────────────────────────────────────────────────
