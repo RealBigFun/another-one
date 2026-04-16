@@ -596,7 +596,10 @@ impl WorkspacePane {
                                         ),
                                     )
                                     .child(
-                                        svg().path("assets/icons/icons__close.svg").size(px(12.)),
+                                        svg()
+                                            .path("assets/icons/icons__close.svg")
+                                            .size(px(12.))
+                                            .text_color(close_col),
                                     ),
                             )
                         }),
