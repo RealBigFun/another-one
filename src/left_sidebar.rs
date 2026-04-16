@@ -10,8 +10,8 @@ use gpui::{
 };
 
 use crate::app::{
-    AnotherOneApp, SectionId, SectionState, SidebarTaskDeleteConfirmState, SidebarTaskMenuState,
-    SidebarTaskRenameState,
+    AnotherOneApp, SectionId, SidebarTaskDeleteConfirmState, SidebarTaskDeleteRequest,
+    SidebarTaskMenuState, SidebarTaskRenameState,
 };
 use crate::project_store::{Branch, Project};
 use crate::theme;
@@ -38,6 +38,28 @@ struct SidebarTaskEntry {
 struct SidebarGroup {
     root_project: Project,
     child_entries: Vec<SidebarTaskEntry>,
+}
+
+struct SidebarTaskMenuRequest {
+    project_id: String,
+    row_id: String,
+    task_id: Option<String>,
+    task_name: String,
+    branch_name: String,
+    is_worktree: bool,
+}
+
+struct ProjectRowState {
+    github_url: Option<String>,
+    active: bool,
+    has_children: bool,
+    expanded: bool,
+}
+
+struct SidebarTaskMenuItemStyle {
+    tooltip_label: &'static str,
+    text_color: gpui::Hsla,
+    hover_bg: gpui::Hsla,
 }
 
 impl AnotherOneApp {
@@ -292,8 +314,6 @@ impl AnotherOneApp {
             .retain(|task_id| !removed_direct_task_ids.contains(task_id));
         self.changed_files
             .retain(|project_id, _| !project_id_set.contains(project_id));
-        self.section_states
-            .retain(|section_id, _| !project_id_set.contains(&section_id.project_id));
         self.project_github_links
             .retain(|project_id, _| !project_id_set.contains(project_id));
         self.project_github_link_checked
@@ -302,14 +322,8 @@ impl AnotherOneApp {
             .retain(|project_id| !project_id_set.contains(project_id));
         self.project_store
             .set_expanded_projects(&self.expanded_projects);
+        let fallback_section = self.fallback_section_after_project_removal();
 
-        if self
-            .active_section
-            .as_ref()
-            .is_some_and(|section| project_id_set.contains(&section.project_id))
-        {
-            self.active_section = None;
-        }
         if self
             .project_menu_project
             .as_ref()
@@ -364,15 +378,16 @@ impl AnotherOneApp {
         self.project_remove_confirm = None;
         self.project_store.save();
 
-        if self.active_section.is_none() {
-            if let Some((section_id, cwd)) = self.fallback_section_after_project_removal() {
-                if !self.section_states.contains_key(&section_id) {
-                    self.section_states
-                        .insert(section_id.clone(), SectionState::with_cwd(Some(cwd)));
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.remove_project_sections(&project_id_set, cx);
+            if workspace.active_section.is_none() && workspace.active_project_page.is_none() {
+                if let Some((section_id, cwd)) = fallback_section.clone() {
+                    workspace.ensure_section(section_id.clone(), Some(cwd), None);
+                    workspace.active_section = Some(section_id);
+                    cx.notify();
                 }
-                self.active_section = Some(section_id);
             }
-        }
+        });
 
         cx.notify();
     }
@@ -417,28 +432,20 @@ impl AnotherOneApp {
         );
     }
 
-    fn restore_view_after_task_removal(&mut self, preferred_project_id: &str) {
-        if self.active_section.is_some() || self.active_project_page.is_some() {
-            return;
-        }
-
-        if self
+    fn restore_view_after_task_removal(
+        &mut self,
+        preferred_project_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let preferred_project_exists = self
             .project_store
             .projects
             .iter()
-            .any(|project| project.id == preferred_project_id)
-        {
-            self.active_project_page = Some(preferred_project_id.to_string());
-            return;
-        }
-
-        if let Some((section_id, cwd)) = self.fallback_section_after_project_removal() {
-            if !self.section_states.contains_key(&section_id) {
-                self.section_states
-                    .insert(section_id.clone(), SectionState::with_cwd(Some(cwd)));
-            }
-            self.active_section = Some(section_id);
-        }
+            .any(|project| project.id == preferred_project_id);
+        let fallback = self.fallback_section_after_project_removal();
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.restore_view(preferred_project_id, preferred_project_exists, fallback, cx);
+        });
     }
 
     fn set_sidebar_task_pinned(
@@ -465,30 +472,33 @@ impl AnotherOneApp {
 
     fn open_sidebar_task_menu(
         &mut self,
-        project_id: &str,
-        row_id: &str,
-        task_id: Option<&str>,
-        task_name: &str,
-        branch_name: &str,
-        is_worktree: bool,
+        request: SidebarTaskMenuRequest,
         ev: &MouseDownEvent,
         cx: &mut Context<Self>,
     ) {
+        let SidebarTaskMenuRequest {
+            project_id,
+            row_id,
+            task_id,
+            task_name,
+            branch_name,
+            is_worktree,
+        } = request;
         let root_project_id = self
-            .sidebar_root_project_for_project(project_id)
+            .sidebar_root_project_for_project(&project_id)
             .map(|project| project.id)
-            .unwrap_or_else(|| project_id.to_string());
+            .unwrap_or_else(|| project_id.clone());
 
         self.commit_sidebar_task_rename(cx);
         self.project_menu_project = None;
         self.sidebar_task_last_click = None;
         self.sidebar_task_menu = Some(SidebarTaskMenuState {
-            project_id: project_id.to_string(),
+            project_id,
             root_project_id,
-            row_id: row_id.to_string(),
-            task_id: task_id.map(str::to_string),
-            task_name: task_name.to_string(),
-            branch_name: branch_name.to_string(),
+            row_id,
+            task_id,
+            task_name,
+            branch_name,
             is_worktree,
             anchor_x: f32::from(ev.position.x),
             anchor_y: f32::from(ev.position.y),
@@ -533,11 +543,6 @@ impl AnotherOneApp {
         preferred_project_id: &str,
         cx: &mut Context<Self>,
     ) {
-        let was_active_task = self
-            .active_section
-            .as_ref()
-            .is_some_and(|section| section.task_id.as_deref() == Some(task_id));
-
         if self
             .project_store
             .remove_direct_task(project_id, task_id)
@@ -554,13 +559,10 @@ impl AnotherOneApp {
         }) {
             self.sidebar_task_rename = None;
         }
-        self.section_states
-            .retain(|section_id, _| section_id.task_id.as_deref() != Some(task_id));
-        if was_active_task {
-            self.active_section = None;
-            self.active_project_page = None;
-        }
-        self.restore_view_after_task_removal(preferred_project_id);
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.remove_task_sections(task_id, cx);
+        });
+        self.restore_view_after_task_removal(preferred_project_id, cx);
         self.project_store.save();
         self.show_success_toast(format!("Deleted task {}.", task_name), cx);
         cx.notify();
@@ -568,23 +570,26 @@ impl AnotherOneApp {
 
     pub(crate) fn request_sidebar_task_delete(
         &mut self,
-        project_id: &str,
-        task_id: Option<&str>,
-        task_name: &str,
-        branch_name: &str,
-        is_worktree: bool,
-        preferred_project_id: &str,
+        request: SidebarTaskDeleteRequest,
         cx: &mut Context<Self>,
     ) {
+        let SidebarTaskDeleteRequest {
+            project_id,
+            task_id,
+            task_name,
+            branch_name,
+            is_worktree,
+            preferred_project_id,
+        } = request;
         self.sidebar_task_menu = None;
         self.sidebar_task_last_click = None;
 
         if is_worktree {
             let Some(confirm) = self.build_sidebar_task_delete_confirm(
-                project_id,
-                task_id,
-                task_name,
-                branch_name,
+                &project_id,
+                task_id.as_deref(),
+                &task_name,
+                &branch_name,
                 is_worktree,
             ) else {
                 self.show_error_toast("Could not find the selected worktree.", cx);
@@ -595,12 +600,18 @@ impl AnotherOneApp {
             return;
         }
 
-        let Some(task_id) = task_id else {
+        let Some(task_id) = task_id.as_deref() else {
             self.show_error_toast("Could not find the selected task.", cx);
             return;
         };
 
-        self.delete_direct_sidebar_task(project_id, task_id, task_name, preferred_project_id, cx);
+        self.delete_direct_sidebar_task(
+            &project_id,
+            task_id,
+            &task_name,
+            &preferred_project_id,
+            cx,
+        );
     }
 
     pub(crate) fn confirm_sidebar_task_delete(&mut self, cx: &mut Context<Self>) {
@@ -625,6 +636,8 @@ impl AnotherOneApp {
         }
 
         let was_active_project = self
+            .workspace_pane
+            .read(cx)
             .active_section
             .as_ref()
             .is_some_and(|section| section.project_id == confirm.project_id);
@@ -648,8 +661,10 @@ impl AnotherOneApp {
                         .iter()
                         .any(|project| project.id == confirm.root_project_id)
                 {
-                    self.active_section = None;
-                    self.active_project_page = Some(confirm.root_project_id.clone());
+                    let root_project_id = confirm.root_project_id.clone();
+                    self.workspace_pane.update(cx, |workspace, cx| {
+                        workspace.activate_project_page(root_project_id, cx);
+                    });
                 }
                 self.show_success_toast(format!("Deleted worktree {}.", confirm.task_name), cx);
                 cx.notify();
@@ -883,11 +898,7 @@ impl AnotherOneApp {
 
     fn project_row(
         project: &Project,
-        github_url: Option<String>,
-        active: bool,
-        has_children: bool,
-        expanded: bool,
-        menu_open: bool,
+        state: ProjectRowState,
         _window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -907,12 +918,12 @@ impl AnotherOneApp {
         let active_bg = gpui::white().opacity(0.03);
         let active_border = gpui::white().opacity(0.18);
         let chevron_col = hsla(0., 0., 0.55, 1.);
-        let controls_visible = menu_open;
         let pid_row = pid.clone();
         let pid_toggle = pid.clone();
         let pid_menu = pid.clone();
         let pid_plus = pid.clone();
-        let github_url_for_icon = github_url.clone();
+        let github_url_for_icon = state.github_url.clone();
+        let github_url_for_click = state.github_url.clone();
         let row_group = SharedString::from(format!("project-row-{}", pid));
 
         let row = div()
@@ -926,12 +937,12 @@ impl AnotherOneApp {
             .py(px(5.))
             .rounded_md()
             .border_1()
-            .border_color(if active {
+            .border_color(if state.active {
                 active_border
             } else {
                 gpui::transparent_black()
             })
-            .when(active, |d| d.bg(active_bg))
+            .when(state.active, |d| d.bg(active_bg))
             .cursor_pointer()
             .hover(move |s| s.bg(hover_bg))
             .tooltip(move |_window, cx| {
@@ -943,9 +954,9 @@ impl AnotherOneApp {
                     this.commit_sidebar_task_rename(cx);
                     this.sidebar_task_menu = None;
                     this.project_menu_project = None;
-                    this.active_project_page = Some(pid_row.clone());
-                    this.active_section = None;
-                    cx.notify();
+                    this.workspace_pane.update(cx, |workspace, cx| {
+                        workspace.activate_project_page(pid_row.clone(), cx);
+                    });
                 }),
             );
 
@@ -983,7 +994,7 @@ impl AnotherOneApp {
                         .truncate()
                         .child(name),
                 )
-                .when(has_children, |row| {
+                .when(state.has_children, |row| {
                     row.child(
                         div()
                             .id(SharedString::from(format!("project-chevron-{}", &pid)))
@@ -1014,7 +1025,7 @@ impl AnotherOneApp {
                             )
                             .child(
                                 svg()
-                                    .path(if expanded {
+                                    .path(if state.expanded {
                                         "assets/icons/icons__chevron-down.svg"
                                     } else {
                                         "assets/icons/icons__chevron-right.svg"
@@ -1042,12 +1053,6 @@ impl AnotherOneApp {
                         .h(px(24.))
                         .rounded_md()
                         .cursor_pointer()
-                        .when(controls_visible, |button| button.visible())
-                        .when(!controls_visible, |button| {
-                            button
-                                .invisible()
-                                .group_hover(row_group.clone(), |button| button.visible())
-                        })
                         .hover(move |s| s.bg(gpui::white().opacity(0.08)))
                         .tooltip(move |_window, cx| {
                             Self::action_tooltip_view("Open project menu", cx)
@@ -1085,18 +1090,6 @@ impl AnotherOneApp {
                         .h(px(24.))
                         .rounded_md()
                         .cursor_pointer()
-                        .when(
-                            github_url_for_icon.is_some() && controls_visible,
-                            |button| button.visible(),
-                        )
-                        .when(
-                            github_url_for_icon.is_some() && !controls_visible,
-                            |button| {
-                                button
-                                    .invisible()
-                                    .group_hover(row_group.clone(), |button| button.visible())
-                            },
-                        )
                         .when(github_url_for_icon.is_none(), |button| button.invisible())
                         .when(github_url_for_icon.is_some(), |d| {
                             d.hover(move |s| s.bg(gpui::white().opacity(0.08)))
@@ -1108,7 +1101,7 @@ impl AnotherOneApp {
                                     cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                                         cx.stop_propagation();
                                         this.sidebar_task_menu = None;
-                                        if let Some(github_url) = github_url.clone() {
+                                        if let Some(github_url) = github_url_for_click.clone() {
                                             if let Err(err) = open_external_url(&github_url) {
                                                 this.show_error_toast(err, cx);
                                             }
@@ -1133,12 +1126,6 @@ impl AnotherOneApp {
                         .h(px(24.))
                         .rounded_md()
                         .cursor_pointer()
-                        .when(controls_visible, |button| button.visible())
-                        .when(!controls_visible, |button| {
-                            button
-                                .invisible()
-                                .group_hover(row_group.clone(), |button| button.visible())
-                        })
                         .hover(move |s| s.bg(gpui::white().opacity(0.08)))
                         .tooltip(move |_window, cx| {
                             Self::action_tooltip_view("Add a task or worktree to this project", cx)
@@ -1336,12 +1323,14 @@ impl AnotherOneApp {
                             cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                                 cx.stop_propagation();
                                 this.request_sidebar_task_delete(
-                                    &delete_project_id,
-                                    delete_task_id.as_deref(),
-                                    &delete_task_name,
-                                    &delete_branch_name,
-                                    is_worktree,
-                                    &delete_preferred_project_id,
+                                    SidebarTaskDeleteRequest {
+                                        project_id: delete_project_id.clone(),
+                                        task_id: delete_task_id.clone(),
+                                        task_name: delete_task_name.clone(),
+                                        branch_name: delete_branch_name.clone(),
+                                        is_worktree,
+                                        preferred_project_id: delete_preferred_project_id.clone(),
+                                    },
                                     cx,
                                 );
                             }),
@@ -1491,27 +1480,26 @@ impl AnotherOneApp {
                         .unwrap_or_else(|| {
                             SectionId::new(&left_click_project_id, &left_click_branch_name)
                         });
-                    if !this.section_states.contains_key(&sid) {
-                        this.section_states.insert(
-                            sid.clone(),
-                            SectionState::with_cwd(Some(project_path.clone())),
-                        );
-                    }
-                    this.active_section = Some(sid);
-                    this.active_project_page = None;
-                    cx.notify();
+                    let sid_for_state = sid.clone();
+                    let project_path = project_path.clone();
+                    this.workspace_pane.update(cx, |workspace, cx| {
+                        workspace.activate_section(sid_for_state, Some(project_path), None, cx);
+                    });
+                    this.mark_git_refresh_stale();
                 }),
             )
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, ev: &MouseDownEvent, _window, cx| {
                     this.open_sidebar_task_menu(
-                        &right_click_project_id,
-                        &right_click_row_id,
-                        right_click_task_id.as_deref(),
-                        &right_click_task_name,
-                        &right_click_branch_name,
-                        right_click_is_worktree,
+                        SidebarTaskMenuRequest {
+                            project_id: right_click_project_id.clone(),
+                            row_id: right_click_row_id.clone(),
+                            task_id: right_click_task_id.clone(),
+                            task_name: right_click_task_name.clone(),
+                            branch_name: right_click_branch_name.clone(),
+                            is_worktree: right_click_is_worktree,
+                        },
                         ev,
                         cx,
                     );
@@ -1709,9 +1697,7 @@ impl AnotherOneApp {
         button_id: SharedString,
         icon_path: &'static str,
         label: SharedString,
-        tooltip_label: &'static str,
-        text_color: gpui::Hsla,
-        hover_bg: gpui::Hsla,
+        style: SidebarTaskMenuItemStyle,
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1723,15 +1709,20 @@ impl AnotherOneApp {
             .h(px(38.))
             .px(px(14.))
             .cursor_pointer()
-            .hover(move |style| style.bg(hover_bg))
-            .tooltip(move |_window, cx| Self::action_tooltip_view(tooltip_label, cx))
+            .hover(move |hover| hover.bg(style.hover_bg))
+            .tooltip(move |_window, cx| Self::action_tooltip_view(style.tooltip_label, cx))
             .on_mouse_down(MouseButton::Left, cx.listener(on_click))
-            .child(svg().path(icon_path).size(px(15.)).text_color(text_color))
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size(px(15.))
+                    .text_color(style.text_color),
+            )
             .child(
                 div()
                     .text_sm()
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(text_color)
+                    .text_color(style.text_color)
                     .child(label),
             )
     }
@@ -1798,9 +1789,11 @@ impl AnotherOneApp {
                 "sidebar-task-menu-pin".into(),
                 "assets/icons/icons__pin-off.svg",
                 pin_label,
-                pin_tooltip,
-                text_col,
-                hover_bg,
+                SidebarTaskMenuItemStyle {
+                    tooltip_label: pin_tooltip,
+                    text_color: text_col,
+                    hover_bg,
+                },
                 move |this, _ev, _window, cx| {
                     this.sidebar_task_menu = None;
                     this.set_sidebar_task_pinned(
@@ -1818,9 +1811,12 @@ impl AnotherOneApp {
                 "sidebar-task-menu-new-task".into(),
                 "assets/icons/icons__git-worktree.svg",
                 "New task from current branch".into(),
-                "Create a new task using this task's current branch as the starting point",
-                text_col,
-                hover_bg,
+                SidebarTaskMenuItemStyle {
+                    tooltip_label:
+                        "Create a new task using this task's current branch as the starting point",
+                    text_color: text_col,
+                    hover_bg,
+                },
                 move |this, _ev, _window, cx| {
                     this.sidebar_task_menu = None;
                     this.focus_handle.focus(_window);
@@ -1837,9 +1833,11 @@ impl AnotherOneApp {
                 "sidebar-task-menu-rename".into(),
                 "assets/icons/icons__edit.svg",
                 "Rename".into(),
-                "Rename this task inline",
-                text_col,
-                hover_bg,
+                SidebarTaskMenuItemStyle {
+                    tooltip_label: "Rename this task inline",
+                    text_color: text_col,
+                    hover_bg,
+                },
                 move |this, _ev, window, cx| {
                     this.sidebar_task_menu = None;
                     this.focus_handle.focus(window);
@@ -1858,17 +1856,21 @@ impl AnotherOneApp {
                 "sidebar-task-menu-delete".into(),
                 "assets/icons/icons__trash.svg",
                 "Delete".into(),
-                delete_tooltip,
-                danger_col,
-                danger_hover_bg,
+                SidebarTaskMenuItemStyle {
+                    tooltip_label: delete_tooltip,
+                    text_color: danger_col,
+                    hover_bg: danger_hover_bg,
+                },
                 move |this, _ev, _window, cx| {
                     this.request_sidebar_task_delete(
-                        &delete_project_id,
-                        delete_task_id.as_deref(),
-                        &delete_task_name,
-                        &delete_branch_name,
-                        delete_is_worktree,
-                        &delete_preferred_project_id,
+                        SidebarTaskDeleteRequest {
+                            project_id: delete_project_id.clone(),
+                            task_id: delete_task_id.clone(),
+                            task_name: delete_task_name.clone(),
+                            branch_name: delete_branch_name.clone(),
+                            is_worktree: delete_is_worktree,
+                            preferred_project_id: delete_preferred_project_id.clone(),
+                        },
                         cx,
                     );
                     cx.stop_propagation();
@@ -2295,6 +2297,9 @@ impl AnotherOneApp {
             );
 
         let list = {
+            let workspace = self.workspace_pane.read(cx);
+            let active_project_page = workspace.active_project_page.clone();
+            let active_section = workspace.active_section.clone();
             let mut list_div = div().flex().flex_col().py(px(4.)).px(px(4.)).gap(px(2.));
             for group in self.sidebar_groups() {
                 self.request_project_github_link_lookup(
@@ -2304,22 +2309,17 @@ impl AnotherOneApp {
                 let root_id = &group.root_project.id;
                 let expanded = self.project_expand_target(root_id);
                 let expand_progress = self.project_expand_progress(root_id);
-                let active = self
-                    .active_project_page
+                let active = active_project_page
                     .as_deref()
                     .is_some_and(|project_id| project_id == root_id);
-                let menu_open = self
-                    .project_menu_project
-                    .as_deref()
-                    .is_some_and(|id| id == root_id);
-
                 list_div = list_div.child(div().child(Self::project_row(
                     &group.root_project,
-                    self.project_github_links.get(root_id).cloned(),
-                    active,
-                    !group.child_entries.is_empty(),
-                    expanded,
-                    menu_open,
+                    ProjectRowState {
+                        github_url: self.project_github_links.get(root_id).cloned(),
+                        active,
+                        has_children: !group.child_entries.is_empty(),
+                        expanded,
+                    },
                     window,
                     cx,
                 )));
@@ -2344,7 +2344,7 @@ impl AnotherOneApp {
                         .gap(px(LIST_GAP))
                         .pt(px((1.0 - expand_progress) * 4.0));
                     for entry in &group.child_entries {
-                        let is_active = self.active_section.as_ref().is_some_and(|section| {
+                        let is_active = active_section.as_ref().is_some_and(|section| {
                             if let Some(task_id) = entry.task_id.as_deref() {
                                 section.task_id.as_deref() == Some(task_id)
                             } else {

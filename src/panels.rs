@@ -4,11 +4,11 @@
 //! fed by a PTY spawned via portable-pty.
 
 use gpui::{
-    canvas, div, fill, hsla, point, prelude::*, px, rgb, size, svg, AnyElement, App, Bounds,
-    ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity, Font, FontFallbacks,
-    FontFeatures, FontStyle, FontWeight as GpuiFontWeight, GlobalElementId, InspectorElementId,
-    KeyDownEvent, Keystroke, LayoutId, MouseButton, MouseDownEvent, Pixels, ScrollWheelEvent,
-    SharedString, TextRun, UnderlineStyle, Window,
+    canvas, div, fill, hsla, point, prelude::*, px, rgb, size, svg, AnyElement, AnyView, App,
+    Bounds, ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity, Font,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight as GpuiFontWeight, GlobalElementId,
+    InspectorElementId, KeyDownEvent, Keystroke, LayoutId, MouseButton, MouseDownEvent, Pixels,
+    Render, ScrollWheelEvent, SharedString, TextRun, UnderlineStyle, Window,
 };
 
 use alacritty_terminal::grid::Dimensions;
@@ -17,7 +17,7 @@ use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 
-use crate::app::AnotherOneApp;
+use crate::app::{AnotherOneApp, WorkspacePane};
 use crate::layout::*;
 use crate::left_sidebar::open_external_url;
 
@@ -444,7 +444,9 @@ impl AnotherOneApp {
                     .child(body),
             )
     }
+}
 
+impl WorkspacePane {
     /// Build the terminal tab bar + REAL terminal content for the active section.
     fn section_main_panel(
         &mut self,
@@ -453,12 +455,12 @@ impl AnotherOneApp {
     ) -> impl IntoElement {
         // Project page takes priority over terminal view.
         if let Some(ref project_id) = self.active_project_page.clone() {
-            self.clear_terminal_viewport();
+            self.clear_terminal_viewport(cx);
             return self.render_project_page(project_id, window, cx);
         }
 
         let Some(ref section_id) = self.active_section.clone() else {
-            self.clear_terminal_viewport();
+            self.clear_terminal_viewport(cx);
             return div().flex().flex_col().size_full().bg(rgb(0x1e1f22)).child(
                 div()
                     .flex_1()
@@ -471,7 +473,7 @@ impl AnotherOneApp {
             );
         };
 
-        self.ensure_active_terminal_spawned(section_id);
+        self.ensure_active_terminal_spawned(section_id, cx);
 
         let tab_bar_bg = rgb(0x27292e);
         let tab_bg_active = rgb(0x1e1f22);
@@ -534,7 +536,7 @@ impl AnotherOneApp {
                         })
                         .hover(move |s| s.bg(if is_active { tab_bg_active } else { tab_hover }))
                         .tooltip(move |_window, cx| {
-                            Self::action_tooltip_view("Switch to this terminal tab", cx)
+                            AnotherOneApp::action_tooltip_view("Switch to this terminal tab", cx)
                         })
                         .on_mouse_down(
                             MouseButton::Left,
@@ -542,7 +544,7 @@ impl AnotherOneApp {
                                 if let Some(state) = this.section_states.get_mut(&sid_click) {
                                     state.active_tab = tab_index;
                                 }
-                                this.ensure_active_terminal_spawned(&sid_click);
+                                this.ensure_active_terminal_spawned(&sid_click, cx);
                                 cx.notify();
                             }),
                         )
@@ -582,7 +584,10 @@ impl AnotherOneApp {
                                         s.bg(gpui::white().opacity(0.08)).text_color(close_hover)
                                     })
                                     .tooltip(move |_window, cx| {
-                                        Self::action_tooltip_view("Close this terminal tab", cx)
+                                        AnotherOneApp::action_tooltip_view(
+                                            "Close this terminal tab",
+                                            cx,
+                                        )
                                     })
                                     .on_mouse_down(
                                         MouseButton::Left,
@@ -620,14 +625,16 @@ impl AnotherOneApp {
                 .rounded(px(5.))
                 .cursor_pointer()
                 .hover(move |s| s.bg(tab_hover))
-                .tooltip(move |_window, cx| Self::action_tooltip_view("New terminal tab", cx))
+                .tooltip(move |_window, cx| {
+                    AnotherOneApp::action_tooltip_view("New terminal tab", cx)
+                })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                         if let Some(state) = this.section_states.get_mut(&sid_for_add) {
                             state.add_tab();
                         }
-                        this.ensure_active_terminal_spawned(&sid_for_add);
+                        this.ensure_active_terminal_spawned(&sid_for_add, cx);
                         cx.notify();
                     }),
                 )
@@ -709,7 +716,7 @@ impl AnotherOneApp {
             });
 
         let Some(term_arc) = term_arc else {
-            self.clear_terminal_viewport();
+            self.clear_terminal_viewport(cx);
             return div()
                 .flex_1()
                 .flex()
@@ -934,6 +941,7 @@ impl AnotherOneApp {
         let sid_for_mouse = section_id.clone();
         let sid_for_keys = section_id.clone();
         let sid_for_scroll = section_id.clone();
+        let app_entity = self.app.upgrade();
 
         // Calculate grid pixel dimensions for centering.
         let grid_pixel_w = cell_w * num_cols as f32;
@@ -950,7 +958,10 @@ impl AnotherOneApp {
             .track_focus(&self.focus_handle)
             .when(hovered_link.is_some(), |div| div.cursor_pointer())
             .tooltip(move |_window, cx| {
-                Self::action_tooltip_view("Select terminal text. Cmd-click a link to open it", cx)
+                AnotherOneApp::action_tooltip_view(
+                    "Select terminal text. Cmd-click a link to open it",
+                    cx,
+                )
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -996,8 +1007,12 @@ impl AnotherOneApp {
 
         // NOTE: refresh timer is started once in AnotherOneApp::new()
 
-        TerminalInputHost::new(grid_div, self.focus_handle.clone(), cx.entity().clone())
-            .into_any_element()
+        if let Some(app_entity) = app_entity {
+            TerminalInputHost::new(grid_div, self.focus_handle.clone(), app_entity)
+                .into_any_element()
+        } else {
+            grid_div.into_any_element()
+        }
     }
 
     fn handle_terminal_mouse_down(
@@ -1050,11 +1065,13 @@ impl AnotherOneApp {
         ev: &KeyDownEvent,
         cx: &mut Context<Self>,
     ) {
-        if this.new_task_modal.is_some() {
-            return;
-        }
-
-        if this.sidebar_task_rename.is_some() {
+        let blocked = this
+            .app
+            .read_with(cx, |app, _| {
+                app.new_task_modal.is_some() || app.sidebar_task_rename.is_some()
+            })
+            .unwrap_or(false);
+        if blocked {
             return;
         }
 
@@ -1075,7 +1092,7 @@ impl AnotherOneApp {
             match shortcut_key.as_str() {
                 "v" => {
                     if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        this.note_terminal_input_activity();
+                        this.note_terminal_input_activity(cx);
                         terminal.paste_text(&text);
                     }
                     cx.stop_propagation();
@@ -1085,7 +1102,7 @@ impl AnotherOneApp {
                     if let Some(selection) = terminal.selection_text() {
                         cx.write_to_clipboard(ClipboardItem::new_string(selection));
                     } else {
-                        this.note_terminal_input_activity();
+                        this.note_terminal_input_activity(cx);
                         terminal.write_to_pty(b"\x03");
                     }
                     cx.stop_propagation();
@@ -1098,7 +1115,7 @@ impl AnotherOneApp {
                     return;
                 }
                 "backspace" => {
-                    this.note_terminal_input_activity();
+                    this.note_terminal_input_activity(cx);
                     terminal.write_to_pty(b"\x15");
                     cx.stop_propagation();
                     return;
@@ -1117,7 +1134,7 @@ impl AnotherOneApp {
             .and_then(|translated| crate::keys::to_esc_str(&translated, &term_mode));
 
         if let Some(esc) = crate::keys::to_esc_str(ks, &term_mode).or(translated_esc) {
-            this.note_terminal_input_activity();
+            this.note_terminal_input_activity(cx);
             terminal.write_to_pty(esc.as_bytes());
             cx.stop_propagation();
         }
@@ -1146,7 +1163,15 @@ impl AnotherOneApp {
         cx.stop_propagation();
         cx.notify();
     }
+}
 
+impl Render for WorkspacePane {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.section_main_panel(window, cx)
+    }
+}
+
+impl AnotherOneApp {
     /// Assemble the main row (sidebar | gutter | main | gutter | right).
     pub fn main_row(
         &mut self,
@@ -1157,7 +1182,7 @@ impl AnotherOneApp {
         open: bool,
         busy: bool,
     ) -> impl IntoElement {
-        let section_panel = self.section_main_panel(window, cx);
+        let section_panel = AnyView::from(self.workspace_pane.clone());
         let right_open = self.right_sidebar_is_open();
 
         div()

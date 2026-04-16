@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use gpui::{
     div, ease_in_out, hsla, percentage, prelude::*, px, rems, rgb, svg, uniform_list, Animation,
-    AnimationExt as _, AnyElement, Context, KeyDownEvent, MouseButton, MouseDownEvent,
+    AnimationExt as _, AnyElement, App, Context, KeyDownEvent, MouseButton, MouseDownEvent,
     SharedString, Transformation, Window,
 };
 
@@ -58,6 +58,35 @@ struct ChangedFilesRowSnapshot {
     unstaged_deletions: i32,
     can_stage: bool,
     can_unstage: bool,
+}
+
+struct ChangedFileActionButtonProps {
+    button_id: gpui::ElementId,
+    icon_path: &'static str,
+    enabled: bool,
+    hover_bg: gpui::Hsla,
+    icon_color: gpui::Hsla,
+    tooltip_label: Option<&'static str>,
+}
+
+struct GitToolbarButtonProps {
+    label: &'static str,
+    leading_icon: Option<&'static str>,
+    trailing_icon: Option<&'static str>,
+    enabled: bool,
+    active: bool,
+    tooltip_label: Option<&'static str>,
+}
+
+struct ChangedFileSectionHeaderProps {
+    section_key: &'static str,
+    title: &'static str,
+    project_id: String,
+    section_indices: Arc<[usize]>,
+    group: ChangeGroup,
+    file_count: usize,
+    additions: i32,
+    deletions: i32,
 }
 
 #[derive(Clone)]
@@ -224,8 +253,8 @@ impl AnotherOneApp {
         )
     }
 
-    fn active_branch_ahead_count(&self) -> usize {
-        let Some(section) = self.active_section.as_ref() else {
+    fn active_branch_ahead_count(&self, cx: &App) -> usize {
+        let Some(section) = self.workspace_pane.read(cx).active_section.clone() else {
             return 0;
         };
 
@@ -258,37 +287,37 @@ impl AnotherOneApp {
     }
 
     fn changed_file_action_button(
-        button_id: impl Into<gpui::ElementId>,
-        icon_path: &'static str,
-        enabled: bool,
-        hover_bg: gpui::Hsla,
-        icon_color: gpui::Hsla,
-        tooltip_label: Option<&'static str>,
+        props: ChangedFileActionButtonProps,
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut button = div()
-            .id(button_id)
+            .id(props.button_id)
             .flex()
             .items_center()
             .justify_center()
             .w(px(28.))
             .h(px(28.))
             .rounded_md()
-            .opacity(if enabled { 1. } else { 0.35 });
+            .opacity(if props.enabled { 1. } else { 0.35 });
 
-        if enabled {
+        if props.enabled {
             button = button
                 .cursor_pointer()
-                .hover(move |style| style.bg(hover_bg))
+                .hover(move |style| style.bg(props.hover_bg))
                 .on_mouse_down(MouseButton::Left, cx.listener(on_click));
 
-            if let Some(label) = tooltip_label {
+            if let Some(label) = props.tooltip_label {
                 button = button.tooltip(move |_window, cx| Self::action_tooltip_view(label, cx));
             }
         }
 
-        button.child(svg().path(icon_path).size(px(16.)).text_color(icon_color))
+        button.child(
+            svg()
+                .path(props.icon_path)
+                .size(px(16.))
+                .text_color(props.icon_color),
+        )
     }
 
     fn changed_file_action_pending(icon_color: gpui::Hsla) -> impl IntoElement {
@@ -302,16 +331,11 @@ impl AnotherOneApp {
     }
 
     fn git_toolbar_button(
-        label: &'static str,
-        leading_icon: Option<&'static str>,
-        trailing_icon: Option<&'static str>,
-        enabled: bool,
-        active: bool,
-        tooltip_label: Option<&'static str>,
+        props: GitToolbarButtonProps,
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let visually_enabled = enabled || active;
+        let visually_enabled = props.enabled || props.active;
         let text_col = if visually_enabled {
             hsla(0., 0., 0.94, 1.)
         } else {
@@ -327,7 +351,7 @@ impl AnotherOneApp {
         let hover_bg = gpui::white().opacity(0.06);
 
         let mut button = div()
-            .id(SharedString::from(format!("git-toolbar-{label}")))
+            .id(SharedString::from(format!("git-toolbar-{}", props.label)))
             .relative()
             .flex()
             .items_center()
@@ -344,9 +368,9 @@ impl AnotherOneApp {
             .flex_row()
             .items_center()
             .gap(px(5.))
-            .opacity(if active { 0. } else { 1. });
+            .opacity(if props.active { 0. } else { 1. });
 
-        if let Some(icon_path) = leading_icon {
+        if let Some(icon_path) = props.leading_icon {
             content = content.child(svg().path(icon_path).size(px(12.)).text_color(icon_col));
         }
 
@@ -355,16 +379,16 @@ impl AnotherOneApp {
                 .text_size(rems(11. / 16.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(text_col)
-                .child(label),
+                .child(props.label),
         );
 
-        if let Some(icon_path) = trailing_icon {
+        if let Some(icon_path) = props.trailing_icon {
             content = content.child(svg().path(icon_path).size(px(11.)).text_color(icon_col));
         }
 
         button = button.child(content);
 
-        if active {
+        if props.active {
             button = button.child(
                 div()
                     .absolute()
@@ -376,11 +400,11 @@ impl AnotherOneApp {
             );
         }
 
-        if let Some(tip) = tooltip_label {
+        if let Some(tip) = props.tooltip_label {
             button = button.tooltip(move |_window, cx| Self::action_tooltip_view(tip, cx));
         }
 
-        button.when(enabled && !active, |button| {
+        button.when(props.enabled && !props.active, |button| {
             button
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover_bg))
@@ -625,7 +649,7 @@ impl AnotherOneApp {
         let active = self.push_action_active();
         let interactive = enabled && !active;
         let visually_enabled = enabled || active;
-        let ahead_count = self.active_branch_ahead_count();
+        let ahead_count = self.active_branch_ahead_count(cx);
         let push_label = if ahead_count > 0 {
             format!("Push ({ahead_count})")
         } else {
@@ -953,14 +977,16 @@ impl AnotherOneApp {
                     ChangeGroup::Uncommitted => snapshot.unstaged_indices.clone(),
                 };
                 self.changed_file_section_header(
-                    section_key,
-                    title,
-                    &snapshot.project_id,
-                    section_indices,
-                    *group,
-                    *file_count,
-                    *additions,
-                    *deletions,
+                    ChangedFileSectionHeaderProps {
+                        section_key,
+                        title,
+                        project_id: snapshot.project_id.clone(),
+                        section_indices,
+                        group: *group,
+                        file_count: *file_count,
+                        additions: *additions,
+                        deletions: *deletions,
+                    },
                     cx,
                 )
                 .into_any_element()
@@ -1029,12 +1055,14 @@ impl AnotherOneApp {
                 Self::changed_file_action_pending(action_icon).into_any_element()
             } else {
                 Self::changed_file_action_button(
-                    ("changed-file-unstage", file_index),
-                    "assets/icons/icons__minus.svg",
-                    can_unstage && !actions_busy,
-                    action_hover,
-                    action_icon,
-                    Some("Unstage file"),
+                    ChangedFileActionButtonProps {
+                        button_id: ("changed-file-unstage", file_index).into(),
+                        icon_path: "assets/icons/icons__minus.svg",
+                        enabled: can_unstage && !actions_busy,
+                        hover_bg: action_hover,
+                        icon_color: action_icon,
+                        tooltip_label: Some("Unstage file"),
+                    },
                     move |this, _ev, _window, cx| {
                         if let Some(changed) =
                             this.changed_file_for_action(&unstage_project_id, file_index)
@@ -1052,12 +1080,14 @@ impl AnotherOneApp {
                     Self::changed_file_action_pending(action_icon).into_any_element()
                 } else {
                     Self::changed_file_action_button(
-                        ("changed-file-stage", file_index),
-                        "assets/icons/icons__plus.svg",
-                        can_stage && !actions_busy,
-                        action_hover,
-                        action_icon,
-                        Some("Stage File"),
+                        ChangedFileActionButtonProps {
+                            button_id: ("changed-file-stage", file_index).into(),
+                            icon_path: "assets/icons/icons__plus.svg",
+                            enabled: can_stage && !actions_busy,
+                            hover_bg: action_hover,
+                            icon_color: action_icon,
+                            tooltip_label: Some("Stage File"),
+                        },
                         move |this, _ev, _window, cx| {
                             if let Some(changed) =
                                 this.changed_file_for_action(&stage_project_id, file_index)
@@ -1071,12 +1101,14 @@ impl AnotherOneApp {
                     .into_any_element()
                 }))
                 .child(div().child(Self::changed_file_action_button(
-                    ("changed-file-discard", file_index),
-                    "assets/icons/icons__discard.svg",
-                    !actions_busy && !project_mutations_pending,
-                    action_hover,
-                    action_icon,
-                    Some("Discard File Changes"),
+                    ChangedFileActionButtonProps {
+                        button_id: ("changed-file-discard", file_index).into(),
+                        icon_path: "assets/icons/icons__discard.svg",
+                        enabled: !actions_busy && !project_mutations_pending,
+                        hover_bg: action_hover,
+                        icon_color: action_icon,
+                        tooltip_label: Some("Discard File Changes"),
+                    },
                     move |this, _ev, _window, cx| {
                         if let Some(changed) =
                             this.changed_file_for_action(&revert_project_id, file_index)
@@ -1155,16 +1187,19 @@ impl AnotherOneApp {
 
     fn changed_file_section_header(
         &self,
-        section_key: &'static str,
-        title: &'static str,
-        project_id: &str,
-        section_indices: Arc<[usize]>,
-        group: ChangeGroup,
-        file_count: usize,
-        section_additions: i32,
-        section_deletions: i32,
+        props: ChangedFileSectionHeaderProps,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let ChangedFileSectionHeaderProps {
+            section_key,
+            title,
+            project_id,
+            section_indices,
+            group,
+            file_count,
+            additions: section_additions,
+            deletions: section_deletions,
+        } = props;
         let border = gpui::white().opacity(0.06);
         let title_col = hsla(0., 0., 0.92, 1.);
         let count_col = hsla(0., 0., 0.74, 1.);
@@ -1172,10 +1207,10 @@ impl AnotherOneApp {
         let action_icon = hsla(0., 0., 0.72, 1.);
         let header_hover = gpui::white().opacity(0.03);
         let collapsed = self.collapsed_change_sections.contains(section_key);
-        let actions_busy = self.changed_files_actions_busy(project_id);
-        let project_mutations_pending = self.changed_files_project_mutations_pending(project_id);
-        let stage_all_pending = self.changed_files_stage_all_pending(project_id);
-        let unstage_all_pending = self.changed_files_unstage_all_pending(project_id);
+        let actions_busy = self.changed_files_actions_busy(&project_id);
+        let project_mutations_pending = self.changed_files_project_mutations_pending(&project_id);
+        let stage_all_pending = self.changed_files_stage_all_pending(&project_id);
+        let unstage_all_pending = self.changed_files_unstage_all_pending(&project_id);
 
         let section_actions = match group {
             ChangeGroup::Staged => {
@@ -1188,15 +1223,18 @@ impl AnotherOneApp {
                         Self::changed_file_action_pending(action_icon).into_any_element()
                     } else {
                         Self::changed_file_action_button(
-                            SharedString::from(format!(
-                                "changed-section-action-{}-staged-unstage",
-                                project_id
-                            )),
-                            "assets/icons/icons__minus.svg",
-                            !actions_busy,
-                            action_hover,
-                            action_icon,
-                            Some("Unstage all files in this section"),
+                            ChangedFileActionButtonProps {
+                                button_id: SharedString::from(format!(
+                                    "changed-section-action-{}-staged-unstage",
+                                    project_id
+                                ))
+                                .into(),
+                                icon_path: "assets/icons/icons__minus.svg",
+                                enabled: !actions_busy,
+                                hover_bg: action_hover,
+                                icon_color: action_icon,
+                                tooltip_label: Some("Unstage all files in this section"),
+                            },
                             move |this, _ev, _window, cx| {
                                 cx.stop_propagation();
                                 this.unstage_all_changes(&unstage_project_id, cx);
@@ -1220,15 +1258,18 @@ impl AnotherOneApp {
                         Self::changed_file_action_pending(action_icon).into_any_element()
                     } else {
                         Self::changed_file_action_button(
-                            SharedString::from(format!(
-                                "changed-section-action-{}-changes-stage",
-                                project_id
-                            )),
-                            "assets/icons/icons__plus.svg",
-                            !actions_busy,
-                            action_hover,
-                            action_icon,
-                            Some("Stage All Changes"),
+                            ChangedFileActionButtonProps {
+                                button_id: SharedString::from(format!(
+                                    "changed-section-action-{}-changes-stage",
+                                    project_id
+                                ))
+                                .into(),
+                                icon_path: "assets/icons/icons__plus.svg",
+                                enabled: !actions_busy,
+                                hover_bg: action_hover,
+                                icon_color: action_icon,
+                                tooltip_label: Some("Stage All Changes"),
+                            },
                             move |this, _ev, _window, cx| {
                                 cx.stop_propagation();
                                 this.stage_all_changes(&stage_project_id, cx);
@@ -1239,15 +1280,18 @@ impl AnotherOneApp {
                         .into_any_element()
                     })
                     .child(Self::changed_file_action_button(
-                        SharedString::from(format!(
-                            "changed-section-action-{}-changes-discard",
-                            project_id
-                        )),
-                        "assets/icons/icons__discard.svg",
-                        !actions_busy && !project_mutations_pending,
-                        action_hover,
-                        action_icon,
-                        Some("Discard All Changes"),
+                        ChangedFileActionButtonProps {
+                            button_id: SharedString::from(format!(
+                                "changed-section-action-{}-changes-discard",
+                                project_id
+                            ))
+                            .into(),
+                            icon_path: "assets/icons/icons__discard.svg",
+                            enabled: !actions_busy && !project_mutations_pending,
+                            hover_bg: action_hover,
+                            icon_color: action_icon,
+                            tooltip_label: Some("Discard All Changes"),
+                        },
                         move |this, _ev, _window, cx| {
                             cx.stop_propagation();
                             this.discard_confirm = Some((
@@ -1337,6 +1381,8 @@ impl AnotherOneApp {
         let bg = theme::chrome_bg(window);
         let muted_col = hsla(0., 0., 0.54, 1.);
         let Some(project_id) = self
+            .workspace_pane
+            .read(cx)
             .active_section
             .as_ref()
             .map(|section| section.project_id.clone())
@@ -1345,7 +1391,7 @@ impl AnotherOneApp {
         };
 
         let has_loaded_changed_files = self.changed_files.contains_key(&project_id);
-        let changed_files = self.active_changed_files();
+        let changed_files = self.active_changed_files(cx);
         let has_changes = !changed_files.is_empty();
         let toolbar_enabled = self.active_git_action.is_none();
         let can_commit = has_changes && toolbar_enabled;
@@ -1432,12 +1478,14 @@ impl AnotherOneApp {
                     .px(px(8.))
                     .py(px(6.))
                     .child(Self::git_toolbar_button(
-                        "Changes",
-                        Some("assets/icons/icons__file_icons__changes.svg"),
-                        None,
-                        has_changes,
-                        false,
-                        Some("View changed files"),
+                        GitToolbarButtonProps {
+                            label: "Changes",
+                            leading_icon: Some("assets/icons/icons__file_icons__changes.svg"),
+                            trailing_icon: None,
+                            enabled: has_changes,
+                            active: false,
+                            tooltip_label: Some("View changed files"),
+                        },
                         move |_this, _ev, _window, cx| {
                             cx.stop_propagation();
                         },
@@ -1452,12 +1500,17 @@ impl AnotherOneApp {
                             .flex_shrink_0()
                             .gap(px(TOOLBAR_ACTION_GAP))
                             .child(Self::git_toolbar_button(
-                                "Commit",
-                                None,
-                                None,
-                                can_commit,
-                                self.toolbar_action_active(ToolbarGitAction::Commit),
-                                Some("Commit changes, staging all files first if needed"),
+                                GitToolbarButtonProps {
+                                    label: "Commit",
+                                    leading_icon: None,
+                                    trailing_icon: None,
+                                    enabled: can_commit,
+                                    active: self
+                                        .toolbar_action_active(ToolbarGitAction::Commit),
+                                    tooltip_label: Some(
+                                        "Commit changes, staging all files first if needed",
+                                    ),
+                                },
                                 move |this, _ev, _window, cx| {
                                     this.create_pr_menu_open = false;
                                     this.push_menu_open = false;
@@ -1467,12 +1520,17 @@ impl AnotherOneApp {
                                 cx,
                             ))
                             .child(Self::git_toolbar_button(
-                                "Commit & Push",
-                                None,
-                                None,
-                                can_commit,
-                                self.toolbar_action_active(ToolbarGitAction::CommitAndPush),
-                                Some("Commit changes and push, staging all files first if needed"),
+                                GitToolbarButtonProps {
+                                    label: "Commit & Push",
+                                    leading_icon: None,
+                                    trailing_icon: None,
+                                    enabled: can_commit,
+                                    active: self
+                                        .toolbar_action_active(ToolbarGitAction::CommitAndPush),
+                                    tooltip_label: Some(
+                                        "Commit changes and push, staging all files first if needed",
+                                    ),
+                                },
                                 move |this, _ev, _window, cx| {
                                     this.create_pr_menu_open = false;
                                     this.push_menu_open = false;

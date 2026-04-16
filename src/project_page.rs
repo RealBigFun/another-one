@@ -1,16 +1,19 @@
 //! Project page rendered in the centre panel when a project is selected.
 
+use std::path::PathBuf;
+
 use gpui::{
     div, hsla, prelude::*, px, rems, rgb, svg, Context, MouseButton, MouseDownEvent, SharedString,
     Window,
 };
 
-use crate::app::{AnotherOneApp, SectionId, SectionState};
+use crate::app::{AnotherOneApp, SectionId, SidebarTaskDeleteRequest, WorkspacePane};
 use crate::left_sidebar::open_external_url;
 
 #[derive(Clone)]
 struct ProjectPageTaskEntry {
     project_id: String,
+    project_path: PathBuf,
     task_id: Option<String>,
     name: String,
     branch_name: String,
@@ -67,7 +70,7 @@ const TEXT_MUTED: fn() -> gpui::Hsla = || hsla(0., 0., 0.40, 1.);
 const GREEN: fn() -> gpui::Hsla = || hsla(138. / 360., 0.50, 0.74, 1.);
 const RED: fn() -> gpui::Hsla = || hsla(352. / 360., 0.52, 0.76, 1.);
 
-impl AnotherOneApp {
+impl WorkspacePane {
     fn project_page_group_key(project: &crate::project_store::Project) -> String {
         project
             .repo_common_dir
@@ -87,8 +90,8 @@ impl AnotherOneApp {
             .cloned()
     }
 
-    fn project_page_tasks(&self, project_id: &str) -> Vec<ProjectPageTaskEntry> {
-        let Some(project) = self
+    fn project_page_tasks(app: &AnotherOneApp, project_id: &str) -> Vec<ProjectPageTaskEntry> {
+        let Some(project) = app
             .project_store
             .projects
             .iter()
@@ -100,21 +103,22 @@ impl AnotherOneApp {
         let group_key = Self::project_page_group_key(project);
         let mut tasks = Vec::new();
 
-        for group_project in self
+        for group_project in app
             .project_store
             .projects
             .iter()
             .filter(|candidate| Self::project_page_group_key(candidate) == group_key)
         {
-            if let Some(direct_tasks) = self.project_store.direct_tasks.get(&group_project.id) {
+            if let Some(direct_tasks) = app.project_store.direct_tasks.get(&group_project.id) {
                 for task in direct_tasks {
                     tasks.push(ProjectPageTaskEntry {
                         project_id: group_project.id.clone(),
+                        project_path: group_project.path.clone(),
                         task_id: Some(task.id.clone()),
                         name: task.name.clone(),
                         branch_name: task.branch_name.clone(),
                         is_worktree: false,
-                        pinned: self
+                        pinned: app
                             .project_store
                             .ui
                             .pinned_direct_task_ids
@@ -129,8 +133,9 @@ impl AnotherOneApp {
                 };
                 tasks.push(ProjectPageTaskEntry {
                     project_id: group_project.id.clone(),
+                    project_path: group_project.path.clone(),
                     task_id: None,
-                    name: self
+                    name: app
                         .project_store
                         .worktree_task_names
                         .get(&group_project.id)
@@ -138,7 +143,7 @@ impl AnotherOneApp {
                         .unwrap_or_else(|| branch.name.clone()),
                     branch_name: branch.name.clone(),
                     is_worktree: true,
-                    pinned: self
+                    pinned: app
                         .project_store
                         .ui
                         .pinned_worktree_project_ids
@@ -154,12 +159,25 @@ impl AnotherOneApp {
     // ── Public entry point ───────────────────────────────────────────
 
     pub(crate) fn render_project_page(
-        &self,
+        &mut self,
         project_id: &str,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let project = self
+        let Some(app_entity) = self.app.upgrade() else {
+            return div().flex().flex_col().size_full().bg(rgb(0x1e1f22)).child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(TEXT_MUTED())
+                    .child("Project not found"),
+            );
+        };
+        let app = app_entity.read(cx);
+        let project = app
             .project_store
             .projects
             .iter()
@@ -181,9 +199,9 @@ impl AnotherOneApp {
         let project_name: SharedString = project.name.clone().into();
         let project_id_owned = project_id.to_string();
 
-        let github_url = self.project_github_links.get(project_id).cloned();
+        let github_url = app.project_github_links.get(project_id).cloned();
 
-        let tasks = self.project_page_tasks(project_id);
+        let tasks = Self::project_page_tasks(app, project_id);
 
         let task_count = tasks.len();
         let search = self.project_page_task_search.to_lowercase();
@@ -304,7 +322,10 @@ impl AnotherOneApp {
                         .hover(|s| s.bg(gpui::white().opacity(0.06)))
                         .cursor_pointer()
                         .tooltip(move |_window, cx| {
-                            Self::action_tooltip_view("Open this project's GitHub repository", cx)
+                            AnotherOneApp::action_tooltip_view(
+                                "Open this project's GitHub repository",
+                                cx,
+                            )
                         })
                         .on_mouse_down(
                             MouseButton::Left,
@@ -340,7 +361,10 @@ impl AnotherOneApp {
                     .hover(|s| s.bg(gpui::white().opacity(0.06)))
                     .cursor_pointer()
                     .tooltip(move |_window, cx| {
-                        Self::action_tooltip_view("Remove this project group from the sidebar", cx)
+                        AnotherOneApp::action_tooltip_view(
+                            "Remove this project group from the sidebar",
+                            cx,
+                        )
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -417,8 +441,7 @@ impl AnotherOneApp {
                             MouseButton::Left,
                             cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
                                 this.focus_handle.focus(window);
-                                this.open_new_task_modal(&pid_new);
-                                cx.notify();
+                                this.open_new_task_modal(&pid_new, cx);
                             }),
                         )
                         .child(
@@ -533,6 +556,7 @@ impl AnotherOneApp {
     ) -> impl IntoElement {
         let task_name: SharedString = task.name.clone().into();
         let pid = task.project_id.clone();
+        let project_path = task.project_path.clone();
         let branch = task.branch_name.clone();
         let task_id = task.task_id.clone();
         let is_worktree = task.is_worktree;
@@ -574,20 +598,8 @@ impl AnotherOneApp {
                     } else {
                         SectionId::new(&pid_nav, &branch_nav)
                     };
-                    if !this.section_states.contains_key(&sid) {
-                        let cwd = this
-                            .project_store
-                            .projects
-                            .iter()
-                            .find(|p| p.id == pid_nav)
-                            .map(|p| p.path.clone());
-                        this.section_states
-                            .insert(sid.clone(), SectionState::with_cwd(cwd));
-                    }
-                    this.active_section = Some(sid);
-                    this.active_project_page = None;
-                    this.mark_git_refresh_stale();
-                    cx.notify();
+                    this.activate_section(sid, Some(project_path.clone()), None, cx);
+                    this.mark_git_refresh_stale(cx);
                 }),
             )
             // Status circle
@@ -640,19 +652,22 @@ impl AnotherOneApp {
                             .cursor_pointer()
                             .hover(|s| s.bg(gpui::white().opacity(0.10)))
                             .tooltip(move |_window, cx| {
-                                Self::action_tooltip_view(delete_tooltip, cx)
+                                AnotherOneApp::action_tooltip_view(delete_tooltip, cx)
                             })
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                                     cx.stop_propagation();
                                     this.request_sidebar_task_delete(
-                                        &delete_project_id,
-                                        delete_task_id.as_deref(),
-                                        &delete_task_name,
-                                        &delete_branch_name,
-                                        is_worktree,
-                                        &delete_preferred_project_id,
+                                        SidebarTaskDeleteRequest {
+                                            project_id: delete_project_id.clone(),
+                                            task_id: delete_task_id.clone(),
+                                            task_name: delete_task_name.clone(),
+                                            branch_name: delete_branch_name.clone(),
+                                            is_worktree,
+                                            preferred_project_id: delete_preferred_project_id
+                                                .clone(),
+                                        },
                                         cx,
                                     );
                                 }),

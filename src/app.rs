@@ -11,7 +11,7 @@ use gpui::{
     ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
     FocusHandle, Focusable, GlobalElementId, InspectorElementId, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString, Timer,
-    UTF16Selection, Window,
+    UTF16Selection, WeakEntity, Window,
 };
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
@@ -256,6 +256,16 @@ pub(crate) struct SidebarTaskDeleteConfirmState {
 }
 
 #[derive(Clone)]
+pub(crate) struct SidebarTaskDeleteRequest {
+    pub(crate) project_id: String,
+    pub(crate) task_id: Option<String>,
+    pub(crate) task_name: String,
+    pub(crate) branch_name: String,
+    pub(crate) is_worktree: bool,
+    pub(crate) preferred_project_id: String,
+}
+
+#[derive(Clone)]
 pub(crate) struct ProjectRemoveConfirmState {
     pub(crate) project_name: String,
     pub(crate) project_ids: Vec<String>,
@@ -344,6 +354,437 @@ impl Render for ActionTooltip {
     }
 }
 
+pub(crate) struct WorkspacePane {
+    pub(crate) app: WeakEntity<AnotherOneApp>,
+    pub(crate) focus_handle: FocusHandle,
+    pub(crate) sidebar_w: f32,
+    pub(crate) right_w: f32,
+    pub(crate) font_size: f32,
+    /// Currently selected section (project + branch).
+    pub(crate) active_section: Option<SectionId>,
+    /// Currently displayed project page (project_id). Mutually exclusive with terminal view.
+    pub(crate) active_project_page: Option<String>,
+    /// Search text for the tasks list on the project page.
+    pub(crate) project_page_task_search: String,
+    /// Whether the Open PRs section is collapsed on the project page.
+    pub(crate) project_page_prs_collapsed: bool,
+    /// Active PR filter tab index (0=All Open, 1=Needs My Review, 2=My PRs, 3=Draft).
+    pub(crate) project_page_pr_filter: usize,
+    /// Per-section terminal tab state.
+    pub(crate) section_states: HashMap<SectionId, SectionState>,
+    /// Last rendered terminal viewport geometry for pointer selection.
+    pub(crate) terminal_viewport: Option<TerminalViewport>,
+    /// Hovered terminal link cell, if any.
+    pub(crate) hovered_terminal_link: Option<HoveredTerminalLink>,
+    /// Active terminal mouse selection drag, if any.
+    pub(crate) terminal_selection_drag: Option<TerminalSelectionDrag>,
+}
+
+impl WorkspacePane {
+    pub(crate) fn new(
+        app: WeakEntity<AnotherOneApp>,
+        focus_handle: FocusHandle,
+        sidebar_w: f32,
+        right_w: f32,
+        font_size: f32,
+        active_section: Option<SectionId>,
+        section_states: HashMap<SectionId, SectionState>,
+    ) -> Self {
+        Self {
+            app,
+            focus_handle,
+            sidebar_w,
+            right_w,
+            font_size,
+            active_section,
+            active_project_page: None,
+            project_page_task_search: String::new(),
+            project_page_prs_collapsed: false,
+            project_page_pr_filter: 0,
+            section_states,
+            terminal_viewport: None,
+            hovered_terminal_link: None,
+            terminal_selection_drag: None,
+        }
+    }
+
+    pub(crate) fn sync_layout(
+        &mut self,
+        sidebar_w: f32,
+        right_w: f32,
+        font_size: f32,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut changed = false;
+
+        if (self.sidebar_w - sidebar_w).abs() > f32::EPSILON {
+            self.sidebar_w = sidebar_w;
+            changed = true;
+        }
+        if (self.right_w - right_w).abs() > f32::EPSILON {
+            self.right_w = right_w;
+            changed = true;
+        }
+        if (self.font_size - font_size).abs() > f32::EPSILON {
+            self.font_size = font_size;
+            changed = true;
+        }
+
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
+
+    pub(crate) fn ensure_section(
+        &mut self,
+        section_id: SectionId,
+        cwd: Option<std::path::PathBuf>,
+        launch_config: Option<TerminalLaunchConfig>,
+    ) {
+        self.section_states
+            .entry(section_id)
+            .or_insert_with(|| match launch_config {
+                Some(launch_config) => SectionState::with_launch_config(cwd, launch_config),
+                None => SectionState::with_cwd(cwd),
+            });
+    }
+
+    pub(crate) fn activate_project_page(
+        &mut self,
+        project_id: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let project_id = project_id.into();
+        let mut changed = self.active_project_page.as_deref() != Some(project_id.as_str())
+            || self.active_section.is_some();
+        changed |= self.clear_terminal_viewport_state();
+        self.active_project_page = Some(project_id);
+        self.active_section = None;
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn activate_section(
+        &mut self,
+        section_id: SectionId,
+        cwd: Option<std::path::PathBuf>,
+        launch_config: Option<TerminalLaunchConfig>,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_section(section_id.clone(), cwd, launch_config);
+        let mut changed =
+            self.active_section.as_ref() != Some(&section_id) || self.active_project_page.is_some();
+        changed |= self.clear_terminal_viewport_state();
+        self.active_section = Some(section_id);
+        self.active_project_page = None;
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn remove_project_sections(
+        &mut self,
+        project_ids: &HashSet<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let before_len = self.section_states.len();
+        self.section_states
+            .retain(|section_id, _| !project_ids.contains(&section_id.project_id));
+
+        let mut changed = before_len != self.section_states.len();
+
+        if self
+            .active_section
+            .as_ref()
+            .is_some_and(|section| project_ids.contains(&section.project_id))
+        {
+            self.active_section = None;
+            changed = true;
+        }
+
+        if self
+            .active_project_page
+            .as_ref()
+            .is_some_and(|project_id| project_ids.contains(project_id))
+        {
+            self.active_project_page = None;
+            changed = true;
+        }
+
+        changed |= self.clear_terminal_viewport_state();
+
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn remove_task_sections(&mut self, task_id: &str, cx: &mut Context<Self>) {
+        let before_len = self.section_states.len();
+        self.section_states
+            .retain(|section_id, _| section_id.task_id.as_deref() != Some(task_id));
+
+        let mut changed = before_len != self.section_states.len();
+        if self
+            .active_section
+            .as_ref()
+            .is_some_and(|section| section.task_id.as_deref() == Some(task_id))
+        {
+            self.active_section = None;
+            self.active_project_page = None;
+            changed = true;
+        }
+
+        changed |= self.clear_terminal_viewport_state();
+
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn restore_view(
+        &mut self,
+        preferred_project_id: &str,
+        preferred_project_exists: bool,
+        fallback: Option<(SectionId, std::path::PathBuf)>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_section.is_some() || self.active_project_page.is_some() {
+            return;
+        }
+
+        if preferred_project_exists {
+            self.active_project_page = Some(preferred_project_id.to_string());
+            cx.notify();
+            return;
+        }
+
+        if let Some((section_id, cwd)) = fallback {
+            self.ensure_section(section_id.clone(), Some(cwd), None);
+            self.active_section = Some(section_id);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn note_terminal_input_activity(&self, cx: &mut Context<Self>) {
+        let _ = self
+            .app
+            .update(cx, |app, _| app.note_terminal_input_activity());
+    }
+
+    pub(crate) fn ensure_active_terminal_spawned(
+        &self,
+        section_id: &SectionId,
+        cx: &mut Context<Self>,
+    ) {
+        let app = self.app.clone();
+        let section_id = section_id.clone();
+        cx.defer(move |cx| {
+            let _ = app.update(cx, |app, app_cx| {
+                app.ensure_active_terminal_spawned(&section_id, app_cx);
+            });
+        });
+    }
+
+    pub(crate) fn mark_git_refresh_stale(&self, cx: &mut Context<Self>) {
+        let _ = self.app.update(cx, |app, _| app.mark_git_refresh_stale());
+    }
+
+    pub(crate) fn show_error_toast(
+        &self,
+        message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let message = message.into();
+        let _ = self.app.update(cx, |app, app_cx| {
+            app.show_error_toast(message.clone(), app_cx)
+        });
+    }
+
+    pub(crate) fn request_remove_project_group(&self, project_id: &str, cx: &mut Context<Self>) {
+        let project_id = project_id.to_string();
+        let app = self.app.clone();
+        cx.defer(move |cx| {
+            let _ = app.update(cx, |app, app_cx| {
+                app.request_remove_project_group(&project_id, app_cx);
+            });
+        });
+    }
+
+    pub(crate) fn open_new_task_modal(&self, project_id: &str, cx: &mut Context<Self>) {
+        let project_id = project_id.to_string();
+        let _ = self.app.update(cx, |app, app_cx| {
+            app.open_new_task_modal(&project_id);
+            app_cx.notify();
+        });
+    }
+
+    pub(crate) fn request_sidebar_task_delete(
+        &self,
+        request: SidebarTaskDeleteRequest,
+        cx: &mut Context<Self>,
+    ) {
+        let app = self.app.clone();
+        cx.defer(move |cx| {
+            let _ = app.update(cx, |app, app_cx| {
+                app.request_sidebar_task_delete(request, app_cx);
+            });
+        });
+    }
+
+    pub(crate) fn update_terminal_viewport(
+        &mut self,
+        section_id: &SectionId,
+        cell_w: f32,
+        cell_h: f32,
+        cols: usize,
+        rows: usize,
+    ) {
+        let top_offset = if cfg!(target_os = "macos") {
+            TITLEBAR_CHROME_H
+        } else {
+            0.0
+        };
+
+        self.terminal_viewport = Some(TerminalViewport {
+            section_id: section_id.clone(),
+            origin_x: self.sidebar_w + GUTTER + 8.0,
+            origin_y: top_offset + 36.0 + 6.0,
+            cell_w,
+            cell_h,
+            cols,
+            rows,
+        });
+    }
+
+    pub(crate) fn clear_terminal_viewport(&mut self, cx: &mut Context<Self>) {
+        if self.clear_terminal_viewport_state() {
+            cx.notify();
+        }
+    }
+
+    fn clear_terminal_viewport_state(&mut self) -> bool {
+        self.terminal_viewport.take().is_some()
+            || self.hovered_terminal_link.take().is_some()
+            || self.terminal_selection_drag.take().is_some()
+    }
+
+    pub(crate) fn terminal_cell_at_position(
+        &self,
+        position: Point<Pixels>,
+    ) -> Option<(SectionId, usize, usize)> {
+        let viewport = self.terminal_viewport.as_ref()?;
+        if viewport.cols == 0 || viewport.rows == 0 {
+            return None;
+        }
+
+        let local_x = f32::from(position.x) - viewport.origin_x;
+        let local_y = f32::from(position.y) - viewport.origin_y;
+
+        let col = (local_x / viewport.cell_w).floor() as i32;
+        let row = (local_y / viewport.cell_h).floor() as i32;
+
+        let col = col.clamp(0, viewport.cols.saturating_sub(1) as i32) as usize;
+        let row = row.clamp(0, viewport.rows.saturating_sub(1) as i32) as usize;
+
+        Some((viewport.section_id.clone(), row, col))
+    }
+
+    pub(crate) fn handle_terminal_mouse_move(
+        &mut self,
+        ev: &MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.update_terminal_selection_drag(ev, cx) {
+            self.set_hovered_terminal_link(None, cx);
+            return true;
+        }
+
+        self.update_hovered_terminal_link(ev, cx);
+        false
+    }
+
+    pub(crate) fn finish_terminal_drag(&mut self) -> bool {
+        self.terminal_selection_drag.take().is_some()
+    }
+
+    fn update_terminal_selection_drag(
+        &mut self,
+        ev: &MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(drag) = self.terminal_selection_drag.as_ref() else {
+            return false;
+        };
+        if !ev.dragging() {
+            return false;
+        }
+
+        let Some((section_id, row, col)) = self.terminal_cell_at_position(ev.position) else {
+            return false;
+        };
+        if section_id != drag.section_id {
+            return false;
+        }
+
+        let Some(state) = self.section_states.get(&section_id) else {
+            return false;
+        };
+        let Some(tab) = state.tabs.get(state.active_tab) else {
+            return false;
+        };
+        let Some(terminal) = tab.terminal.as_ref() else {
+            return false;
+        };
+
+        terminal.update_selection(row, col);
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn set_hovered_terminal_link(
+        &mut self,
+        hovered: Option<HoveredTerminalLink>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.hovered_terminal_link == hovered {
+            return false;
+        }
+
+        self.hovered_terminal_link = hovered;
+        cx.notify();
+        true
+    }
+
+    fn update_hovered_terminal_link(
+        &mut self,
+        ev: &MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let hovered = if ev.dragging() || self.terminal_selection_drag.is_some() {
+            None
+        } else {
+            self.terminal_cell_at_position(ev.position)
+                .and_then(|(section_id, row, col)| {
+                    let state = self.section_states.get(&section_id)?;
+                    let tab = state.tabs.get(state.active_tab)?;
+                    let terminal = tab.terminal.as_ref()?;
+                    terminal
+                        .link_hint_at_viewport_cell(row, col)
+                        .map(|_| HoveredTerminalLink {
+                            section_id,
+                            row,
+                            col,
+                        })
+                })
+        };
+
+        self.set_hovered_terminal_link(hovered, cx)
+    }
+}
+
 pub struct AnotherOneApp {
     pub(crate) sidebar_w: f32,
     pub(crate) sidebar_saved: f32,
@@ -375,18 +816,7 @@ pub struct AnotherOneApp {
     pub(crate) project_remove_confirm: Option<ProjectRemoveConfirmState>,
     /// Pending task deletion confirmation for a worktree task.
     pub(crate) sidebar_task_delete_confirm: Option<SidebarTaskDeleteConfirmState>,
-    /// Currently selected section (project + branch).
-    pub(crate) active_section: Option<SectionId>,
-    /// Currently displayed project page (project_id). Mutually exclusive with terminal view.
-    pub(crate) active_project_page: Option<String>,
-    /// Search text for the tasks list on the project page.
-    pub(crate) project_page_task_search: String,
-    /// Whether the Open PRs section is collapsed on the project page.
-    pub(crate) project_page_prs_collapsed: bool,
-    /// Active PR filter tab index (0=All Open, 1=Needs My Review, 2=My PRs, 3=Draft).
-    pub(crate) project_page_pr_filter: usize,
-    /// Per-section terminal tab state.
-    pub(crate) section_states: HashMap<SectionId, SectionState>,
+    pub(crate) workspace_pane: Entity<WorkspacePane>,
     /// Cached changed-file snapshot per project.
     pub(crate) changed_files: HashMap<String, Arc<[ChangedFile]>>,
     /// Cached partitioned sidebar data derived from `changed_files`.
@@ -394,12 +824,6 @@ pub struct AnotherOneApp {
         HashMap<String, crate::right_sidebar::ChangedFilesListSnapshot>,
     /// Focus handle for terminal keyboard input.
     pub(crate) focus_handle: FocusHandle,
-    /// Last rendered terminal viewport geometry for pointer selection.
-    pub(crate) terminal_viewport: Option<TerminalViewport>,
-    /// Hovered terminal link cell, if any.
-    pub(crate) hovered_terminal_link: Option<HoveredTerminalLink>,
-    /// Active terminal mouse selection drag, if any.
-    pub(crate) terminal_selection_drag: Option<TerminalSelectionDrag>,
     /// Whether the refresh timer has been started.
     pub(crate) refresh_timer_started: bool,
     /// The toolbar git action currently running in the background, if any.
@@ -579,7 +1003,7 @@ impl EntityInputHandler for AnotherOneApp {
         &mut self,
         _ignore_disabled_input: bool,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
         match self.text_input_target() {
             TextInputTarget::NewTaskModal => self.new_task_modal.as_ref().map(|state| {
@@ -596,7 +1020,7 @@ impl EntityInputHandler for AnotherOneApp {
                     state.task_name_selection_anchor,
                 )
             }),
-            TextInputTarget::Terminal => terminal_selected_text_range(self),
+            TextInputTarget::Terminal => terminal_selected_text_range(self, cx),
             TextInputTarget::Blocked => None,
         }
     }
@@ -649,21 +1073,24 @@ impl EntityInputHandler for AnotherOneApp {
                 }
             }
             TextInputTarget::Terminal => {
-                let Some(section_id) = self.active_section.as_ref() else {
-                    return;
-                };
-                let Some(state) = self.section_states.get(section_id) else {
-                    return;
-                };
-                let Some(tab) = state.tabs.get(state.active_tab) else {
-                    return;
-                };
-                let Some(terminal) = tab.terminal.as_ref() else {
-                    return;
-                };
                 if !text.is_empty() {
                     self.note_terminal_input_activity();
-                    terminal.write_to_pty(text.as_bytes());
+                    let replacement = text.to_string();
+                    self.workspace_pane.update(cx, |workspace, _| {
+                        let Some(section_id) = workspace.active_section.as_ref() else {
+                            return;
+                        };
+                        let Some(state) = workspace.section_states.get(section_id) else {
+                            return;
+                        };
+                        let Some(tab) = state.tabs.get(state.active_tab) else {
+                            return;
+                        };
+                        let Some(terminal) = tab.terminal.as_ref() else {
+                            return;
+                        };
+                        terminal.write_to_pty(replacement.as_bytes());
+                    });
                 }
             }
             TextInputTarget::Blocked => {}
@@ -750,11 +1177,12 @@ fn utf16_selection_for_text(
     }
 }
 
-fn terminal_selected_text_range(app: &AnotherOneApp) -> Option<UTF16Selection> {
-    let alt_screen = app
+fn terminal_selected_text_range(app: &AnotherOneApp, cx: &App) -> Option<UTF16Selection> {
+    let workspace = app.workspace_pane.read(cx);
+    let alt_screen = workspace
         .active_section
         .as_ref()
-        .and_then(|sid| app.section_states.get(sid))
+        .and_then(|sid| workspace.section_states.get(sid))
         .and_then(|state| state.tabs.get(state.active_tab))
         .and_then(|tab| tab.terminal.as_ref())
         .and_then(|terminal| {
@@ -1071,16 +1499,32 @@ impl AnotherOneApp {
             let cwd = store.projects.first().map(|p| p.path.clone());
             section_states.insert(sid.clone(), SectionState::with_cwd(cwd));
         }
+        let focus_handle = cx.focus_handle();
+        let initial_sidebar_w = if left_sidebar_open {
+            280.
+        } else {
+            SIDEBAR_COLLAPSED
+        };
+        let initial_right_w = 460.;
+        let initial_font_size = 13.0;
+        let app_entity = cx.weak_entity();
+        let workspace_pane = cx.new(|_| {
+            WorkspacePane::new(
+                app_entity.clone(),
+                focus_handle.clone(),
+                initial_sidebar_w,
+                initial_right_w,
+                initial_font_size,
+                initial_section.clone(),
+                section_states,
+            )
+        });
 
         let mut app = Self {
-            sidebar_w: if left_sidebar_open {
-                280.
-            } else {
-                SIDEBAR_COLLAPSED
-            },
+            sidebar_w: initial_sidebar_w,
             sidebar_saved: 280.,
-            right_w: 460.,
-            right_saved: 460.,
+            right_w: initial_right_w,
+            right_saved: initial_right_w,
             drag: None,
             animating: false,
             project_store: store,
@@ -1102,18 +1546,10 @@ impl AnotherOneApp {
             sidebar_task_delete_confirm: None,
             new_task_modal: None,
             sidebar_task_rename: None,
-            active_section: initial_section,
-            active_project_page: None,
-            project_page_task_search: String::new(),
-            project_page_prs_collapsed: false,
-            project_page_pr_filter: 0,
-            section_states,
+            workspace_pane,
             changed_files: HashMap::new(),
             changed_files_list_snapshots: HashMap::new(),
-            focus_handle: cx.focus_handle(),
-            terminal_viewport: None,
-            hovered_terminal_link: None,
-            terminal_selection_drag: None,
+            focus_handle,
             refresh_timer_started: false,
             active_git_action: None,
             git_action_receiver: None,
@@ -1135,15 +1571,15 @@ impl AnotherOneApp {
             settings_section: crate::settings_page::SettingsSection::Agents,
             marked_text: None,
             sidebar_task_last_click: None,
-            font_size: 13.0,
+            font_size: initial_font_size,
             last_terminal_input: Cell::new(Instant::now() - ACTIVE_TERMINAL_TYPING_GRACE),
             last_git_status_refresh: Instant::now() - ACTIVE_GIT_STATUS_REFRESH_INTERVAL,
             last_git_metadata_refresh: Instant::now() - ACTIVE_GIT_METADATA_REFRESH_INTERVAL,
             last_terminal_output_redraw: Instant::now() - ACTIVE_TERMINAL_FRAME_INTERVAL,
         };
 
-        if let Some(section_id) = app.active_section.clone() {
-            app.ensure_active_terminal_spawned(&section_id);
+        if let Some(section_id) = app.workspace_pane.read(cx).active_section.clone() {
+            app.ensure_active_terminal_spawned(&section_id, cx);
         }
 
         app
@@ -1151,6 +1587,15 @@ impl AnotherOneApp {
 
     pub(crate) fn note_terminal_input_activity(&self) {
         self.last_terminal_input.set(Instant::now());
+    }
+
+    pub(crate) fn sync_workspace_layout(&mut self, cx: &mut Context<Self>) {
+        let sidebar_w = self.sidebar_w;
+        let right_w = self.right_w;
+        let font_size = self.font_size;
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.sync_layout(sidebar_w, right_w, font_size, cx);
+        });
     }
 
     fn active_terminal_frame_interval(&self) -> Duration {
@@ -1187,9 +1632,10 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    pub(crate) fn ensure_active_terminal_spawned(&mut self, section_id: &SectionId) {
+    pub(crate) fn ensure_active_terminal_spawned(&mut self, section_id: &SectionId, cx: &App) {
+        let workspace = self.workspace_pane.read(cx);
         let Some((tab_id, cwd, launch_config)) =
-            self.section_states.get(section_id).and_then(|state| {
+            workspace.section_states.get(section_id).and_then(|state| {
                 state
                     .tabs
                     .get(state.active_tab)
@@ -1222,38 +1668,44 @@ impl AnotherOneApp {
 
     fn zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
         self.font_size = (self.font_size + 1.0).min(32.0);
+        self.sync_workspace_layout(cx);
         cx.notify();
     }
 
     fn zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
         self.font_size = (self.font_size - 1.0).max(8.0);
+        self.sync_workspace_layout(cx);
         cx.notify();
     }
 
     fn zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
         self.font_size = 13.0;
+        self.sync_workspace_layout(cx);
         cx.notify();
     }
 
-    fn flush_pending_terminal_resizes(&mut self) -> bool {
-        let mut resized = false;
-        for section in self.section_states.values_mut() {
-            for tab in &mut section.tabs {
-                if let Some(terminal) = tab.terminal.as_mut() {
-                    resized |= terminal.flush_resize();
+    fn flush_pending_terminal_resizes(&mut self, cx: &mut Context<Self>) -> bool {
+        self.workspace_pane.update(cx, |workspace, _| {
+            let mut resized = false;
+            for section in workspace.section_states.values_mut() {
+                for tab in &mut section.tabs {
+                    if let Some(terminal) = tab.terminal.as_mut() {
+                        resized |= terminal.flush_resize();
+                    }
                 }
             }
-        }
-        resized
+            resized
+        })
     }
 
-    fn should_notify_active_terminal(&mut self) -> bool {
-        let Some(section_id) = self.active_section.clone() else {
+    fn should_notify_active_terminal(&mut self, cx: &App) -> bool {
+        let workspace = self.workspace_pane.read(cx);
+        let Some(section_id) = workspace.active_section.clone() else {
             return false;
         };
 
         let frame_interval = self.active_terminal_frame_interval();
-        let Some(terminal) = self
+        let Some(terminal) = workspace
             .section_states
             .get(&section_id)
             .and_then(|section| section.tabs.get(section.active_tab))
@@ -1374,7 +1826,7 @@ impl AnotherOneApp {
         }
     }
 
-    fn maybe_schedule_active_git_refresh(&mut self) {
+    fn maybe_schedule_active_git_refresh(&mut self, cx: &App) {
         if self.git_refresh_in_flight {
             return;
         }
@@ -1387,7 +1839,8 @@ impl AnotherOneApp {
             return;
         }
 
-        let Some((project_id, project_path)) = self
+        let workspace = self.workspace_pane.read(cx);
+        let Some((project_id, project_path)) = workspace
             .active_section
             .as_ref()
             .and_then(|section| {
@@ -1442,14 +1895,18 @@ impl AnotherOneApp {
         self.last_git_metadata_refresh = self.last_git_status_refresh;
     }
 
-    fn active_project_context(&self) -> Option<(String, std::path::PathBuf)> {
-        self.active_section.as_ref().and_then(|section| {
-            self.project_store
-                .projects
-                .iter()
-                .find(|project| project.id == section.project_id)
-                .map(|project| (project.id.clone(), project.path.clone()))
-        })
+    fn active_project_context(&self, cx: &App) -> Option<(String, std::path::PathBuf)> {
+        self.workspace_pane
+            .read(cx)
+            .active_section
+            .as_ref()
+            .and_then(|section| {
+                self.project_store
+                    .projects
+                    .iter()
+                    .find(|project| project.id == section.project_id)
+                    .map(|project| (project.id.clone(), project.path.clone()))
+            })
     }
 
     fn activate_project_section(
@@ -1458,18 +1915,12 @@ impl AnotherOneApp {
         branch_name: &str,
         cwd: std::path::PathBuf,
         launch_config: Option<TerminalLaunchConfig>,
+        cx: &mut Context<Self>,
     ) {
         let section_id = SectionId::new(project_id, branch_name);
-        if !self.section_states.contains_key(&section_id) {
-            let section_state = match launch_config {
-                Some(launch_config) => SectionState::with_launch_config(Some(cwd), launch_config),
-                None => SectionState::with_cwd(Some(cwd)),
-            };
-            self.section_states
-                .insert(section_id.clone(), section_state);
-        }
-        self.active_section = Some(section_id);
-        self.active_project_page = None;
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.activate_section(section_id, Some(cwd), launch_config, cx);
+        });
         self.mark_git_refresh_stale();
     }
 
@@ -1554,14 +2005,11 @@ impl AnotherOneApp {
             self.project_store
                 .set_expanded_projects(&self.expanded_projects);
             let section_id = SectionId::for_task(&project.id, &branch_name, &task_id);
-            if !self.section_states.contains_key(&section_id) {
-                self.section_states.insert(
-                    section_id.clone(),
-                    SectionState::with_launch_config(Some(project.path.clone()), launch_config),
-                );
-            }
-            self.active_section = Some(section_id);
-            self.active_project_page = None;
+            let project_path = project.path.clone();
+            let launch_config = launch_config.clone();
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.activate_section(section_id, Some(project_path), Some(launch_config), cx);
+            });
             self.mark_git_refresh_stale();
             self.new_task_modal = None;
             self.show_success_toast(
@@ -1617,8 +2065,10 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    pub(crate) fn active_changed_files(&self) -> Arc<[ChangedFile]> {
-        self.active_section
+    pub(crate) fn active_changed_files(&self, cx: &App) -> Arc<[ChangedFile]> {
+        self.workspace_pane
+            .read(cx)
+            .active_section
             .as_ref()
             .and_then(|section| self.changed_files.get(&section.project_id))
             .cloned()
@@ -1912,7 +2362,7 @@ impl AnotherOneApp {
             return;
         }
 
-        let Some((project_id, project_path)) = self.active_project_context() else {
+        let Some((project_id, project_path)) = self.active_project_context(cx) else {
             self.show_error_toast("No active project is selected.", cx);
             return;
         };
@@ -2093,6 +2543,7 @@ impl AnotherOneApp {
                             &success.branch_name,
                             project.path.clone(),
                             Some(success.launch_config),
+                            cx,
                         );
                         self.new_task_modal = None;
                         self.show_success_toast(
@@ -2146,6 +2597,7 @@ impl AnotherOneApp {
                                         &branch.name,
                                         project_path,
                                         None,
+                                        cx,
                                     );
                                     self.expanded_projects.insert(project_id.clone());
                                     self.project_store
@@ -2185,17 +2637,21 @@ impl AnotherOneApp {
             self.pending_terminal_spawns
                 .remove(&(reply.section_id.clone(), reply.tab_id));
 
-            let Some(state) = self.section_states.get_mut(&reply.section_id) else {
-                continue;
-            };
-            let Some(tab) = state.tabs.iter_mut().find(|tab| tab.id == reply.tab_id) else {
-                continue;
-            };
-
             match reply.result {
                 Ok(terminal) => {
-                    tab.terminal = Some(terminal);
-                    should_notify = true;
+                    let section_id = reply.section_id.clone();
+                    let tab_id = reply.tab_id;
+                    should_notify |= self.workspace_pane.update(cx, |workspace, cx| {
+                        let Some(state) = workspace.section_states.get_mut(&section_id) else {
+                            return false;
+                        };
+                        let Some(tab) = state.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+                            return false;
+                        };
+                        tab.terminal = Some(terminal);
+                        cx.notify();
+                        true
+                    });
                 }
                 Err(error) => {
                     self.show_error_toast(error, cx);
@@ -2364,6 +2820,7 @@ impl AnotherOneApp {
             self.sidebar_w = to;
             self.project_store
                 .set_left_sidebar_open(to > SIDEBAR_COLLAPSED + 8.);
+            self.sync_workspace_layout(cx);
             cx.notify();
             return;
         }
@@ -2380,6 +2837,7 @@ impl AnotherOneApp {
                     let v = from + (to - from) * e;
                     let _ = handle.update(async_cx, |this, cx| {
                         this.sidebar_w = v;
+                        this.sync_workspace_layout(cx);
                         cx.notify();
                     });
                     Timer::after(Duration::from_millis(STEP_MS)).await;
@@ -2389,6 +2847,7 @@ impl AnotherOneApp {
                     this.animating = false;
                     this.project_store
                         .set_left_sidebar_open(to > SIDEBAR_COLLAPSED + 8.);
+                    this.sync_workspace_layout(cx);
                     cx.notify();
                 });
             })
@@ -2409,6 +2868,7 @@ impl AnotherOneApp {
         };
         if (from - to).abs() < 1. {
             self.right_w = to;
+            self.sync_workspace_layout(cx);
             cx.notify();
             return;
         }
@@ -2425,6 +2885,7 @@ impl AnotherOneApp {
                     let v = from + (to - from) * e;
                     let _ = handle.update(async_cx, |this, cx| {
                         this.right_w = v;
+                        this.sync_workspace_layout(cx);
                         cx.notify();
                     });
                     Timer::after(Duration::from_millis(STEP_MS)).await;
@@ -2432,6 +2893,7 @@ impl AnotherOneApp {
                 let _ = handle.update(async_cx, |this, cx| {
                     this.right_w = to;
                     this.animating = false;
+                    this.sync_workspace_layout(cx);
                     cx.notify();
                 });
             })
@@ -2479,12 +2941,11 @@ impl AnotherOneApp {
             return;
         }
 
-        if self.update_terminal_selection_drag(ev, cx) {
-            self.set_hovered_terminal_link(None, cx);
+        if self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.handle_terminal_mouse_move(ev, cx)
+        }) {
             return;
         }
-
-        self.update_hovered_terminal_link(ev, cx);
 
         let Some((kind, last_x)) = self.drag else {
             return;
@@ -2514,16 +2975,20 @@ impl AnotherOneApp {
             }
         }
         self.clamp_layout(window);
+        self.sync_workspace_layout(cx);
         cx.notify();
     }
 
     pub fn on_mouse_up(&mut self, _ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let had_toast_drag = self.finish_toast_drag(cx);
-        let had_terminal_drag = self.terminal_selection_drag.take().is_some();
+        let had_terminal_drag = self
+            .workspace_pane
+            .update(cx, |workspace, _| workspace.finish_terminal_drag());
         let had_layout_drag = self.drag.take().is_some();
 
         if had_layout_drag {
             self.clamp_layout(window);
+            self.sync_workspace_layout(cx);
             self.project_store
                 .set_left_sidebar_open(self.sidebar_is_open());
         }
@@ -2581,11 +3046,11 @@ impl AnotherOneApp {
             )
     }
 
-    fn footer_branch_indicator(&self, window: &Window) -> impl IntoElement {
+    fn footer_branch_indicator(&self, window: &Window, cx: &App) -> impl IntoElement {
         let icon_col = theme::toggle_icon_color(window);
         let text_col = gpui::white().opacity(0.55);
 
-        if let Some(ref section) = self.active_section {
+        if let Some(section) = self.workspace_pane.read(cx).active_section.clone() {
             let name: SharedString = section.branch_name.clone().into();
             div()
                 .flex()
@@ -2609,17 +3074,22 @@ impl AnotherOneApp {
         }
     }
 
-    fn footer_worktree_indicator(&self, window: &Window) -> impl IntoElement {
+    fn footer_worktree_indicator(&self, window: &Window, cx: &App) -> impl IntoElement {
         let icon_col = theme::toggle_icon_color(window);
         let text_col = gpui::white().opacity(0.55);
 
-        let worktree_name = self.active_section.as_ref().and_then(|section| {
-            self.project_store
-                .projects
-                .iter()
-                .find(|p| p.id == section.project_id)
-                .and_then(|p| p.worktree_name.clone())
-        });
+        let worktree_name = self
+            .workspace_pane
+            .read(cx)
+            .active_section
+            .as_ref()
+            .and_then(|section| {
+                self.project_store
+                    .projects
+                    .iter()
+                    .find(|p| p.id == section.project_id)
+                    .and_then(|p| p.worktree_name.clone())
+            });
 
         if let Some(name) = worktree_name {
             let name: SharedString = name.into();
@@ -2654,132 +3124,6 @@ impl AnotherOneApp {
         self.settings_open = true;
         cx.stop_propagation();
         cx.notify();
-    }
-
-    pub(crate) fn update_terminal_viewport(
-        &mut self,
-        section_id: &SectionId,
-        cell_w: f32,
-        cell_h: f32,
-        cols: usize,
-        rows: usize,
-    ) {
-        let top_offset = if cfg!(target_os = "macos") {
-            TITLEBAR_CHROME_H
-        } else {
-            0.0
-        };
-
-        self.terminal_viewport = Some(TerminalViewport {
-            section_id: section_id.clone(),
-            origin_x: self.sidebar_w + GUTTER + 8.0,
-            origin_y: top_offset + 36.0 + 6.0,
-            cell_w,
-            cell_h,
-            cols,
-            rows,
-        });
-    }
-
-    pub(crate) fn clear_terminal_viewport(&mut self) {
-        self.terminal_viewport = None;
-        self.hovered_terminal_link = None;
-        self.terminal_selection_drag = None;
-    }
-
-    pub(crate) fn terminal_cell_at_position(
-        &self,
-        position: Point<Pixels>,
-    ) -> Option<(SectionId, usize, usize)> {
-        let viewport = self.terminal_viewport.as_ref()?;
-        if viewport.cols == 0 || viewport.rows == 0 {
-            return None;
-        }
-
-        let local_x = f32::from(position.x) - viewport.origin_x;
-        let local_y = f32::from(position.y) - viewport.origin_y;
-
-        let col = (local_x / viewport.cell_w).floor() as i32;
-        let row = (local_y / viewport.cell_h).floor() as i32;
-
-        let col = col.clamp(0, viewport.cols.saturating_sub(1) as i32) as usize;
-        let row = row.clamp(0, viewport.rows.saturating_sub(1) as i32) as usize;
-
-        Some((viewport.section_id.clone(), row, col))
-    }
-
-    fn update_terminal_selection_drag(
-        &mut self,
-        ev: &MouseMoveEvent,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(drag) = self.terminal_selection_drag.as_ref() else {
-            return false;
-        };
-        if !ev.dragging() {
-            return false;
-        }
-
-        let Some((section_id, row, col)) = self.terminal_cell_at_position(ev.position) else {
-            return false;
-        };
-        if section_id != drag.section_id {
-            return false;
-        }
-
-        let Some(state) = self.section_states.get(&section_id) else {
-            return false;
-        };
-        let Some(tab) = state.tabs.get(state.active_tab) else {
-            return false;
-        };
-        let Some(terminal) = tab.terminal.as_ref() else {
-            return false;
-        };
-
-        terminal.update_selection(row, col);
-        cx.notify();
-        true
-    }
-
-    fn set_hovered_terminal_link(
-        &mut self,
-        hovered: Option<HoveredTerminalLink>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.hovered_terminal_link == hovered {
-            return false;
-        }
-
-        self.hovered_terminal_link = hovered;
-        cx.notify();
-        true
-    }
-
-    fn update_hovered_terminal_link(
-        &mut self,
-        ev: &MouseMoveEvent,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let hovered = if ev.dragging() || self.terminal_selection_drag.is_some() {
-            None
-        } else {
-            self.terminal_cell_at_position(ev.position)
-                .and_then(|(section_id, row, col)| {
-                    let state = self.section_states.get(&section_id)?;
-                    let tab = state.tabs.get(state.active_tab)?;
-                    let terminal = tab.terminal.as_ref()?;
-                    terminal
-                        .link_hint_at_viewport_cell(row, col)
-                        .map(|_| HoveredTerminalLink {
-                            section_id,
-                            row,
-                            col,
-                        })
-                })
-        };
-
-        self.set_hovered_terminal_link(hovered, cx)
     }
 
     fn tick_toasts(&mut self) -> bool {
@@ -3154,8 +3498,8 @@ impl Render for AnotherOneApp {
                     loop {
                         Timer::after(interval).await;
                         let next_interval = handle.update(async_cx, |this, cx| {
-                            let mut should_notify = this.flush_pending_terminal_resizes();
-                            should_notify |= this.should_notify_active_terminal();
+                            let mut should_notify = this.flush_pending_terminal_resizes(cx);
+                            should_notify |= this.should_notify_active_terminal(cx);
                             should_notify |= this.drain_git_action(cx);
                             should_notify |= this.drain_changed_files_git_mutations(cx);
                             should_notify |= this.drain_git_refresh();
@@ -3164,7 +3508,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_terminal_spawn(cx);
                             should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.tick_toasts();
-                            this.maybe_schedule_active_git_refresh();
+                            this.maybe_schedule_active_git_refresh(cx);
                             if should_notify {
                                 cx.notify();
                             }
@@ -3228,6 +3572,7 @@ impl Render for AnotherOneApp {
 
         // ── Normal main layout ──────────────────────────────────
         self.clamp_layout(window);
+        self.sync_workspace_layout(cx);
         let sw = self.sidebar_w;
         let rw = self.right_w;
         let open = self.sidebar_is_open();
@@ -3265,8 +3610,8 @@ impl Render for AnotherOneApp {
                     .gap(px(8.))
                     .pl(px(GUTTER + 4.))
                     .pr(px(10.))
-                    .child(self.footer_branch_indicator(window))
-                    .child(self.footer_worktree_indicator(window)),
+                    .child(self.footer_branch_indicator(window, cx))
+                    .child(self.footer_worktree_indicator(window, cx)),
             );
 
         #[cfg(target_os = "macos")]

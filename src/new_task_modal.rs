@@ -78,6 +78,16 @@ fn active_bg() -> gpui::Hsla {
     gpui::white().opacity(0.10)
 }
 
+struct SourceBranchSectionProps<'a> {
+    project_name: SharedString,
+    selected_branch: SharedString,
+    current_branch: SharedString,
+    branches: &'a [String],
+    worktree_mode: bool,
+    dropdown_open: bool,
+    submitting: bool,
+}
+
 impl AnotherOneApp {
     pub(crate) fn open_new_task_modal(&mut self, project_id: &str) {
         let Some(project) = self
@@ -220,13 +230,15 @@ impl AnotherOneApp {
                             .min_h_0()
                             .overflow_y_scroll()
                             .child(Self::render_source_branch(
-                                project_name,
-                                selected_branch,
-                                current_branch,
-                                &available_branches,
-                                worktree_mode,
-                                branch_dropdown_open,
-                                submitting,
+                                SourceBranchSectionProps {
+                                    project_name,
+                                    selected_branch,
+                                    current_branch,
+                                    branches: &available_branches,
+                                    worktree_mode,
+                                    dropdown_open: branch_dropdown_open,
+                                    submitting,
+                                },
                                 cx,
                             ))
                             .child(Self::render_task_name_field(
@@ -466,15 +478,18 @@ impl AnotherOneApp {
     }
 
     fn render_source_branch(
-        project_name: SharedString,
-        selected_branch: SharedString,
-        current_branch: SharedString,
-        branches: &[String],
-        worktree_mode: bool,
-        dropdown_open: bool,
-        submitting: bool,
+        props: SourceBranchSectionProps<'_>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let SourceBranchSectionProps {
+            project_name,
+            selected_branch,
+            current_branch,
+            branches,
+            worktree_mode,
+            dropdown_open,
+            submitting,
+        } = props;
         let mut section = div()
             .mx(px(20.))
             .mt(px(4.))

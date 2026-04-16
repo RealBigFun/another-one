@@ -586,132 +586,6 @@ fn is_git_index_lock_error(stderr: &str, stdout: &str) -> bool {
             || combined.contains("File exists"))
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::{HashMap, HashSet};
-    use std::path::PathBuf;
-
-    use super::{format_git_command_error, DirectTask, Project, ProjectSettings, StoreFile};
-
-    fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
-        Project {
-            id: id.to_string(),
-            name: format!("Project {id}"),
-            path: PathBuf::from(format!("/tmp/{id}")),
-            settings: ProjectSettings::default(),
-            worktrees: Vec::new(),
-            branches: Vec::new(),
-            worktree_name: worktree_name.map(str::to_string),
-            repo_common_dir: None,
-        }
-    }
-
-    #[test]
-    fn formats_index_lock_error_for_toasts() {
-        let message = format_git_command_error(
-            "Could not unstage staged changes",
-            "Another git process seems to be running in this repository.\nfatal: Unable to create '/tmp/repo/.git/index.lock': File exists.",
-            "",
-        );
-
-        assert_eq!(
-            message,
-            "Could not unstage staged changes. Another git process or a stale `.git/index.lock` file is blocking this repository. Finish the other git command or remove the lock file, then try again."
-        );
-    }
-
-    #[test]
-    fn prefers_command_detail_when_no_special_case_matches() {
-        let message = format_git_command_error(
-            "Could not unstage staged changes",
-            "fatal: not a git repository",
-            "",
-        );
-
-        assert_eq!(
-            message,
-            "Could not unstage staged changes. fatal: not a git repository"
-        );
-    }
-
-    #[test]
-    fn store_file_defaults_new_sidebar_fields_for_old_json() {
-        let store: StoreFile =
-            serde_json::from_str(r#"{"projects":[{"id":"p1","name":"Project","path":"/tmp/p1"}]}"#)
-                .expect("old store JSON should still deserialize");
-
-        assert_eq!(store.projects.len(), 1);
-        assert!(store.direct_tasks.is_empty());
-        assert!(store.worktree_task_names.is_empty());
-        assert!(store.ui.left_sidebar_open);
-        assert_eq!(store.ui.expanded_project_ids, None);
-        assert!(store.ui.pinned_direct_task_ids.is_empty());
-        assert!(store.ui.pinned_worktree_project_ids.is_empty());
-    }
-
-    #[test]
-    fn store_file_round_trip_preserves_sidebar_task_state() {
-        let store = StoreFile {
-            projects: vec![
-                sample_project("root", None),
-                sample_project("wt1", Some("wt1")),
-            ],
-            direct_tasks: HashMap::from([(
-                "root".to_string(),
-                vec![DirectTask {
-                    id: "task-1".to_string(),
-                    name: "Investigate bug".to_string(),
-                    branch_name: "feature/persist-tasks".to_string(),
-                }],
-            )]),
-            worktree_task_names: HashMap::from([(
-                "wt1".to_string(),
-                "Friendly worktree name".to_string(),
-            )]),
-            ui: super::UiState {
-                left_sidebar_open: false,
-                expanded_project_ids: Some(HashSet::from(["root".to_string(), "wt1".to_string()])),
-                pinned_direct_task_ids: HashSet::from(["task-1".to_string()]),
-                pinned_worktree_project_ids: HashSet::from(["wt1".to_string()]),
-            },
-        };
-
-        let json = serde_json::to_string(&store).expect("store JSON should serialize");
-        let round_trip: StoreFile =
-            serde_json::from_str(&json).expect("store JSON should deserialize");
-
-        assert_eq!(round_trip.projects.len(), 2);
-        assert_eq!(
-            round_trip
-                .direct_tasks
-                .get("root")
-                .expect("direct tasks should round-trip")[0]
-                .name,
-            "Investigate bug"
-        );
-        assert_eq!(
-            round_trip
-                .worktree_task_names
-                .get("wt1")
-                .expect("worktree task name should round-trip"),
-            "Friendly worktree name"
-        );
-        assert!(!round_trip.ui.left_sidebar_open);
-        assert_eq!(
-            round_trip.ui.expanded_project_ids,
-            Some(HashSet::from(["root".to_string(), "wt1".to_string()]))
-        );
-        assert_eq!(
-            round_trip.ui.pinned_direct_task_ids,
-            HashSet::from(["task-1".to_string()])
-        );
-        assert_eq!(
-            round_trip.ui.pinned_worktree_project_ids,
-            HashSet::from(["wt1".to_string()])
-        );
-    }
-}
-
 pub fn current_branch(path: &Path) -> Option<String> {
     git_current_branch(path)
 }
@@ -1277,4 +1151,130 @@ fn detect_repo_common_dir(path: &Path) -> Option<PathBuf> {
     };
 
     absolute.canonicalize().ok().or(Some(absolute))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+    use std::path::PathBuf;
+
+    use super::{format_git_command_error, DirectTask, Project, ProjectSettings, StoreFile};
+
+    fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
+        Project {
+            id: id.to_string(),
+            name: format!("Project {id}"),
+            path: PathBuf::from(format!("/tmp/{id}")),
+            settings: ProjectSettings::default(),
+            worktrees: Vec::new(),
+            branches: Vec::new(),
+            worktree_name: worktree_name.map(str::to_string),
+            repo_common_dir: None,
+        }
+    }
+
+    #[test]
+    fn formats_index_lock_error_for_toasts() {
+        let message = format_git_command_error(
+            "Could not unstage staged changes",
+            "Another git process seems to be running in this repository.\nfatal: Unable to create '/tmp/repo/.git/index.lock': File exists.",
+            "",
+        );
+
+        assert_eq!(
+            message,
+            "Could not unstage staged changes. Another git process or a stale `.git/index.lock` file is blocking this repository. Finish the other git command or remove the lock file, then try again."
+        );
+    }
+
+    #[test]
+    fn prefers_command_detail_when_no_special_case_matches() {
+        let message = format_git_command_error(
+            "Could not unstage staged changes",
+            "fatal: not a git repository",
+            "",
+        );
+
+        assert_eq!(
+            message,
+            "Could not unstage staged changes. fatal: not a git repository"
+        );
+    }
+
+    #[test]
+    fn store_file_defaults_new_sidebar_fields_for_old_json() {
+        let store: StoreFile =
+            serde_json::from_str(r#"{"projects":[{"id":"p1","name":"Project","path":"/tmp/p1"}]}"#)
+                .expect("old store JSON should still deserialize");
+
+        assert_eq!(store.projects.len(), 1);
+        assert!(store.direct_tasks.is_empty());
+        assert!(store.worktree_task_names.is_empty());
+        assert!(store.ui.left_sidebar_open);
+        assert_eq!(store.ui.expanded_project_ids, None);
+        assert!(store.ui.pinned_direct_task_ids.is_empty());
+        assert!(store.ui.pinned_worktree_project_ids.is_empty());
+    }
+
+    #[test]
+    fn store_file_round_trip_preserves_sidebar_task_state() {
+        let store = StoreFile {
+            projects: vec![
+                sample_project("root", None),
+                sample_project("wt1", Some("wt1")),
+            ],
+            direct_tasks: HashMap::from([(
+                "root".to_string(),
+                vec![DirectTask {
+                    id: "task-1".to_string(),
+                    name: "Investigate bug".to_string(),
+                    branch_name: "feature/persist-tasks".to_string(),
+                }],
+            )]),
+            worktree_task_names: HashMap::from([(
+                "wt1".to_string(),
+                "Friendly worktree name".to_string(),
+            )]),
+            ui: super::UiState {
+                left_sidebar_open: false,
+                expanded_project_ids: Some(HashSet::from(["root".to_string(), "wt1".to_string()])),
+                pinned_direct_task_ids: HashSet::from(["task-1".to_string()]),
+                pinned_worktree_project_ids: HashSet::from(["wt1".to_string()]),
+            },
+        };
+
+        let json = serde_json::to_string(&store).expect("store JSON should serialize");
+        let round_trip: StoreFile =
+            serde_json::from_str(&json).expect("store JSON should deserialize");
+
+        assert_eq!(round_trip.projects.len(), 2);
+        assert_eq!(
+            round_trip
+                .direct_tasks
+                .get("root")
+                .expect("direct tasks should round-trip")[0]
+                .name,
+            "Investigate bug"
+        );
+        assert_eq!(
+            round_trip
+                .worktree_task_names
+                .get("wt1")
+                .expect("worktree task name should round-trip"),
+            "Friendly worktree name"
+        );
+        assert!(!round_trip.ui.left_sidebar_open);
+        assert_eq!(
+            round_trip.ui.expanded_project_ids,
+            Some(HashSet::from(["root".to_string(), "wt1".to_string()]))
+        );
+        assert_eq!(
+            round_trip.ui.pinned_direct_task_ids,
+            HashSet::from(["task-1".to_string()])
+        );
+        assert_eq!(
+            round_trip.ui.pinned_worktree_project_ids,
+            HashSet::from(["wt1".to_string()])
+        );
+    }
 }
