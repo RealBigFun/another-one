@@ -1,6 +1,7 @@
 //! AnotherOne desktop app (sidebar | main | right) using GPUI from Zed
 //! (https://github.com/zed-industries/zed, crate `gpui`).
 
+mod add_agent_modal;
 mod agents;
 mod app;
 mod assets;

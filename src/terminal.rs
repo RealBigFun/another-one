@@ -30,7 +30,7 @@ const URL_TRIM_CHARS: &[char] = &[
 
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
-use crate::agents::TerminalLaunchConfig;
+use crate::agents::{TerminalLaunchConfig, TerminalLaunchKind};
 
 // ── Event listener (no-op; we poll the grid directly) ────────────────
 
@@ -97,7 +97,7 @@ impl TerminalInstance {
         cols: u16,
         rows: u16,
         cwd: Option<&std::path::Path>,
-        launch_config: Option<&TerminalLaunchConfig>,
+        launch_config: &TerminalLaunchConfig,
     ) -> anyhow::Result<Self> {
         // 1. Open PTY.
         let pty_system = NativePtySystem::default();
@@ -108,10 +108,25 @@ impl TerminalInstance {
             pixel_height: 0,
         })?;
 
-        // 2. Build shell command.
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-        let mut cmd = CommandBuilder::new(&shell);
-        cmd.arg("-l"); // login shell
+        // 2. Build the process command for the tab type.
+        let mut cmd = match launch_config.kind {
+            TerminalLaunchKind::Shell => {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+                let mut command = CommandBuilder::new(&shell);
+                command.arg("-l");
+                command
+            }
+            TerminalLaunchKind::Agent => {
+                let Some(program) = launch_config.launch_argv.first() else {
+                    anyhow::bail!("The agent tab is missing a launch command.");
+                };
+                let mut command = CommandBuilder::new(program);
+                for arg in launch_config.launch_argv.iter().skip(1) {
+                    command.arg(arg);
+                }
+                command
+            }
+        };
         if let Some(dir) = cwd {
             cmd.cwd(dir);
         }
@@ -165,9 +180,7 @@ impl TerminalInstance {
             scroll_px: 0.0,
         };
 
-        if let Some(startup_command) =
-            launch_config.and_then(TerminalLaunchConfig::startup_command_line)
-        {
+        if let Some(startup_command) = launch_config.shell_startup_command_line() {
             instance.write_to_pty(startup_command.as_bytes());
             instance.write_to_pty(b"\n");
         }

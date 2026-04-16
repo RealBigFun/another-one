@@ -9,6 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use crate::agents::{AgentProviderKind, ResumeTarget, TerminalLaunchKind};
+
 /// A single project entry. Will later carry per-project settings, worktrees, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -128,6 +130,29 @@ pub struct Worktree {
     pub path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedTerminalTab {
+    pub id: usize,
+    pub title: String,
+    pub kind: TerminalLaunchKind,
+    #[serde(default)]
+    pub provider: Option<AgentProviderKind>,
+    #[serde(default)]
+    pub launch_argv: Vec<String>,
+    #[serde(default)]
+    pub resume_target: Option<ResumeTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedSectionState {
+    pub active_tab_id: usize,
+    pub next_tab_id: usize,
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub tabs: Vec<PersistedTerminalTab>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(default = "default_left_sidebar_open")]
@@ -138,6 +163,8 @@ pub struct UiState {
     pub pinned_direct_task_ids: HashSet<String>,
     #[serde(default)]
     pub pinned_worktree_project_ids: HashSet<String>,
+    #[serde(default)]
+    pub last_active_section_key: Option<String>,
 }
 
 impl Default for UiState {
@@ -147,6 +174,7 @@ impl Default for UiState {
             expanded_project_ids: None,
             pinned_direct_task_ids: HashSet::new(),
             pinned_worktree_project_ids: HashSet::new(),
+            last_active_section_key: None,
         }
     }
 }
@@ -165,6 +193,8 @@ struct StoreFile {
     #[serde(default)]
     worktree_task_names: HashMap<String, String>,
     #[serde(default)]
+    terminal_sections: HashMap<String, PersistedSectionState>,
+    #[serde(default)]
     ui: UiState,
 }
 
@@ -174,6 +204,7 @@ pub struct ProjectStore {
     pub projects: Vec<Project>,
     pub direct_tasks: HashMap<String, Vec<DirectTask>>,
     pub worktree_task_names: HashMap<String, String>,
+    pub terminal_sections: HashMap<String, PersistedSectionState>,
     pub ui: UiState,
     file_path: PathBuf,
 }
@@ -187,6 +218,7 @@ impl ProjectStore {
             mut projects,
             mut direct_tasks,
             mut worktree_task_names,
+            mut terminal_sections,
             mut ui,
         } = Self::read_from_disk(&file_path);
 
@@ -204,6 +236,21 @@ impl ProjectStore {
             .collect();
         direct_tasks.retain(|project_id, _| project_ids.contains(project_id));
         worktree_task_names.retain(|project_id, _| project_ids.contains(project_id));
+        terminal_sections.retain(|section_key, _| {
+            let mut parts = section_key.splitn(3, "::");
+            let Some(project_id) = parts.next() else {
+                return false;
+            };
+            let Some(_branch_name) = parts.next() else {
+                return false;
+            };
+            let Some(task_id) = parts.next() else {
+                return false;
+            };
+
+            project_ids.contains(project_id)
+                && (task_id.is_empty() || direct_task_ids.contains(task_id))
+        });
         if let Some(expanded_project_ids) = ui.expanded_project_ids.as_mut() {
             expanded_project_ids.retain(|project_id| project_ids.contains(project_id));
         }
@@ -211,11 +258,19 @@ impl ProjectStore {
             .retain(|task_id| direct_task_ids.contains(task_id));
         ui.pinned_worktree_project_ids
             .retain(|project_id| project_ids.contains(project_id));
+        if ui
+            .last_active_section_key
+            .as_ref()
+            .is_some_and(|section_key| !terminal_sections.contains_key(section_key))
+        {
+            ui.last_active_section_key = None;
+        }
 
         Self {
             projects,
             direct_tasks,
             worktree_task_names,
+            terminal_sections,
             ui,
             file_path,
         }
@@ -227,6 +282,16 @@ impl ProjectStore {
         self.projects.retain(|p| p.id != id);
         self.direct_tasks.remove(id);
         self.worktree_task_names.remove(id);
+        self.terminal_sections
+            .retain(|section_key, _| !section_key.starts_with(&format!("{id}::")));
+        if self
+            .ui
+            .last_active_section_key
+            .as_ref()
+            .is_some_and(|section_key| section_key.starts_with(&format!("{id}::")))
+        {
+            self.ui.last_active_section_key = None;
+        }
         self.ui.pinned_worktree_project_ids.remove(id);
         self.save();
     }
@@ -281,6 +346,7 @@ impl ProjectStore {
             projects: self.projects.clone(),
             direct_tasks: self.direct_tasks.clone(),
             worktree_task_names: self.worktree_task_names.clone(),
+            terminal_sections: self.terminal_sections.clone(),
             ui: self.ui.clone(),
         };
         if let Some(parent) = self.file_path.parent() {
@@ -302,6 +368,54 @@ impl ProjectStore {
     pub fn set_expanded_projects(&mut self, expanded_project_ids: &HashSet<String>) {
         self.ui.expanded_project_ids = Some(expanded_project_ids.clone());
         self.save();
+    }
+
+    pub fn set_last_active_section_key(&mut self, section_key: Option<String>) {
+        if self.ui.last_active_section_key == section_key {
+            return;
+        }
+
+        self.ui.last_active_section_key = section_key;
+        self.save();
+    }
+
+    pub fn set_terminal_section(
+        &mut self,
+        section_key: impl Into<String>,
+        state: PersistedSectionState,
+    ) {
+        self.terminal_sections.insert(section_key.into(), state);
+        self.save();
+    }
+
+    pub fn remove_terminal_section(&mut self, section_key: &str) -> bool {
+        let removed = self.terminal_sections.remove(section_key).is_some();
+        if removed {
+            if self.ui.last_active_section_key.as_deref() == Some(section_key) {
+                self.ui.last_active_section_key = None;
+            }
+            self.save();
+        }
+        removed
+    }
+
+    pub fn remove_terminal_sections(&mut self, section_keys: &HashSet<String>) -> bool {
+        let before = self.terminal_sections.len();
+        self.terminal_sections
+            .retain(|section_key, _| !section_keys.contains(section_key));
+        let changed = before != self.terminal_sections.len();
+        if changed {
+            if self
+                .ui
+                .last_active_section_key
+                .as_ref()
+                .is_some_and(|section_key| section_keys.contains(section_key))
+            {
+                self.ui.last_active_section_key = None;
+            }
+            self.save();
+        }
+        changed
     }
 
     // --- private helpers ---
@@ -1158,7 +1272,12 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
 
-    use super::{format_git_command_error, DirectTask, Project, ProjectSettings, StoreFile};
+    use crate::agents::{AgentProviderKind, ResumeTarget, TerminalLaunchKind};
+
+    use super::{
+        format_git_command_error, DirectTask, PersistedSectionState, PersistedTerminalTab, Project,
+        ProjectSettings, StoreFile,
+    };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
         Project {
@@ -1210,10 +1329,12 @@ mod tests {
         assert_eq!(store.projects.len(), 1);
         assert!(store.direct_tasks.is_empty());
         assert!(store.worktree_task_names.is_empty());
+        assert!(store.terminal_sections.is_empty());
         assert!(store.ui.left_sidebar_open);
         assert_eq!(store.ui.expanded_project_ids, None);
         assert!(store.ui.pinned_direct_task_ids.is_empty());
         assert!(store.ui.pinned_worktree_project_ids.is_empty());
+        assert_eq!(store.ui.last_active_section_key, None);
     }
 
     #[test]
@@ -1235,11 +1356,64 @@ mod tests {
                 "wt1".to_string(),
                 "Friendly worktree name".to_string(),
             )]),
+            terminal_sections: HashMap::from([
+                (
+                    "root::main::".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: 1,
+                        next_tab_id: 3,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                        tabs: vec![
+                            PersistedTerminalTab {
+                                id: 0,
+                                title: "Terminal".to_string(),
+                                kind: TerminalLaunchKind::Shell,
+                                provider: None,
+                                launch_argv: Vec::new(),
+                                resume_target: None,
+                            },
+                            PersistedTerminalTab {
+                                id: 1,
+                                title: "Claude Code".to_string(),
+                                kind: TerminalLaunchKind::Agent,
+                                provider: Some(AgentProviderKind::ClaudeCode),
+                                launch_argv: vec![
+                                    "claude".to_string(),
+                                    "--resume".to_string(),
+                                    "session-123".to_string(),
+                                ],
+                                resume_target: Some(ResumeTarget::id("session-123")),
+                            },
+                        ],
+                    },
+                ),
+                (
+                    "wt1::feature/worktree::".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: 0,
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt1")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: 0,
+                            title: "Pi".to_string(),
+                            kind: TerminalLaunchKind::Agent,
+                            provider: Some(AgentProviderKind::Pi),
+                            launch_argv: vec![
+                                "pi".to_string(),
+                                "--session".to_string(),
+                                "/tmp/pi-session.jsonl".to_string(),
+                            ],
+                            resume_target: Some(ResumeTarget::path("/tmp/pi-session.jsonl")),
+                        }],
+                    },
+                ),
+            ]),
             ui: super::UiState {
                 left_sidebar_open: false,
                 expanded_project_ids: Some(HashSet::from(["root".to_string(), "wt1".to_string()])),
                 pinned_direct_task_ids: HashSet::from(["task-1".to_string()]),
                 pinned_worktree_project_ids: HashSet::from(["wt1".to_string()]),
+                last_active_section_key: Some("root::main::".to_string()),
             },
         };
 
@@ -1263,6 +1437,23 @@ mod tests {
                 .expect("worktree task name should round-trip"),
             "Friendly worktree name"
         );
+        assert_eq!(
+            round_trip
+                .terminal_sections
+                .get("root::main::")
+                .expect("root terminal state should round-trip")
+                .active_tab_id,
+            1
+        );
+        assert_eq!(
+            round_trip
+                .terminal_sections
+                .get("wt1::feature/worktree::")
+                .expect("worktree terminal state should round-trip")
+                .tabs[0]
+                .resume_target,
+            Some(ResumeTarget::path("/tmp/pi-session.jsonl"))
+        );
         assert!(!round_trip.ui.left_sidebar_open);
         assert_eq!(
             round_trip.ui.expanded_project_ids,
@@ -1275,6 +1466,10 @@ mod tests {
         assert_eq!(
             round_trip.ui.pinned_worktree_project_ids,
             HashSet::from(["wt1".to_string()])
+        );
+        assert_eq!(
+            round_trip.ui.last_active_section_key.as_deref(),
+            Some("root::main::")
         );
     }
 }

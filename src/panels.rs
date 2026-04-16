@@ -541,11 +541,8 @@ impl WorkspacePane {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                                if let Some(state) = this.section_states.get_mut(&sid_click) {
-                                    state.active_tab = tab_index;
-                                }
+                                this.activate_tab(&sid_click, tab_index, cx);
                                 this.ensure_active_terminal_spawned(&sid_click, cx);
-                                cx.notify();
                             }),
                         )
                         .child(
@@ -594,12 +591,7 @@ impl WorkspacePane {
                                         cx.listener(
                                             move |this, _ev: &MouseDownEvent, _window, cx| {
                                                 cx.stop_propagation();
-                                                if let Some(state) =
-                                                    this.section_states.get_mut(&sid_close)
-                                                {
-                                                    state.close_tab(close_index);
-                                                }
-                                                cx.notify();
+                                                this.close_tab(&sid_close, close_index, cx);
                                             },
                                         ),
                                     )
@@ -626,16 +618,12 @@ impl WorkspacePane {
                 .cursor_pointer()
                 .hover(move |s| s.bg(tab_hover))
                 .tooltip(move |_window, cx| {
-                    AnotherOneApp::action_tooltip_view("New terminal tab", cx)
+                    AnotherOneApp::action_tooltip_view("Add an agent tab", cx)
                 })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                        if let Some(state) = this.section_states.get_mut(&sid_for_add) {
-                            state.add_tab();
-                        }
-                        this.ensure_active_terminal_spawned(&sid_for_add, cx);
-                        cx.notify();
+                        this.open_add_agent_modal(&sid_for_add, cx);
                     }),
                 )
                 .child(
@@ -957,12 +945,6 @@ impl WorkspacePane {
             .flex_col()
             .track_focus(&self.focus_handle)
             .when(hovered_link.is_some(), |div| div.cursor_pointer())
-            .tooltip(move |_window, cx| {
-                AnotherOneApp::action_tooltip_view(
-                    "Select terminal text. Cmd-click a link to open it",
-                    cx,
-                )
-            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
@@ -1068,7 +1050,9 @@ impl WorkspacePane {
         let blocked = this
             .app
             .read_with(cx, |app, _| {
-                app.new_task_modal.is_some() || app.sidebar_task_rename.is_some()
+                app.new_task_modal.is_some()
+                    || app.add_agent_modal.is_some()
+                    || app.sidebar_task_rename.is_some()
             })
             .unwrap_or(false);
         if blocked {
