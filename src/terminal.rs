@@ -83,7 +83,7 @@ pub struct TerminalInstance {
     /// Latest requested resize, coalesced and applied outside render.
     pending_resize: Option<(u16, u16)>,
     /// Whether the reader thread is still alive.
-    pub alive: Arc<Mutex<bool>>,
+    _alive: Arc<Mutex<bool>>,
     /// Whether the terminal grid changed and needs repainting.
     dirty: Arc<AtomicBool>,
     /// Accumulated scroll pixels for smooth trackpad scrolling.
@@ -160,7 +160,7 @@ impl TerminalInstance {
             cols,
             rows,
             pending_resize: None,
-            alive,
+            _alive: alive,
             dirty,
             scroll_px: 0.0,
         };
@@ -200,11 +200,6 @@ impl TerminalInstance {
         } else {
             self.write_to_pty(text.as_bytes());
         }
-    }
-
-    /// Check if the terminal process is still running.
-    pub fn is_alive(&self) -> bool {
-        *self.alive.lock().unwrap()
     }
 
     /// Queue a resize to be applied outside the render path.

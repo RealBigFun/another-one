@@ -586,31 +586,6 @@ fn is_git_index_lock_error(stderr: &str, stdout: &str) -> bool {
             || combined.contains("File exists"))
 }
 
-/// Switch the repo rooted at `path` to `branch`.
-pub fn switch_branch(path: &Path, branch: &str) -> bool {
-    for args in [&["switch", branch][..], &["checkout", branch][..]] {
-        if git_status_ok(path, args) {
-            return true;
-        }
-    }
-
-    let Some((_, local_branch_name)) = branch.split_once('/') else {
-        return false;
-    };
-
-    for args in [
-        &["switch", local_branch_name][..],
-        &["switch", "--track", branch][..],
-        &["checkout", "--track", branch][..],
-    ] {
-        if git_status_ok(path, args) {
-            return true;
-        }
-    }
-
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};

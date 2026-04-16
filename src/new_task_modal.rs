@@ -296,9 +296,7 @@ impl AnotherOneApp {
                 self.submit_new_task_modal(cx);
             }
             _ => {
-                if self.handle_task_name_key_down(ev, cx) {
-                    return;
-                }
+                self.handle_task_name_key_down(ev, cx);
             }
         }
     }
@@ -424,7 +422,7 @@ impl AnotherOneApp {
                     .gap(px(4.))
                     .child(
                         div()
-                            .text_size(rems(16. / 16.))
+                            .text_size(rems(1.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(title_col())
                             .child("New Task"),

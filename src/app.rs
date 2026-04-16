@@ -87,10 +87,6 @@ pub struct SectionState {
 }
 
 impl SectionState {
-    pub fn new() -> Self {
-        Self::with_cwd(None)
-    }
-
     pub fn with_cwd(cwd: Option<std::path::PathBuf>) -> Self {
         Self::with_launch_config(cwd, TerminalLaunchConfig::default())
     }
@@ -360,9 +356,7 @@ pub struct AnotherOneApp {
     pub(crate) expanded_projects: HashSet<String>,
     pub(crate) project_expand_animations: HashMap<String, SidebarProjectExpandAnimation>,
     pub(crate) next_project_expand_animation_id: u64,
-    pub(crate) hovered_project: Option<String>,
     pub(crate) project_menu_project: Option<String>,
-    pub(crate) hovered_sidebar_task: Option<(String, String)>,
     pub(crate) sidebar_task_menu: Option<SidebarTaskMenuState>,
     /// Collapsed change-file sections in the right sidebar (e.g. "staged", "uncommitted").
     pub(crate) collapsed_change_sections: HashSet<String>,
@@ -391,8 +385,6 @@ pub struct AnotherOneApp {
     pub(crate) project_page_prs_collapsed: bool,
     /// Active PR filter tab index (0=All Open, 1=Needs My Review, 2=My PRs, 3=Draft).
     pub(crate) project_page_pr_filter: usize,
-    /// Search text for the PR search bar on the project page.
-    pub(crate) project_page_pr_search: String,
     /// Per-section terminal tab state.
     pub(crate) section_states: HashMap<SectionId, SectionState>,
     /// Cached changed-file snapshot per project.
@@ -548,7 +540,7 @@ impl Element for AppInputHost {
         self.child.paint(window, cx);
         window.handle_input(
             &self.focus_handle,
-            ElementInputHandler::new(input_bounds.clone(), self.view.clone()),
+            ElementInputHandler::new(*input_bounds, self.view.clone()),
             cx,
         );
     }
@@ -1008,7 +1000,7 @@ impl AnotherOneApp {
 
         let handle = cx.entity().clone();
         window
-            .spawn(&**cx, async move |async_cx| {
+            .spawn(cx, async move |async_cx| {
                 let steps = ((PROJECT_EXPAND_ANIMATION_DURATION.as_secs_f32()
                     / PROJECT_EXPAND_ANIMATION_STEP.as_secs_f32())
                 .ceil() as i32)
@@ -1096,9 +1088,7 @@ impl AnotherOneApp {
             expanded_projects: expanded,
             project_expand_animations: HashMap::new(),
             next_project_expand_animation_id: 1,
-            hovered_project: None,
             project_menu_project: None,
-            hovered_sidebar_task: None,
             sidebar_task_menu: None,
             collapsed_change_sections: HashSet::new(),
             create_pr_menu_open: false,
@@ -1117,7 +1107,6 @@ impl AnotherOneApp {
             project_page_task_search: String::new(),
             project_page_prs_collapsed: false,
             project_page_pr_filter: 0,
-            project_page_pr_search: String::new(),
             section_states,
             changed_files: HashMap::new(),
             changed_files_list_snapshots: HashMap::new(),
@@ -2381,7 +2370,7 @@ impl AnotherOneApp {
         self.animating = true;
         let handle = cx.entity().clone();
         window
-            .spawn(&**cx, async move |async_cx| {
+            .spawn(cx, async move |async_cx| {
                 const STEP_MS: u64 = 16;
                 const DURATION_MS: f32 = 260.;
                 let steps = ((DURATION_MS / STEP_MS as f32).ceil() as i32).max(1);
@@ -2426,7 +2415,7 @@ impl AnotherOneApp {
         self.animating = true;
         let handle = cx.entity().clone();
         window
-            .spawn(&**cx, async move |async_cx| {
+            .spawn(cx, async move |async_cx| {
                 const STEP_MS: u64 = 16;
                 const DURATION_MS: f32 = 260.;
                 let steps = ((DURATION_MS / STEP_MS as f32).ceil() as i32).max(1);
@@ -3160,7 +3149,7 @@ impl Render for AnotherOneApp {
             let handle = cx.entity().clone();
             let initial_interval = self.refresh_timer_interval();
             window
-                .spawn(&**cx, async move |async_cx| {
+                .spawn(cx, async move |async_cx| {
                     let mut interval = initial_interval;
                     loop {
                         Timer::after(interval).await;

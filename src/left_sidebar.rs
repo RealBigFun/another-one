@@ -318,13 +318,6 @@ impl AnotherOneApp {
             self.project_menu_project = None;
         }
         if self
-            .hovered_project
-            .as_ref()
-            .is_some_and(|project_id| project_id_set.contains(project_id))
-        {
-            self.hovered_project = None;
-        }
-        if self
             .new_task_modal
             .as_ref()
             .is_some_and(|state| project_id_set.contains(&state.project_id))
@@ -351,13 +344,6 @@ impl AnotherOneApp {
             .is_some_and(|(project_id, _, _)| project_id_set.contains(project_id))
         {
             self.sidebar_task_last_click = None;
-        }
-        if self
-            .hovered_sidebar_task
-            .as_ref()
-            .is_some_and(|(project_id, _)| project_id_set.contains(project_id))
-        {
-            self.hovered_sidebar_task = None;
         }
         if self
             .sidebar_task_menu
@@ -496,7 +482,6 @@ impl AnotherOneApp {
         self.commit_sidebar_task_rename(cx);
         self.project_menu_project = None;
         self.sidebar_task_last_click = None;
-        self.hovered_sidebar_task = Some((project_id.to_string(), row_id.to_string()));
         self.sidebar_task_menu = Some(SidebarTaskMenuState {
             project_id: project_id.to_string(),
             root_project_id,
@@ -564,7 +549,6 @@ impl AnotherOneApp {
 
         self.sidebar_task_menu = None;
         self.sidebar_task_last_click = None;
-        self.hovered_sidebar_task = None;
         if self.sidebar_task_rename.as_ref().is_some_and(|rename| {
             rename.project_id == project_id && rename.row_id == task_id && !rename.is_worktree
         }) {
@@ -656,7 +640,7 @@ impl AnotherOneApp {
                 }
 
                 self.sidebar_task_delete_confirm = None;
-                self.remove_project_group_ids(&[confirm.project_id.clone()], cx);
+                self.remove_project_group_ids(std::slice::from_ref(&confirm.project_id), cx);
                 if was_active_project
                     && self
                         .project_store
@@ -903,7 +887,6 @@ impl AnotherOneApp {
         active: bool,
         has_children: bool,
         expanded: bool,
-        hovered: bool,
         menu_open: bool,
         _window: &Window,
         cx: &mut Context<Self>,
@@ -924,16 +907,17 @@ impl AnotherOneApp {
         let active_bg = gpui::white().opacity(0.03);
         let active_border = gpui::white().opacity(0.18);
         let chevron_col = hsla(0., 0., 0.55, 1.);
-        let controls_visible = hovered || menu_open;
-        let pid_hover = pid.clone();
+        let controls_visible = menu_open;
         let pid_row = pid.clone();
         let pid_toggle = pid.clone();
         let pid_menu = pid.clone();
         let pid_plus = pid.clone();
         let github_url_for_icon = github_url.clone();
+        let row_group = SharedString::from(format!("project-row-{}", pid));
 
         let row = div()
             .id(SharedString::from(format!("project-{}", &pid)))
+            .group(row_group.clone())
             .flex()
             .flex_row()
             .items_center()
@@ -963,15 +947,7 @@ impl AnotherOneApp {
                     this.active_section = None;
                     cx.notify();
                 }),
-            )
-            .on_hover(cx.listener(move |this, is_hovered, _, cx| {
-                if *is_hovered {
-                    this.hovered_project = Some(pid_hover.clone());
-                } else if this.hovered_project.as_deref() == Some(pid_hover.as_str()) {
-                    this.hovered_project = None;
-                }
-                cx.notify();
-            }));
+            );
 
         row.child(
             div()
@@ -1066,7 +1042,12 @@ impl AnotherOneApp {
                         .h(px(24.))
                         .rounded_md()
                         .cursor_pointer()
-                        .opacity(if controls_visible { 1. } else { 0. })
+                        .when(controls_visible, |button| button.visible())
+                        .when(!controls_visible, |button| {
+                            button
+                                .invisible()
+                                .group_hover(row_group.clone(), |button| button.visible())
+                        })
                         .hover(move |s| s.bg(gpui::white().opacity(0.08)))
                         .tooltip(move |_window, cx| {
                             Self::action_tooltip_view("Open project menu", cx)
@@ -1077,7 +1058,6 @@ impl AnotherOneApp {
                                 cx.stop_propagation();
                                 this.commit_sidebar_task_rename(cx);
                                 this.sidebar_task_menu = None;
-                                this.hovered_project = Some(pid_menu.clone());
                                 this.project_menu_project = if this.project_menu_project.as_deref()
                                     == Some(pid_menu.as_str())
                                 {
@@ -1105,11 +1085,19 @@ impl AnotherOneApp {
                         .h(px(24.))
                         .rounded_md()
                         .cursor_pointer()
-                        .opacity(if github_url_for_icon.is_some() {
-                            1.
-                        } else {
-                            0.
-                        })
+                        .when(
+                            github_url_for_icon.is_some() && controls_visible,
+                            |button| button.visible(),
+                        )
+                        .when(
+                            github_url_for_icon.is_some() && !controls_visible,
+                            |button| {
+                                button
+                                    .invisible()
+                                    .group_hover(row_group.clone(), |button| button.visible())
+                            },
+                        )
+                        .when(github_url_for_icon.is_none(), |button| button.invisible())
                         .when(github_url_for_icon.is_some(), |d| {
                             d.hover(move |s| s.bg(gpui::white().opacity(0.08)))
                                 .tooltip(move |_window, cx| {
@@ -1145,6 +1133,12 @@ impl AnotherOneApp {
                         .h(px(24.))
                         .rounded_md()
                         .cursor_pointer()
+                        .when(controls_visible, |button| button.visible())
+                        .when(!controls_visible, |button| {
+                            button
+                                .invisible()
+                                .group_hover(row_group.clone(), |button| button.visible())
+                        })
                         .hover(move |s| s.bg(gpui::white().opacity(0.08)))
                         .tooltip(move |_window, cx| {
                             Self::action_tooltip_view("Add a task or worktree to this project", cx)
@@ -1216,16 +1210,11 @@ impl AnotherOneApp {
             .filter(|state| state.project_id == project_id && state.row_id == row_id);
         let is_editing = rename_state.is_some();
         let is_pinned = self.sidebar_task_entry_is_pinned(entry);
-        let is_hovered = self.hovered_sidebar_task.as_ref().is_some_and(
-            |(hovered_project_id, hovered_row_id)| {
-                hovered_project_id == &project_id && hovered_row_id == &row_id
-            },
-        );
         let menu_open = self
             .sidebar_task_menu
             .as_ref()
             .is_some_and(|menu| menu.project_id == project_id && menu.row_id == row_id);
-        let show_delete_action = !is_editing && (is_hovered || menu_open);
+        let keep_delete_visible = !is_editing && menu_open;
         let row_tooltip = if task_id.is_some() || is_worktree {
             "Open this task in the terminal. Double-click to rename it or right-click for more actions."
         } else {
@@ -1294,6 +1283,7 @@ impl AnotherOneApp {
                 .into_any_element()
         };
 
+        let row_group = SharedString::from(format!("task-row-{project_id}-{row_id}"));
         let mut right_controls = div().flex().flex_row().items_center().gap(px(6.));
 
         if entry.branch.lines_added > 0 || entry.branch.lines_removed > 0 {
@@ -1330,8 +1320,13 @@ impl AnotherOneApp {
                 .w(px(22.))
                 .h(px(22.))
                 .rounded_sm()
-                .opacity(if show_delete_action { 1. } else { 0. })
-                .when(show_delete_action, |button| {
+                .when(keep_delete_visible, |button| button.visible())
+                .when(!keep_delete_visible, |button| {
+                    button.invisible().when(!is_editing, |button| {
+                        button.group_hover(row_group.clone(), |button| button.visible())
+                    })
+                })
+                .when(!is_editing, |button| {
                     button
                         .cursor_pointer()
                         .hover(move |style| style.bg(delete_hover_bg))
@@ -1404,8 +1399,6 @@ impl AnotherOneApp {
             )
             .child(right_controls);
 
-        let row_project_id = project_id.clone();
-        let row_id_for_hover = row_id.clone();
         let left_click_project_id = project_id.clone();
         let left_click_row_id = row_id.clone();
         let left_click_task_id = task_id.clone();
@@ -1427,6 +1420,7 @@ impl AnotherOneApp {
                     .as_deref()
                     .unwrap_or(entry.branch.name.as_str())
             )))
+            .group(row_group.clone())
             .flex()
             .flex_col()
             .pl(px(18.))
@@ -1445,23 +1439,6 @@ impl AnotherOneApp {
             .when(is_active, |d| d.bg(active_bg))
             .hover(move |s| if is_editing { s } else { s.bg(hover_bg) })
             .tooltip(move |_window, cx| Self::action_tooltip_view(row_tooltip, cx))
-            .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                if *is_hovered {
-                    this.hovered_sidebar_task =
-                        Some((row_project_id.clone(), row_id_for_hover.clone()));
-                } else if this.sidebar_task_menu.as_ref().is_some_and(|menu| {
-                    menu.project_id == row_project_id && menu.row_id == row_id_for_hover
-                }) {
-                    // Keep the action affordances visible while the context menu is open.
-                } else if this.hovered_sidebar_task.as_ref().is_some_and(
-                    |(hovered_project_id, hovered_row_id)| {
-                        hovered_project_id == &row_project_id && hovered_row_id == &row_id_for_hover
-                    },
-                ) {
-                    this.hovered_sidebar_task = None;
-                }
-                cx.notify();
-            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
@@ -2264,7 +2241,7 @@ impl AnotherOneApp {
             prompt: Some("Add Project Folder".into()),
         });
         window
-            .spawn(&**cx, async move |async_cx| {
+            .spawn(cx, async move |async_cx| {
                 if let Ok(Ok(Some(paths))) = receiver.await {
                     if let Some(path) = paths.first() {
                         let _ = handle.update(async_cx, |this, cx| {
@@ -2331,10 +2308,6 @@ impl AnotherOneApp {
                     .active_project_page
                     .as_deref()
                     .is_some_and(|project_id| project_id == root_id);
-                let hovered = self
-                    .hovered_project
-                    .as_deref()
-                    .is_some_and(|id| id == root_id);
                 let menu_open = self
                     .project_menu_project
                     .as_deref()
@@ -2346,7 +2319,6 @@ impl AnotherOneApp {
                     active,
                     !group.child_entries.is_empty(),
                     expanded,
-                    hovered,
                     menu_open,
                     window,
                     cx,

@@ -387,7 +387,7 @@ impl Element for TerminalInputHost {
         self.child.paint(window, cx);
         window.handle_input(
             &self.focus_handle,
-            ElementInputHandler::new(input_bounds.clone(), self.view.clone()),
+            ElementInputHandler::new(*input_bounds, self.view.clone()),
             cx,
         );
     }
@@ -454,7 +454,7 @@ impl AnotherOneApp {
         // Project page takes priority over terminal view.
         if let Some(ref project_id) = self.active_project_page.clone() {
             self.clear_terminal_viewport();
-            return self.render_project_page(&project_id, window, cx);
+            return self.render_project_page(project_id, window, cx);
         }
 
         let Some(ref section_id) = self.active_section.clone() else {

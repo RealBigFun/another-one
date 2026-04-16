@@ -252,7 +252,7 @@ impl AnotherOneApp {
                     .flex_1()
                     .min_w(px(0.))
                     .text_color(TEXT_PRIMARY())
-                    .text_size(rems(16. / 16.))
+                    .text_size(rems(1.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .truncate()
                     .child(project_name.clone()),
