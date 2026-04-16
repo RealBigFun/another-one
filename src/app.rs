@@ -20,7 +20,7 @@ actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
 
 use crate::agents::{
     prepare_launch_config_for_spawn, terminal_launch_config_for_selected_agents, AgentProviderKind,
-    ResumeTarget, TerminalLaunchConfig, TerminalLaunchKind, AGENTS, DEFAULT_AGENT_ID,
+    ResumeTarget, TerminalLaunchConfig, TerminalLaunchKind, AGENTS,
 };
 use crate::layout::*;
 use crate::project_store::{
@@ -941,8 +941,7 @@ impl WorkspacePane {
                     .find(|agent| agent.provider == Some(provider))
                     .map(|agent| agent.id)
             })
-            .unwrap_or(DEFAULT_AGENT_ID)
-            .to_string();
+            .map(str::to_string);
         let app = self.app.clone();
         cx.defer(move |cx| {
             let _ = app.update(cx, |app, app_cx| {
@@ -3094,23 +3093,11 @@ impl AnotherOneApp {
                     Ok(project) => {
                         let project_name = project.name.clone();
                         let project_id = project.id.clone();
-                        let project_path = project.path.clone();
                         let added = self.project_store.insert_project(project.clone());
                         if added {
-                            if self.project_store.projects.len() == 1 {
-                                if let Some(branch) = project.branches.first() {
-                                    self.activate_project_section(
-                                        &project_id,
-                                        &branch.name,
-                                        project_path,
-                                        None,
-                                        cx,
-                                    );
-                                    self.expanded_projects.insert(project_id.clone());
-                                    self.project_store
-                                        .set_expanded_projects(&self.expanded_projects);
-                                }
-                            }
+                            self.workspace_pane.update(cx, |workspace, cx| {
+                                workspace.activate_project_page(project_id.clone(), cx);
+                            });
                             self.show_success_toast(
                                 format!("Added {} to the sidebar.", project_name),
                                 cx,
@@ -4826,7 +4813,6 @@ mod tests {
 
         fs::remove_dir_all(&root).expect("temp test directory should be removed");
     }
-
 }
 
 // ── Render ───────────────────────────────────────────────────────────

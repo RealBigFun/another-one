@@ -7,17 +7,19 @@ use gpui::{
     MouseDownEvent, SharedString,
 };
 
-use crate::agents::{terminal_launch_config_for_selected_agents, AGENTS, DEFAULT_AGENT_ID};
+use crate::agents::{terminal_launch_config_for_selected_agents, AGENTS};
 use crate::app::{AnotherOneApp, SectionId};
 
 #[derive(Clone)]
 pub(crate) struct AddAgentModalState {
     pub section_id: SectionId,
-    pub selected_agent_id: String,
+    pub selected_agent_id: Option<String>,
     pub agent_dropdown_open: bool,
 }
 
 const CARD_BG: u32 = 0x2b2d31;
+const CLI_ONLY_ICON: &str = "assets/icons/icons__terminal.svg";
+const CLI_ONLY_LABEL: &str = "CLI only";
 const TITLE_COL: (f32, f32, f32, f32) = (0., 0., 0.92, 1.);
 const BODY_COL: (f32, f32, f32, f32) = (0., 0., 0.78, 1.);
 const MUTED_COL: (f32, f32, f32, f32) = (0., 0., 0.58, 1.);
@@ -54,17 +56,12 @@ impl AnotherOneApp {
     pub(crate) fn open_add_agent_modal(
         &mut self,
         section_id: SectionId,
-        selected_agent_id: String,
+        selected_agent_id: Option<String>,
     ) {
-        let selected_agent_id = if AGENTS.iter().any(|agent| agent.id == selected_agent_id) {
-            selected_agent_id
-        } else {
-            DEFAULT_AGENT_ID.to_string()
-        };
-
         self.add_agent_modal = Some(AddAgentModalState {
             section_id,
-            selected_agent_id,
+            selected_agent_id: selected_agent_id
+                .filter(|selected| AGENTS.iter().any(|agent| agent.id == selected)),
             agent_dropdown_open: false,
         });
     }
@@ -74,12 +71,25 @@ impl AnotherOneApp {
             return div().id("add-agent-modal-overlay");
         };
 
-        let selected_agent = AGENTS
-            .iter()
-            .find(|agent| agent.id == state.selected_agent_id)
-            .unwrap_or(&AGENTS[0]);
-        let trigger_icon: SharedString = selected_agent.icon.into();
-        let trigger_label: SharedString = selected_agent.label.into();
+        let (trigger_icon, trigger_label, trigger_help_text) = state
+            .selected_agent_id
+            .as_deref()
+            .and_then(|selected_id| AGENTS.iter().find(|agent| agent.id == selected_id))
+            .map(|selected_agent| {
+                (
+                    selected_agent.icon,
+                    selected_agent.label,
+                    "The new tab will open in this task’s existing worktree.",
+                )
+            })
+            .unwrap_or((
+                CLI_ONLY_ICON,
+                CLI_ONLY_LABEL,
+                "Open a plain shell in this task’s existing worktree.",
+            ));
+        let trigger_icon: SharedString = trigger_icon.into();
+        let trigger_label: SharedString = trigger_label.into();
+        let trigger_help_text: SharedString = trigger_help_text.into();
 
         let card = div()
             .w(px(440.))
@@ -183,17 +193,13 @@ impl AnotherOneApp {
                                         div()
                                             .text_size(rems(11. / 16.))
                                             .text_color(muted_col())
-                                            .child(
-                                                "The new tab will open in this task’s existing worktree.",
-                                            ),
+                                            .child(trigger_help_text),
                                     )
                                     .when(state.agent_dropdown_open, |container| {
-                                        container.child(
-                                            self.render_add_agent_dropdown(
-                                                &state.selected_agent_id,
-                                                cx,
-                                            ),
-                                        )
+                                        container.child(self.render_add_agent_dropdown(
+                                            state.selected_agent_id.as_deref(),
+                                            cx,
+                                        ))
                                     }),
                             ),
                     ),
@@ -253,17 +259,16 @@ impl AnotherOneApp {
             return;
         };
 
-        if !AGENTS
-            .iter()
-            .any(|agent| agent.id == state.selected_agent_id)
-        {
-            self.show_error_toast("Could not determine which agent to launch.", cx);
-            return;
-        }
+        let launch_config = if let Some(selected_agent_id) = state.selected_agent_id.as_ref() {
+            if !AGENTS.iter().any(|agent| agent.id == selected_agent_id) {
+                self.show_error_toast("Could not determine which agent to launch.", cx);
+                return;
+            }
 
-        let launch_config = terminal_launch_config_for_selected_agents(&HashSet::from([state
-            .selected_agent_id
-            .clone()]));
+            terminal_launch_config_for_selected_agents(&HashSet::from([selected_agent_id.clone()]))
+        } else {
+            terminal_launch_config_for_selected_agents(&HashSet::new())
+        };
         let section_id = state.section_id.clone();
         let added = self.workspace_pane.update(cx, |workspace, cx| {
             let added =
@@ -342,10 +347,10 @@ impl AnotherOneApp {
 
     fn render_add_agent_dropdown(
         &self,
-        selected_agent_id: &str,
+        selected_agent_id: Option<&str>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let visible_rows = AGENTS.len().min(6) as f32;
+        let visible_rows = (AGENTS.len() + 1).min(6) as f32;
         let dropdown_height = px(visible_rows * 36. + 8.);
 
         let mut list = div()
@@ -360,79 +365,100 @@ impl AnotherOneApp {
             .overflow_y_scroll()
             .py(px(4.));
 
-        for agent in AGENTS {
-            let is_selected = agent.id == selected_agent_id;
-            let agent_id = agent.id.to_string();
-            let icon_path: SharedString = agent.icon.into();
-            let label: SharedString = agent.label.into();
+        list = list.child(self.render_add_agent_option(
+            SharedString::from("add-agent-option-cli-only"),
+            SharedString::from(CLI_ONLY_LABEL),
+            SharedString::from(CLI_ONLY_ICON),
+            selected_agent_id.is_none(),
+            None,
+            cx,
+        ));
 
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("add-agent-option-{}", agent.id)))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(36.))
-                    .px(px(12.))
-                    .cursor_pointer()
-                    .bg(if is_selected {
-                        active_bg()
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .hover(move |s| s.bg(hover_bg()))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                            if let Some(state) = this.add_agent_modal.as_mut() {
-                                state.selected_agent_id = agent_id.clone();
-                                state.agent_dropdown_open = false;
-                            }
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    )
-                    .child(
-                        div()
-                            .w(px(18.))
-                            .h(px(18.))
-                            .rounded(px(999.))
-                            .border_1()
-                            .border_color(if is_selected {
-                                hsla(220. / 360., 0.55, 0.58, 1.)
-                            } else {
-                                border_col()
-                            })
-                            .bg(if is_selected {
-                                hsla(220. / 360., 0.55, 0.58, 1.)
-                            } else {
-                                gpui::transparent_black()
-                            })
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when(is_selected, |container| {
-                                container.child(
-                                    svg()
-                                        .path("assets/icons/icons__check.svg")
-                                        .size(px(11.))
-                                        .text_color(gpui::white()),
-                                )
-                            }),
-                    )
-                    .child(svg().path(icon_path).size(px(18.)).text_color(title_col()))
-                    .child(
-                        div()
-                            .text_size(rems(13. / 16.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(body_col())
-                            .child(label),
-                    ),
-            );
+        for agent in AGENTS {
+            list = list.child(self.render_add_agent_option(
+                SharedString::from(format!("add-agent-option-{}", agent.id)),
+                SharedString::from(agent.label),
+                SharedString::from(agent.icon),
+                selected_agent_id == Some(agent.id),
+                Some(agent.id.to_string()),
+                cx,
+            ));
         }
 
         list
+    }
+
+    fn render_add_agent_option(
+        &self,
+        dom_id: SharedString,
+        label: SharedString,
+        icon_path: SharedString,
+        is_selected: bool,
+        next_selected_agent_id: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(dom_id)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.))
+            .h(px(36.))
+            .px(px(12.))
+            .cursor_pointer()
+            .bg(if is_selected {
+                active_bg()
+            } else {
+                gpui::transparent_black()
+            })
+            .hover(move |s| s.bg(hover_bg()))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    if let Some(state) = this.add_agent_modal.as_mut() {
+                        state.selected_agent_id = next_selected_agent_id.clone();
+                        state.agent_dropdown_open = false;
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .w(px(18.))
+                    .h(px(18.))
+                    .rounded(px(999.))
+                    .border_1()
+                    .border_color(if is_selected {
+                        hsla(220. / 360., 0.55, 0.58, 1.)
+                    } else {
+                        border_col()
+                    })
+                    .bg(if is_selected {
+                        hsla(220. / 360., 0.55, 0.58, 1.)
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(is_selected, |container| {
+                        container.child(
+                            svg()
+                                .path("assets/icons/icons__check.svg")
+                                .size(px(11.))
+                                .text_color(gpui::white()),
+                        )
+                    }),
+            )
+            .child(svg().path(icon_path).size(px(18.)).text_color(title_col()))
+            .child(
+                div()
+                    .text_size(rems(13. / 16.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(body_col())
+                    .child(label),
+            )
     }
 
     fn render_add_agent_modal_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {

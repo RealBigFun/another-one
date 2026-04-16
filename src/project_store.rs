@@ -425,18 +425,10 @@ impl ProjectStore {
         base.join("another-one").join("projects.json")
     }
 
-    fn legacy_config_path() -> PathBuf {
-        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        base.join("three-column").join("projects.json")
-    }
-
     fn read_from_disk(path: &Path) -> StoreFile {
-        let fallback_path = Self::legacy_config_path();
         let read_path = if path.exists() {
             path
-        } else if fallback_path.exists() {
-            fallback_path.as_path()
-        } else {
+        }  else {
             path
         };
 
