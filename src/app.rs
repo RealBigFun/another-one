@@ -2,9 +2,10 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
@@ -36,7 +37,7 @@ const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 const BUSY_TERMINAL_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(12);
 const ACTIVE_GIT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const TERMINAL_CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const TERMINAL_CAPTURE_POLL_LIMIT: usize = 60;
+const TERMINAL_CAPTURE_POLL_LIMIT: usize = 16;
 const TOAST_ANIMATION_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 const TERMINAL_BUSY_GRACE: Duration = Duration::from_secs(2);
 const TOAST_LIFETIME: Duration = Duration::from_secs(4);
@@ -106,6 +107,7 @@ pub struct TerminalTab {
     /// Real terminal instance (PTY + grid).
     pub terminal: Option<TerminalInstance>,
     launch_failed: bool,
+    resume_capture_pending: bool,
 }
 
 /// Per-section state: which terminal tabs are open and which is active.
@@ -240,6 +242,7 @@ impl TerminalTab {
             launch_config,
             terminal: None,
             launch_failed: false,
+            resume_capture_pending: false,
         }
     }
 
@@ -280,6 +283,7 @@ impl TerminalTab {
             launch_config,
             terminal: None,
             launch_failed: false,
+            resume_capture_pending: false,
         }
     }
 }
@@ -358,7 +362,14 @@ struct TerminalSpawnReply {
 struct TerminalMetadataReply {
     section_id: SectionId,
     tab_id: usize,
-    launch_config: TerminalLaunchConfig,
+    launch_config: Option<TerminalLaunchConfig>,
+    capture_finished: bool,
+}
+
+#[derive(Debug, Default)]
+struct CodexSessionCaptureState {
+    index_offsets: HashMap<PathBuf, u64>,
+    session_paths: HashMap<String, PathBuf>,
 }
 
 struct ProjectGitHubLinkReply {
@@ -661,17 +672,6 @@ impl WorkspacePane {
         project_ids: &HashSet<String>,
         cx: &mut Context<Self>,
     ) {
-        let removed_capture_keys = self
-            .section_states
-            .iter()
-            .filter(|(section_id, _)| project_ids.contains(&section_id.project_id))
-            .flat_map(|(_, state)| {
-                state.tabs.iter().filter_map(|tab| {
-                    tab.launch_config
-                        .discovery_capture_key(state.cwd.as_deref())
-                })
-            })
-            .collect::<HashSet<_>>();
         let removed_section_ids = self
             .section_states
             .keys()
@@ -705,7 +705,7 @@ impl WorkspacePane {
         changed |= self.clear_terminal_viewport_state();
 
         if !removed_section_ids.is_empty() {
-            self.cleanup_removed_sections(&removed_section_ids, &removed_capture_keys, cx);
+            self.cleanup_removed_sections(&removed_section_ids, cx);
         }
 
         if changed {
@@ -714,17 +714,6 @@ impl WorkspacePane {
     }
 
     pub(crate) fn remove_task_sections(&mut self, task_id: &str, cx: &mut Context<Self>) {
-        let removed_capture_keys = self
-            .section_states
-            .iter()
-            .filter(|(section_id, _)| section_id.task_id.as_deref() == Some(task_id))
-            .flat_map(|(_, state)| {
-                state.tabs.iter().filter_map(|tab| {
-                    tab.launch_config
-                        .discovery_capture_key(state.cwd.as_deref())
-                })
-            })
-            .collect::<HashSet<_>>();
         let removed_section_ids = self
             .section_states
             .keys()
@@ -749,7 +738,7 @@ impl WorkspacePane {
         changed |= self.clear_terminal_viewport_state();
 
         if !removed_section_ids.is_empty() {
-            self.cleanup_removed_sections(&removed_section_ids, &removed_capture_keys, cx);
+            self.cleanup_removed_sections(&removed_section_ids, cx);
         }
 
         if changed {
@@ -825,18 +814,13 @@ impl WorkspacePane {
         tab_index: usize,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let capture_key = self.section_states.get(section_id).and_then(|state| {
-            let tab = state.tabs.get(tab_index)?;
-            tab.launch_config
-                .discovery_capture_key(state.cwd.as_deref())
-        });
         let removed_tab_id = self
             .section_states
             .get_mut(section_id)
             .and_then(|state| state.close_tab(tab_index));
         if removed_tab_id.is_some() {
             if let Some(tab_id) = removed_tab_id {
-                self.cleanup_removed_tab(section_id, tab_id, capture_key, cx);
+                self.cleanup_removed_tab(section_id, tab_id, cx);
             }
             self.persist_section_state(section_id, cx);
             cx.notify();
@@ -896,34 +880,22 @@ impl WorkspacePane {
         });
     }
 
-    fn cleanup_removed_tab(
-        &self,
-        section_id: &SectionId,
-        tab_id: usize,
-        capture_key: Option<(AgentProviderKind, String)>,
-        cx: &mut Context<Self>,
-    ) {
+    fn cleanup_removed_tab(&self, section_id: &SectionId, tab_id: usize, cx: &mut Context<Self>) {
         let app = self.app.clone();
         let section_id = section_id.clone();
         cx.defer(move |cx| {
             let _ = app.update(cx, |app, _| {
-                app.cleanup_removed_tab(&section_id, tab_id, capture_key.clone());
+                app.cleanup_removed_tab(&section_id, tab_id);
             });
         });
     }
 
-    fn cleanup_removed_sections(
-        &self,
-        section_ids: &HashSet<SectionId>,
-        capture_keys: &HashSet<(AgentProviderKind, String)>,
-        cx: &mut Context<Self>,
-    ) {
+    fn cleanup_removed_sections(&self, section_ids: &HashSet<SectionId>, cx: &mut Context<Self>) {
         let app = self.app.clone();
         let section_ids = section_ids.clone();
-        let capture_keys = capture_keys.clone();
         cx.defer(move |cx| {
             let _ = app.update(cx, |app, _| {
-                app.cleanup_removed_sections(&section_ids, &capture_keys);
+                app.cleanup_removed_sections(&section_ids);
             });
         });
     }
@@ -1213,8 +1185,10 @@ pub struct AnotherOneApp {
     terminal_metadata_receiver: mpsc::Receiver<TerminalMetadataReply>,
     /// Active terminal spawns keyed by section + tab id.
     pending_terminal_spawns: HashSet<(SectionId, usize)>,
-    /// Discovery-based launches waiting for a resume target, keyed by provider + cwd.
-    pending_terminal_captures: HashSet<(AgentProviderKind, String)>,
+    /// Discovery-based launches waiting for a resume target, keyed by section + tab id.
+    pending_terminal_captures: HashSet<(SectionId, usize)>,
+    /// Shared incremental state for Codex resume-target discovery.
+    codex_session_capture_state: Arc<Mutex<CodexSessionCaptureState>>,
     /// Sender used by background project GitHub-link lookups.
     project_github_link_sender: mpsc::Sender<ProjectGitHubLinkReply>,
     /// Receiver for background project GitHub-link lookups.
@@ -1851,6 +1825,7 @@ impl AnotherOneApp {
         let left_sidebar_open = store.ui.left_sidebar_open;
         let (terminal_spawn_sender, terminal_spawn_receiver) = mpsc::channel();
         let (terminal_metadata_sender, terminal_metadata_receiver) = mpsc::channel();
+        let codex_session_capture_state = Arc::new(Mutex::new(CodexSessionCaptureState::default()));
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             mpsc::channel();
@@ -1961,6 +1936,7 @@ impl AnotherOneApp {
             terminal_metadata_receiver,
             pending_terminal_spawns: HashSet::new(),
             pending_terminal_captures: HashSet::new(),
+            codex_session_capture_state,
             project_github_link_sender,
             project_github_link_receiver,
             project_github_link_requests: HashSet::new(),
@@ -2021,29 +1997,18 @@ impl AnotherOneApp {
         self.project_store.remove_terminal_sections(&section_keys);
     }
 
-    fn cleanup_removed_tab(
-        &mut self,
-        section_id: &SectionId,
-        tab_id: usize,
-        capture_key: Option<(AgentProviderKind, String)>,
-    ) {
+    fn cleanup_removed_tab(&mut self, section_id: &SectionId, tab_id: usize) {
         self.pending_terminal_spawns
             .remove(&(section_id.clone(), tab_id));
-        if let Some(capture_key) = capture_key {
-            self.pending_terminal_captures.remove(&capture_key);
-        }
+        self.pending_terminal_captures
+            .remove(&(section_id.clone(), tab_id));
     }
 
-    fn cleanup_removed_sections(
-        &mut self,
-        section_ids: &HashSet<SectionId>,
-        capture_keys: &HashSet<(AgentProviderKind, String)>,
-    ) {
+    fn cleanup_removed_sections(&mut self, section_ids: &HashSet<SectionId>) {
         self.pending_terminal_spawns
             .retain(|(section_id, _)| !section_ids.contains(section_id));
-        for capture_key in capture_keys {
-            self.pending_terminal_captures.remove(capture_key);
-        }
+        self.pending_terminal_captures
+            .retain(|(section_id, _)| !section_ids.contains(section_id));
         self.remove_persisted_sections(section_ids);
     }
 
@@ -2108,22 +2073,6 @@ impl AnotherOneApp {
             return;
         };
 
-        let capture_key = launch_config.discovery_capture_key(cwd.as_deref());
-        if let Some(capture_key) = capture_key.as_ref() {
-            if self.pending_terminal_captures.contains(capture_key) {
-                if let Some(provider) = launch_config.provider {
-                    self.show_info_toast(
-                        format!(
-                            "Wait for the first {} tab in this folder to finish initializing before opening another fresh tab.",
-                            provider.label()
-                        ),
-                        cx,
-                    );
-                }
-                return;
-            }
-        }
-
         if !self
             .pending_terminal_spawns
             .insert((section_id.clone(), tab_id))
@@ -2131,12 +2080,23 @@ impl AnotherOneApp {
             return;
         }
 
-        if let Some(capture_key) = capture_key.clone() {
-            self.pending_terminal_captures.insert(capture_key);
+        if launch_requires_background_resume_capture(&launch_config) {
+            self.pending_terminal_captures
+                .insert((section_id.clone(), tab_id));
+            self.workspace_pane.update(cx, |workspace, _| {
+                let Some(state) = workspace.section_states.get_mut(section_id) else {
+                    return;
+                };
+                let Some(tab) = state.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+                    return;
+                };
+                tab.resume_capture_pending = true;
+            });
         }
 
         let tx = self.terminal_spawn_sender.clone();
         let metadata_tx = self.terminal_metadata_sender.clone();
+        let codex_capture_state = Arc::clone(&self.codex_session_capture_state);
         let section_id = section_id.clone();
         std::thread::spawn(move || {
             let launch_started_at = std::time::SystemTime::now();
@@ -2162,7 +2122,8 @@ impl AnotherOneApp {
                 let _ = metadata_tx.send(TerminalMetadataReply {
                     section_id: section_id.clone(),
                     tab_id,
-                    launch_config: prepared_launch_config.clone(),
+                    launch_config: Some(prepared_launch_config.clone()),
+                    capture_finished: true,
                 });
             }
 
@@ -2174,33 +2135,33 @@ impl AnotherOneApp {
                     let _ = metadata_tx.send(TerminalMetadataReply {
                         section_id: section_id.clone(),
                         tab_id,
-                        launch_config: prepared_launch_config.clone(),
+                        launch_config: Some(prepared_launch_config.clone()),
+                        capture_finished: true,
                     });
                 }
 
-                if let Some(provider) = prepared_launch_config.provider {
-                    if prepared_launch_config.kind == TerminalLaunchKind::Agent
-                        && provider.is_discovery_based()
-                        && prepared_launch_config.resume_target.is_none()
-                    {
-                        let metadata_tx = metadata_tx.clone();
-                        let section_id = section_id.clone();
-                        let cwd = cwd.clone();
-                        std::thread::spawn(move || {
-                            if let Some(launch_config) = capture_resume_target_for_launch(
-                                provider,
-                                cwd.as_deref(),
-                                launch_started_at,
-                                &prepared_launch_config,
-                            ) {
-                                let _ = metadata_tx.send(TerminalMetadataReply {
-                                    section_id,
-                                    tab_id,
-                                    launch_config,
-                                });
-                            }
+                if launch_requires_background_resume_capture(&prepared_launch_config) {
+                    let metadata_tx = metadata_tx.clone();
+                    let section_id = section_id.clone();
+                    let cwd = cwd.clone();
+                    let provider = prepared_launch_config
+                        .provider
+                        .expect("discovery-based capture requires a provider");
+                    std::thread::spawn(move || {
+                        let launch_config = capture_resume_target_for_launch_with_state(
+                            provider,
+                            cwd.as_deref(),
+                            launch_started_at,
+                            &prepared_launch_config,
+                            &codex_capture_state,
+                        );
+                        let _ = metadata_tx.send(TerminalMetadataReply {
+                            section_id,
+                            tab_id,
+                            launch_config,
+                            capture_finished: true,
                         });
-                    }
+                    });
                 }
             }
 
@@ -3181,7 +3142,8 @@ impl AnotherOneApp {
 
         while let Ok(reply) = self.terminal_metadata_receiver.try_recv() {
             let section_id = reply.section_id.clone();
-            let mut capture_key_to_remove = None;
+            let launch_config = reply.launch_config.clone();
+            let capture_finished = reply.capture_finished;
             let updated = self.workspace_pane.update(cx, |workspace, cx| {
                 let Some(state) = workspace.section_states.get_mut(&section_id) else {
                     return false;
@@ -3190,27 +3152,26 @@ impl AnotherOneApp {
                     return false;
                 };
 
-                if let Some(provider) = reply.launch_config.provider {
-                    if provider.is_discovery_based() && reply.launch_config.resume_target.is_some()
-                    {
-                        if let Some(cwd) = state.cwd.as_ref() {
-                            capture_key_to_remove = Some((provider, cwd.display().to_string()));
-                        }
-                    }
+                if let Some(launch_config) = launch_config.as_ref() {
+                    tab.launch_config = launch_config.clone();
+                    tab.launch_failed = false;
                 }
-
-                tab.launch_config = reply.launch_config.clone();
-                tab.launch_failed = false;
+                if capture_finished {
+                    tab.resume_capture_pending = false;
+                }
                 cx.notify();
                 true
             });
 
-            if let Some(capture_key) = capture_key_to_remove {
-                self.pending_terminal_captures.remove(&capture_key);
+            if capture_finished {
+                self.pending_terminal_captures
+                    .remove(&(section_id.clone(), reply.tab_id));
             }
 
             if updated {
-                self.persist_section_state_from_workspace(&section_id, cx);
+                if launch_config.is_some() {
+                    self.persist_section_state_from_workspace(&section_id, cx);
+                }
                 should_notify = true;
             }
         }
@@ -3243,19 +3204,8 @@ impl AnotherOneApp {
                     });
                 }
                 Err(error) => {
-                    if let Some(capture_key) = self
-                        .workspace_pane
-                        .read(cx)
-                        .section_states
-                        .get(&reply.section_id)
-                        .and_then(|state| {
-                            let tab = state.tabs.iter().find(|tab| tab.id == reply.tab_id)?;
-                            tab.launch_config
-                                .discovery_capture_key(state.cwd.as_deref())
-                        })
-                    {
-                        self.pending_terminal_captures.remove(&capture_key);
-                    }
+                    self.pending_terminal_captures
+                        .remove(&(reply.section_id.clone(), reply.tab_id));
 
                     let section_id = reply.section_id.clone();
                     let tab_id = reply.tab_id;
@@ -3267,6 +3217,7 @@ impl AnotherOneApp {
                             return;
                         };
                         tab.launch_failed = true;
+                        tab.resume_capture_pending = false;
                         cx.notify();
                     });
                     self.show_error_toast(error, cx);
@@ -4110,15 +4061,28 @@ struct PiSessionCandidate {
     modified_at: SystemTime,
 }
 
-fn capture_resume_target_for_launch(
+fn launch_requires_background_resume_capture(launch_config: &TerminalLaunchConfig) -> bool {
+    matches!(
+        launch_config.provider,
+        Some(provider)
+            if launch_config.kind == TerminalLaunchKind::Agent
+                && provider.is_discovery_based()
+                && launch_config.resume_target.is_none()
+    )
+}
+
+fn capture_resume_target_for_launch_with_state(
     provider: AgentProviderKind,
     cwd: Option<&Path>,
     launch_started_at: SystemTime,
     launch_config: &TerminalLaunchConfig,
+    codex_capture_state: &Arc<Mutex<CodexSessionCaptureState>>,
 ) -> Option<TerminalLaunchConfig> {
     let cwd = cwd?;
     let resume_target = match provider {
-        AgentProviderKind::Codex => capture_codex_resume_target(cwd, launch_started_at),
+        AgentProviderKind::Codex => {
+            capture_codex_resume_target(cwd, launch_started_at, codex_capture_state)
+        }
         AgentProviderKind::Pi => capture_pi_resume_target(cwd, launch_started_at),
         _ => None,
     }?;
@@ -4126,15 +4090,40 @@ fn capture_resume_target_for_launch(
     Some(launch_config.with_resume_target(resume_target))
 }
 
-fn capture_codex_resume_target(cwd: &Path, launch_started_at: SystemTime) -> Option<ResumeTarget> {
+fn capture_codex_resume_target(
+    cwd: &Path,
+    launch_started_at: SystemTime,
+    capture_state: &Arc<Mutex<CodexSessionCaptureState>>,
+) -> Option<ResumeTarget> {
     let home = dirs::home_dir()?;
     let index_path = home.join(".codex").join("session_index.jsonl");
     let sessions_root = home.join(".codex").join("sessions");
+    let mut pending_session_ids = Vec::new();
+    let mut seen_session_ids = HashSet::new();
 
     for _ in 0..TERMINAL_CAPTURE_POLL_LIMIT {
-        if let Some(target) =
-            find_codex_resume_target(&index_path, &sessions_root, cwd, launch_started_at)
-        {
+        let new_session_ids = {
+            let mut state = capture_state.lock().ok()?;
+            read_new_codex_index_ids(&index_path, &mut state)
+        };
+        for session_id in new_session_ids {
+            if seen_session_ids.insert(session_id.clone()) {
+                pending_session_ids.push(session_id);
+            }
+        }
+
+        let target = {
+            let mut state = capture_state.lock().ok()?;
+            find_codex_resume_target(
+                &pending_session_ids,
+                &sessions_root,
+                cwd,
+                launch_started_at,
+                &mut state,
+            )
+        };
+
+        if let Some(target) = target {
             return Some(target);
         }
         std::thread::sleep(TERMINAL_CAPTURE_POLL_INTERVAL);
@@ -4159,15 +4148,21 @@ fn capture_pi_resume_target(cwd: &Path, launch_started_at: SystemTime) -> Option
 }
 
 fn find_codex_resume_target(
-    index_path: &Path,
+    session_ids: &[String],
     sessions_root: &Path,
     cwd: &Path,
     launch_started_at: SystemTime,
+    capture_state: &mut CodexSessionCaptureState,
 ) -> Option<ResumeTarget> {
-    let index_ids = read_codex_index_ids(index_path);
-    let candidates = read_codex_session_candidates(sessions_root, launch_started_at);
+    let candidates = session_ids
+        .iter()
+        .filter_map(|session_id| {
+            let path = resolve_codex_session_path(session_id, sessions_root, capture_state)?;
+            parse_codex_session_candidate(&path, launch_started_at)
+        })
+        .collect::<Vec<_>>();
 
-    match_codex_resume_target(&index_ids, &candidates, cwd, launch_started_at)
+    match_codex_resume_target(session_ids, &candidates, cwd, launch_started_at)
 }
 
 fn match_codex_resume_target(
@@ -4203,34 +4198,109 @@ fn match_codex_resume_target(
         .map(|candidate| ResumeTarget::id(candidate.session_id.clone()))
 }
 
-fn read_codex_index_ids(index_path: &Path) -> Vec<String> {
-    let Ok(contents) = std::fs::read_to_string(index_path) else {
+fn read_new_codex_index_ids(
+    index_path: &Path,
+    capture_state: &mut CodexSessionCaptureState,
+) -> Vec<String> {
+    let Ok(file) = std::fs::File::open(index_path) else {
+        return Vec::new();
+    };
+    let Ok(metadata) = file.metadata() else {
         return Vec::new();
     };
 
-    contents
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter_map(|value| {
-            value
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-        })
-        .collect()
+    let offset = capture_state
+        .index_offsets
+        .entry(index_path.to_path_buf())
+        .or_insert(0);
+    if *offset > metadata.len() {
+        *offset = 0;
+    }
+
+    let mut reader = BufReader::new(file);
+    if reader.seek(SeekFrom::Start(*offset)).is_err() {
+        return Vec::new();
+    }
+
+    let mut ids = Vec::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let Ok(bytes_read) = reader.read_line(&mut line) else {
+            return Vec::new();
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        if let Some(session_id) = parse_codex_index_id(line.trim()) {
+            ids.push(session_id);
+        }
+    }
+
+    if let Ok(position) = reader.stream_position() {
+        *offset = position;
+    }
+
+    ids
 }
 
-fn read_codex_session_candidates(
-    sessions_root: &Path,
-    launch_started_at: SystemTime,
-) -> Vec<CodexSessionCandidate> {
-    let mut paths = Vec::new();
-    collect_recent_jsonl_files(sessions_root, launch_started_at, &mut paths);
+fn parse_codex_index_id(line: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()?
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
 
-    paths
-        .into_iter()
-        .filter_map(|path| parse_codex_session_candidate(&path, launch_started_at))
-        .collect()
+fn resolve_codex_session_path(
+    session_id: &str,
+    sessions_root: &Path,
+    capture_state: &mut CodexSessionCaptureState,
+) -> Option<PathBuf> {
+    if let Some(path) = capture_state.session_paths.get(session_id) {
+        if path.exists() {
+            return Some(path.clone());
+        }
+        capture_state.session_paths.remove(session_id);
+    }
+
+    let path = find_codex_session_file(sessions_root, session_id)?;
+    capture_state
+        .session_paths
+        .insert(session_id.to_string(), path.clone());
+    Some(path)
+}
+
+fn find_codex_session_file(root: &Path, session_id: &str) -> Option<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return None;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_codex_session_file(&path, session_id) {
+                return Some(found);
+            }
+            continue;
+        }
+
+        if path.extension().is_none_or(|ext| ext != "jsonl") {
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(file_stem) = file_name.strip_suffix(".jsonl") else {
+            continue;
+        };
+        if file_stem.ends_with(session_id) {
+            return Some(path);
+        }
+    }
+
+    None
 }
 
 fn parse_codex_session_candidate(
@@ -4336,35 +4406,6 @@ fn parse_pi_session_candidate(
     })
 }
 
-fn collect_recent_jsonl_files(root: &Path, launch_started_at: SystemTime, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_recent_jsonl_files(&path, launch_started_at, out);
-            continue;
-        }
-
-        if path.extension().is_none_or(|ext| ext != "jsonl") {
-            continue;
-        }
-
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        let Ok(modified_at) = metadata.modified() else {
-            continue;
-        };
-        if modified_at.duration_since(launch_started_at).is_err() {
-            continue;
-        }
-        out.push(path);
-    }
-}
-
 fn cwd_slug(cwd: &Path) -> Option<String> {
     let parts = cwd
         .components()
@@ -4442,8 +4483,10 @@ fn choose_initial_section(
 #[cfg(test)]
 mod tests {
     use super::{
-        choose_initial_section, cwd_slug, match_codex_resume_target, match_pi_resume_target,
-        CodexSessionCandidate, PiSessionCandidate, SectionId, SectionState,
+        choose_initial_section, cwd_slug, launch_requires_background_resume_capture,
+        match_codex_resume_target, match_pi_resume_target, read_new_codex_index_ids,
+        CodexSessionCandidate, CodexSessionCaptureState, PiSessionCandidate, SectionId,
+        SectionState,
     };
     use crate::agents::{
         AgentProviderKind, ResumeTarget, TerminalLaunchConfig, TerminalLaunchKind,
@@ -4452,6 +4495,7 @@ mod tests {
         Branch, PersistedSectionState, PersistedTerminalTab, Project, ProjectSettings, Worktree,
     };
     use std::collections::HashMap;
+    use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -4723,6 +4767,64 @@ mod tests {
         let target = match_pi_resume_target(&candidates, cwd, launch_started_at);
 
         assert_eq!(target, Some(ResumeTarget::path("/tmp/first.jsonl")));
+    }
+
+    #[test]
+    fn fresh_discovery_based_launch_requires_background_capture() {
+        assert!(launch_requires_background_resume_capture(
+            &TerminalLaunchConfig::for_provider(AgentProviderKind::Codex)
+        ));
+        assert!(launch_requires_background_resume_capture(
+            &TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)
+        ));
+        assert!(!launch_requires_background_resume_capture(
+            &TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode)
+        ));
+        assert!(!launch_requires_background_resume_capture(
+            &TerminalLaunchConfig::for_provider(AgentProviderKind::Codex)
+                .with_resume_target(ResumeTarget::id("session-1"))
+        ));
+    }
+
+    #[test]
+    fn codex_index_reader_only_returns_new_appended_ids() {
+        let root = std::env::temp_dir().join(format!("another-one-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("temp test directory should be created");
+        let index_path = root.join("session_index.jsonl");
+        let mut capture_state = CodexSessionCaptureState::default();
+
+        fs::write(
+            &index_path,
+            concat!(
+                "{\"id\":\"first\"}\n",
+                "{\"broken\":true}\n",
+                "{\"id\":\"second\"}\n"
+            ),
+        )
+        .expect("initial index should be written");
+
+        let first_read = read_new_codex_index_ids(&index_path, &mut capture_state);
+        assert_eq!(first_read, vec!["first".to_string(), "second".to_string()]);
+
+        let second_read = read_new_codex_index_ids(&index_path, &mut capture_state);
+        assert!(second_read.is_empty());
+
+        fs::write(
+            &index_path,
+            concat!(
+                "{\"id\":\"first\"}\n",
+                "{\"broken\":true}\n",
+                "{\"id\":\"second\"}\n",
+                "not-json\n",
+                "{\"id\":\"third\"}\n"
+            ),
+        )
+        .expect("appended index should be written");
+
+        let third_read = read_new_codex_index_ids(&index_path, &mut capture_state);
+        assert_eq!(third_read, vec!["third".to_string()]);
+
+        fs::remove_dir_all(&root).expect("temp test directory should be removed");
     }
 
     #[test]

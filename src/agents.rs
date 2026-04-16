@@ -223,19 +223,6 @@ impl TerminalLaunchConfig {
             .to_string()
     }
 
-    pub fn discovery_capture_key(&self, cwd: Option<&Path>) -> Option<(AgentProviderKind, String)> {
-        let provider = self.provider?;
-        if self.kind != TerminalLaunchKind::Agent
-            || !provider.is_discovery_based()
-            || self.resume_target.is_some()
-            || self.resume_mode != ResumeMode::Fresh
-        {
-            return None;
-        }
-
-        Some((provider, cwd?.display().to_string()))
-    }
-
     pub fn with_resume_target(&self, resume_target: ResumeTarget) -> Self {
         let mut next = self.clone();
         next.resume_target = Some(resume_target);
