@@ -1,4 +1,4 @@
-//! Three-column desktop layout (sidebar | main | right) using GPUI from Zed
+//! AnotherOne desktop app (sidebar | main | right) using GPUI from Zed
 //! (https://github.com/zed-industries/zed, crate `gpui`).
 
 mod agents;
@@ -24,9 +24,10 @@ use gpui::{
     point, px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions,
 };
 
-use app::{ThreeColumnApp, ZoomIn, ZoomOut, ZoomReset};
+use app::{AnotherOneApp, ZoomIn, ZoomOut, ZoomReset};
 use assets::ProjectAssets;
 
+#[hotpath::main]
 fn main() {
     Application::new()
         .with_assets(ProjectAssets {
@@ -63,7 +64,7 @@ fn main() {
                 #[cfg(not(target_os = "macos"))]
                 {
                     gpui::TitlebarOptions {
-                        title: Some("Three Column Layout".into()),
+                        title: Some("AnotherOne".into()),
                         appears_transparent: false,
                         traffic_light_position: None,
                     }
@@ -83,7 +84,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_, cx| cx.new(|cx| ThreeColumnApp::new(cx)),
+                |_, cx| cx.new(|cx| AnotherOneApp::new(cx)),
             )
             .unwrap();
             cx.on_window_closed(|cx| {

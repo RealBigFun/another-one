@@ -348,7 +348,7 @@ impl Render for ActionTooltip {
     }
 }
 
-pub struct ThreeColumnApp {
+pub struct AnotherOneApp {
     pub(crate) sidebar_w: f32,
     pub(crate) sidebar_saved: f32,
     pub(crate) right_w: f32,
@@ -466,7 +466,7 @@ pub struct ThreeColumnApp {
     pub(crate) last_terminal_output_redraw: Instant,
 }
 
-impl Focusable for ThreeColumnApp {
+impl Focusable for AnotherOneApp {
     fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -475,14 +475,14 @@ impl Focusable for ThreeColumnApp {
 struct AppInputHost {
     child: AnyElement,
     focus_handle: FocusHandle,
-    view: Entity<ThreeColumnApp>,
+    view: Entity<AnotherOneApp>,
 }
 
 impl AppInputHost {
     fn new(
         child: impl IntoElement,
         focus_handle: FocusHandle,
-        view: Entity<ThreeColumnApp>,
+        view: Entity<AnotherOneApp>,
     ) -> Self {
         Self {
             child: child.into_any_element(),
@@ -562,7 +562,7 @@ enum TextInputTarget {
     Blocked,
 }
 
-impl EntityInputHandler for ThreeColumnApp {
+impl EntityInputHandler for AnotherOneApp {
     fn text_for_range(
         &mut self,
         range: std::ops::Range<usize>,
@@ -758,7 +758,7 @@ fn utf16_selection_for_text(
     }
 }
 
-fn terminal_selected_text_range(app: &ThreeColumnApp) -> Option<UTF16Selection> {
+fn terminal_selected_text_range(app: &AnotherOneApp) -> Option<UTF16Selection> {
     let alt_screen = app
         .active_section
         .as_ref()
@@ -844,7 +844,7 @@ fn byte_to_utf16_offset(text: &str, byte_offset: usize) -> usize {
     text[..clamped].encode_utf16().count()
 }
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     fn text_input_target(&self) -> TextInputTarget {
         if self
             .new_task_modal
@@ -1054,6 +1054,7 @@ impl ThreeColumnApp {
         cx.notify();
     }
 
+    #[hotpath::measure]
     pub fn new(cx: &mut Context<Self>) -> Self {
         let store = ProjectStore::load();
         let left_sidebar_open = store.ui.left_sidebar_open;
@@ -1434,6 +1435,7 @@ impl ThreeColumnApp {
         });
     }
 
+    #[hotpath::measure]
     pub(crate) fn refresh_project_git_state(&mut self, project_id: &str) {
         let Some(project_path) = self
             .project_store
@@ -3148,7 +3150,8 @@ impl ThreeColumnApp {
 
 // ── Render ───────────────────────────────────────────────────────────
 
-impl Render for ThreeColumnApp {
+impl Render for AnotherOneApp {
+    #[hotpath::measure]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity().clone();
         // Start terminal refresh timer once.
@@ -3234,7 +3237,7 @@ impl Render for ThreeColumnApp {
             }
         }
 
-        // ── Normal three-column layout ──────────────────────────
+        // ── Normal main layout ──────────────────────────────────
         self.clamp_layout(window);
         let sw = self.sidebar_w;
         let rw = self.right_w;

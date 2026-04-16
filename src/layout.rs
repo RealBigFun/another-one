@@ -2,7 +2,7 @@
 
 use gpui::Window;
 
-use crate::app::ThreeColumnApp;
+use crate::app::AnotherOneApp;
 
 /// Horizontal space before the sidebar toggle (clears macOS traffic lights).
 #[cfg(target_os = "macos")]
@@ -34,7 +34,7 @@ pub enum Gutter {
     Right,
 }
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     pub fn sidebar_is_open(&self) -> bool {
         self.sidebar_w > SIDEBAR_COLLAPSED + 8.
     }

@@ -1,6 +1,6 @@
 //! Persistent project store.
 //!
-//! Projects are saved as JSON in `~/.config/three-column/projects.json`.
+//! Projects are saved as JSON in `~/.config/another-one/projects.json`.
 //! Each project is a folder the user has added. The store is designed to be
 //! extended later with per-project settings and sub-worktrees.
 
@@ -180,6 +180,7 @@ pub struct ProjectStore {
 
 impl ProjectStore {
     /// Load (or create) the store from the default config location.
+    #[hotpath::measure]
     pub fn load() -> Self {
         let file_path = Self::config_path();
         let StoreFile {
@@ -274,6 +275,7 @@ impl ProjectStore {
     }
 
     /// Persist current state to disk.
+    #[hotpath::measure]
     pub fn save(&self) {
         let store = StoreFile {
             projects: self.projects.clone(),
@@ -306,11 +308,25 @@ impl ProjectStore {
 
     fn config_path() -> PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        base.join("another-one").join("projects.json")
+    }
+
+    fn legacy_config_path() -> PathBuf {
+        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         base.join("three-column").join("projects.json")
     }
 
     fn read_from_disk(path: &Path) -> StoreFile {
-        match std::fs::read_to_string(path) {
+        let fallback_path = Self::legacy_config_path();
+        let read_path = if path.exists() {
+            path
+        } else if fallback_path.exists() {
+            fallback_path.as_path()
+        } else {
+            path
+        };
+
+        match std::fs::read_to_string(read_path) {
             Ok(contents) => serde_json::from_str::<StoreFile>(&contents).unwrap_or_default(),
             Err(_) => StoreFile::default(),
         }
@@ -339,6 +355,7 @@ pub fn prepare_project(folder: &Path) -> Result<Project, String> {
     })
 }
 
+#[hotpath::measure]
 pub fn read_project_git_state(path: &Path, include_metadata: bool) -> ProjectGitState {
     ProjectGitState {
         changed_files: list_changed_files(path),

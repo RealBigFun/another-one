@@ -4,7 +4,7 @@ use gpui::{
     div, hsla, prelude::*, px, rems, rgb, svg, Context, MouseButton, MouseDownEvent, Window,
 };
 
-use crate::app::ThreeColumnApp;
+use crate::app::AnotherOneApp;
 use crate::layout::TITLEBAR_CHROME_H;
 
 const TEXT_PRIMARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.92, 1.);
@@ -26,7 +26,7 @@ impl SettingsSection {
     }
 }
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     /// Render the full-window settings page (sidebar + content).
     pub(crate) fn render_settings_page(
         &self,

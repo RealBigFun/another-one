@@ -2,11 +2,11 @@
 
 use gpui::{div, prelude::*, px, rgb, svg, Context, MouseButton, MouseDownEvent, Window};
 
-use crate::app::ThreeColumnApp;
+use crate::app::AnotherOneApp;
 use crate::layout::*;
 use crate::theme;
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     pub fn titlebar_toggle_mouse(
         &mut self,
         _: &MouseDownEvent,

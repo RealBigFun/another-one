@@ -17,7 +17,7 @@ use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 
-use crate::app::ThreeColumnApp;
+use crate::app::AnotherOneApp;
 use crate::layout::*;
 use crate::left_sidebar::open_external_url;
 
@@ -314,14 +314,14 @@ fn terminal_cell_metrics(font_size_val: f32, window: &mut Window) -> (f32, f32) 
 struct TerminalInputHost {
     child: AnyElement,
     focus_handle: gpui::FocusHandle,
-    view: Entity<ThreeColumnApp>,
+    view: Entity<AnotherOneApp>,
 }
 
 impl TerminalInputHost {
     fn new(
         child: impl IntoElement,
         focus_handle: gpui::FocusHandle,
-        view: Entity<ThreeColumnApp>,
+        view: Entity<AnotherOneApp>,
     ) -> Self {
         Self {
             child: child.into_any_element(),
@@ -393,7 +393,7 @@ impl Element for TerminalInputHost {
     }
 }
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     /// Generic bordered panel with a title strip and body text.
     pub fn panel(
         title: &'static str,
@@ -994,7 +994,7 @@ impl ThreeColumnApp {
 
         grid_div = grid_div.child(inner);
 
-        // NOTE: refresh timer is started once in ThreeColumnApp::new()
+        // NOTE: refresh timer is started once in AnotherOneApp::new()
 
         TerminalInputHost::new(grid_div, self.focus_handle.clone(), cx.entity().clone())
             .into_any_element()
@@ -1147,7 +1147,7 @@ impl ThreeColumnApp {
         cx.notify();
     }
 
-    /// Assemble the three-column main row (sidebar | gutter | main | gutter | right).
+    /// Assemble the main row (sidebar | gutter | main | gutter | right).
     pub fn main_row(
         &mut self,
         window: &mut Window,

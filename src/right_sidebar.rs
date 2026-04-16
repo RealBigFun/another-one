@@ -10,7 +10,7 @@ use gpui::{
     SharedString, Transformation, Window,
 };
 
-use crate::app::ThreeColumnApp;
+use crate::app::AnotherOneApp;
 use crate::git_actions::ToolbarGitAction;
 use crate::theme;
 
@@ -149,7 +149,7 @@ impl ChangedFilesListSnapshot {
     }
 }
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     fn changed_files_list_snapshot(
         &mut self,
         project_id: &str,

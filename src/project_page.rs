@@ -5,7 +5,7 @@ use gpui::{
     Window,
 };
 
-use crate::app::{SectionId, SectionState, ThreeColumnApp};
+use crate::app::{AnotherOneApp, SectionId, SectionState};
 use crate::left_sidebar::open_external_url;
 
 #[derive(Clone)]
@@ -67,7 +67,7 @@ const TEXT_MUTED: fn() -> gpui::Hsla = || hsla(0., 0., 0.40, 1.);
 const GREEN: fn() -> gpui::Hsla = || hsla(138. / 360., 0.50, 0.74, 1.);
 const RED: fn() -> gpui::Hsla = || hsla(352. / 360., 0.52, 0.76, 1.);
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     fn project_page_group_key(project: &crate::project_store::Project) -> String {
         project
             .repo_common_dir

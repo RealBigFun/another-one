@@ -10,8 +10,8 @@ use gpui::{
 };
 
 use crate::app::{
-    SectionId, SectionState, SidebarTaskDeleteConfirmState, SidebarTaskMenuState,
-    SidebarTaskRenameState, ThreeColumnApp,
+    AnotherOneApp, SectionId, SectionState, SidebarTaskDeleteConfirmState, SidebarTaskMenuState,
+    SidebarTaskRenameState,
 };
 use crate::project_store::{Branch, Project};
 use crate::theme;
@@ -40,7 +40,7 @@ struct SidebarGroup {
     child_entries: Vec<SidebarTaskEntry>,
 }
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     fn sidebar_group_key(project: &Project) -> String {
         project
             .repo_common_dir

@@ -9,7 +9,7 @@ use gpui::{
 use uuid::Uuid;
 
 use crate::agents::{AGENTS, DEFAULT_AGENT_ID};
-use crate::app::ThreeColumnApp;
+use crate::app::AnotherOneApp;
 
 #[derive(Clone)]
 pub(crate) struct NewTaskModalState {
@@ -78,7 +78,7 @@ fn active_bg() -> gpui::Hsla {
     gpui::white().opacity(0.10)
 }
 
-impl ThreeColumnApp {
+impl AnotherOneApp {
     pub(crate) fn open_new_task_modal(&mut self, project_id: &str) {
         let Some(project) = self
             .project_store

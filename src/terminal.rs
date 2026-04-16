@@ -92,6 +92,7 @@ pub struct TerminalInstance {
 
 impl TerminalInstance {
     /// Spawn a new terminal with the given grid size and working directory.
+    #[hotpath::measure]
     pub fn new(
         cols: u16,
         rows: u16,
