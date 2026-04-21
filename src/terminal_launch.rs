@@ -19,6 +19,8 @@ use crate::terminal_runtime::{PreparedTerminalRuntime, TerminalGridSize, Termina
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(400);
+const ANOTHER_ONE_CODEX_SESSION_CAPTURE_ENV: &str = "ANOTHER_ONE_CODEX_SESSION_CAPTURE";
+const ANOTHER_ONE_PI_SESSION_CAPTURE_ENV: &str = "ANOTHER_ONE_PI_SESSION_CAPTURE";
 
 pub(crate) enum TerminalLaunchReply {
     Launched {
@@ -113,8 +115,7 @@ fn launch_terminal(
 ) -> anyhow::Result<()> {
     let launch_started_at = SystemTime::now();
     let cwd = cwd.unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let (mut builder, launch_config, discovery_kind) =
-        build_command(&cwd, launch_config, launch_started_at)?;
+    let (mut builder, launch_config, discovery_kind) = build_command(&cwd, launch_config)?;
 
     builder.cwd(&cwd);
     apply_terminal_environment(&mut builder);
@@ -203,8 +204,7 @@ fn launch_warm_terminal(
 ) -> anyhow::Result<()> {
     let launch_started_at = SystemTime::now();
     let cwd = cwd.unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let (mut builder, launch_config, discovery_kind) =
-        build_command(&cwd, launch_config, launch_started_at)?;
+    let (mut builder, launch_config, discovery_kind) = build_command(&cwd, launch_config)?;
 
     builder.cwd(&cwd);
     apply_terminal_environment(&mut builder);
@@ -276,16 +276,25 @@ fn launch_warm_terminal(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug)]
 enum DiscoveryKind {
-    Pi,
-    Codex,
+    Pi { capture: PiSessionCapture },
+    Codex { capture: CodexSessionCapture },
+}
+
+#[derive(Clone, Debug)]
+struct CodexSessionCapture {
+    path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct PiSessionCapture {
+    path: PathBuf,
 }
 
 fn build_command(
     cwd: &Path,
     launch_config: TerminalLaunchConfig,
-    launch_started_at: SystemTime,
 ) -> anyhow::Result<(CommandBuilder, TerminalLaunchConfig, Option<DiscoveryKind>)> {
     if launch_config.mode == TerminalLaunchMode::RawShell {
         return Ok((CommandBuilder::new_default_prog(), launch_config, None));
@@ -297,12 +306,10 @@ fn build_command(
 
     match provider {
         AgentProviderKind::ClaudeCode => {
-            let session = launch_config.session.clone().unwrap_or(TerminalSessionRef {
-                kind: TerminalSessionKind::ClaudeSession,
-                id: Uuid::new_v4().to_string(),
-            });
+            let (session, should_resume) =
+                resolve_claude_session(cwd, launch_config.session.as_ref(), None);
             let mut builder = CommandBuilder::new("claude");
-            if launch_config.session.is_some() {
+            if should_resume {
                 builder.args(["--resume", session.id.as_str()]);
             } else {
                 builder.args(["--session-id", session.id.as_str()]);
@@ -328,18 +335,26 @@ fn build_command(
                 builder.args(["resume", session.id.as_str()]);
                 None
             } else {
-                Some(DiscoveryKind::Codex)
+                let capture = prepare_codex_session_capture()?;
+                capture.attach_to_command(&mut builder);
+                Some(DiscoveryKind::Codex { capture })
             };
-            let _ = launch_started_at;
             Ok((builder, launch_config, discovery))
         }
         AgentProviderKind::Pi => {
             let mut builder = CommandBuilder::new("pi");
-            let discovery = if let Some(session) = launch_config.session.clone() {
+            let discovery = if let Some(session) =
+                resolve_pi_session(cwd, launch_config.session.as_ref(), None)
+            {
                 builder.args(["--session", session.id.as_str()]);
                 None
             } else {
-                Some(DiscoveryKind::Pi)
+                let capture = prepare_pi_session_capture()?;
+                capture.attach_to_command(&mut builder);
+                let extension_path = pi_session_capture_extension_path();
+                let extension_path = extension_path.to_string_lossy().into_owned();
+                builder.args(["-e", extension_path.as_str()]);
+                Some(DiscoveryKind::Pi { capture })
             };
             Ok((builder, launch_config, discovery))
         }
@@ -353,12 +368,176 @@ fn build_command(
     }
 }
 
+fn resolve_pi_session(
+    cwd: &Path,
+    requested_session: Option<&TerminalSessionRef>,
+    sessions_root: Option<&Path>,
+) -> Option<TerminalSessionRef> {
+    let session = requested_session?;
+    pi_session_exists(cwd, &session.id, sessions_root).then(|| session.clone())
+}
+
+fn pi_session_exists(cwd: &Path, session_id: &str, sessions_root: Option<&Path>) -> bool {
+    let session_path = Path::new(session_id);
+    if session_path.is_file() {
+        return true;
+    }
+
+    let sessions_root = sessions_root
+        .map(Path::to_path_buf)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".pi/agent/sessions")));
+    let Some(sessions_root) = sessions_root else {
+        return false;
+    };
+
+    let mut stack = vec![sessions_root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(file) = fs::File::open(&path) else {
+                continue;
+            };
+            let mut first_line = String::new();
+            if BufReader::new(file).read_line(&mut first_line).is_err() {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<Value>(&first_line) else {
+                continue;
+            };
+            let matches_id = value.get("id").and_then(Value::as_str) == Some(session_id);
+            if !matches_id {
+                continue;
+            }
+            let matches_cwd = value
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(|value| Path::new(value) == cwd)
+                .unwrap_or(true);
+            if matches_cwd {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn resolve_claude_session(
+    cwd: &Path,
+    requested_session: Option<&TerminalSessionRef>,
+    projects_root: Option<&Path>,
+) -> (TerminalSessionRef, bool) {
+    if let Some(session) = requested_session {
+        if claude_session_exists(cwd, &session.id, projects_root) {
+            return (session.clone(), true);
+        }
+    }
+
+    (
+        TerminalSessionRef {
+            kind: TerminalSessionKind::ClaudeSession,
+            id: Uuid::new_v4().to_string(),
+        },
+        false,
+    )
+}
+
+fn claude_session_exists(cwd: &Path, session_id: &str, projects_root: Option<&Path>) -> bool {
+    let projects_root = projects_root
+        .map(Path::to_path_buf)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".claude/projects")));
+    let Some(projects_root) = projects_root else {
+        return false;
+    };
+
+    let session_file_name = format!("{session_id}.jsonl");
+    let expected_project_path = projects_root
+        .join(claude_project_dir_name(cwd))
+        .join(&session_file_name);
+    if expected_project_path.is_file() {
+        return true;
+    }
+
+    let Ok(entries) = fs::read_dir(projects_root) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.is_dir() && path.join(&session_file_name).is_file()
+    })
+}
+
+fn claude_project_dir_name(cwd: &Path) -> String {
+    cwd.to_string_lossy()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect()
+}
+
 fn apply_terminal_environment(builder: &mut CommandBuilder) {
     builder.env("TERM", "xterm-256color");
     builder.env("COLORTERM", "truecolor");
     builder.env("COLORTERM_BCE", "1");
     builder.env("TERM_PROGRAM", "WezTerm");
     builder.env("TERM_PROGRAM_VERSION", "20240203");
+}
+
+impl CodexSessionCapture {
+    fn attach_to_command(&self, builder: &mut CommandBuilder) {
+        builder.env(
+            ANOTHER_ONE_CODEX_SESSION_CAPTURE_ENV,
+            self.path.to_string_lossy().into_owned(),
+        );
+    }
+}
+
+impl PiSessionCapture {
+    fn attach_to_command(&self, builder: &mut CommandBuilder) {
+        builder.env(
+            ANOTHER_ONE_PI_SESSION_CAPTURE_ENV,
+            self.path.to_string_lossy().into_owned(),
+        );
+    }
+}
+
+fn prepare_codex_session_capture() -> anyhow::Result<CodexSessionCapture> {
+    let capture_dir = dirs::config_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("another-one")
+        .join("codex-session-captures");
+    fs::create_dir_all(&capture_dir)
+        .with_context(|| format!("failed to create {}", capture_dir.display()))?;
+    Ok(CodexSessionCapture {
+        path: capture_dir.join(format!("{}.json", Uuid::new_v4())),
+    })
+}
+
+fn prepare_pi_session_capture() -> anyhow::Result<PiSessionCapture> {
+    let capture_dir = dirs::config_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("another-one")
+        .join("pi-session-captures");
+    fs::create_dir_all(&capture_dir)
+        .with_context(|| format!("failed to create {}", capture_dir.display()))?;
+    Ok(PiSessionCapture {
+        path: capture_dir.join(format!("{}.json", Uuid::new_v4())),
+    })
+}
+
+fn pi_session_capture_extension_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts")
+        .join("pi-session-start-extension.ts")
 }
 
 fn create_cursor_chat(cwd: &Path) -> anyhow::Result<String> {
@@ -404,9 +583,13 @@ fn discover_session(
 ) -> Option<TerminalSessionRef> {
     let deadline = SystemTime::now() + DISCOVERY_TIMEOUT;
     loop {
-        let discovered = match kind {
-            DiscoveryKind::Pi => discover_pi_session(launch_started_at, cwd),
-            DiscoveryKind::Codex => discover_codex_session(launch_started_at),
+        let discovered = match &kind {
+            DiscoveryKind::Pi { capture } => {
+                discover_pi_session(launch_started_at, cwd, Some(&capture.path))
+            }
+            DiscoveryKind::Codex { capture } => {
+                discover_codex_session(launch_started_at, Some(&capture.path))
+            }
         };
         if discovered.is_some() {
             return discovered;
@@ -418,7 +601,20 @@ fn discover_session(
     }
 }
 
-fn discover_pi_session(launch_started_at: SystemTime, cwd: &Path) -> Option<TerminalSessionRef> {
+fn discover_pi_session(
+    launch_started_at: SystemTime,
+    cwd: &Path,
+    capture_path: Option<&Path>,
+) -> Option<TerminalSessionRef> {
+    match capture_path.map(|path| read_session_capture(path, TerminalSessionKind::PiSession)) {
+        Some(SessionCaptureState::Ready(session)) => {
+            let _ = fs::remove_file(capture_path.expect("capture path should exist"));
+            return Some(session);
+        }
+        Some(SessionCaptureState::Pending) => return None,
+        Some(SessionCaptureState::Missing) | None => {}
+    }
+
     let sessions_root = dirs::home_dir()?.join(".pi/agent/sessions");
     newest_matching_jsonl(&sessions_root, launch_started_at, |path| {
         let file = fs::File::open(path).ok()?;
@@ -438,7 +634,23 @@ fn discover_pi_session(launch_started_at: SystemTime, cwd: &Path) -> Option<Term
     })
 }
 
-fn discover_codex_session(launch_started_at: SystemTime) -> Option<TerminalSessionRef> {
+fn discover_codex_session(
+    launch_started_at: SystemTime,
+    capture_path: Option<&Path>,
+) -> Option<TerminalSessionRef> {
+    match capture_path.map(|path| read_session_capture(path, TerminalSessionKind::CodexSession)) {
+        Some(SessionCaptureState::Ready(session)) => {
+            let _ = fs::remove_file(capture_path.expect("capture path should exist"));
+            return Some(session);
+        }
+        Some(SessionCaptureState::Pending) => return None,
+        Some(SessionCaptureState::Missing) | None => {}
+    }
+
+    discover_codex_session_from_index(launch_started_at)
+}
+
+fn discover_codex_session_from_index(launch_started_at: SystemTime) -> Option<TerminalSessionRef> {
     let index_path = dirs::home_dir()?.join(".codex/session_index.jsonl");
     let recent_cutoff = launch_started_at
         .checked_sub(Duration::from_secs(5))
@@ -459,6 +671,36 @@ fn discover_codex_session(launch_started_at: SystemTime) -> Option<TerminalSessi
             kind: TerminalSessionKind::CodexSession,
             id,
         })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SessionCaptureState {
+    Missing,
+    Pending,
+    Ready(TerminalSessionRef),
+}
+
+fn read_session_capture(path: &Path, kind: TerminalSessionKind) -> SessionCaptureState {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return SessionCaptureState::Missing;
+        }
+        Err(_) => return SessionCaptureState::Pending,
+    };
+    let Some(id) = serde_json::from_str::<Value>(&contents)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+    else {
+        return SessionCaptureState::Pending;
+    };
+
+    SessionCaptureState::Ready(TerminalSessionRef { kind, id })
 }
 
 fn newest_matching_jsonl(
@@ -503,4 +745,262 @@ fn newest_matching_jsonl(
     }
 
     newest.map(|(_, session)| session)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        claude_project_dir_name, claude_session_exists, discover_codex_session,
+        discover_pi_session, pi_session_exists, read_session_capture, resolve_claude_session,
+        resolve_pi_session, SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
+    };
+    use std::env;
+    use std::fs;
+    use std::path::Path;
+    use std::path::PathBuf;
+    use std::time::SystemTime;
+    use uuid::Uuid;
+
+    fn temp_capture_path() -> PathBuf {
+        env::temp_dir().join(format!("another-one-codex-capture-{}.json", Uuid::new_v4()))
+    }
+
+    fn temp_claude_projects_root() -> PathBuf {
+        env::temp_dir().join(format!("another-one-claude-projects-{}", Uuid::new_v4()))
+    }
+
+    fn temp_pi_sessions_root() -> PathBuf {
+        env::temp_dir().join(format!("another-one-pi-sessions-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn session_capture_reads_session_id_from_hook_payload() {
+        let path = temp_capture_path();
+        fs::write(&path, r#"{"session_id":"session-42","source":"startup"}"#)
+            .expect("capture file should be writable");
+
+        let state = read_session_capture(&path, TerminalSessionKind::CodexSession);
+
+        assert_eq!(
+            state,
+            SessionCaptureState::Ready(TerminalSessionRef {
+                kind: TerminalSessionKind::CodexSession,
+                id: "session-42".to_string(),
+            })
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn session_capture_waits_for_complete_hook_payload() {
+        let path = temp_capture_path();
+        fs::write(&path, r#"{"source":"startup"}"#).expect("capture file should be writable");
+
+        let state = read_session_capture(&path, TerminalSessionKind::CodexSession);
+
+        assert_eq!(state, SessionCaptureState::Pending);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn codex_discovery_prefers_hook_capture_when_available() {
+        let path = temp_capture_path();
+        fs::write(&path, r#"{"session_id":"hook-session"}"#)
+            .expect("capture file should be writable");
+
+        let session = discover_codex_session(SystemTime::now(), Some(&path));
+
+        assert_eq!(
+            session,
+            Some(TerminalSessionRef {
+                kind: TerminalSessionKind::CodexSession,
+                id: "hook-session".to_string(),
+            })
+        );
+        assert!(
+            !path.exists(),
+            "discovery should clean up consumed capture files"
+        );
+    }
+
+    #[test]
+    fn pi_discovery_prefers_extension_capture_when_available() {
+        let path = temp_capture_path();
+        fs::write(&path, r#"{"session_id":"pi-session"}"#)
+            .expect("capture file should be writable");
+
+        let session = discover_pi_session(SystemTime::now(), Path::new("/tmp"), Some(&path));
+
+        assert_eq!(
+            session,
+            Some(TerminalSessionRef {
+                kind: TerminalSessionKind::PiSession,
+                id: "pi-session".to_string(),
+            })
+        );
+        assert!(
+            !path.exists(),
+            "discovery should clean up consumed capture files"
+        );
+    }
+
+    #[test]
+    fn pi_session_exists_checks_saved_session_index() {
+        let sessions_root = temp_pi_sessions_root();
+        let session_dir = sessions_root.join("project");
+        fs::create_dir_all(&session_dir).expect("session dir should be created");
+        fs::write(
+            session_dir.join("session.jsonl"),
+            r#"{"type":"session","id":"pi-session","cwd":"/tmp/project"}"#,
+        )
+        .expect("session file should be created");
+
+        assert!(pi_session_exists(
+            Path::new("/tmp/project"),
+            "pi-session",
+            Some(&sessions_root),
+        ));
+        assert!(!pi_session_exists(
+            Path::new("/tmp/project"),
+            "missing-session",
+            Some(&sessions_root),
+        ));
+
+        let _ = fs::remove_dir_all(sessions_root);
+    }
+
+    #[test]
+    fn resolve_pi_session_reuses_existing_saved_session() {
+        let sessions_root = temp_pi_sessions_root();
+        let session_dir = sessions_root.join("project");
+        fs::create_dir_all(&session_dir).expect("session dir should be created");
+        fs::write(
+            session_dir.join("session.jsonl"),
+            r#"{"type":"session","id":"pi-session","cwd":"/tmp/project"}"#,
+        )
+        .expect("session file should be created");
+        let requested_session = TerminalSessionRef {
+            kind: TerminalSessionKind::PiSession,
+            id: "pi-session".to_string(),
+        };
+
+        let session = resolve_pi_session(
+            Path::new("/tmp/project"),
+            Some(&requested_session),
+            Some(&sessions_root),
+        );
+
+        assert_eq!(session, Some(requested_session));
+
+        let _ = fs::remove_dir_all(sessions_root);
+    }
+
+    #[test]
+    fn resolve_pi_session_drops_missing_saved_session() {
+        let sessions_root = temp_pi_sessions_root();
+        fs::create_dir_all(&sessions_root).expect("sessions root should be created");
+        let requested_session = TerminalSessionRef {
+            kind: TerminalSessionKind::PiSession,
+            id: "missing-session".to_string(),
+        };
+
+        let session = resolve_pi_session(
+            Path::new("/tmp/project"),
+            Some(&requested_session),
+            Some(&sessions_root),
+        );
+
+        assert_eq!(session, None);
+
+        let _ = fs::remove_dir_all(sessions_root);
+    }
+
+    #[test]
+    fn claude_project_dir_name_replaces_non_alphanumeric_characters() {
+        assert_eq!(
+            claude_project_dir_name(Path::new("/Users/jeff.f/webz/another-one")),
+            "-Users-jeff-f-webz-another-one"
+        );
+    }
+
+    #[test]
+    fn claude_session_exists_checks_expected_project_directory_first() {
+        let projects_root = temp_claude_projects_root();
+        let cwd = Path::new("/tmp/my.repo");
+        let project_dir = projects_root.join(claude_project_dir_name(cwd));
+        fs::create_dir_all(&project_dir).expect("project dir should be created");
+        fs::write(project_dir.join("session-42.jsonl"), "{}")
+            .expect("session file should be created");
+
+        assert!(claude_session_exists(
+            cwd,
+            "session-42",
+            Some(&projects_root)
+        ));
+        assert!(!claude_session_exists(cwd, "missing", Some(&projects_root)));
+
+        let _ = fs::remove_dir_all(projects_root);
+    }
+
+    #[test]
+    fn claude_session_exists_falls_back_to_scanning_other_project_directories() {
+        let projects_root = temp_claude_projects_root();
+        let other_project_dir = projects_root.join("other-project");
+        fs::create_dir_all(&other_project_dir).expect("project dir should be created");
+        fs::write(other_project_dir.join("session-99.jsonl"), "{}")
+            .expect("session file should be created");
+
+        assert!(claude_session_exists(
+            Path::new("/tmp/current-project"),
+            "session-99",
+            Some(&projects_root),
+        ));
+
+        let _ = fs::remove_dir_all(projects_root);
+    }
+
+    #[test]
+    fn resolve_claude_session_reuses_existing_session_when_file_exists() {
+        let projects_root = temp_claude_projects_root();
+        let cwd = Path::new("/tmp/project");
+        let requested_session = TerminalSessionRef {
+            kind: TerminalSessionKind::ClaudeSession,
+            id: "session-123".to_string(),
+        };
+        let project_dir = projects_root.join(claude_project_dir_name(cwd));
+        fs::create_dir_all(&project_dir).expect("project dir should be created");
+        fs::write(project_dir.join("session-123.jsonl"), "{}")
+            .expect("session file should be created");
+
+        let (session, should_resume) =
+            resolve_claude_session(cwd, Some(&requested_session), Some(&projects_root));
+
+        assert!(should_resume);
+        assert_eq!(session, requested_session);
+
+        let _ = fs::remove_dir_all(projects_root);
+    }
+
+    #[test]
+    fn resolve_claude_session_generates_new_session_when_saved_one_is_missing() {
+        let projects_root = temp_claude_projects_root();
+        fs::create_dir_all(&projects_root).expect("projects root should be created");
+        let requested_session = TerminalSessionRef {
+            kind: TerminalSessionKind::ClaudeSession,
+            id: "missing-session".to_string(),
+        };
+
+        let (session, should_resume) = resolve_claude_session(
+            Path::new("/tmp/project"),
+            Some(&requested_session),
+            Some(&projects_root),
+        );
+
+        assert!(!should_resume);
+        assert_eq!(session.kind, TerminalSessionKind::ClaudeSession);
+        assert_ne!(session.id, requested_session.id);
+
+        let _ = fs::remove_dir_all(projects_root);
+    }
 }

@@ -1325,14 +1325,6 @@ impl AnotherOneApp {
                     .flex_1()
                     .min_w(px(0.))
                     .overflow_hidden()
-                    .child(
-                        svg()
-                            .flex_shrink_0()
-                            .path("assets/icons/icons__git-branch.svg")
-                            .size(px(14.))
-                            .text_color(muted_col),
-                    )
-                    .child(task_label)
                     .when(is_worktree, |row| {
                         row.child(
                             svg()
@@ -1342,6 +1334,10 @@ impl AnotherOneApp {
                                 .text_color(muted_col),
                         )
                     })
+                    .when(!is_worktree, |row| {
+                        row.child(div().flex_shrink_0().w(px(13.)))
+                    })
+                    .child(task_label)
                     .when(is_worktree && entry.branch.is_default, |row| {
                         row.child(
                             div()

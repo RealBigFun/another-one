@@ -1807,7 +1807,8 @@ impl AnotherOneApp {
         let Some(request) = self.terminal_request_for_key(key, cx) else {
             return false;
         };
-        let is_claude_restore = request.launch_config.provider == Some(AgentProviderKind::ClaudeCode)
+        let is_claude_restore = request.launch_config.provider
+            == Some(AgentProviderKind::ClaudeCode)
             && request.launch_config.session.is_some();
         if !is_claude_restore {
             return false;
@@ -4468,8 +4469,8 @@ fn remove_terminal_runtime_state<T>(
 mod tests {
     use super::{
         apply_terminal_session_backfill, choose_initial_section,
-        output_mentions_missing_claude_conversation, remove_terminal_runtime_state, SectionId,
-        SectionState, trim_to_recent_output_limit, TERMINAL_RECENT_OUTPUT_LIMIT,
+        output_mentions_missing_claude_conversation, remove_terminal_runtime_state,
+        trim_to_recent_output_limit, SectionId, SectionState, TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,

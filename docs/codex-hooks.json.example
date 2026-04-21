@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Users/jeff.f/webz/another-one/scripts/codex-session-start-hook.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
