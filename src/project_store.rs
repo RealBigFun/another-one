@@ -313,14 +313,6 @@ impl ProjectStore {
         store
     }
 
-    pub fn ordered_projects(&self) -> Vec<&Project> {
-        self.projects.iter().collect()
-    }
-
-    pub fn first_project(&self) -> Option<&Project> {
-        self.projects.first()
-    }
-
     pub fn project(&self, project_id: &str) -> Option<&Project> {
         self.projects_by_id.get(project_id)
     }
@@ -348,22 +340,6 @@ impl ProjectStore {
 
     pub fn task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
         self.tasks_by_id.get_mut(task_id)
-    }
-
-    pub fn tasks_for_root_project(&self, root_project_id: &str) -> Vec<&Task> {
-        self.task_ids_by_root_project
-            .get(root_project_id)
-            .into_iter()
-            .flatten()
-            .filter_map(|task_id| self.tasks_by_id.get(task_id))
-            .collect()
-    }
-
-    pub fn root_project_for_project(&self, project_id: &str) -> Option<&Project> {
-        let project = self.project(project_id)?;
-        self.projects_by_id.values().find(|candidate| {
-            candidate.repo_id == project.repo_id && candidate.kind == ProjectKind::Root
-        })
     }
 
     pub fn branch_names(&self, project_id: &str) -> Vec<String> {
@@ -426,36 +402,9 @@ impl ProjectStore {
         self.branch_view(project_id, &branch_name)
     }
 
-    pub fn default_branch_name(&self, project_id: &str) -> Option<String> {
-        let repo = self.repo_for_project(project_id)?;
-        repo.branch_order.iter().find_map(|branch_name| {
-            repo.branches_by_name
-                .get(branch_name.as_str())
-                .filter(|branch| branch.is_default)
-                .map(|branch| branch.name.clone())
-        })
-    }
-
     pub fn current_branch_name(&self, project_id: &str) -> Option<String> {
         self.project(project_id)
             .and_then(|project| project.checkout.current_branch.clone())
-    }
-
-    pub fn worktree_name(&self, project_id: &str) -> Option<String> {
-        let project = self.project(project_id)?;
-        if project.kind != ProjectKind::Worktree {
-            return None;
-        }
-
-        project
-            .path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-    }
-
-    pub fn project_repo_id(&self, project_id: &str) -> Option<&str> {
-        self.project(project_id)
-            .map(|project| project.repo_id.as_str())
     }
 
     #[allow(dead_code)]
