@@ -1,12 +1,9 @@
 //! Application state, core event handlers, animation, and `Render` impl.
 
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::{
     actions, div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, AnyView, App, Bounds,
@@ -18,28 +15,18 @@ use gpui::{
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
 
-use crate::agents::{
-    prepare_launch_config_for_spawn, terminal_launch_config_for_selected_agents, AgentProviderKind,
-    ResumeTarget, TerminalLaunchConfig, TerminalLaunchKind, AGENTS,
-};
+use crate::agents::{terminal_launch_config_for_selected_agents, TerminalLaunchConfig, AGENTS};
 use crate::layout::*;
 use crate::project_store::{
     ChangedFile, DirectTask, PersistedSectionState, PersistedTerminalTab, ProjectGitState,
     ProjectStore,
 };
-use crate::terminal::TerminalInstance;
 use crate::theme;
 
-const ACTIVE_TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(80);
-const ACTIVE_TERMINAL_TYPING_FRAME_INTERVAL: Duration = Duration::from_millis(33);
-const ACTIVE_TERMINAL_TYPING_GRACE: Duration = Duration::from_millis(180);
 const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
-const BUSY_TERMINAL_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(12);
 const ACTIVE_GIT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
-const TERMINAL_CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const TERMINAL_CAPTURE_POLL_LIMIT: usize = 16;
+const IDLE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const TOAST_ANIMATION_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
-const TERMINAL_BUSY_GRACE: Duration = Duration::from_secs(2);
 const TOAST_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_ERROR_EXTRA_LIFETIME: Duration = Duration::from_secs(3);
 const TOAST_FADE_IN: Duration = Duration::from_millis(220);
@@ -104,10 +91,6 @@ pub struct TerminalTab {
     pub id: usize,
     pub title: String,
     pub launch_config: TerminalLaunchConfig,
-    /// Real terminal instance (PTY + grid).
-    pub terminal: Option<TerminalInstance>,
-    launch_failed: bool,
-    resume_capture_pending: bool,
 }
 
 /// Per-section state: which terminal tabs are open and which is active.
@@ -134,15 +117,6 @@ impl SectionState {
             next_tab_id: 1,
             cwd,
         }
-    }
-
-    pub fn add_tab(&mut self) -> usize {
-        let launch_config = self
-            .tabs
-            .get(self.active_tab)
-            .map(|tab| tab.launch_config.fresh_clone_for_new_tab())
-            .unwrap_or_default();
-        self.add_tab_with_launch_config(launch_config)
     }
 
     pub fn add_tab_with_launch_config(&mut self, launch_config: TerminalLaunchConfig) -> usize {
@@ -174,9 +148,6 @@ impl SectionState {
         }
 
         self.active_tab = index;
-        if let Some(tab) = self.tabs.get_mut(index) {
-            tab.launch_failed = false;
-        }
         true
     }
 
@@ -240,9 +211,6 @@ impl TerminalTab {
             id,
             title,
             launch_config,
-            terminal: None,
-            launch_failed: false,
-            resume_capture_pending: false,
         }
     }
 
@@ -250,40 +218,21 @@ impl TerminalTab {
         PersistedTerminalTab {
             id: self.id,
             title: self.title.clone(),
-            kind: self.launch_config.kind,
             provider: self.launch_config.provider,
-            launch_argv: self.launch_config.persisted_launch_argv(),
-            resume_target: self.launch_config.resume_target.clone(),
         }
     }
 
     fn from_persisted(persisted: PersistedTerminalTab) -> Self {
-        let mut launch_config = if let Some(provider) = persisted.provider {
+        let launch_config = if let Some(provider) = persisted.provider {
             TerminalLaunchConfig::for_provider(provider)
         } else {
             TerminalLaunchConfig::default()
         };
-        launch_config.kind = persisted.kind;
-        if persisted.kind == TerminalLaunchKind::Agent {
-            launch_config.launch_argv = if persisted.launch_argv.is_empty() {
-                launch_config.launch_argv.clone()
-            } else {
-                persisted.launch_argv.clone()
-            };
-            if let Some(resume_target) = persisted.resume_target.clone() {
-                launch_config = launch_config.with_resume_target(resume_target);
-            }
-        } else {
-            launch_config.launch_argv = Vec::new();
-        }
 
         Self {
             id: persisted.id,
             title: persisted.title,
             launch_config,
-            terminal: None,
-            launch_failed: false,
-            resume_capture_pending: false,
         }
     }
 }
@@ -351,25 +300,6 @@ struct TaskCreationReply {
 
 struct ProjectAddReply {
     result: Result<crate::project_store::Project, String>,
-}
-
-struct TerminalSpawnReply {
-    section_id: SectionId,
-    tab_id: usize,
-    result: Result<TerminalInstance, String>,
-}
-
-struct TerminalMetadataReply {
-    section_id: SectionId,
-    tab_id: usize,
-    launch_config: Option<TerminalLaunchConfig>,
-    capture_finished: bool,
-}
-
-#[derive(Debug, Default)]
-struct CodexSessionCaptureState {
-    index_offsets: HashMap<PathBuf, u64>,
-    session_paths: HashMap<String, PathBuf>,
 }
 
 struct ProjectGitHubLinkReply {
@@ -440,29 +370,6 @@ pub(crate) struct ProjectRemoveConfirmState {
     pub(crate) project_name: String,
     pub(crate) project_ids: Vec<String>,
     pub(crate) open_task_count: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TerminalViewport {
-    pub(crate) section_id: SectionId,
-    pub(crate) origin_x: f32,
-    pub(crate) origin_y: f32,
-    pub(crate) cell_w: f32,
-    pub(crate) cell_h: f32,
-    pub(crate) cols: usize,
-    pub(crate) rows: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TerminalSelectionDrag {
-    pub(crate) section_id: SectionId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HoveredTerminalLink {
-    pub(crate) section_id: SectionId,
-    pub(crate) row: usize,
-    pub(crate) col: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -540,14 +447,8 @@ pub(crate) struct WorkspacePane {
     pub(crate) project_page_prs_collapsed: bool,
     /// Active PR filter tab index (0=All Open, 1=Needs My Review, 2=My PRs, 3=Draft).
     pub(crate) project_page_pr_filter: usize,
-    /// Per-section terminal tab state.
+    /// Per-section placeholder tab state.
     pub(crate) section_states: HashMap<SectionId, SectionState>,
-    /// Last rendered terminal viewport geometry for pointer selection.
-    pub(crate) terminal_viewport: Option<TerminalViewport>,
-    /// Hovered terminal link cell, if any.
-    pub(crate) hovered_terminal_link: Option<HoveredTerminalLink>,
-    /// Active terminal mouse selection drag, if any.
-    pub(crate) terminal_selection_drag: Option<TerminalSelectionDrag>,
 }
 
 impl WorkspacePane {
@@ -572,9 +473,6 @@ impl WorkspacePane {
             project_page_prs_collapsed: false,
             project_page_pr_filter: 0,
             section_states,
-            terminal_viewport: None,
-            hovered_terminal_link: None,
-            terminal_selection_drag: None,
         }
     }
 
@@ -638,9 +536,8 @@ impl WorkspacePane {
         cx: &mut Context<Self>,
     ) {
         let project_id = project_id.into();
-        let mut changed = self.active_project_page.as_deref() != Some(project_id.as_str())
+        let changed = self.active_project_page.as_deref() != Some(project_id.as_str())
             || self.active_section.is_some();
-        changed |= self.clear_terminal_viewport_state();
         self.active_project_page = Some(project_id);
         self.active_section = None;
         if changed {
@@ -656,9 +553,8 @@ impl WorkspacePane {
         cx: &mut Context<Self>,
     ) {
         self.ensure_section(section_id.clone(), cwd, launch_config, cx);
-        let mut changed =
+        let changed =
             self.active_section.as_ref() != Some(&section_id) || self.active_project_page.is_some();
-        changed |= self.clear_terminal_viewport_state();
         self.active_section = Some(section_id);
         self.active_project_page = None;
         self.persist_active_section(cx);
@@ -702,8 +598,6 @@ impl WorkspacePane {
             changed = true;
         }
 
-        changed |= self.clear_terminal_viewport_state();
-
         if !removed_section_ids.is_empty() {
             self.cleanup_removed_sections(&removed_section_ids, cx);
         }
@@ -734,8 +628,6 @@ impl WorkspacePane {
             self.active_project_page = None;
             changed = true;
         }
-
-        changed |= self.clear_terminal_viewport_state();
 
         if !removed_section_ids.is_empty() {
             self.cleanup_removed_sections(&removed_section_ids, cx);
@@ -826,26 +718,6 @@ impl WorkspacePane {
             cx.notify();
         }
         removed_tab_id
-    }
-
-    pub(crate) fn note_terminal_input_activity(&self, cx: &mut Context<Self>) {
-        let _ = self
-            .app
-            .update(cx, |app, _| app.note_terminal_input_activity());
-    }
-
-    pub(crate) fn ensure_active_terminal_spawned(
-        &self,
-        section_id: &SectionId,
-        cx: &mut Context<Self>,
-    ) {
-        let app = self.app.clone();
-        let section_id = section_id.clone();
-        cx.defer(move |cx| {
-            let _ = app.update(cx, |app, app_cx| {
-                app.ensure_active_terminal_spawned(&section_id, app_cx);
-            });
-        });
     }
 
     pub(crate) fn mark_git_refresh_stale(&self, cx: &mut Context<Self>) {
@@ -963,156 +835,6 @@ impl WorkspacePane {
             });
         });
     }
-
-    pub(crate) fn update_terminal_viewport(
-        &mut self,
-        section_id: &SectionId,
-        cell_w: f32,
-        cell_h: f32,
-        cols: usize,
-        rows: usize,
-    ) {
-        let top_offset = if cfg!(target_os = "macos") {
-            TITLEBAR_CHROME_H
-        } else {
-            0.0
-        };
-
-        self.terminal_viewport = Some(TerminalViewport {
-            section_id: section_id.clone(),
-            origin_x: self.sidebar_w + GUTTER + 8.0,
-            origin_y: top_offset + 36.0 + 6.0,
-            cell_w,
-            cell_h,
-            cols,
-            rows,
-        });
-    }
-
-    pub(crate) fn clear_terminal_viewport(&mut self, cx: &mut Context<Self>) {
-        if self.clear_terminal_viewport_state() {
-            cx.notify();
-        }
-    }
-
-    fn clear_terminal_viewport_state(&mut self) -> bool {
-        self.terminal_viewport.take().is_some()
-            || self.hovered_terminal_link.take().is_some()
-            || self.terminal_selection_drag.take().is_some()
-    }
-
-    pub(crate) fn terminal_cell_at_position(
-        &self,
-        position: Point<Pixels>,
-    ) -> Option<(SectionId, usize, usize)> {
-        let viewport = self.terminal_viewport.as_ref()?;
-        if viewport.cols == 0 || viewport.rows == 0 {
-            return None;
-        }
-
-        let local_x = f32::from(position.x) - viewport.origin_x;
-        let local_y = f32::from(position.y) - viewport.origin_y;
-
-        let col = (local_x / viewport.cell_w).floor() as i32;
-        let row = (local_y / viewport.cell_h).floor() as i32;
-
-        let col = col.clamp(0, viewport.cols.saturating_sub(1) as i32) as usize;
-        let row = row.clamp(0, viewport.rows.saturating_sub(1) as i32) as usize;
-
-        Some((viewport.section_id.clone(), row, col))
-    }
-
-    pub(crate) fn handle_terminal_mouse_move(
-        &mut self,
-        ev: &MouseMoveEvent,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.update_terminal_selection_drag(ev, cx) {
-            self.set_hovered_terminal_link(None, cx);
-            return true;
-        }
-
-        self.update_hovered_terminal_link(ev, cx);
-        false
-    }
-
-    pub(crate) fn finish_terminal_drag(&mut self) -> bool {
-        self.terminal_selection_drag.take().is_some()
-    }
-
-    fn update_terminal_selection_drag(
-        &mut self,
-        ev: &MouseMoveEvent,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(drag) = self.terminal_selection_drag.as_ref() else {
-            return false;
-        };
-        if !ev.dragging() {
-            return false;
-        }
-
-        let Some((section_id, row, col)) = self.terminal_cell_at_position(ev.position) else {
-            return false;
-        };
-        if section_id != drag.section_id {
-            return false;
-        }
-
-        let Some(state) = self.section_states.get(&section_id) else {
-            return false;
-        };
-        let Some(tab) = state.tabs.get(state.active_tab) else {
-            return false;
-        };
-        let Some(terminal) = tab.terminal.as_ref() else {
-            return false;
-        };
-
-        terminal.update_selection(row, col);
-        cx.notify();
-        true
-    }
-
-    pub(crate) fn set_hovered_terminal_link(
-        &mut self,
-        hovered: Option<HoveredTerminalLink>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.hovered_terminal_link == hovered {
-            return false;
-        }
-
-        self.hovered_terminal_link = hovered;
-        cx.notify();
-        true
-    }
-
-    fn update_hovered_terminal_link(
-        &mut self,
-        ev: &MouseMoveEvent,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let hovered = if ev.dragging() || self.terminal_selection_drag.is_some() {
-            None
-        } else {
-            self.terminal_cell_at_position(ev.position)
-                .and_then(|(section_id, row, col)| {
-                    let state = self.section_states.get(&section_id)?;
-                    let tab = state.tabs.get(state.active_tab)?;
-                    let terminal = tab.terminal.as_ref()?;
-                    terminal
-                        .link_hint_at_viewport_cell(row, col)
-                        .map(|_| HoveredTerminalLink {
-                            section_id,
-                            row,
-                            col,
-                        })
-                })
-        };
-
-        self.set_hovered_terminal_link(hovered, cx)
-    }
 }
 
 pub struct AnotherOneApp {
@@ -1174,20 +896,6 @@ pub struct AnotherOneApp {
     task_creation_receiver: Option<mpsc::Receiver<TaskCreationReply>>,
     /// Receiver for the in-flight add-project background preparation result.
     project_add_receiver: Option<mpsc::Receiver<ProjectAddReply>>,
-    /// Sender used by background terminal spawns.
-    terminal_spawn_sender: mpsc::Sender<TerminalSpawnReply>,
-    /// Receiver for background terminal spawns.
-    terminal_spawn_receiver: mpsc::Receiver<TerminalSpawnReply>,
-    /// Sender used by background launch metadata capture tasks.
-    terminal_metadata_sender: mpsc::Sender<TerminalMetadataReply>,
-    /// Receiver for background launch metadata capture tasks.
-    terminal_metadata_receiver: mpsc::Receiver<TerminalMetadataReply>,
-    /// Active terminal spawns keyed by section + tab id.
-    pending_terminal_spawns: HashSet<(SectionId, usize)>,
-    /// Discovery-based launches waiting for a resume target, keyed by section + tab id.
-    pending_terminal_captures: HashSet<(SectionId, usize)>,
-    /// Shared incremental state for Codex resume-target discovery.
-    codex_session_capture_state: Arc<Mutex<CodexSessionCaptureState>>,
     /// Sender used by background project GitHub-link lookups.
     project_github_link_sender: mpsc::Sender<ProjectGitHubLinkReply>,
     /// Receiver for background project GitHub-link lookups.
@@ -1210,16 +918,12 @@ pub struct AnotherOneApp {
     pub(crate) settings_open: bool,
     /// Which settings section is currently active.
     pub(crate) settings_section: crate::settings_page::SettingsSection,
-    /// Terminal font size (adjusted by Cmd+/Cmd- zoom).
+    /// UI font size (adjusted by Cmd+/Cmd- zoom).
     pub(crate) font_size: f32,
-    /// Last time the active terminal received local keyboard input.
-    pub(crate) last_terminal_input: Cell<Instant>,
     /// Last time changed-file state was refreshed from git.
     pub(crate) last_git_status_refresh: Instant,
     /// Last time branch/worktree metadata was refreshed from git.
     pub(crate) last_git_metadata_refresh: Instant,
-    /// Last time PTY-driven terminal output triggered a repaint.
-    pub(crate) last_terminal_output_redraw: Instant,
 }
 
 impl Focusable for AnotherOneApp {
@@ -1314,7 +1018,6 @@ impl Element for AppInputHost {
 enum TextInputTarget {
     NewTaskModal,
     SidebarTaskRename,
-    Terminal,
     Blocked,
 }
 
@@ -1335,7 +1038,7 @@ impl EntityInputHandler for AnotherOneApp {
                 .sidebar_task_rename
                 .as_ref()
                 .map(|state| text_for_utf16_range(&state.task_name, range, adjusted_range)),
-            TextInputTarget::Terminal | TextInputTarget::Blocked => None,
+            TextInputTarget::Blocked => None,
         }
     }
 
@@ -1343,7 +1046,7 @@ impl EntityInputHandler for AnotherOneApp {
         &mut self,
         _ignore_disabled_input: bool,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
         match self.text_input_target() {
             TextInputTarget::NewTaskModal => self.new_task_modal.as_ref().map(|state| {
@@ -1360,7 +1063,6 @@ impl EntityInputHandler for AnotherOneApp {
                     state.task_name_selection_anchor,
                 )
             }),
-            TextInputTarget::Terminal => terminal_selected_text_range(self, cx),
             TextInputTarget::Blocked => None,
         }
     }
@@ -1412,27 +1114,6 @@ impl EntityInputHandler for AnotherOneApp {
                     cx.notify();
                 }
             }
-            TextInputTarget::Terminal => {
-                if !text.is_empty() {
-                    self.note_terminal_input_activity();
-                    let replacement = text.to_string();
-                    self.workspace_pane.update(cx, |workspace, _| {
-                        let Some(section_id) = workspace.active_section.as_ref() else {
-                            return;
-                        };
-                        let Some(state) = workspace.section_states.get(section_id) else {
-                            return;
-                        };
-                        let Some(tab) = state.tabs.get(state.active_tab) else {
-                            return;
-                        };
-                        let Some(terminal) = tab.terminal.as_ref() else {
-                            return;
-                        };
-                        terminal.write_to_pty(replacement.as_bytes());
-                    });
-                }
-            }
             TextInputTarget::Blocked => {}
         }
     }
@@ -1455,7 +1136,7 @@ impl EntityInputHandler for AnotherOneApp {
                 };
                 return;
             }
-            TextInputTarget::Terminal | TextInputTarget::Blocked => {}
+            TextInputTarget::Blocked => {}
         }
 
         self.marked_text = if new_text.is_empty() {
@@ -1514,32 +1195,6 @@ fn utf16_selection_for_text(
             range: cursor_utf16..cursor_utf16,
             reversed: false,
         }
-    }
-}
-
-fn terminal_selected_text_range(app: &AnotherOneApp, cx: &App) -> Option<UTF16Selection> {
-    let workspace = app.workspace_pane.read(cx);
-    let alt_screen = workspace
-        .active_section
-        .as_ref()
-        .and_then(|sid| workspace.section_states.get(sid))
-        .and_then(|state| state.tabs.get(state.active_tab))
-        .and_then(|tab| tab.terminal.as_ref())
-        .and_then(|terminal| {
-            terminal.term.lock().ok().map(|t| {
-                t.mode()
-                    .contains(alacritty_terminal::term::TermMode::ALT_SCREEN)
-            })
-        })
-        .unwrap_or(false);
-
-    if alt_screen {
-        None
-    } else {
-        Some(UTF16Selection {
-            range: 0..0,
-            reversed: false,
-        })
     }
 }
 
@@ -1634,7 +1289,7 @@ impl AnotherOneApp {
             return TextInputTarget::SidebarTaskRename;
         }
 
-        TextInputTarget::Terminal
+        TextInputTarget::Blocked
     }
 
     pub(crate) fn action_tooltip_view(label: &'static str, cx: &mut App) -> AnyView {
@@ -1822,9 +1477,6 @@ impl AnotherOneApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let store = ProjectStore::load();
         let left_sidebar_open = store.ui.left_sidebar_open;
-        let (terminal_spawn_sender, terminal_spawn_receiver) = mpsc::channel();
-        let (terminal_metadata_sender, terminal_metadata_receiver) = mpsc::channel();
-        let codex_session_capture_state = Arc::new(Mutex::new(CodexSessionCaptureState::default()));
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             mpsc::channel();
@@ -1889,7 +1541,7 @@ impl AnotherOneApp {
             )
         });
 
-        let mut app = Self {
+        let app = Self {
             sidebar_w: initial_sidebar_w,
             sidebar_saved: 280.,
             right_w: initial_right_w,
@@ -1929,13 +1581,6 @@ impl AnotherOneApp {
             git_refresh_receiver: None,
             task_creation_receiver: None,
             project_add_receiver: None,
-            terminal_spawn_sender,
-            terminal_spawn_receiver,
-            terminal_metadata_sender,
-            terminal_metadata_receiver,
-            pending_terminal_spawns: HashSet::new(),
-            pending_terminal_captures: HashSet::new(),
-            codex_session_capture_state,
             project_github_link_sender,
             project_github_link_receiver,
             project_github_link_requests: HashSet::new(),
@@ -1946,21 +1591,11 @@ impl AnotherOneApp {
             add_agent_modal: None,
             sidebar_task_last_click: None,
             font_size: initial_font_size,
-            last_terminal_input: Cell::new(Instant::now() - ACTIVE_TERMINAL_TYPING_GRACE),
             last_git_status_refresh: Instant::now() - ACTIVE_GIT_STATUS_REFRESH_INTERVAL,
             last_git_metadata_refresh: Instant::now() - ACTIVE_GIT_METADATA_REFRESH_INTERVAL,
-            last_terminal_output_redraw: Instant::now() - ACTIVE_TERMINAL_FRAME_INTERVAL,
         };
 
-        if let Some(section_id) = app.workspace_pane.read(cx).active_section.clone() {
-            app.ensure_active_terminal_spawned(&section_id, cx);
-        }
-
         app
-    }
-
-    pub(crate) fn note_terminal_input_activity(&self) {
-        self.last_terminal_input.set(Instant::now());
     }
 
     fn set_last_active_section_key(&mut self, section_key: Option<String>) {
@@ -1972,22 +1607,6 @@ impl AnotherOneApp {
             .set_terminal_section(section_id.store_key(), persisted);
     }
 
-    fn persist_section_state_from_workspace(&mut self, section_id: &SectionId, cx: &App) {
-        let persisted = self
-            .workspace_pane
-            .read(cx)
-            .section_states
-            .get(section_id)
-            .map(SectionState::to_persisted);
-
-        if let Some(persisted) = persisted {
-            self.persist_section_state(section_id, persisted);
-        } else {
-            self.project_store
-                .remove_terminal_section(&section_id.store_key());
-        }
-    }
-
     fn remove_persisted_sections(&mut self, section_ids: &HashSet<SectionId>) {
         let section_keys = section_ids
             .iter()
@@ -1996,18 +1615,9 @@ impl AnotherOneApp {
         self.project_store.remove_terminal_sections(&section_keys);
     }
 
-    fn cleanup_removed_tab(&mut self, section_id: &SectionId, tab_id: usize) {
-        self.pending_terminal_spawns
-            .remove(&(section_id.clone(), tab_id));
-        self.pending_terminal_captures
-            .remove(&(section_id.clone(), tab_id));
-    }
+    fn cleanup_removed_tab(&mut self, _section_id: &SectionId, _tab_id: usize) {}
 
     fn cleanup_removed_sections(&mut self, section_ids: &HashSet<SectionId>) {
-        self.pending_terminal_spawns
-            .retain(|(section_id, _)| !section_ids.contains(section_id));
-        self.pending_terminal_captures
-            .retain(|(section_id, _)| !section_ids.contains(section_id));
         self.remove_persisted_sections(section_ids);
     }
 
@@ -2018,14 +1628,6 @@ impl AnotherOneApp {
         self.workspace_pane.update(cx, |workspace, cx| {
             workspace.sync_layout(sidebar_w, right_w, font_size, cx);
         });
-    }
-
-    fn active_terminal_frame_interval(&self) -> Duration {
-        if self.last_terminal_input.get().elapsed() < ACTIVE_TERMINAL_TYPING_GRACE {
-            ACTIVE_TERMINAL_TYPING_FRAME_INTERVAL
-        } else {
-            ACTIVE_TERMINAL_FRAME_INTERVAL
-        }
     }
 
     pub(crate) fn mark_git_refresh_stale(&mut self) {
@@ -2054,124 +1656,6 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    pub(crate) fn ensure_active_terminal_spawned(
-        &mut self,
-        section_id: &SectionId,
-        cx: &mut Context<Self>,
-    ) {
-        let workspace = self.workspace_pane.read(cx);
-        let Some((tab_id, cwd, launch_config)) =
-            workspace.section_states.get(section_id).and_then(|state| {
-                state
-                    .tabs
-                    .get(state.active_tab)
-                    .filter(|tab| tab.terminal.is_none() && !tab.launch_failed)
-                    .map(|tab| (tab.id, state.cwd.clone(), tab.launch_config.clone()))
-            })
-        else {
-            return;
-        };
-
-        if !self
-            .pending_terminal_spawns
-            .insert((section_id.clone(), tab_id))
-        {
-            return;
-        }
-
-        if launch_requires_background_resume_capture(&launch_config) {
-            self.pending_terminal_captures
-                .insert((section_id.clone(), tab_id));
-            self.workspace_pane.update(cx, |workspace, _| {
-                let Some(state) = workspace.section_states.get_mut(section_id) else {
-                    return;
-                };
-                let Some(tab) = state.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
-                    return;
-                };
-                tab.resume_capture_pending = true;
-            });
-        }
-
-        let tx = self.terminal_spawn_sender.clone();
-        let metadata_tx = self.terminal_metadata_sender.clone();
-        let codex_capture_state = Arc::clone(&self.codex_session_capture_state);
-        let section_id = section_id.clone();
-        std::thread::spawn(move || {
-            let launch_started_at = std::time::SystemTime::now();
-            let prepared_launch_config =
-                match prepare_launch_config_for_spawn(&launch_config, cwd.as_deref()) {
-                    Ok(prepared) => prepared,
-                    Err(error) => {
-                        let _ = tx.send(TerminalSpawnReply {
-                            section_id,
-                            tab_id,
-                            result: Err(error),
-                        });
-                        return;
-                    }
-                };
-            let send_metadata_before_spawn = matches!(
-                prepared_launch_config.provider,
-                Some(AgentProviderKind::CursorAgent)
-            ) && prepared_launch_config.resume_target
-                != launch_config.resume_target;
-
-            if send_metadata_before_spawn {
-                let _ = metadata_tx.send(TerminalMetadataReply {
-                    section_id: section_id.clone(),
-                    tab_id,
-                    launch_config: Some(prepared_launch_config.clone()),
-                    capture_finished: true,
-                });
-            }
-
-            let result = TerminalInstance::new(80, 24, cwd.as_deref(), &prepared_launch_config)
-                .map_err(|error| format!("Could not start the terminal: {error}"));
-
-            if result.is_ok() && !send_metadata_before_spawn {
-                if prepared_launch_config.resume_target != launch_config.resume_target {
-                    let _ = metadata_tx.send(TerminalMetadataReply {
-                        section_id: section_id.clone(),
-                        tab_id,
-                        launch_config: Some(prepared_launch_config.clone()),
-                        capture_finished: true,
-                    });
-                }
-
-                if launch_requires_background_resume_capture(&prepared_launch_config) {
-                    let metadata_tx = metadata_tx.clone();
-                    let section_id = section_id.clone();
-                    let cwd = cwd.clone();
-                    let provider = prepared_launch_config
-                        .provider
-                        .expect("discovery-based capture requires a provider");
-                    std::thread::spawn(move || {
-                        let launch_config = capture_resume_target_for_launch_with_state(
-                            provider,
-                            cwd.as_deref(),
-                            launch_started_at,
-                            &prepared_launch_config,
-                            &codex_capture_state,
-                        );
-                        let _ = metadata_tx.send(TerminalMetadataReply {
-                            section_id,
-                            tab_id,
-                            launch_config,
-                            capture_finished: true,
-                        });
-                    });
-                }
-            }
-
-            let _ = tx.send(TerminalSpawnReply {
-                section_id,
-                tab_id,
-                result,
-            });
-        });
-    }
-
     fn zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
         self.font_size = (self.font_size + 1.0).min(32.0);
         self.sync_workspace_layout(cx);
@@ -2190,54 +1674,8 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    fn flush_pending_terminal_resizes(&mut self, cx: &mut Context<Self>) -> bool {
-        self.workspace_pane.update(cx, |workspace, _| {
-            let mut resized = false;
-            for section in workspace.section_states.values_mut() {
-                for tab in &mut section.tabs {
-                    if let Some(terminal) = tab.terminal.as_mut() {
-                        resized |= terminal.flush_resize();
-                    }
-                }
-            }
-            resized
-        })
-    }
-
-    fn should_notify_active_terminal(&mut self, cx: &App) -> bool {
-        let workspace = self.workspace_pane.read(cx);
-        let Some(section_id) = workspace.active_section.clone() else {
-            return false;
-        };
-
-        let frame_interval = self.active_terminal_frame_interval();
-        let Some(terminal) = workspace
-            .section_states
-            .get(&section_id)
-            .and_then(|section| section.tabs.get(section.active_tab))
-            .and_then(|tab| tab.terminal.as_ref())
-        else {
-            return false;
-        };
-
-        if !terminal.is_dirty() {
-            return false;
-        }
-
-        if self.last_terminal_output_redraw.elapsed() < frame_interval {
-            return false;
-        }
-
-        self.last_terminal_output_redraw = Instant::now();
-        terminal.take_dirty()
-    }
-
     fn git_status_refresh_interval(&self) -> Duration {
-        if self.last_terminal_output_redraw.elapsed() < TERMINAL_BUSY_GRACE {
-            BUSY_TERMINAL_GIT_STATUS_REFRESH_INTERVAL
-        } else {
-            ACTIVE_GIT_STATUS_REFRESH_INTERVAL
-        }
+        ACTIVE_GIT_STATUS_REFRESH_INTERVAL
     }
 
     fn apply_project_git_state(&mut self, project_id: &str, state: ProjectGitState) -> bool {
@@ -3124,98 +2562,6 @@ impl AnotherOneApp {
         }
     }
 
-    fn drain_terminal_metadata(&mut self, cx: &mut Context<Self>) -> bool {
-        let mut should_notify = false;
-
-        while let Ok(reply) = self.terminal_metadata_receiver.try_recv() {
-            let section_id = reply.section_id.clone();
-            let launch_config = reply.launch_config.clone();
-            let capture_finished = reply.capture_finished;
-            let updated = self.workspace_pane.update(cx, |workspace, cx| {
-                let Some(state) = workspace.section_states.get_mut(&section_id) else {
-                    return false;
-                };
-                let Some(tab) = state.tabs.iter_mut().find(|tab| tab.id == reply.tab_id) else {
-                    return false;
-                };
-
-                if let Some(launch_config) = launch_config.as_ref() {
-                    tab.launch_config = launch_config.clone();
-                    tab.launch_failed = false;
-                }
-                if capture_finished {
-                    tab.resume_capture_pending = false;
-                }
-                cx.notify();
-                true
-            });
-
-            if capture_finished {
-                self.pending_terminal_captures
-                    .remove(&(section_id.clone(), reply.tab_id));
-            }
-
-            if updated {
-                if launch_config.is_some() {
-                    self.persist_section_state_from_workspace(&section_id, cx);
-                }
-                should_notify = true;
-            }
-        }
-
-        should_notify
-    }
-
-    fn drain_terminal_spawn(&mut self, cx: &mut Context<Self>) -> bool {
-        let mut should_notify = false;
-
-        while let Ok(reply) = self.terminal_spawn_receiver.try_recv() {
-            self.pending_terminal_spawns
-                .remove(&(reply.section_id.clone(), reply.tab_id));
-
-            match reply.result {
-                Ok(terminal) => {
-                    let section_id = reply.section_id.clone();
-                    let tab_id = reply.tab_id;
-                    should_notify |= self.workspace_pane.update(cx, |workspace, cx| {
-                        let Some(state) = workspace.section_states.get_mut(&section_id) else {
-                            return false;
-                        };
-                        let Some(tab) = state.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
-                            return false;
-                        };
-                        tab.terminal = Some(terminal);
-                        tab.launch_failed = false;
-                        cx.notify();
-                        true
-                    });
-                }
-                Err(error) => {
-                    self.pending_terminal_captures
-                        .remove(&(reply.section_id.clone(), reply.tab_id));
-
-                    let section_id = reply.section_id.clone();
-                    let tab_id = reply.tab_id;
-                    self.workspace_pane.update(cx, |workspace, cx| {
-                        let Some(state) = workspace.section_states.get_mut(&section_id) else {
-                            return;
-                        };
-                        let Some(tab) = state.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
-                            return;
-                        };
-                        tab.launch_failed = true;
-                        tab.resume_capture_pending = false;
-                        cx.notify();
-                    });
-                    self.show_error_toast(error, cx);
-                    should_notify = true;
-                }
-            }
-        }
-
-        should_notify
-    }
-
     pub(crate) fn request_project_github_link_lookup(
         &mut self,
         project_id: &str,
@@ -3494,12 +2840,6 @@ impl AnotherOneApp {
             return;
         }
 
-        if self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.handle_terminal_mouse_move(ev, cx)
-        }) {
-            return;
-        }
-
         let Some((kind, last_x)) = self.drag else {
             return;
         };
@@ -3534,9 +2874,6 @@ impl AnotherOneApp {
 
     pub fn on_mouse_up(&mut self, _ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let had_toast_drag = self.finish_toast_drag(cx);
-        let had_terminal_drag = self
-            .workspace_pane
-            .update(cx, |workspace, _| workspace.finish_terminal_drag());
         let had_layout_drag = self.drag.take().is_some();
 
         if had_layout_drag {
@@ -3546,7 +2883,7 @@ impl AnotherOneApp {
                 .set_left_sidebar_open(self.sidebar_is_open());
         }
 
-        if had_toast_drag || had_terminal_drag || had_layout_drag {
+        if had_toast_drag || had_layout_drag {
             cx.notify();
         }
     }
@@ -3668,6 +3005,71 @@ impl AnotherOneApp {
         }
     }
 
+    fn main_row(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        sw: f32,
+        rw: f32,
+        open: bool,
+        busy: bool,
+    ) -> impl IntoElement {
+        let chrome = theme::chrome_bg(window);
+        let gutter_bg = gpui::black().opacity(0.12);
+
+        div()
+            .flex()
+            .flex_row()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .w(px(sw))
+                    .flex_shrink_0()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .when(open, |panel| panel.child(self.sidebar_content(window, cx)))
+                    .when(!open, |panel| panel.bg(chrome)),
+            )
+            .child(
+                div()
+                    .w(px(GUTTER))
+                    .flex_shrink_0()
+                    .bg(gutter_bg)
+                    .when(!busy, |gutter| {
+                        gutter.on_mouse_down(MouseButton::Left, cx.listener(Self::left_gutter_down))
+                    })
+                    .when(busy, |gutter| gutter.opacity(0.45)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(MIN_MAIN))
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(self.workspace_pane.clone()),
+            )
+            .child(
+                div()
+                    .w(px(GUTTER))
+                    .flex_shrink_0()
+                    .bg(gutter_bg)
+                    .when(!busy, |gutter| {
+                        gutter
+                            .on_mouse_down(MouseButton::Left, cx.listener(Self::right_gutter_down))
+                    })
+                    .when(busy, |gutter| gutter.opacity(0.45)),
+            )
+            .child(
+                div()
+                    .w(px(rw))
+                    .flex_shrink_0()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(self.changed_files_panel(window, cx)),
+            )
+    }
+
     pub fn on_settings_button(
         &mut self,
         _ev: &MouseDownEvent,
@@ -3722,7 +3124,7 @@ impl AnotherOneApp {
 
     fn refresh_timer_interval(&self) -> Duration {
         if self.toasts.is_empty() && self.copied_toast.is_none() {
-            self.active_terminal_frame_interval()
+            IDLE_REFRESH_INTERVAL
         } else {
             TOAST_ANIMATION_REFRESH_INTERVAL
         }
@@ -4034,384 +3436,6 @@ impl AnotherOneApp {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CodexSessionCandidate {
-    session_id: String,
-    cwd: PathBuf,
-    modified_at: SystemTime,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PiSessionCandidate {
-    session_path: PathBuf,
-    cwd: PathBuf,
-    modified_at: SystemTime,
-}
-
-fn launch_requires_background_resume_capture(launch_config: &TerminalLaunchConfig) -> bool {
-    matches!(
-        launch_config.provider,
-        Some(provider)
-            if launch_config.kind == TerminalLaunchKind::Agent
-                && provider.is_discovery_based()
-                && launch_config.resume_target.is_none()
-    )
-}
-
-fn capture_resume_target_for_launch_with_state(
-    provider: AgentProviderKind,
-    cwd: Option<&Path>,
-    launch_started_at: SystemTime,
-    launch_config: &TerminalLaunchConfig,
-    codex_capture_state: &Arc<Mutex<CodexSessionCaptureState>>,
-) -> Option<TerminalLaunchConfig> {
-    let cwd = cwd?;
-    let resume_target = match provider {
-        AgentProviderKind::Codex => {
-            capture_codex_resume_target(cwd, launch_started_at, codex_capture_state)
-        }
-        AgentProviderKind::Pi => capture_pi_resume_target(cwd, launch_started_at),
-        _ => None,
-    }?;
-
-    Some(launch_config.with_resume_target(resume_target))
-}
-
-fn capture_codex_resume_target(
-    cwd: &Path,
-    launch_started_at: SystemTime,
-    capture_state: &Arc<Mutex<CodexSessionCaptureState>>,
-) -> Option<ResumeTarget> {
-    let home = dirs::home_dir()?;
-    let index_path = home.join(".codex").join("session_index.jsonl");
-    let sessions_root = home.join(".codex").join("sessions");
-    let mut pending_session_ids = Vec::new();
-    let mut seen_session_ids = HashSet::new();
-
-    for _ in 0..TERMINAL_CAPTURE_POLL_LIMIT {
-        let new_session_ids = {
-            let mut state = capture_state.lock().ok()?;
-            read_new_codex_index_ids(&index_path, &mut state)
-        };
-        for session_id in new_session_ids {
-            if seen_session_ids.insert(session_id.clone()) {
-                pending_session_ids.push(session_id);
-            }
-        }
-
-        let target = {
-            let mut state = capture_state.lock().ok()?;
-            find_codex_resume_target(
-                &pending_session_ids,
-                &sessions_root,
-                cwd,
-                launch_started_at,
-                &mut state,
-            )
-        };
-
-        if let Some(target) = target {
-            return Some(target);
-        }
-        std::thread::sleep(TERMINAL_CAPTURE_POLL_INTERVAL);
-    }
-
-    None
-}
-
-fn capture_pi_resume_target(cwd: &Path, launch_started_at: SystemTime) -> Option<ResumeTarget> {
-    let home = dirs::home_dir()?;
-    let slug = cwd_slug(cwd)?;
-    let sessions_dir = home.join(".pi").join("agent").join("sessions").join(slug);
-
-    for _ in 0..TERMINAL_CAPTURE_POLL_LIMIT {
-        if let Some(target) = find_pi_resume_target(&sessions_dir, cwd, launch_started_at) {
-            return Some(target);
-        }
-        std::thread::sleep(TERMINAL_CAPTURE_POLL_INTERVAL);
-    }
-
-    None
-}
-
-fn find_codex_resume_target(
-    session_ids: &[String],
-    sessions_root: &Path,
-    cwd: &Path,
-    launch_started_at: SystemTime,
-    capture_state: &mut CodexSessionCaptureState,
-) -> Option<ResumeTarget> {
-    let candidates = session_ids
-        .iter()
-        .filter_map(|session_id| {
-            let path = resolve_codex_session_path(session_id, sessions_root, capture_state)?;
-            parse_codex_session_candidate(&path, launch_started_at)
-        })
-        .collect::<Vec<_>>();
-
-    match_codex_resume_target(session_ids, &candidates, cwd, launch_started_at)
-}
-
-fn match_codex_resume_target(
-    index_ids: &[String],
-    candidates: &[CodexSessionCandidate],
-    cwd: &Path,
-    launch_started_at: SystemTime,
-) -> Option<ResumeTarget> {
-    let mut recent_candidates = candidates
-        .iter()
-        .filter(|candidate| {
-            candidate.cwd == cwd
-                && candidate
-                    .modified_at
-                    .duration_since(launch_started_at)
-                    .is_ok()
-        })
-        .collect::<Vec<_>>();
-    recent_candidates.sort_by_key(|candidate| candidate.modified_at);
-
-    for session_id in index_ids.iter().rev() {
-        if let Some(candidate) = recent_candidates
-            .iter()
-            .rev()
-            .find(|candidate| &candidate.session_id == session_id)
-        {
-            return Some(ResumeTarget::id(candidate.session_id.clone()));
-        }
-    }
-
-    recent_candidates
-        .last()
-        .map(|candidate| ResumeTarget::id(candidate.session_id.clone()))
-}
-
-fn read_new_codex_index_ids(
-    index_path: &Path,
-    capture_state: &mut CodexSessionCaptureState,
-) -> Vec<String> {
-    let Ok(file) = std::fs::File::open(index_path) else {
-        return Vec::new();
-    };
-    let Ok(metadata) = file.metadata() else {
-        return Vec::new();
-    };
-
-    let offset = capture_state
-        .index_offsets
-        .entry(index_path.to_path_buf())
-        .or_insert(0);
-    if *offset > metadata.len() {
-        *offset = 0;
-    }
-
-    let mut reader = BufReader::new(file);
-    if reader.seek(SeekFrom::Start(*offset)).is_err() {
-        return Vec::new();
-    }
-
-    let mut ids = Vec::new();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let Ok(bytes_read) = reader.read_line(&mut line) else {
-            return Vec::new();
-        };
-        if bytes_read == 0 {
-            break;
-        }
-        if let Some(session_id) = parse_codex_index_id(line.trim()) {
-            ids.push(session_id);
-        }
-    }
-
-    if let Ok(position) = reader.stream_position() {
-        *offset = position;
-    }
-
-    ids
-}
-
-fn parse_codex_index_id(line: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(line)
-        .ok()?
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-}
-
-fn resolve_codex_session_path(
-    session_id: &str,
-    sessions_root: &Path,
-    capture_state: &mut CodexSessionCaptureState,
-) -> Option<PathBuf> {
-    if let Some(path) = capture_state.session_paths.get(session_id) {
-        if path.exists() {
-            return Some(path.clone());
-        }
-        capture_state.session_paths.remove(session_id);
-    }
-
-    let path = find_codex_session_file(sessions_root, session_id)?;
-    capture_state
-        .session_paths
-        .insert(session_id.to_string(), path.clone());
-    Some(path)
-}
-
-fn find_codex_session_file(root: &Path, session_id: &str) -> Option<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return None;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_codex_session_file(&path, session_id) {
-                return Some(found);
-            }
-            continue;
-        }
-
-        if path.extension().is_none_or(|ext| ext != "jsonl") {
-            continue;
-        }
-
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let Some(file_stem) = file_name.strip_suffix(".jsonl") else {
-            continue;
-        };
-        if file_stem.ends_with(session_id) {
-            return Some(path);
-        }
-    }
-
-    None
-}
-
-fn parse_codex_session_candidate(
-    path: &Path,
-    launch_started_at: SystemTime,
-) -> Option<CodexSessionCandidate> {
-    let metadata = std::fs::metadata(path).ok()?;
-    let modified_at = metadata.modified().ok()?;
-    if modified_at.duration_since(launch_started_at).is_err() {
-        return None;
-    }
-
-    let contents = std::fs::read_to_string(path).ok()?;
-    for line in contents.lines().take(20) {
-        let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
-        if value.get("type").and_then(serde_json::Value::as_str) != Some("session_meta") {
-            continue;
-        }
-        let payload = value.get("payload")?;
-        let session_id = payload.get("id")?.as_str()?.to_string();
-        let cwd = PathBuf::from(payload.get("cwd")?.as_str()?);
-        return Some(CodexSessionCandidate {
-            session_id,
-            cwd,
-            modified_at,
-        });
-    }
-
-    None
-}
-
-fn find_pi_resume_target(
-    sessions_dir: &Path,
-    cwd: &Path,
-    launch_started_at: SystemTime,
-) -> Option<ResumeTarget> {
-    let candidates = read_pi_session_candidates(sessions_dir, launch_started_at);
-    match_pi_resume_target(&candidates, cwd, launch_started_at)
-}
-
-fn match_pi_resume_target(
-    candidates: &[PiSessionCandidate],
-    cwd: &Path,
-    launch_started_at: SystemTime,
-) -> Option<ResumeTarget> {
-    let mut matching = candidates
-        .iter()
-        .filter(|candidate| {
-            candidate.cwd == cwd
-                && candidate
-                    .modified_at
-                    .duration_since(launch_started_at)
-                    .is_ok()
-        })
-        .collect::<Vec<_>>();
-    matching.sort_by_key(|candidate| candidate.modified_at);
-
-    matching
-        .first()
-        .map(|candidate| ResumeTarget::path(candidate.session_path.display().to_string()))
-}
-
-fn read_pi_session_candidates(
-    sessions_dir: &Path,
-    launch_started_at: SystemTime,
-) -> Vec<PiSessionCandidate> {
-    let Ok(entries) = std::fs::read_dir(sessions_dir) else {
-        return Vec::new();
-    };
-
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
-        .filter_map(|path| parse_pi_session_candidate(&path, launch_started_at))
-        .collect()
-}
-
-fn parse_pi_session_candidate(
-    path: &Path,
-    launch_started_at: SystemTime,
-) -> Option<PiSessionCandidate> {
-    let metadata = std::fs::metadata(path).ok()?;
-    let modified_at = metadata.modified().ok()?;
-    if modified_at.duration_since(launch_started_at).is_err() {
-        return None;
-    }
-
-    let first_line = std::fs::read_to_string(path)
-        .ok()?
-        .lines()
-        .next()?
-        .to_string();
-    let value = serde_json::from_str::<serde_json::Value>(&first_line).ok()?;
-    if value.get("type").and_then(serde_json::Value::as_str) != Some("session") {
-        return None;
-    }
-
-    Some(PiSessionCandidate {
-        session_path: path.to_path_buf(),
-        cwd: PathBuf::from(value.get("cwd")?.as_str()?),
-        modified_at,
-    })
-}
-
-fn cwd_slug(cwd: &Path) -> Option<String> {
-    let parts = cwd
-        .components()
-        .filter_map(|component| match component {
-            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            std::path::Component::Prefix(prefix) => {
-                Some(prefix.as_os_str().to_string_lossy().into_owned())
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    if parts.is_empty() {
-        return None;
-    }
-
-    Some(format!("--{}--", parts.join("-")))
-}
-
 fn choose_initial_section(
     projects: &[crate::project_store::Project],
     section_states: &HashMap<SectionId, SectionState>,
@@ -4452,7 +3476,7 @@ fn choose_initial_section(
             state
                 .tabs
                 .get(state.active_tab)
-                .filter(|tab| tab.launch_config.kind == TerminalLaunchKind::Agent)
+                .filter(|tab| tab.launch_config.provider.is_some())
                 .map(|_| section_id.clone())
         })
     {
@@ -4469,31 +3493,19 @@ fn choose_initial_section(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        choose_initial_section, cwd_slug, launch_requires_background_resume_capture,
-        match_codex_resume_target, match_pi_resume_target, read_new_codex_index_ids,
-        CodexSessionCandidate, CodexSessionCaptureState, PiSessionCandidate, SectionId,
-        SectionState,
-    };
-    use crate::agents::{
-        AgentProviderKind, ResumeTarget, TerminalLaunchConfig, TerminalLaunchKind,
-    };
+    use super::{choose_initial_section, SectionId, SectionState};
+    use crate::agents::{AgentProviderKind, TerminalLaunchConfig};
     use crate::project_store::{
         Branch, PersistedSectionState, PersistedTerminalTab, Project, ProjectSettings, Worktree,
     };
     use std::collections::HashMap;
-    use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::time::{Duration, UNIX_EPOCH};
+    use std::path::PathBuf;
 
     fn shell_tab(id: usize, title: &str) -> PersistedTerminalTab {
         PersistedTerminalTab {
             id,
             title: title.to_string(),
-            kind: TerminalLaunchKind::Shell,
             provider: None,
-            launch_argv: Vec::new(),
-            resume_target: None,
         }
     }
 
@@ -4530,10 +3542,7 @@ mod tests {
                     PersistedTerminalTab {
                         id: 4,
                         title: "Codex".to_string(),
-                        kind: TerminalLaunchKind::Agent,
                         provider: Some(AgentProviderKind::Codex),
-                        launch_argv: vec!["codex".to_string()],
-                        resume_target: Some(ResumeTarget::id("session-1")),
                     },
                 ],
             },
@@ -4546,7 +3555,7 @@ mod tests {
     }
 
     #[test]
-    fn section_state_add_tab_continues_after_restored_next_tab_id() {
+    fn section_state_add_tab_with_launch_config_continues_after_restored_next_tab_id() {
         let mut state = SectionState::from_persisted(
             PersistedSectionState {
                 active_tab_id: 0,
@@ -4555,16 +3564,14 @@ mod tests {
                 tabs: vec![PersistedTerminalTab {
                     id: 0,
                     title: "Pi".to_string(),
-                    kind: TerminalLaunchKind::Agent,
                     provider: Some(AgentProviderKind::Pi),
-                    launch_argv: vec!["pi".to_string()],
-                    resume_target: Some(ResumeTarget::path("/tmp/pi-session.jsonl")),
                 }],
             },
             None,
         );
 
-        let id = state.add_tab();
+        let id = state
+            .add_tab_with_launch_config(TerminalLaunchConfig::for_provider(AgentProviderKind::Pi));
 
         assert_eq!(id, 7);
         assert_eq!(state.next_tab_id, 8);
@@ -4619,10 +3626,7 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: 0,
                             title: "Codex".to_string(),
-                            kind: TerminalLaunchKind::Agent,
                             provider: Some(AgentProviderKind::Codex),
-                            launch_argv: vec!["codex".to_string()],
-                            resume_target: Some(ResumeTarget::id("session-1")),
                         }],
                     },
                     None,
@@ -4664,10 +3668,7 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: 0,
                             title: "Claude Code".to_string(),
-                            kind: TerminalLaunchKind::Agent,
                             provider: Some(AgentProviderKind::ClaudeCode),
-                            launch_argv: vec!["claude".to_string(), "--resume".to_string()],
-                            resume_target: Some(ResumeTarget::id("session-1")),
                         }],
                     },
                     None,
@@ -4678,140 +3679,6 @@ mod tests {
         let chosen = choose_initial_section(&[project], &section_states, None);
 
         assert_eq!(chosen, Some(task_section));
-    }
-
-    #[test]
-    fn codex_matcher_prefers_indexed_new_session_for_cwd() {
-        let cwd = Path::new("/tmp/project");
-        let launch_started_at = UNIX_EPOCH + Duration::from_secs(100);
-        let candidates = vec![
-            CodexSessionCandidate {
-                session_id: "old".to_string(),
-                cwd: cwd.to_path_buf(),
-                modified_at: UNIX_EPOCH + Duration::from_secs(90),
-            },
-            CodexSessionCandidate {
-                session_id: "wrong-cwd".to_string(),
-                cwd: PathBuf::from("/tmp/elsewhere"),
-                modified_at: UNIX_EPOCH + Duration::from_secs(160),
-            },
-            CodexSessionCandidate {
-                session_id: "wanted".to_string(),
-                cwd: cwd.to_path_buf(),
-                modified_at: UNIX_EPOCH + Duration::from_secs(170),
-            },
-        ];
-
-        let target = match_codex_resume_target(
-            &["old".to_string(), "wanted".to_string()],
-            &candidates,
-            cwd,
-            launch_started_at,
-        );
-
-        assert_eq!(target, Some(ResumeTarget::id("wanted")));
-    }
-
-    #[test]
-    fn codex_matcher_falls_back_to_newest_matching_session() {
-        let cwd = Path::new("/tmp/project");
-        let launch_started_at = UNIX_EPOCH + Duration::from_secs(100);
-        let candidates = vec![
-            CodexSessionCandidate {
-                session_id: "older".to_string(),
-                cwd: cwd.to_path_buf(),
-                modified_at: UNIX_EPOCH + Duration::from_secs(120),
-            },
-            CodexSessionCandidate {
-                session_id: "newest".to_string(),
-                cwd: cwd.to_path_buf(),
-                modified_at: UNIX_EPOCH + Duration::from_secs(180),
-            },
-        ];
-
-        let target = match_codex_resume_target(&[], &candidates, cwd, launch_started_at);
-
-        assert_eq!(target, Some(ResumeTarget::id("newest")));
-    }
-
-    #[test]
-    fn pi_matcher_chooses_first_new_file_for_cwd() {
-        let cwd = Path::new("/tmp/project");
-        let launch_started_at = UNIX_EPOCH + Duration::from_secs(100);
-        let candidates = vec![
-            PiSessionCandidate {
-                session_path: PathBuf::from("/tmp/late.jsonl"),
-                cwd: cwd.to_path_buf(),
-                modified_at: UNIX_EPOCH + Duration::from_secs(150),
-            },
-            PiSessionCandidate {
-                session_path: PathBuf::from("/tmp/first.jsonl"),
-                cwd: cwd.to_path_buf(),
-                modified_at: UNIX_EPOCH + Duration::from_secs(110),
-            },
-        ];
-
-        let target = match_pi_resume_target(&candidates, cwd, launch_started_at);
-
-        assert_eq!(target, Some(ResumeTarget::path("/tmp/first.jsonl")));
-    }
-
-    #[test]
-    fn fresh_discovery_based_launch_requires_background_capture() {
-        assert!(launch_requires_background_resume_capture(
-            &TerminalLaunchConfig::for_provider(AgentProviderKind::Codex)
-        ));
-        assert!(launch_requires_background_resume_capture(
-            &TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)
-        ));
-        assert!(!launch_requires_background_resume_capture(
-            &TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode)
-        ));
-        assert!(!launch_requires_background_resume_capture(
-            &TerminalLaunchConfig::for_provider(AgentProviderKind::Codex)
-                .with_resume_target(ResumeTarget::id("session-1"))
-        ));
-    }
-
-    #[test]
-    fn codex_index_reader_only_returns_new_appended_ids() {
-        let root = std::env::temp_dir().join(format!("another-one-test-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("temp test directory should be created");
-        let index_path = root.join("session_index.jsonl");
-        let mut capture_state = CodexSessionCaptureState::default();
-
-        fs::write(
-            &index_path,
-            concat!(
-                "{\"id\":\"first\"}\n",
-                "{\"broken\":true}\n",
-                "{\"id\":\"second\"}\n"
-            ),
-        )
-        .expect("initial index should be written");
-
-        let first_read = read_new_codex_index_ids(&index_path, &mut capture_state);
-        assert_eq!(first_read, vec!["first".to_string(), "second".to_string()]);
-
-        let second_read = read_new_codex_index_ids(&index_path, &mut capture_state);
-        assert!(second_read.is_empty());
-
-        fs::write(
-            &index_path,
-            concat!(
-                "{\"id\":\"first\"}\n",
-                "{\"broken\":true}\n",
-                "{\"id\":\"second\"}\n",
-                "not-json\n",
-                "{\"id\":\"third\"}\n"
-            ),
-        )
-        .expect("appended index should be written");
-
-        let third_read = read_new_codex_index_ids(&index_path, &mut capture_state);
-        assert_eq!(third_read, vec!["third".to_string()]);
-
-        fs::remove_dir_all(&root).expect("temp test directory should be removed");
     }
 }
 
@@ -4832,15 +3699,12 @@ impl Render for AnotherOneApp {
                     loop {
                         Timer::after(interval).await;
                         let next_interval = handle.update(async_cx, |this, cx| {
-                            let mut should_notify = this.flush_pending_terminal_resizes(cx);
-                            should_notify |= this.should_notify_active_terminal(cx);
+                            let mut should_notify = false;
                             should_notify |= this.drain_git_action(cx);
                             should_notify |= this.drain_changed_files_git_mutations(cx);
                             should_notify |= this.drain_git_refresh();
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_project_add(cx);
-                            should_notify |= this.drain_terminal_metadata(cx);
-                            should_notify |= this.drain_terminal_spawn(cx);
                             should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.tick_toasts();
                             this.maybe_schedule_active_git_refresh(cx);
@@ -4968,6 +3832,7 @@ impl Render for AnotherOneApp {
                     .child(Self::mac_title_strip(window, cx, busy))
                     .child(main)
                     .child(footer)
+                    .child(self.project_menu_overlay(sw, cx))
                     .child(self.sidebar_task_menu_overlay(window, cx))
                     .child(self.new_task_modal_overlay(cx))
                     .child(self.add_agent_modal_overlay(cx))
@@ -4996,6 +3861,7 @@ impl Render for AnotherOneApp {
                     .on_action(cx.listener(Self::zoom_reset))
                     .child(main)
                     .child(footer)
+                    .child(self.project_menu_overlay(sw, cx))
                     .child(self.sidebar_task_menu_overlay(window, cx))
                     .child(self.new_task_modal_overlay(cx))
                     .child(self.add_agent_modal_overlay(cx))

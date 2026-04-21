@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use crate::agents::{AgentProviderKind, ResumeTarget, TerminalLaunchKind};
+use crate::agents::AgentProviderKind;
 
 /// A single project entry. Will later carry per-project settings, worktrees, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,13 +134,8 @@ pub struct Worktree {
 pub struct PersistedTerminalTab {
     pub id: usize,
     pub title: String,
-    pub kind: TerminalLaunchKind,
     #[serde(default)]
     pub provider: Option<AgentProviderKind>,
-    #[serde(default)]
-    pub launch_argv: Vec<String>,
-    #[serde(default)]
-    pub resume_target: Option<ResumeTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -388,17 +383,6 @@ impl ProjectStore {
         self.save();
     }
 
-    pub fn remove_terminal_section(&mut self, section_key: &str) -> bool {
-        let removed = self.terminal_sections.remove(section_key).is_some();
-        if removed {
-            if self.ui.last_active_section_key.as_deref() == Some(section_key) {
-                self.ui.last_active_section_key = None;
-            }
-            self.save();
-        }
-        removed
-    }
-
     pub fn remove_terminal_sections(&mut self, section_keys: &HashSet<String>) -> bool {
         let before = self.terminal_sections.len();
         self.terminal_sections
@@ -426,11 +410,7 @@ impl ProjectStore {
     }
 
     fn read_from_disk(path: &Path) -> StoreFile {
-        let read_path = if path.exists() {
-            path
-        }  else {
-            path
-        };
+        let read_path = if path.exists() { path } else { path };
 
         match std::fs::read_to_string(read_path) {
             Ok(contents) => serde_json::from_str::<StoreFile>(&contents).unwrap_or_default(),
@@ -1264,7 +1244,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
 
-    use crate::agents::{AgentProviderKind, ResumeTarget, TerminalLaunchKind};
+    use crate::agents::AgentProviderKind;
 
     use super::{
         format_git_command_error, DirectTask, PersistedSectionState, PersistedTerminalTab, Project,
@@ -1359,22 +1339,12 @@ mod tests {
                             PersistedTerminalTab {
                                 id: 0,
                                 title: "Terminal".to_string(),
-                                kind: TerminalLaunchKind::Shell,
                                 provider: None,
-                                launch_argv: Vec::new(),
-                                resume_target: None,
                             },
                             PersistedTerminalTab {
                                 id: 1,
                                 title: "Claude Code".to_string(),
-                                kind: TerminalLaunchKind::Agent,
                                 provider: Some(AgentProviderKind::ClaudeCode),
-                                launch_argv: vec![
-                                    "claude".to_string(),
-                                    "--resume".to_string(),
-                                    "session-123".to_string(),
-                                ],
-                                resume_target: Some(ResumeTarget::id("session-123")),
                             },
                         ],
                     },
@@ -1388,14 +1358,7 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: 0,
                             title: "Pi".to_string(),
-                            kind: TerminalLaunchKind::Agent,
                             provider: Some(AgentProviderKind::Pi),
-                            launch_argv: vec![
-                                "pi".to_string(),
-                                "--session".to_string(),
-                                "/tmp/pi-session.jsonl".to_string(),
-                            ],
-                            resume_target: Some(ResumeTarget::path("/tmp/pi-session.jsonl")),
                         }],
                     },
                 ),
@@ -1443,8 +1406,8 @@ mod tests {
                 .get("wt1::feature/worktree::")
                 .expect("worktree terminal state should round-trip")
                 .tabs[0]
-                .resume_target,
-            Some(ResumeTarget::path("/tmp/pi-session.jsonl"))
+                .provider,
+            Some(AgentProviderKind::Pi)
         );
         assert!(!round_trip.ui.left_sidebar_open);
         assert_eq!(

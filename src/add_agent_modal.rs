@@ -271,12 +271,7 @@ impl AnotherOneApp {
         };
         let section_id = state.section_id.clone();
         let added = self.workspace_pane.update(cx, |workspace, cx| {
-            let added =
-                workspace.add_tab_with_launch_config(&section_id, launch_config.clone(), cx);
-            if added {
-                workspace.ensure_active_terminal_spawned(&section_id, cx);
-            }
-            added
+            workspace.add_tab_with_launch_config(&section_id, launch_config.clone(), cx)
         });
 
         if !added {

@@ -6,7 +6,6 @@ mod agents;
 mod app;
 mod assets;
 mod git_actions;
-mod keys;
 mod layout;
 mod left_sidebar;
 mod new_task_modal;
@@ -15,7 +14,6 @@ mod project_page;
 mod project_store;
 mod right_sidebar;
 mod settings_page;
-mod terminal;
 mod theme;
 mod titlebar;
 

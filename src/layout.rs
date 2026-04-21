@@ -25,7 +25,6 @@ pub const RIGHT_SIDEBAR_MIN_OPEN: f32 = MIN_RIGHT;
 /// Title strip under unified titlebar (macOS full-size content). Slightly taller so the
 /// traffic-light cluster has more vertical room.
 pub const TITLEBAR_CHROME_H: f32 = 38.;
-pub const SIDEBAR_TOOLBAR_H: f32 = 40.;
 pub const FOOTER_H: f32 = TITLEBAR_CHROME_H;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
