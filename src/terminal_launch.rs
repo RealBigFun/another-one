@@ -18,8 +18,8 @@ use crate::agents::{
 use crate::terminal_runtime::{PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey};
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
+const CODEX_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(400);
-const ANOTHER_ONE_CODEX_SESSION_CAPTURE_ENV: &str = "ANOTHER_ONE_CODEX_SESSION_CAPTURE";
 const ANOTHER_ONE_PI_SESSION_CAPTURE_ENV: &str = "ANOTHER_ONE_PI_SESSION_CAPTURE";
 
 pub(crate) enum TerminalLaunchReply {
@@ -279,12 +279,7 @@ fn launch_warm_terminal(
 #[derive(Clone, Debug)]
 enum DiscoveryKind {
     Pi { capture: PiSessionCapture },
-    Codex { capture: CodexSessionCapture },
-}
-
-#[derive(Clone, Debug)]
-struct CodexSessionCapture {
-    path: PathBuf,
+    Codex,
 }
 
 #[derive(Clone, Debug)]
@@ -335,9 +330,7 @@ fn build_command(
                 builder.args(["resume", session.id.as_str()]);
                 None
             } else {
-                let capture = prepare_codex_session_capture()?;
-                capture.attach_to_command(&mut builder);
-                Some(DiscoveryKind::Codex { capture })
+                Some(DiscoveryKind::Codex)
             };
             Ok((builder, launch_config, discovery))
         }
@@ -492,15 +485,6 @@ fn apply_terminal_environment(builder: &mut CommandBuilder) {
     builder.env("TERM_PROGRAM_VERSION", "20240203");
 }
 
-impl CodexSessionCapture {
-    fn attach_to_command(&self, builder: &mut CommandBuilder) {
-        builder.env(
-            ANOTHER_ONE_CODEX_SESSION_CAPTURE_ENV,
-            self.path.to_string_lossy().into_owned(),
-        );
-    }
-}
-
 impl PiSessionCapture {
     fn attach_to_command(&self, builder: &mut CommandBuilder) {
         builder.env(
@@ -508,18 +492,6 @@ impl PiSessionCapture {
             self.path.to_string_lossy().into_owned(),
         );
     }
-}
-
-fn prepare_codex_session_capture() -> anyhow::Result<CodexSessionCapture> {
-    let capture_dir = dirs::config_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("another-one")
-        .join("codex-session-captures");
-    fs::create_dir_all(&capture_dir)
-        .with_context(|| format!("failed to create {}", capture_dir.display()))?;
-    Ok(CodexSessionCapture {
-        path: capture_dir.join(format!("{}.json", Uuid::new_v4())),
-    })
 }
 
 fn prepare_pi_session_capture() -> anyhow::Result<PiSessionCapture> {
@@ -581,15 +553,13 @@ fn discover_session(
     launch_started_at: SystemTime,
     cwd: &Path,
 ) -> Option<TerminalSessionRef> {
-    let deadline = SystemTime::now() + DISCOVERY_TIMEOUT;
+    let deadline = SystemTime::now() + discovery_timeout_for_kind(&kind);
     loop {
         let discovered = match &kind {
             DiscoveryKind::Pi { capture } => {
                 discover_pi_session(launch_started_at, cwd, Some(&capture.path))
             }
-            DiscoveryKind::Codex { capture } => {
-                discover_codex_session(launch_started_at, Some(&capture.path))
-            }
+            DiscoveryKind::Codex => discover_codex_session(launch_started_at, cwd),
         };
         if discovered.is_some() {
             return discovered;
@@ -598,6 +568,15 @@ fn discover_session(
             return None;
         }
         thread::sleep(DISCOVERY_POLL_INTERVAL);
+    }
+}
+
+fn discovery_timeout_for_kind(kind: &DiscoveryKind) -> Duration {
+    match kind {
+        // Codex can delay creation of the resumable rollout file until after
+        // the first real turn, so keep discovery alive well past startup.
+        DiscoveryKind::Codex => CODEX_DISCOVERY_TIMEOUT,
+        DiscoveryKind::Pi { .. } => DISCOVERY_TIMEOUT,
     }
 }
 
@@ -634,24 +613,50 @@ fn discover_pi_session(
     })
 }
 
-fn discover_codex_session(
-    launch_started_at: SystemTime,
-    capture_path: Option<&Path>,
-) -> Option<TerminalSessionRef> {
-    match capture_path.map(|path| read_session_capture(path, TerminalSessionKind::CodexSession)) {
-        Some(SessionCaptureState::Ready(session)) => {
-            let _ = fs::remove_file(capture_path.expect("capture path should exist"));
-            return Some(session);
-        }
-        Some(SessionCaptureState::Pending) => return None,
-        Some(SessionCaptureState::Missing) | None => {}
-    }
-
-    discover_codex_session_from_index(launch_started_at)
+fn discover_codex_session(launch_started_at: SystemTime, cwd: &Path) -> Option<TerminalSessionRef> {
+    discover_codex_session_from_saved_sessions(launch_started_at, cwd, None)
+        .or_else(|| discover_codex_session_from_index(launch_started_at, None))
 }
 
-fn discover_codex_session_from_index(launch_started_at: SystemTime) -> Option<TerminalSessionRef> {
-    let index_path = dirs::home_dir()?.join(".codex/session_index.jsonl");
+fn discover_codex_session_from_saved_sessions(
+    launch_started_at: SystemTime,
+    cwd: &Path,
+    codex_root: Option<&Path>,
+) -> Option<TerminalSessionRef> {
+    let codex_root = codex_root
+        .map(Path::to_path_buf)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))?;
+    let mut newest: Option<(SystemTime, TerminalSessionRef)> = None;
+
+    for root in [
+        codex_root.join("sessions"),
+        codex_root.join("archived_sessions"),
+    ] {
+        let Some((discovered_at, session)) =
+            newest_matching_codex_session(&root, launch_started_at, cwd)
+        else {
+            continue;
+        };
+        let replace = newest
+            .as_ref()
+            .map(|(current, _)| discovered_at > *current)
+            .unwrap_or(true);
+        if replace {
+            newest = Some((discovered_at, session));
+        }
+    }
+
+    newest.map(|(_, session)| session)
+}
+
+fn discover_codex_session_from_index(
+    launch_started_at: SystemTime,
+    codex_root: Option<&Path>,
+) -> Option<TerminalSessionRef> {
+    let index_path = codex_root
+        .map(Path::to_path_buf)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))?
+        .join("session_index.jsonl");
     let recent_cutoff = launch_started_at
         .checked_sub(Duration::from_secs(5))
         .unwrap_or(launch_started_at);
@@ -671,6 +676,86 @@ fn discover_codex_session_from_index(launch_started_at: SystemTime) -> Option<Te
             kind: TerminalSessionKind::CodexSession,
             id,
         })
+}
+
+fn newest_matching_codex_session(
+    root: &Path,
+    launch_started_at: SystemTime,
+    cwd: &Path,
+) -> Option<(SystemTime, TerminalSessionRef)> {
+    let mut stack = vec![root.to_path_buf()];
+    let recent_cutoff = launch_started_at
+        .checked_sub(Duration::from_secs(5))
+        .unwrap_or(launch_started_at);
+    let mut newest: Option<(SystemTime, TerminalSessionRef)> = None;
+
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let Some(created_at) = codex_session_file_time(&metadata) else {
+                continue;
+            };
+            if created_at < recent_cutoff {
+                continue;
+            }
+
+            let Some(session) = parse_codex_session_file(&path, cwd) else {
+                continue;
+            };
+            let replace = newest
+                .as_ref()
+                .map(|(current, _)| created_at > *current)
+                .unwrap_or(true);
+            if replace {
+                newest = Some((created_at, session));
+            }
+        }
+    }
+
+    newest
+}
+
+fn codex_session_file_time(metadata: &fs::Metadata) -> Option<SystemTime> {
+    metadata.created().ok().or_else(|| metadata.modified().ok())
+}
+
+fn parse_codex_session_file(path: &Path, cwd: &Path) -> Option<TerminalSessionRef> {
+    let file = fs::File::open(path).ok()?;
+    let mut first_line = String::new();
+    BufReader::new(file).read_line(&mut first_line).ok()?;
+    let value = serde_json::from_str::<Value>(&first_line).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return None;
+    }
+
+    let payload = value.get("payload")?;
+    let matches_cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(|value| Path::new(value) == cwd)
+        .unwrap_or(false);
+    if !matches_cwd {
+        return None;
+    }
+
+    Some(TerminalSessionRef {
+        kind: TerminalSessionKind::CodexSession,
+        id: payload.get("id")?.as_str()?.to_string(),
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -750,15 +835,17 @@ fn newest_matching_jsonl(
 #[cfg(test)]
 mod tests {
     use super::{
-        claude_project_dir_name, claude_session_exists, discover_codex_session,
-        discover_pi_session, pi_session_exists, read_session_capture, resolve_claude_session,
-        resolve_pi_session, SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
+        claude_project_dir_name, claude_session_exists, discover_codex_session_from_index,
+        discover_codex_session_from_saved_sessions, discover_pi_session,
+        discovery_timeout_for_kind, pi_session_exists, read_session_capture,
+        resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
+        SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
     };
     use std::env;
     use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
-    use std::time::SystemTime;
+    use std::time::{Duration, SystemTime};
     use uuid::Uuid;
 
     fn temp_capture_path() -> PathBuf {
@@ -771,6 +858,26 @@ mod tests {
 
     fn temp_pi_sessions_root() -> PathBuf {
         env::temp_dir().join(format!("another-one-pi-sessions-{}", Uuid::new_v4()))
+    }
+
+    fn temp_codex_root() -> PathBuf {
+        env::temp_dir().join(format!("another-one-codex-root-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn codex_discovery_timeout_is_long_lived() {
+        assert_eq!(
+            discovery_timeout_for_kind(&DiscoveryKind::Codex),
+            Duration::from_secs(60 * 60)
+        );
+        assert_eq!(
+            discovery_timeout_for_kind(&DiscoveryKind::Pi {
+                capture: PiSessionCapture {
+                    path: PathBuf::from("/tmp/pi-capture.json"),
+                },
+            }),
+            Duration::from_secs(20)
+        );
     }
 
     #[test]
@@ -804,24 +911,60 @@ mod tests {
     }
 
     #[test]
-    fn codex_discovery_prefers_hook_capture_when_available() {
-        let path = temp_capture_path();
-        fs::write(&path, r#"{"session_id":"hook-session"}"#)
-            .expect("capture file should be writable");
+    fn codex_discovery_prefers_saved_session_with_matching_cwd() {
+        let codex_root = temp_codex_root();
+        let sessions_dir = codex_root.join("sessions/2026/04/21");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir should be created");
+        fs::write(
+            sessions_dir.join("rollout-2026-04-21T16-19-30-match.jsonl"),
+            r#"{"timestamp":"2026-04-21T23:19:37.594Z","type":"session_meta","payload":{"id":"match-session","cwd":"/tmp/project"}}"#,
+        )
+        .expect("matching session file should be created");
+        fs::write(
+            sessions_dir.join("rollout-2026-04-21T16-19-30-other.jsonl"),
+            r#"{"timestamp":"2026-04-21T23:19:37.594Z","type":"session_meta","payload":{"id":"other-session","cwd":"/tmp/other"}}"#,
+        )
+        .expect("non-matching session file should be created");
 
-        let session = discover_codex_session(SystemTime::now(), Some(&path));
+        let session = discover_codex_session_from_saved_sessions(
+            SystemTime::now(),
+            Path::new("/tmp/project"),
+            Some(&codex_root),
+        );
 
         assert_eq!(
             session,
             Some(TerminalSessionRef {
                 kind: TerminalSessionKind::CodexSession,
-                id: "hook-session".to_string(),
+                id: "match-session".to_string(),
             })
         );
-        assert!(
-            !path.exists(),
-            "discovery should clean up consumed capture files"
+
+        let _ = fs::remove_dir_all(codex_root);
+    }
+
+    #[test]
+    fn codex_discovery_falls_back_to_session_index_when_sessions_are_missing() {
+        let codex_root = temp_codex_root();
+        fs::create_dir_all(&codex_root).expect("codex root should be created");
+        fs::write(
+            codex_root.join("session_index.jsonl"),
+            r#"{"id":"older-session","updated_at":"2026-04-21T23:18:00.000Z"}
+{"id":"index-session","updated_at":"2026-04-21T23:19:30.000Z"}"#,
+        )
+        .expect("session index should be created");
+
+        let session = discover_codex_session_from_index(SystemTime::now(), Some(&codex_root));
+
+        assert_eq!(
+            session,
+            Some(TerminalSessionRef {
+                kind: TerminalSessionKind::CodexSession,
+                id: "index-session".to_string(),
+            })
         );
+
+        let _ = fs::remove_dir_all(codex_root);
     }
 
     #[test]

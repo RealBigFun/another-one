@@ -1,5 +1,9 @@
-# Codex Session Capture Hook
+# Codex Session Restore
 
-Install the sample hook by copying [codex-hooks.json.example](/Users/jeff.f/webz/another-one/docs/codex-hooks.json.example) to `~/.codex/hooks.json`.
+`another-one` no longer requires a Codex startup hook to restore sessions.
 
-The hook runs [codex-session-start-hook.sh](/Users/jeff.f/webz/another-one/scripts/codex-session-start-hook.sh), which writes the first Codex `SessionStart` hook payload to the app-provided capture path. `another-one` then reads `session_id` from that payload and stores it in the tab launch config.
+When launching a fresh Codex tab, the app now discovers the new session by scanning `~/.codex/sessions` (and `~/.codex/archived_sessions` as a fallback) for the newest rollout whose creation time is close to the terminal launch time and whose recorded `cwd` matches the tab.
+
+`~/.codex/session_index.jsonl` is still used as a last-resort fallback when no matching session file is available.
+
+The sample files [codex-hooks.json.example](/Users/jeff.f/webz/another-one/docs/codex-hooks.json.example) and [codex-session-start-hook.sh](/Users/jeff.f/webz/another-one/scripts/codex-session-start-hook.sh) are kept only as legacy/debugging references.
