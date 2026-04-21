@@ -117,8 +117,7 @@ fn launch_terminal(
         build_command(&cwd, launch_config, launch_started_at)?;
 
     builder.cwd(&cwd);
-    builder.env("TERM", "xterm-256color");
-    builder.env("COLORTERM", "truecolor");
+    apply_terminal_environment(&mut builder);
 
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(size.as_pty_size())?;
@@ -208,8 +207,7 @@ fn launch_warm_terminal(
         build_command(&cwd, launch_config, launch_started_at)?;
 
     builder.cwd(&cwd);
-    builder.env("TERM", "xterm-256color");
-    builder.env("COLORTERM", "truecolor");
+    apply_terminal_environment(&mut builder);
 
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(size.as_pty_size())?;
@@ -353,6 +351,14 @@ fn build_command(
             Ok((builder, launch_config, None))
         }
     }
+}
+
+fn apply_terminal_environment(builder: &mut CommandBuilder) {
+    builder.env("TERM", "xterm-256color");
+    builder.env("COLORTERM", "truecolor");
+    builder.env("COLORTERM_BCE", "1");
+    builder.env("TERM_PROGRAM", "WezTerm");
+    builder.env("TERM_PROGRAM_VERSION", "20240203");
 }
 
 fn create_cursor_chat(cwd: &Path) -> anyhow::Result<String> {

@@ -89,7 +89,7 @@ struct SourceBranchSectionProps<'a> {
 }
 
 impl AnotherOneApp {
-    pub(crate) fn open_new_task_modal(&mut self, project_id: &str) {
+    pub(crate) fn open_new_task_modal(&mut self, project_id: &str, cx: &mut Context<Self>) {
         let Some(project) = self
             .project_store
             .projects
@@ -104,13 +104,14 @@ impl AnotherOneApp {
             .primary_branch_for_project(&project.id, true)
             .map(|branch| branch.name)
             .unwrap_or_default();
-        self.open_new_task_modal_with_branch(project_id, &source_branch);
+        self.open_new_task_modal_with_branch(project_id, &source_branch, cx);
     }
 
     pub(crate) fn open_new_task_modal_with_branch(
         &mut self,
         project_id: &str,
         source_branch: &str,
+        cx: &mut Context<Self>,
     ) {
         let Some(project) = self
             .project_store
@@ -140,6 +141,7 @@ impl AnotherOneApp {
             advanced_expanded: false,
             submitting: false,
         });
+        self.sync_new_task_modal_prewarm(cx);
     }
 
     pub(crate) fn new_task_modal_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -260,6 +262,7 @@ impl AnotherOneApp {
             return;
         }
 
+        self.cancel_active_new_task_prewarm();
         self.new_task_modal = None;
         cx.notify();
     }
@@ -285,6 +288,7 @@ impl AnotherOneApp {
 
         match ev.keystroke.key.as_str() {
             "escape" => {
+                self.cancel_active_new_task_prewarm();
                 self.new_task_modal = None;
                 cx.notify();
             }
@@ -605,6 +609,7 @@ impl AnotherOneApp {
                                         state.branch_dropdown_open = false;
                                         state.agent_dropdown_open = false;
                                     }
+                                    this.sync_new_task_modal_prewarm(cx);
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -890,6 +895,7 @@ impl AnotherOneApp {
                                     state.selected_agents.insert(agent_id.clone());
                                 }
                             }
+                            this.sync_new_task_modal_prewarm(cx);
                             cx.stop_propagation();
                             cx.notify();
                         }),
@@ -1002,6 +1008,7 @@ impl AnotherOneApp {
                                         state.worktree_mode = true;
                                         state.agent_dropdown_open = false;
                                     }
+                                    this.sync_new_task_modal_prewarm(cx);
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -1070,6 +1077,7 @@ impl AnotherOneApp {
                                         state.branch_dropdown_open = false;
                                         state.agent_dropdown_open = false;
                                     }
+                                    this.sync_new_task_modal_prewarm(cx);
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),

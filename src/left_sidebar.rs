@@ -655,6 +655,16 @@ impl AnotherOneApp {
             return false;
         }
 
+        #[cfg(target_os = "macos")]
+        if let Some(bytes) = macos_terminal_command_bytes(ev) {
+            if self.write_active_terminal_input(cx, &bytes) {
+                cx.stop_propagation();
+                return true;
+            }
+            return false;
+        }
+
+        #[cfg(target_os = "macos")]
         if modifiers.platform {
             return false;
         }
@@ -1096,7 +1106,7 @@ impl AnotherOneApp {
                                 this.focus_handle.focus(window);
                                 this.commit_sidebar_task_rename(cx);
                                 this.sidebar_task_menu = None;
-                                this.open_new_task_modal(&pid_plus);
+                                this.open_new_task_modal(&pid_plus, cx);
                                 cx.notify();
                             }),
                         )
@@ -1397,10 +1407,10 @@ impl AnotherOneApp {
                         now,
                     ));
                     this.sidebar_task_menu = None;
+                    this.focus_handle.focus(window);
 
                     if repeated_click {
                         cx.stop_propagation();
-                        this.focus_handle.focus(window);
                         this.begin_sidebar_task_rename(
                             &left_click_project_id,
                             &left_click_row_id,
@@ -1757,6 +1767,7 @@ impl AnotherOneApp {
                     this.open_new_task_modal_with_branch(
                         &new_task_project_id,
                         &new_task_branch_name,
+                        cx,
                     );
                     cx.stop_propagation();
                     cx.notify();
@@ -2634,7 +2645,12 @@ fn terminal_key_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
         _ => None,
     };
 
-    if modifiers.control {
+    #[cfg(target_os = "macos")]
+    let control_pressed = modifiers.control;
+    #[cfg(not(target_os = "macos"))]
+    let control_pressed = modifiers.control || modifiers.platform;
+
+    if control_pressed {
         if let Some(key_char) = ev.keystroke.key_char.as_deref() {
             if let Some(byte) = control_key_byte(key_char) {
                 return Some(vec![byte]);
@@ -2646,7 +2662,12 @@ fn terminal_key_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
     }
 
     if bytes.is_none() {
-        if modifiers.control || modifiers.function {
+        #[cfg(target_os = "macos")]
+        let has_terminal_modifier = modifiers.control || modifiers.platform || modifiers.function;
+        #[cfg(not(target_os = "macos"))]
+        let has_terminal_modifier = modifiers.control || modifiers.function;
+
+        if has_terminal_modifier {
             return None;
         }
         let key_char = ev.keystroke.key_char.as_deref()?;
@@ -2660,6 +2681,28 @@ fn terminal_key_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
         return Some(prefixed);
     }
 
+    Some(bytes)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_terminal_command_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
+    let modifiers = ev.keystroke.modifiers;
+    if !modifiers.platform || modifiers.control || modifiers.function {
+        return None;
+    }
+
+    let byte = match ev.keystroke.key.as_str() {
+        "backspace" => 0x15,
+        "delete" => 0x0b,
+        "left" | "home" => 0x01,
+        "right" | "end" => 0x05,
+        _ => return None,
+    };
+
+    let mut bytes = vec![byte];
+    if modifiers.alt {
+        bytes.insert(0, 0x1b);
+    }
     Some(bytes)
 }
 
@@ -2679,6 +2722,52 @@ fn control_key_byte(value: &str) -> Option<u8> {
         '^' => Some(0x1e),
         '_' => Some(0x1f),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{KeyDownEvent, Keystroke, Modifiers};
+
+    fn key_event(key: &str, key_char: Option<&str>, modifiers: Modifiers) -> KeyDownEvent {
+        KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers,
+                key: key.to_string(),
+                key_char: key_char.map(str::to_string),
+            },
+            is_held: false,
+        }
+    }
+
+    #[test]
+    fn terminal_key_bytes_encodes_enter_and_backspace() {
+        assert_eq!(
+            terminal_key_bytes(&key_event("enter", None, Modifiers::default())),
+            Some(vec![b'\r'])
+        );
+        assert_eq!(
+            terminal_key_bytes(&key_event("backspace", None, Modifiers::default())),
+            Some(vec![0x7f])
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_terminal_command_bytes_maps_line_editing_shortcuts() {
+        assert_eq!(
+            macos_terminal_command_bytes(&key_event("backspace", None, Modifiers::command())),
+            Some(vec![0x15])
+        );
+        assert_eq!(
+            macos_terminal_command_bytes(&key_event("left", None, Modifiers::command())),
+            Some(vec![0x01])
+        );
+        assert_eq!(
+            macos_terminal_command_bytes(&key_event("delete", None, Modifiers::command())),
+            Some(vec![0x0b])
+        );
     }
 }
 

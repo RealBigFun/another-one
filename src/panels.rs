@@ -1,13 +1,14 @@
 //! Reusable panel helper and main content assembly.
 
 use gpui::{
-    div, hsla, prelude::*, px, rgb, svg, Context, MouseButton, MouseDownEvent, Render,
-    SharedString, StyledText, Window,
+    canvas, div, fill, hsla, outline, point, prelude::*, px, rgb, size, svg, App, BorderStyle,
+    Bounds, Context, MouseButton, MouseDownEvent, Pixels, Render, SharedString, Window,
 };
 
 use crate::app::{AnotherOneApp, WorkspacePane};
 use crate::terminal_runtime::{
-    TerminalLineSnapshot, TerminalRuntimeKey, TERMINAL_LINE_HEIGHT_RATIO,
+    TerminalCursorKind, TerminalRuntimeKey, TerminalSurfaceSnapshot, TERMINAL_CELL_WIDTH_RATIO,
+    TERMINAL_LINE_HEIGHT_RATIO,
 };
 
 impl AnotherOneApp {
@@ -149,7 +150,8 @@ impl WorkspacePane {
                         })
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                this.focus_handle.focus(window);
                                 this.activate_tab(&sid_click, tab_index, cx);
                             }),
                         )
@@ -255,7 +257,7 @@ impl WorkspacePane {
     fn render_terminal_tab(
         &self,
         section_id: &crate::app::SectionId,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let terminal_bg = rgb(0x1e1f22);
@@ -290,22 +292,42 @@ impl WorkspacePane {
             .unwrap_or((None, false, None));
 
         if let Some(snapshot) = snapshot {
-            let mut body = div()
+            let line_height = px((self.font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0));
+            let cell_width = terminal_cell_width(window, self.font_size);
+            let padding = px(12.);
+            let canvas_snapshot = snapshot.clone();
+            let font_size = px(self.font_size);
+            return div()
+                .relative()
                 .flex_1()
                 .min_h_0()
                 .overflow_hidden()
                 .bg(terminal_bg)
-                .p(px(12.))
-                .font_family("Lilex Nerd Font Mono")
-                .text_size(px(self.font_size))
-                .line_height(px((self.font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0)))
-                .text_color(title_col);
-
-            for line in &snapshot.lines {
-                body = body.child(render_terminal_line(line));
-            }
-
-            return body;
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _ev: &MouseDownEvent, window, _cx| {
+                        this.focus_handle.focus(window);
+                    }),
+                )
+                .child(
+                    canvas(
+                        move |bounds, _, _| bounds,
+                        move |bounds, _, window, cx| {
+                            paint_terminal_snapshot(
+                                bounds,
+                                &canvas_snapshot,
+                                window,
+                                cx,
+                                padding,
+                                cell_width,
+                                line_height,
+                                font_size,
+                            );
+                        },
+                    )
+                    .absolute()
+                    .inset_0(),
+                );
         }
 
         let status_title = if pending {
@@ -425,10 +447,88 @@ impl WorkspacePane {
     }
 }
 
-fn render_terminal_line(line: &TerminalLineSnapshot) -> gpui::Div {
-    let text = StyledText::new(line.text.clone()).with_runs(line.runs.clone());
+fn paint_terminal_snapshot(
+    bounds: Bounds<Pixels>,
+    snapshot: &TerminalSurfaceSnapshot,
+    window: &mut Window,
+    cx: &mut App,
+    padding: Pixels,
+    cell_width: Pixels,
+    cell_height: Pixels,
+    font_size: Pixels,
+) {
+    for (line_index, line) in snapshot.lines.iter().enumerate() {
+        let top = bounds.origin.y + padding + cell_height * line_index as f32;
 
-    div().whitespace_nowrap().child(text)
+        for span in &line.background_spans {
+            let left = bounds.origin.x + padding + cell_width * span.column as f32;
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(left, top),
+                    size(cell_width * span.width as f32, cell_height),
+                ),
+                span.color,
+            ));
+        }
+    }
+
+    for run in &snapshot.positioned_runs {
+        let position = point(
+            bounds.origin.x + padding + cell_width * run.column as f32,
+            bounds.origin.y + padding + cell_height * run.line as f32,
+        );
+        let _ = window
+            .text_system()
+            .shape_line(
+                run.text.clone().into(),
+                font_size,
+                std::slice::from_ref(&run.style),
+                Some(cell_width),
+            )
+            .paint(position, cell_height, window, cx);
+    }
+
+    let Some(cursor) = &snapshot.cursor else {
+        return;
+    };
+
+    let left = bounds.origin.x + padding + cell_width * cursor.column as f32;
+    let top = bounds.origin.y + padding + cell_height * cursor.line as f32;
+    let width = cell_width * cursor.width as f32;
+    let rect = Bounds::new(point(left, top), size(width, cell_height));
+
+    match cursor.kind {
+        TerminalCursorKind::Block => window.paint_quad(fill(rect, cursor.color)),
+        TerminalCursorKind::HollowBlock => {
+            window.paint_quad(outline(rect, cursor.color, BorderStyle::default()));
+        }
+        TerminalCursorKind::Beam => {
+            window.paint_quad(fill(
+                Bounds::new(point(left, top), size(px(2.), cell_height)),
+                cursor.color,
+            ));
+        }
+        TerminalCursorKind::Underline => {
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(left, top + cell_height - px(2.)),
+                    size(width.max(px(1.)), px(2.)),
+                ),
+                cursor.color,
+            ));
+        }
+    }
+}
+
+fn terminal_cell_width(window: &mut Window, font_size: f32) -> Pixels {
+    let font_pixels = px(font_size);
+    let text_system = window.text_system();
+    let font_id = text_system.resolve_font(&gpui::font("Lilex Nerd Font Mono"));
+
+    text_system
+        .advance(font_id, font_pixels, 'w')
+        .map(|advance| advance.width.max(px(7.)))
+        .unwrap_or_else(|_| px((font_size * TERMINAL_CELL_WIDTH_RATIO).max(7.0)))
 }
 
 impl Render for WorkspacePane {

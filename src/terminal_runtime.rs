@@ -2,22 +2,21 @@ use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::grid::{Dimensions, GridCell};
+use alacritty_terminal::event::{Event, EventListener, WindowSize};
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
-use gpui::{
-    font, px, rgb, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle,
-};
+use gpui::{font, px, rgb, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
 use portable_pty::{ChildKiller, MasterPty, PtySize};
 
 use crate::app::SectionId;
 
 const MIN_TERMINAL_COLS: u16 = 20;
 const MIN_TERMINAL_ROWS: u16 = 4;
-const CELL_WIDTH_RATIO: f32 = 0.62;
+pub(crate) const TERMINAL_CELL_WIDTH_RATIO: f32 = 0.62;
 pub(crate) const TERMINAL_LINE_HEIGHT_RATIO: f32 = 1.25;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -47,7 +46,7 @@ impl Default for TerminalGridSize {
 
 impl TerminalGridSize {
     pub fn from_panel_size(width_px: f32, height_px: f32, font_size: f32) -> Self {
-        let cell_width = (font_size * CELL_WIDTH_RATIO).max(7.0);
+        let cell_width = (font_size * TERMINAL_CELL_WIDTH_RATIO).max(7.0);
         let cell_height = (font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0);
         let cols = (width_px / cell_width)
             .floor()
@@ -91,12 +90,72 @@ impl Dimensions for TerminalGridSize {
 pub(crate) struct TerminalSurfaceSnapshot {
     pub text: String,
     pub lines: Vec<TerminalLineSnapshot>,
+    pub positioned_runs: Vec<TerminalPositionedRunSnapshot>,
+    pub cursor: Option<TerminalCursorSnapshot>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TerminalLineSnapshot {
     pub text: String,
     pub runs: Vec<TextRun>,
+    pub background_spans: Vec<TerminalBackgroundSpanSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalPositionedRunSnapshot {
+    pub line: usize,
+    pub column: usize,
+    pub cell_count: usize,
+    pub text: String,
+    pub style: TextRun,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalBackgroundSpanSnapshot {
+    pub column: usize,
+    pub width: usize,
+    pub color: Hsla,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalCursorKind {
+    Block,
+    HollowBlock,
+    Beam,
+    Underline,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalCursorSnapshot {
+    pub line: usize,
+    pub column: usize,
+    pub width: usize,
+    pub kind: TerminalCursorKind,
+    pub color: Hsla,
+}
+
+#[derive(Clone)]
+struct ResolvedCellStyle {
+    foreground: Hsla,
+    background: Hsla,
+    font: gpui::Font,
+    underline: Option<UnderlineStyle>,
+    strikethrough: Option<StrikethroughStyle>,
+}
+
+#[derive(Default)]
+struct PendingTextRun {
+    text: String,
+    len: usize,
+    style: Option<ResolvedCellStyle>,
+}
+
+struct PendingPositionedRun {
+    line: usize,
+    column: usize,
+    cell_count: usize,
+    text: String,
+    style: TextRun,
 }
 
 pub(crate) struct PreparedTerminalRuntime {
@@ -182,14 +241,19 @@ impl LiveTerminalRuntime {
                     Event::Title(title) => update.title = Some(title),
                     Event::ResetTitle => update.reset_title = true,
                     Event::PtyWrite(text) => pty_writes.push(text.into_bytes()),
+                    Event::ColorRequest(index, formatter) => {
+                        let color = resolve_color_request(index, self.term.colors());
+                        pty_writes.push(formatter(color).into_bytes());
+                    }
+                    Event::TextAreaSizeRequest(formatter) => {
+                        pty_writes.push(formatter(window_size_from_grid(self.size)).into_bytes());
+                    }
                     Event::Wakeup
                     | Event::Bell
                     | Event::MouseCursorDirty
                     | Event::CursorBlinkingChange
                     | Event::ClipboardStore(_, _)
                     | Event::ClipboardLoad(_, _)
-                    | Event::ColorRequest(_, _)
-                    | Event::TextAreaSizeRequest(_)
                     | Event::Exit
                     | Event::ChildExit(_) => {}
                 }
@@ -251,14 +315,18 @@ fn build_surface_snapshot<T: EventListener>(
         .then(|| point_to_viewport(display_offset, renderable.cursor.point))
         .flatten();
     let mut lines = Vec::with_capacity(size.rows as usize);
+    let mut positioned_runs = Vec::new();
+    let mut cursor_snapshot = None;
 
     for viewport_line in 0..size.rows as usize {
         let point = viewport_to_point(display_offset, Point::new(viewport_line, Column(0)));
         let grid_line = &term.grid()[point.line];
         let mut text = String::new();
         let mut runs = Vec::new();
-        let mut pending_blank_text = String::new();
-        let mut pending_blank_len = 0usize;
+        let mut background_spans = Vec::new();
+        let mut pending_blank_run = PendingTextRun::default();
+        let mut pending_positioned_run: Option<PendingPositionedRun> = None;
+        let mut previous_cell_had_zero_width = false;
 
         for column in 0..size.cols as usize {
             let cell = &grid_line[Column(column)];
@@ -268,43 +336,93 @@ fn build_surface_snapshot<T: EventListener>(
             {
                 continue;
             }
+            if cell.c == ' ' && previous_cell_had_zero_width {
+                previous_cell_had_zero_width = false;
+                continue;
+            }
+            previous_cell_had_zero_width =
+                matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
 
-            let is_cursor = cursor.is_some_and(|cursor| {
-                cursor.line == viewport_line && cursor.column.0 == column
-            });
+            let is_cursor = cursor
+                .is_some_and(|cursor| cursor.line == viewport_line && cursor.column.0 == column);
+            let mut cell_style = resolve_cell_style(cell, renderable.colors);
             let chunk = cell_display_text(cell);
             if chunk.is_empty() {
                 continue;
             }
 
-            if cell.is_empty() && !is_cursor {
-                pending_blank_len += chunk.len();
-                pending_blank_text.push_str(&chunk);
+            maybe_push_background_span(
+                &mut background_spans,
+                column,
+                terminal_cell_width(cell),
+                cell_style.background,
+            );
+
+            if is_cursor {
+                if let Some(snapshot) = cursor_snapshot_from_cell(
+                    viewport_line,
+                    column,
+                    terminal_cell_width(cell),
+                    renderable.cursor.shape,
+                    &cell_style,
+                ) {
+                    if snapshot.kind == TerminalCursorKind::Block {
+                        cell_style.foreground = cell_style.background;
+                    }
+                    cursor_snapshot = Some(snapshot);
+                }
+            }
+
+            let positioned_style = text_run_from_style(cell_style.clone());
+            if !cell_is_render_blank(cell) {
+                let mut char_text = String::new();
+                char_text.push(cell.c);
+                for zero_width in cell.zerowidth().into_iter().flatten() {
+                    char_text.push(*zero_width);
+                }
+                append_positioned_run(
+                    &mut pending_positioned_run,
+                    &mut positioned_runs,
+                    viewport_line,
+                    column,
+                    terminal_cell_width(cell),
+                    char_text,
+                    positioned_style,
+                );
+            } else if let Some(batch) = pending_positioned_run.take() {
+                positioned_runs.push(TerminalPositionedRunSnapshot {
+                    line: batch.line,
+                    column: batch.column,
+                    cell_count: batch.cell_count,
+                    text: batch.text,
+                    style: batch.style,
+                });
+            }
+
+            if cell_is_trimmable_blank(cell) && !is_cursor {
+                pending_blank_run.text.push_str(&chunk);
+                pending_blank_run.len += chunk.len();
+                pending_blank_run.style = Some(cell_style);
                 continue;
             }
 
-            if pending_blank_len > 0 {
-                text.push_str(&pending_blank_text);
+            if pending_blank_run.len > 0 {
+                text.push_str(&pending_blank_run.text);
                 push_text_run(
                     &mut runs,
-                    pending_blank_len,
-                    default_text_run(default_foreground_color(), None),
+                    pending_blank_run.len,
+                    text_run_from_style(
+                        pending_blank_run
+                            .style
+                            .clone()
+                            .unwrap_or_else(default_cell_style),
+                    ),
                 );
-                pending_blank_text.clear();
-                pending_blank_len = 0;
+                pending_blank_run = PendingTextRun::default();
             }
 
             text.push_str(&chunk);
-            push_text_run(
-                &mut runs,
-                chunk.len(),
-                build_text_run(
-                    cell,
-                    renderable.colors,
-                    renderable.cursor.shape,
-                    is_cursor,
-                ),
-            );
+            push_text_run(&mut runs, chunk.len(), text_run_from_style(cell_style));
         }
 
         if text.is_empty() {
@@ -312,11 +430,39 @@ fn build_surface_snapshot<T: EventListener>(
             push_text_run(
                 &mut runs,
                 text.len(),
-                default_text_run(default_foreground_color(), None),
+                text_run_from_style(default_cell_style()),
             );
         }
 
-        lines.push(TerminalLineSnapshot { text, runs });
+        if pending_blank_run.len > 0 {
+            text.push_str(&pending_blank_run.text);
+            push_text_run(
+                &mut runs,
+                pending_blank_run.len,
+                text_run_from_style(
+                    pending_blank_run
+                        .style
+                        .clone()
+                        .unwrap_or_else(default_cell_style),
+                ),
+            );
+        }
+
+        if let Some(batch) = pending_positioned_run.take() {
+            positioned_runs.push(TerminalPositionedRunSnapshot {
+                line: batch.line,
+                column: batch.column,
+                cell_count: batch.cell_count,
+                text: batch.text,
+                style: batch.style,
+            });
+        }
+
+        lines.push(TerminalLineSnapshot {
+            text,
+            runs,
+            background_spans,
+        });
     }
 
     let text = lines
@@ -325,7 +471,53 @@ fn build_surface_snapshot<T: EventListener>(
         .collect::<Vec<_>>()
         .join("\n");
 
-    TerminalSurfaceSnapshot { text, lines }
+    TerminalSurfaceSnapshot {
+        text,
+        lines,
+        positioned_runs,
+        cursor: cursor_snapshot,
+    }
+}
+
+fn append_positioned_run(
+    pending_run: &mut Option<PendingPositionedRun>,
+    positioned_runs: &mut Vec<TerminalPositionedRunSnapshot>,
+    line: usize,
+    column: usize,
+    cell_width: usize,
+    text: String,
+    style: TextRun,
+) {
+    if let Some(run) = pending_run {
+        if run.line == line
+            && run.column + run.cell_count == column
+            && same_text_style(&run.style, &style)
+        {
+            run.cell_count += cell_width;
+            run.style.len += text.len();
+            run.text.push_str(&text);
+            return;
+        }
+
+        let finished = pending_run.take().unwrap();
+        positioned_runs.push(TerminalPositionedRunSnapshot {
+            line: finished.line,
+            column: finished.column,
+            cell_count: finished.cell_count,
+            text: finished.text,
+            style: finished.style,
+        });
+    }
+
+    let mut style = style;
+    style.len = text.len();
+    *pending_run = Some(PendingPositionedRun {
+        line,
+        column,
+        cell_count: cell_width,
+        text,
+        style,
+    });
 }
 
 fn push_text_run(runs: &mut Vec<TextRun>, len: usize, mut run: TextRun) {
@@ -366,12 +558,89 @@ fn cell_display_text(cell: &alacritty_terminal::term::cell::Cell) -> String {
     text
 }
 
-fn build_text_run(
+fn cell_is_trimmable_blank(cell: &alacritty_terminal::term::cell::Cell) -> bool {
+    (cell.flags.contains(Flags::HIDDEN) || cell.c == ' ') && cell.zerowidth().is_none()
+}
+
+fn cell_is_render_blank(cell: &alacritty_terminal::term::cell::Cell) -> bool {
+    if cell.c != ' ' {
+        return false;
+    }
+
+    if cell.bg != Color::Named(NamedColor::Background) {
+        return false;
+    }
+
+    if cell
+        .flags
+        .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
+    {
+        return false;
+    }
+
+    true
+}
+
+fn terminal_cell_width(cell: &alacritty_terminal::term::cell::Cell) -> usize {
+    if cell.flags.contains(Flags::WIDE_CHAR) {
+        2
+    } else {
+        1
+    }
+}
+
+fn maybe_push_background_span(
+    spans: &mut Vec<TerminalBackgroundSpanSnapshot>,
+    column: usize,
+    width: usize,
+    color: Hsla,
+) {
+    if color == default_background_color() {
+        return;
+    }
+
+    if let Some(last) = spans.last_mut() {
+        if last.color == color && last.column + last.width == column {
+            last.width += width;
+            return;
+        }
+    }
+
+    spans.push(TerminalBackgroundSpanSnapshot {
+        column,
+        width,
+        color,
+    });
+}
+
+fn cursor_snapshot_from_cell(
+    line: usize,
+    column: usize,
+    width: usize,
+    cursor_shape: CursorShape,
+    cell_style: &ResolvedCellStyle,
+) -> Option<TerminalCursorSnapshot> {
+    let kind = match cursor_shape {
+        CursorShape::Block => TerminalCursorKind::Block,
+        CursorShape::HollowBlock => TerminalCursorKind::HollowBlock,
+        CursorShape::Beam => TerminalCursorKind::Beam,
+        CursorShape::Underline => TerminalCursorKind::Underline,
+        CursorShape::Hidden => return None,
+    };
+
+    Some(TerminalCursorSnapshot {
+        line,
+        column,
+        width,
+        kind,
+        color: cell_style.foreground,
+    })
+}
+
+fn resolve_cell_style(
     cell: &alacritty_terminal::term::cell::Cell,
     colors: &alacritty_terminal::term::color::Colors,
-    cursor_shape: CursorShape,
-    is_cursor: bool,
-) -> TextRun {
+) -> ResolvedCellStyle {
     let mut foreground = resolve_color(cell.fg, cell.flags, true, colors);
     let mut background = resolve_color(cell.bg, cell.flags, false, colors);
 
@@ -383,39 +652,18 @@ fn build_text_run(
         foreground = background;
     }
 
-    let mut underline = underline_style(cell, colors, foreground);
-    if is_cursor {
-        match cursor_shape {
-            CursorShape::Underline => {
-                underline = Some(UnderlineStyle {
-                    thickness: px(2.),
-                    color: Some(foreground),
-                    wavy: false,
-                });
-            }
-            CursorShape::Beam | CursorShape::HollowBlock | CursorShape::Block => {
-                std::mem::swap(&mut foreground, &mut background);
-            }
-            CursorShape::Hidden => {}
-        }
-    }
-
-    let background_color = if background == default_background_color() {
-        None
-    } else {
-        Some(background)
-    };
-
-    TextRun {
-        len: 0,
+    ResolvedCellStyle {
+        foreground,
+        background,
         font: terminal_font(cell.flags),
-        color: foreground,
-        background_color,
-        underline,
-        strikethrough: cell.flags.contains(Flags::STRIKEOUT).then(|| StrikethroughStyle {
-            thickness: px(1.),
-            color: Some(foreground),
-        }),
+        underline: underline_style(cell, colors, foreground),
+        strikethrough: cell
+            .flags
+            .contains(Flags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                thickness: px(1.),
+                color: Some(foreground),
+            }),
     }
 }
 
@@ -455,14 +703,24 @@ fn underline_style(
     })
 }
 
-fn default_text_run(color: Hsla, background_color: Option<Hsla>) -> TextRun {
-    TextRun {
-        len: 0,
+fn default_cell_style() -> ResolvedCellStyle {
+    ResolvedCellStyle {
+        foreground: default_foreground_color(),
+        background: default_background_color(),
         font: font("Lilex Nerd Font Mono"),
-        color,
-        background_color,
         underline: None,
         strikethrough: None,
+    }
+}
+
+fn text_run_from_style(style: ResolvedCellStyle) -> TextRun {
+    TextRun {
+        len: 0,
+        font: style.font,
+        color: style.foreground,
+        background_color: None,
+        underline: style.underline,
+        strikethrough: style.strikethrough,
     }
 }
 
@@ -490,25 +748,14 @@ fn resolve_color(
         Color::Indexed(index) => resolve_indexed_color(index, colors),
     };
 
-    let mut color: Hsla =
-        gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into();
-    if is_foreground && flags.contains(Flags::DIM) {
-        color.a *= 0.72;
-    }
-    color
+    gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
 }
 
-fn resolve_named_color(
-    named: NamedColor,
-    colors: &alacritty_terminal::term::color::Colors,
-) -> Rgb {
+fn resolve_named_color(named: NamedColor, colors: &alacritty_terminal::term::color::Colors) -> Rgb {
     colors[named].unwrap_or_else(|| default_named_color(named))
 }
 
-fn resolve_indexed_color(
-    index: u8,
-    colors: &alacritty_terminal::term::color::Colors,
-) -> Rgb {
+fn resolve_indexed_color(index: u8, colors: &alacritty_terminal::term::color::Colors) -> Rgb {
     colors[index as usize].unwrap_or_else(|| default_indexed_color(index))
 }
 
@@ -595,6 +842,68 @@ fn default_foreground_color() -> Hsla {
     rgb(0xd7dae0).into()
 }
 
+fn window_size_from_grid(size: TerminalGridSize) -> WindowSize {
+    WindowSize {
+        num_lines: size.rows,
+        num_cols: size.cols,
+        cell_width: if size.cols == 0 {
+            0
+        } else {
+            size.pixel_width / size.cols
+        },
+        cell_height: if size.rows == 0 {
+            0
+        } else {
+            size.pixel_height / size.rows
+        },
+    }
+}
+
+fn resolve_color_request(index: usize, colors: &Colors) -> Rgb {
+    colors[index].unwrap_or_else(|| default_color_request(index))
+}
+
+fn default_color_request(index: usize) -> Rgb {
+    if index <= u8::MAX as usize {
+        return default_indexed_color(index as u8);
+    }
+
+    match index {
+        x if x == NamedColor::Foreground as usize => hsla_to_vte(default_foreground_color()),
+        x if x == NamedColor::Background as usize => hsla_to_vte(default_background_color()),
+        x if x == NamedColor::Cursor as usize => hsla_to_vte(default_foreground_color()),
+        x if x == NamedColor::BrightForeground as usize => rgb_to_vte(0xffffff),
+        x if x == NamedColor::DimForeground as usize => {
+            scale_rgb(hsla_to_vte(default_foreground_color()), 0.72)
+        }
+        x if x == NamedColor::DimBlack as usize => {
+            scale_rgb(default_named_color(NamedColor::Black), 0.72)
+        }
+        x if x == NamedColor::DimRed as usize => {
+            scale_rgb(default_named_color(NamedColor::Red), 0.72)
+        }
+        x if x == NamedColor::DimGreen as usize => {
+            scale_rgb(default_named_color(NamedColor::Green), 0.72)
+        }
+        x if x == NamedColor::DimYellow as usize => {
+            scale_rgb(default_named_color(NamedColor::Yellow), 0.72)
+        }
+        x if x == NamedColor::DimBlue as usize => {
+            scale_rgb(default_named_color(NamedColor::Blue), 0.72)
+        }
+        x if x == NamedColor::DimMagenta as usize => {
+            scale_rgb(default_named_color(NamedColor::Magenta), 0.72)
+        }
+        x if x == NamedColor::DimCyan as usize => {
+            scale_rgb(default_named_color(NamedColor::Cyan), 0.72)
+        }
+        x if x == NamedColor::DimWhite as usize => {
+            scale_rgb(default_named_color(NamedColor::White), 0.72)
+        }
+        _ => hsla_to_vte(default_background_color()),
+    }
+}
+
 fn scale_rgb(rgb: Rgb, factor: f32) -> Rgb {
     Rgb {
         r: (f32::from(rgb.r) * factor).round().clamp(0.0, 255.0) as u8,
@@ -642,18 +951,23 @@ mod tests {
 
     #[test]
     fn snapshot_preserves_truecolor_background_and_bold_runs() {
-        let snapshot =
-            snapshot_from_ansi(b"\x1b[1;38;2;255;140;0;48;2;30;50;90mhi\x1b[0m");
+        let snapshot = snapshot_from_ansi(b"\x1b[1;38;2;255;140;0;48;2;30;50;90mhi\x1b[0m");
         let line = &snapshot.lines[0];
         let styled_run = line
             .runs
             .iter()
-            .find(|run| run.background_color == Some(rgb(0x1e325a).into()))
-            .expect("expected styled run with truecolor background");
+            .find(|run| run.font.weight == FontWeight::BOLD)
+            .expect("expected bold styled run");
+        let background_span = line
+            .background_spans
+            .iter()
+            .find(|span| span.color == rgb(0x1e325a).into())
+            .expect("expected truecolor background span");
 
         assert!(line.text.starts_with("hi"));
         assert_eq!(styled_run.font.weight, FontWeight::BOLD);
-        assert_eq!(styled_run.background_color, Some(rgb(0x1e325a).into()));
+        assert_eq!(background_span.column, 0);
+        assert!(background_span.width >= 2);
     }
 
     #[test]
