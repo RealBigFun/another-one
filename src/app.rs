@@ -88,7 +88,7 @@ impl SectionId {
 
 /// A single terminal tab within a section.
 pub struct TerminalTab {
-    pub id: usize,
+    pub id: String,
     pub title: String,
     pub launch_config: TerminalLaunchConfig,
 }
@@ -112,22 +112,23 @@ impl SectionState {
         launch_config: TerminalLaunchConfig,
     ) -> Self {
         Self {
-            tabs: vec![TerminalTab::new(0, launch_config)],
+            tabs: vec![TerminalTab::new(launch_config)],
             active_tab: 0,
             next_tab_id: 1,
             cwd,
         }
     }
 
-    pub fn add_tab_with_launch_config(&mut self, launch_config: TerminalLaunchConfig) -> usize {
-        let id = self.next_tab_id;
+    pub fn add_tab_with_launch_config(&mut self, launch_config: TerminalLaunchConfig) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
         self.next_tab_id += 1;
-        self.tabs.push(TerminalTab::new(id, launch_config));
+        let new_tab = TerminalTab::with_id(id.clone(), launch_config);
+        self.tabs.push(new_tab);
         self.active_tab = self.tabs.len() - 1;
         id
     }
 
-    pub fn close_tab(&mut self, index: usize) -> Option<usize> {
+    pub fn close_tab(&mut self, index: usize) -> Option<String> {
         if self.tabs.len() <= 1 || index >= self.tabs.len() {
             return None; // keep at least one tab
         }
@@ -151,10 +152,10 @@ impl SectionState {
         true
     }
 
-    pub fn active_tab_id(&self) -> usize {
+    pub fn active_tab_id(&self) -> String {
         self.tabs
             .get(self.active_tab)
-            .map(|tab| tab.id)
+            .map(|tab| tab.id.clone())
             .unwrap_or_default()
     }
 
@@ -186,10 +187,9 @@ impl SectionState {
             .collect::<Vec<_>>();
 
         if tabs.is_empty() {
-            tabs.push(TerminalTab::new(0, TerminalLaunchConfig::default()));
+            tabs.push(TerminalTab::new(TerminalLaunchConfig::default()));
         }
 
-        let max_tab_id = tabs.iter().map(|tab| tab.id).max().unwrap_or(0);
         let active_tab = tabs
             .iter()
             .position(|tab| tab.id == persisted.active_tab_id)
@@ -198,14 +198,18 @@ impl SectionState {
         Self {
             tabs,
             active_tab,
-            next_tab_id: persisted.next_tab_id.max(max_tab_id + 1),
+            next_tab_id: persisted.next_tab_id.max(1),
             cwd: persisted.cwd.or(fallback_cwd),
         }
     }
 }
 
 impl TerminalTab {
-    fn new(id: usize, launch_config: TerminalLaunchConfig) -> Self {
+    fn new(launch_config: TerminalLaunchConfig) -> Self {
+        Self::with_id(uuid::Uuid::new_v4().to_string(), launch_config)
+    }
+
+    fn with_id(id: String, launch_config: TerminalLaunchConfig) -> Self {
         let title = launch_config.default_title();
         Self {
             id,
@@ -216,7 +220,7 @@ impl TerminalTab {
 
     fn to_persisted(&self) -> PersistedTerminalTab {
         PersistedTerminalTab {
-            id: self.id,
+            id: self.id.clone(),
             title: self.title.clone(),
             provider: self.launch_config.provider,
         }
@@ -299,7 +303,7 @@ struct TaskCreationReply {
 }
 
 struct ProjectAddReply {
-    result: Result<crate::project_store::Project, String>,
+    result: Result<crate::project_store::PreparedProject, String>,
 }
 
 struct ProjectGitHubLinkReply {
@@ -309,7 +313,7 @@ struct ProjectGitHubLinkReply {
 
 struct TaskCreationSuccess {
     original_project_id: String,
-    project: crate::project_store::Project,
+    project: crate::project_store::PreparedProject,
     branch_name: String,
     task_name: String,
     launch_config: TerminalLaunchConfig,
@@ -704,14 +708,14 @@ impl WorkspacePane {
         section_id: &SectionId,
         tab_index: usize,
         cx: &mut Context<Self>,
-    ) -> Option<usize> {
+    ) -> Option<String> {
         let removed_tab_id = self
             .section_states
             .get_mut(section_id)
             .and_then(|state| state.close_tab(tab_index));
         if removed_tab_id.is_some() {
-            if let Some(tab_id) = removed_tab_id {
-                self.cleanup_removed_tab(section_id, tab_id, cx);
+            if let Some(ref tab_id) = removed_tab_id {
+                self.cleanup_removed_tab(section_id, tab_id.clone(), cx);
             }
             self.persist_section_state(section_id, cx);
             cx.notify();
@@ -751,7 +755,7 @@ impl WorkspacePane {
         });
     }
 
-    fn cleanup_removed_tab(&self, section_id: &SectionId, tab_id: usize, cx: &mut Context<Self>) {
+    fn cleanup_removed_tab(&self, section_id: &SectionId, tab_id: String, cx: &mut Context<Self>) {
         let app = self.app.clone();
         let section_id = section_id.clone();
         cx.defer(move |cx| {
@@ -1479,13 +1483,15 @@ impl AnotherOneApp {
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             mpsc::channel();
-        let expanded = store.ui.expanded_project_ids.clone().unwrap_or_else(|| {
+        let expanded = if store.ui.expanded_repo_ids.is_empty() {
             let mut expanded = HashSet::new();
             if let Some(first) = store.projects.first() {
-                expanded.insert(first.id.clone());
+                expanded.insert(first.repo_id.clone());
             }
             expanded
-        });
+        } else {
+            store.ui.expanded_repo_ids.clone()
+        };
         let mut section_states = store
             .terminal_sections
             .iter()
@@ -1504,38 +1510,10 @@ impl AnotherOneApp {
                 ))
             })
             .collect::<HashMap<_, _>>();
-
-        for (root_project_id, task_list) in &store.tasks {
-            for task in task_list {
-                let project_id = task
-                    .worktree_project_id
-                    .as_deref()
-                    .unwrap_or(root_project_id);
-                let section_id =
-                    SectionId::for_task(project_id, &task.branch_name, &task.id);
-                if !task.tabs.is_empty() {
-                    let persisted = PersistedSectionState {
-                        active_tab_id: task.active_tab_id,
-                        next_tab_id: task.next_tab_id,
-                        cwd: task.cwd.clone(),
-                        tabs: task.tabs.clone(),
-                    };
-                    let fallback_cwd = store
-                        .projects
-                        .iter()
-                        .find(|project| project.id == project_id)
-                        .map(|project| project.path.clone());
-                    section_states.insert(
-                        section_id,
-                        SectionState::from_persisted(persisted, fallback_cwd),
-                    );
-                }
-            }
-        }
         let initial_section = choose_initial_section(
             &store.projects,
             &section_states,
-            store.ui.last_active_section_key.as_deref(),
+            store.ui.last_active_section_id.as_deref(),
         );
         if let Some(ref sid) = initial_section {
             let cwd = store
@@ -1650,7 +1628,7 @@ impl AnotherOneApp {
         }
     }
 
-    fn cleanup_removed_tab(&mut self, _section_id: &SectionId, _tab_id: usize) {}
+    fn cleanup_removed_tab(&mut self, _section_id: &SectionId, _tab_id: String) {}
 
     fn cleanup_removed_sections(&mut self, section_ids: &HashSet<SectionId>) {
         self.remove_persisted_sections(section_ids);
@@ -1720,44 +1698,61 @@ impl AnotherOneApp {
             changed_files,
             ahead_count,
             metadata,
+            current_branch,
         } = state;
 
         if let Some(metadata) = metadata {
-            if let Some(project) = self
+            let repo_id = self
                 .project_store
-                .projects
-                .iter_mut()
-                .find(|project| project.id == project_id)
-            {
-                if project.branches != metadata.branches {
-                    project.branches = metadata.branches;
+                .project(project_id)
+                .map(|project| project.repo_id.clone());
+            if let Some(repo_id) = repo_id {
+                if let Some(repo) = self.project_store.repo_mut(&repo_id) {
+                    if repo.branch_order != metadata.branch_order {
+                        repo.branch_order = metadata.branch_order.clone();
+                        changed = true;
+                    }
+                    if repo.branches_by_name != metadata.branches_by_name {
+                        repo.branches_by_name = metadata.branches_by_name.clone();
+                        changed = true;
+                    }
+                    if repo.common_dir != metadata.common_dir {
+                        repo.common_dir = metadata.common_dir.clone();
+                        changed = true;
+                    }
+                }
+            }
+            if let Some(project) = self.project_store.project_mut(project_id) {
+                if project.kind != metadata.kind {
+                    project.kind = metadata.kind;
                     changed = true;
                 }
-                if project.worktree_name != metadata.worktree_name {
-                    project.worktree_name = metadata.worktree_name;
-                    changed = true;
-                }
-                if project.repo_common_dir != metadata.repo_common_dir {
-                    project.repo_common_dir = metadata.repo_common_dir;
+                if project.checkout != metadata.checkout {
+                    project.checkout = metadata.checkout;
                     changed = true;
                 }
             }
         }
 
-        if let Some(project) = self
+        let repo_id = self
             .project_store
-            .projects
-            .iter_mut()
-            .find(|project| project.id == project_id)
-        {
-            if let Some(current_branch) =
-                project.branches.iter_mut().find(|branch| branch.is_current)
-            {
-                if current_branch.ahead_count != ahead_count {
-                    current_branch.ahead_count = ahead_count;
-                    changed = true;
+            .project(project_id)
+            .map(|project| project.repo_id.clone());
+        if let Some(repo_id) = repo_id {
+            if let Some(repo) = self.project_store.repo_mut(&repo_id) {
+                if let Some(branch_name) = current_branch.as_deref() {
+                    if let Some(branch) = repo.branches_by_name.get_mut(branch_name) {
+                        if branch.ahead_count != ahead_count {
+                            branch.ahead_count = ahead_count;
+                            changed = true;
+                        }
+                    }
                 }
             }
+        }
+
+        if changed {
+            self.project_store.refresh_runtime_views();
         }
 
         if self
@@ -1931,14 +1926,7 @@ impl AnotherOneApp {
 
         if !worktree_mode {
             let branch_name = crate::project_store::current_branch(&project.path)
-                .or_else(|| {
-                    project
-                        .branches
-                        .iter()
-                        .find(|branch| branch.is_current)
-                        .or_else(|| project.branches.first())
-                        .map(|branch| branch.name.clone())
-                })
+                .or_else(|| self.project_store.current_branch_name(&project.id))
                 .unwrap_or_else(|| source_branch.clone());
 
             if branch_name.is_empty() {
@@ -1955,23 +1943,22 @@ impl AnotherOneApp {
                 task_name.clone()
             };
             let task_id = uuid::Uuid::new_v4().to_string();
-            self.project_store
-                .tasks
-                .entry(project.id.clone())
-                .or_default()
-                .push(Task {
-                    id: task_id.clone(),
-                    name: task_name.clone(),
-                    kind: TaskKind::Direct,
-                    branch_name: branch_name.clone(),
-                    worktree_project_id: None,
-                    tabs: Vec::new(),
-                    active_tab_id: 0,
-                    next_tab_id: 0,
-                    cwd: None,
-                });
+            self.project_store.insert_task(Task {
+                id: task_id.clone(),
+                name: task_name.clone(),
+                kind: TaskKind::Direct,
+                root_project_id: project.id.clone(),
+                target_project_id: project.id.clone(),
+                branch_name: branch_name.clone(),
+                section_id: SectionId::for_task(&project.id, &branch_name, &task_id).store_key(),
+                worktree_project_id: None,
+                tabs: Vec::new(),
+                active_tab_id: String::new(),
+                next_tab_id: 0,
+                cwd: None,
+            });
             self.project_store.save();
-            self.expanded_projects.insert(project.id.clone());
+            self.expanded_projects.insert(project.repo_id.clone());
             self.project_store
                 .set_expanded_projects(&self.expanded_projects);
             let section_id = SectionId::for_task(&project.id, &branch_name, &task_id);
@@ -2009,19 +1996,30 @@ impl AnotherOneApp {
             .map(|created| TaskCreationSuccess {
                 original_project_id: project_id,
                 project: crate::project_store::prepare_project(&created.path).unwrap_or_else(
-                    |_| crate::project_store::Project {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        name: created
-                            .path
-                            .file_name()
-                            .map(|name| name.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| created.path.display().to_string()),
-                        path: created.path.clone(),
-                        settings: crate::project_store::ProjectSettings::default(),
-                        worktrees: Vec::new(),
-                        branches: Vec::new(),
-                        worktree_name: None,
-                        repo_common_dir: None,
+                    |_| crate::project_store::PreparedProject {
+                        project: crate::project_store::Project {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            repo_id: uuid::Uuid::new_v4().to_string(),
+                            name: created
+                                .path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| created.path.display().to_string()),
+                            path: created.path.clone(),
+                            kind: crate::project_store::ProjectKind::Worktree,
+                            checkout: crate::project_store::ProjectCheckoutState::default(),
+                            worktree_name: created
+                                .path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned()),
+                            repo_common_dir: None,
+                        },
+                        repo: crate::project_store::RepoRecord {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            common_dir: None,
+                            branch_order: Vec::new(),
+                            branches_by_name: HashMap::new(),
+                        },
                     },
                 ),
                 branch_name: created.branch_name,
@@ -2491,8 +2489,8 @@ impl AnotherOneApp {
                 self.task_creation_receiver = None;
                 match reply.result {
                     Ok(success) => {
-                        let project = success.project.clone();
-                        let inserted = self.project_store.insert_project(project.clone());
+                        let prepared = success.project.clone();
+                        let inserted = self.project_store.insert_prepared_project(prepared.clone());
                         if !inserted {
                             if let Some(state) = self.new_task_modal.as_mut() {
                                 state.submitting = false;
@@ -2504,33 +2502,46 @@ impl AnotherOneApp {
                             return true;
                         }
 
-                        let task_id = uuid::Uuid::new_v4().to_string();
-                        self.project_store
-                            .tasks
-                            .entry(success.original_project_id.clone())
-                            .or_default()
-                            .push(Task {
-                                id: task_id.clone(),
-                                name: success.task_name.clone(),
-                                kind: TaskKind::Worktree,
-                                branch_name: success.branch_name.clone(),
-                                worktree_project_id: Some(project.id.clone()),
-                                tabs: Vec::new(),
-                                active_tab_id: 0,
-                                next_tab_id: 0,
-                                cwd: None,
-                            });
+                        let Some(project) =
+                            self.project_store.project(&prepared.project.id).cloned()
+                        else {
+                            if let Some(state) = self.new_task_modal.as_mut() {
+                                state.submitting = false;
+                            }
+                            self.show_error_toast(
+                                "The worktree was created, but the app could not resolve its saved state.",
+                                cx,
+                            );
+                            return true;
+                        };
 
-                        self.expanded_projects
-                            .insert(success.original_project_id.clone());
+                        let task_id = uuid::Uuid::new_v4().to_string();
+                        self.project_store.insert_task(Task {
+                            id: task_id.clone(),
+                            name: success.task_name.clone(),
+                            kind: TaskKind::Worktree,
+                            root_project_id: success.original_project_id.clone(),
+                            target_project_id: project.id.clone(),
+                            branch_name: success.branch_name.clone(),
+                            section_id: SectionId::for_task(
+                                &project.id,
+                                &success.branch_name,
+                                &task_id,
+                            )
+                            .store_key(),
+                            worktree_project_id: Some(project.id.clone()),
+                            tabs: Vec::new(),
+                            active_tab_id: String::new(),
+                            next_tab_id: 0,
+                            cwd: None,
+                        });
+
+                        self.expanded_projects.insert(project.repo_id.clone());
                         self.project_store
                             .set_expanded_projects(&self.expanded_projects);
 
-                        let section_id = SectionId::for_task(
-                            &project.id,
-                            &success.branch_name,
-                            &task_id,
-                        );
+                        let section_id =
+                            SectionId::for_task(&project.id, &success.branch_name, &task_id);
                         let project_path = project.path.clone();
                         let launch_config = Some(success.launch_config);
                         self.workspace_pane.update(cx, |workspace, cx| {
@@ -2584,9 +2595,9 @@ impl AnotherOneApp {
                 self.project_add_receiver = None;
                 match reply.result {
                     Ok(project) => {
-                        let project_name = project.name.clone();
-                        let project_id = project.id.clone();
-                        let added = self.project_store.insert_project(project.clone());
+                        let project_name = project.project.name.clone();
+                        let project_id = project.project.id.clone();
+                        let added = self.project_store.insert_prepared_project(project.clone());
                         if added {
                             self.workspace_pane.update(cx, |workspace, cx| {
                                 workspace.activate_project_page(project_id.clone(), cx);
@@ -3540,9 +3551,10 @@ fn choose_initial_section(
 
     projects.first().and_then(|project| {
         project
-            .branches
-            .first()
-            .map(|branch| SectionId::new(&project.id, &branch.name))
+            .checkout
+            .current_branch
+            .as_ref()
+            .map(|branch_name| SectionId::new(&project.id, branch_name))
     })
 }
 
@@ -3551,14 +3563,14 @@ mod tests {
     use super::{choose_initial_section, SectionId, SectionState};
     use crate::agents::{AgentProviderKind, TerminalLaunchConfig};
     use crate::project_store::{
-        Branch, PersistedSectionState, PersistedTerminalTab, Project, ProjectSettings, Worktree,
+        PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
     };
     use std::collections::HashMap;
     use std::path::PathBuf;
 
     fn shell_tab(id: usize, title: &str) -> PersistedTerminalTab {
         PersistedTerminalTab {
-            id,
+            id: id.to_string(),
             title: title.to_string(),
             provider: None,
         }
@@ -3567,35 +3579,31 @@ mod tests {
     fn sample_project(id: &str, branch_name: &str) -> Project {
         Project {
             id: id.to_string(),
+            repo_id: format!("repo-{id}"),
             name: format!("Project {id}"),
             path: PathBuf::from(format!("/tmp/{id}")),
-            settings: ProjectSettings::default(),
-            worktrees: Vec::<Worktree>::new(),
-            branches: vec![Branch {
-                name: branch_name.to_string(),
+            kind: ProjectKind::Root,
+            checkout: ProjectCheckoutState {
+                current_branch: Some(branch_name.to_string()),
                 lines_added: 0,
                 lines_removed: 0,
-                ahead_count: 0,
-                last_commit_relative: "now".to_string(),
-                is_default: true,
-                is_current: true,
-            }],
+            },
             worktree_name: None,
             repo_common_dir: None,
         }
     }
 
     #[test]
-    fn section_state_restores_active_tab_and_clamps_next_tab_id() {
+    fn section_state_restores_active_tab_with_stable_tab_ids() {
         let state = SectionState::from_persisted(
             PersistedSectionState {
-                active_tab_id: 99,
+                active_tab_id: "99".to_string(),
                 next_tab_id: 1,
                 cwd: None,
                 tabs: vec![
                     shell_tab(0, "Terminal"),
                     PersistedTerminalTab {
-                        id: 4,
+                        id: "4".to_string(),
                         title: "Codex".to_string(),
                         provider: Some(AgentProviderKind::Codex),
                     },
@@ -3605,7 +3613,7 @@ mod tests {
         );
 
         assert_eq!(state.active_tab, 1);
-        assert_eq!(state.next_tab_id, 5);
+        assert_eq!(state.next_tab_id, 1);
         assert_eq!(state.cwd, Some(PathBuf::from("/tmp/project")));
     }
 
@@ -3613,11 +3621,11 @@ mod tests {
     fn section_state_add_tab_with_launch_config_continues_after_restored_next_tab_id() {
         let mut state = SectionState::from_persisted(
             PersistedSectionState {
-                active_tab_id: 0,
+                active_tab_id: "0".to_string(),
                 next_tab_id: 7,
                 cwd: Some(PathBuf::from("/tmp/project")),
                 tabs: vec![PersistedTerminalTab {
-                    id: 0,
+                    id: "0".to_string(),
                     title: "Pi".to_string(),
                     provider: Some(AgentProviderKind::Pi),
                 }],
@@ -3628,7 +3636,7 @@ mod tests {
         let id = state
             .add_tab_with_launch_config(TerminalLaunchConfig::for_provider(AgentProviderKind::Pi));
 
-        assert_eq!(id, 7);
+        assert!(!id.is_empty());
         assert_eq!(state.next_tab_id, 8);
         assert_eq!(
             state.tabs[state.active_tab].launch_config,
@@ -3644,7 +3652,7 @@ mod tests {
             AgentProviderKind::ClaudeCode,
         ));
 
-        assert_eq!(id, 1);
+        assert!(!id.is_empty());
         assert_eq!(state.active_tab, 1);
         assert_eq!(state.tabs[1].title, "Claude Code");
         assert_eq!(
@@ -3663,7 +3671,7 @@ mod tests {
                 main_section.clone(),
                 SectionState::from_persisted(
                     PersistedSectionState {
-                        active_tab_id: 0,
+                        active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(project.path.clone()),
                         tabs: vec![shell_tab(0, "Terminal")],
@@ -3675,11 +3683,11 @@ mod tests {
                 task_section,
                 SectionState::from_persisted(
                     PersistedSectionState {
-                        active_tab_id: 0,
+                        active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(project.path.clone()),
                         tabs: vec![PersistedTerminalTab {
-                            id: 0,
+                            id: "0".to_string(),
                             title: "Codex".to_string(),
                             provider: Some(AgentProviderKind::Codex),
                         }],
@@ -3705,7 +3713,7 @@ mod tests {
                 main_section,
                 SectionState::from_persisted(
                     PersistedSectionState {
-                        active_tab_id: 0,
+                        active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(project.path.clone()),
                         tabs: vec![shell_tab(0, "Terminal")],
@@ -3717,11 +3725,11 @@ mod tests {
                 task_section.clone(),
                 SectionState::from_persisted(
                     PersistedSectionState {
-                        active_tab_id: 0,
+                        active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(project.path.clone()),
                         tabs: vec![PersistedTerminalTab {
-                            id: 0,
+                            id: "0".to_string(),
                             title: "Claude Code".to_string(),
                             provider: Some(AgentProviderKind::ClaudeCode),
                         }],

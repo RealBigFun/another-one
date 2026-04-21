@@ -1,8 +1,6 @@
 //! Persistent project store.
 //!
 //! Projects are saved as JSON in `~/.config/another-one/projects.json`.
-//! Each project is a folder the user has added. The store is designed to be
-//! extended later with per-project settings and sub-worktrees.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -11,62 +9,92 @@ use std::process::{Command, Output};
 
 use crate::agents::AgentProviderKind;
 
-/// A single project entry. Will later carry per-project settings, worktrees, etc.
+const STORE_VERSION: u8 = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoBranchRecord {
+    pub name: String,
+    #[serde(default)]
+    pub last_commit_relative: String,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub ahead_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoRecord {
+    pub id: String,
+    #[serde(default)]
+    pub common_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub branch_order: Vec<String>,
+    #[serde(default)]
+    pub branches_by_name: HashMap<String, RepoBranchRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectKind {
+    Root,
+    Worktree,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCheckoutState {
+    #[serde(default)]
+    pub current_branch: Option<String>,
+    #[serde(default)]
+    pub lines_added: i32,
+    #[serde(default)]
+    pub lines_removed: i32,
+}
+
+/// A git branch with optional diff stats resolved for a specific project/worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Branch {
+    pub name: String,
+    pub lines_added: i32,
+    pub lines_removed: i32,
+    pub ahead_count: usize,
+    pub last_commit_relative: String,
+    pub is_default: bool,
+    pub is_current: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
-    /// Stable identifier (UUID v4).
     pub id: String,
-    /// Display name (derived from folder name at add-time, but stored so it can be renamed).
+    pub repo_id: String,
     pub name: String,
-    /// Absolute path to the project root folder.
     pub path: PathBuf,
-    /// Per-project settings (reserved for future use).
+    pub kind: ProjectKind,
     #[serde(default)]
-    pub settings: ProjectSettings,
-    /// Sub-worktrees (reserved for future use).
-    #[serde(default)]
-    pub worktrees: Vec<Worktree>,
-    /// Branches detected in this project.
-    #[serde(default)]
-    pub branches: Vec<Branch>,
-    /// Name of the git worktree if this is not the main working tree.
-    #[serde(default)]
+    pub checkout: ProjectCheckoutState,
+    #[serde(skip)]
     pub worktree_name: Option<String>,
-    /// Canonical git common-dir used to group worktrees that belong to the same repo.
-    #[serde(default)]
+    #[serde(skip)]
     pub repo_common_dir: Option<PathBuf>,
 }
 
-/// A git branch with optional diff stats.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Branch {
-    pub name: String,
-    /// Lines added vs upstream (if available).
-    pub lines_added: i32,
-    /// Lines removed vs upstream (if available).
-    pub lines_removed: i32,
-    /// Number of commits ahead of the configured upstream branch.
-    #[serde(default)]
-    pub ahead_count: usize,
-    /// Human-readable time since last commit (e.g. "3mo ago").
-    pub last_commit_relative: String,
-    /// Whether this is the default/primary branch.
-    pub is_default: bool,
-    /// Whether this branch is currently checked out.
-    #[serde(default)]
-    pub is_current: bool,
+impl Project {
+    pub fn is_worktree(&self) -> bool {
+        self.kind == ProjectKind::Worktree
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectGitMetadata {
-    pub branches: Vec<Branch>,
-    pub worktree_name: Option<String>,
-    pub repo_common_dir: Option<PathBuf>,
+    pub common_dir: Option<PathBuf>,
+    pub kind: ProjectKind,
+    pub checkout: ProjectCheckoutState,
+    pub branch_order: Vec<String>,
+    pub branches_by_name: HashMap<String, RepoBranchRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectGitState {
     pub changed_files: Vec<ChangedFile>,
+    pub current_branch: Option<String>,
     pub ahead_count: usize,
     pub metadata: Option<ProjectGitMetadata>,
 }
@@ -83,17 +111,19 @@ pub struct Task {
     pub id: String,
     pub name: String,
     pub kind: TaskKind,
+    pub root_project_id: String,
+    pub target_project_id: String,
     pub branch_name: String,
-    /// For worktree tasks: the project id of the worktree Project entry.
-    #[serde(default)]
+    pub section_id: String,
+    #[serde(skip)]
     pub worktree_project_id: Option<String>,
-    #[serde(default)]
+    #[serde(skip)]
     pub tabs: Vec<PersistedTerminalTab>,
-    #[serde(default)]
-    pub active_tab_id: usize,
-    #[serde(default)]
+    #[serde(skip)]
+    pub active_tab_id: String,
+    #[serde(skip)]
     pub next_tab_id: usize,
-    #[serde(default)]
+    #[serde(skip)]
     pub cwd: Option<PathBuf>,
 }
 
@@ -102,6 +132,12 @@ pub struct CreatedTaskWorktree {
     pub path: PathBuf,
     pub branch_name: String,
     pub task_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedProject {
+    pub project: Project,
+    pub repo: RepoRecord,
 }
 
 /// A single file with changes relative to HEAD.
@@ -136,22 +172,9 @@ impl ChangedFile {
     }
 }
 
-/// Placeholder for future per-project settings.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ProjectSettings {
-    // Will hold things like custom color, pinned status, etc.
-}
-
-/// Placeholder for future sub-worktree support.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Worktree {
-    pub name: String,
-    pub path: PathBuf,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedTerminalTab {
-    pub id: usize,
+    pub id: String,
     pub title: String,
     #[serde(default)]
     pub provider: Option<AgentProviderKind>,
@@ -159,7 +182,7 @@ pub struct PersistedTerminalTab {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedSectionState {
-    pub active_tab_id: usize,
+    pub active_tab_id: String,
     pub next_tab_id: usize,
     #[serde(default)]
     pub cwd: Option<PathBuf>,
@@ -172,20 +195,20 @@ pub struct UiState {
     #[serde(default = "default_left_sidebar_open")]
     pub left_sidebar_open: bool,
     #[serde(default)]
-    pub expanded_project_ids: Option<HashSet<String>>,
+    pub expanded_repo_ids: HashSet<String>,
     #[serde(default)]
     pub pinned_task_ids: HashSet<String>,
     #[serde(default)]
-    pub last_active_section_key: Option<String>,
+    pub last_active_section_id: Option<String>,
 }
 
 impl Default for UiState {
     fn default() -> Self {
         Self {
             left_sidebar_open: default_left_sidebar_open(),
-            expanded_project_ids: None,
+            expanded_repo_ids: HashSet::new(),
             pinned_task_ids: HashSet::new(),
-            last_active_section_key: None,
+            last_active_section_id: None,
         }
     }
 }
@@ -194,130 +217,321 @@ fn default_left_sidebar_open() -> bool {
     true
 }
 
-/// The on-disk format.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoreFile {
+    version: u8,
     #[serde(default)]
-    projects: Vec<Project>,
+    repos: HashMap<String, RepoRecord>,
     #[serde(default)]
-    tasks: HashMap<String, Vec<Task>>,
+    projects: HashMap<String, Project>,
     #[serde(default)]
-    terminal_sections: HashMap<String, PersistedSectionState>,
+    project_order: Vec<String>,
+    #[serde(default)]
+    tasks: HashMap<String, Task>,
+    #[serde(default)]
+    task_ids_by_root_project: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    sections: HashMap<String, PersistedSectionState>,
     #[serde(default)]
     ui: UiState,
 }
 
-/// In-memory project store with load/save to disk.
+impl Default for StoreFile {
+    fn default() -> Self {
+        Self {
+            version: STORE_VERSION,
+            repos: HashMap::new(),
+            projects: HashMap::new(),
+            project_order: Vec::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            sections: HashMap::new(),
+            ui: UiState::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ProjectStore {
+    pub repos: HashMap<String, RepoRecord>,
+    projects_by_id: HashMap<String, Project>,
     pub projects: Vec<Project>,
+    pub project_order: Vec<String>,
+    tasks_by_id: HashMap<String, Task>,
     pub tasks: HashMap<String, Vec<Task>>,
+    pub task_ids_by_root_project: HashMap<String, Vec<String>>,
     pub terminal_sections: HashMap<String, PersistedSectionState>,
     pub ui: UiState,
     file_path: PathBuf,
 }
 
 impl ProjectStore {
-    /// Load (or create) the store from the default config location.
     #[hotpath::measure]
     pub fn load() -> Self {
         let file_path = Self::config_path();
         let StoreFile {
-            mut projects,
-            mut tasks,
-            mut terminal_sections,
+            repos,
+            projects,
+            project_order,
+            tasks,
+            task_ids_by_root_project,
+            sections,
             mut ui,
+            ..
         } = Self::read_from_disk(&file_path);
 
-        // Detect worktree status for all projects on load.
-        for project in &mut projects {
-            project.worktree_name = detect_worktree_name(&project.path);
-            project.repo_common_dir = detect_repo_common_dir(&project.path);
-        }
-
-        let project_ids: HashSet<_> = projects.iter().map(|project| project.id.clone()).collect();
-        let task_ids: HashSet<_> = tasks
-            .values()
-            .flatten()
-            .map(|task| task.id.clone())
-            .collect();
-        tasks.retain(|project_id, _| project_ids.contains(project_id));
-        for task_list in tasks.values_mut() {
-            task_list.retain(|task| {
-                task.worktree_project_id
-                    .as_ref()
-                    .map_or(true, |wt_id| project_ids.contains(wt_id))
-            });
-        }
-        tasks.retain(|_, task_list| !task_list.is_empty());
-        terminal_sections.retain(|section_key, _| {
-            let mut parts = section_key.splitn(3, "::");
-            let Some(project_id) = parts.next() else {
-                return false;
-            };
-            let Some(_branch_name) = parts.next() else {
-                return false;
-            };
-            let Some(task_id) = parts.next() else {
-                return false;
-            };
-
-            project_ids.contains(project_id)
-                && (task_id.is_empty() || task_ids.contains(task_id))
-        });
-        if let Some(expanded_project_ids) = ui.expanded_project_ids.as_mut() {
-            expanded_project_ids.retain(|project_id| project_ids.contains(project_id));
-        }
-        ui.pinned_task_ids
-            .retain(|task_id| task_ids.contains(task_id));
-        if ui
-            .last_active_section_key
-            .as_ref()
-            .is_some_and(|section_key| !terminal_sections.contains_key(section_key))
-        {
-            ui.last_active_section_key = None;
-        }
-
-        Self {
-            projects,
-            tasks,
-            terminal_sections,
-            ui,
+        let mut store = Self {
+            repos,
+            projects_by_id: projects,
+            projects: Vec::new(),
+            project_order,
+            tasks_by_id: tasks,
+            tasks: HashMap::new(),
+            task_ids_by_root_project,
+            terminal_sections: sections,
+            ui: UiState::default(),
             file_path,
+        };
+        store.sanitize();
+        store.rebuild_runtime_views();
+        ui.expanded_repo_ids
+            .retain(|repo_id| store.repos.contains_key(repo_id));
+        ui.pinned_task_ids
+            .retain(|task_id| store.tasks_by_id.contains_key(task_id));
+        if ui
+            .last_active_section_id
+            .as_ref()
+            .is_some_and(|section_id| !store.terminal_sections.contains_key(section_id))
+        {
+            ui.last_active_section_id = None;
         }
+        store.ui = ui;
+        store
     }
 
-    /// Remove a project by id.
-    #[allow(dead_code)]
-    pub fn remove_project(&mut self, id: &str) {
-        self.projects.retain(|p| p.id != id);
-        self.tasks.remove(id);
-        for task_list in self.tasks.values_mut() {
-            task_list.retain(|task| task.worktree_project_id.as_deref() != Some(id));
+    pub fn ordered_projects(&self) -> Vec<&Project> {
+        self.projects.iter().collect()
+    }
+
+    pub fn first_project(&self) -> Option<&Project> {
+        self.projects.first()
+    }
+
+    pub fn project(&self, project_id: &str) -> Option<&Project> {
+        self.projects_by_id.get(project_id)
+    }
+
+    pub fn project_mut(&mut self, project_id: &str) -> Option<&mut Project> {
+        self.projects_by_id.get_mut(project_id)
+    }
+
+    pub fn repo(&self, repo_id: &str) -> Option<&RepoRecord> {
+        self.repos.get(repo_id)
+    }
+
+    pub fn repo_mut(&mut self, repo_id: &str) -> Option<&mut RepoRecord> {
+        self.repos.get_mut(repo_id)
+    }
+
+    pub fn repo_for_project(&self, project_id: &str) -> Option<&RepoRecord> {
+        let project = self.project(project_id)?;
+        self.repo(&project.repo_id)
+    }
+
+    pub fn task(&self, task_id: &str) -> Option<&Task> {
+        self.tasks_by_id.get(task_id)
+    }
+
+    pub fn task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
+        self.tasks_by_id.get_mut(task_id)
+    }
+
+    pub fn tasks_for_root_project(&self, root_project_id: &str) -> Vec<&Task> {
+        self.task_ids_by_root_project
+            .get(root_project_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|task_id| self.tasks_by_id.get(task_id))
+            .collect()
+    }
+
+    pub fn root_project_for_project(&self, project_id: &str) -> Option<&Project> {
+        let project = self.project(project_id)?;
+        self.projects_by_id.values().find(|candidate| {
+            candidate.repo_id == project.repo_id && candidate.kind == ProjectKind::Root
+        })
+    }
+
+    pub fn branch_names(&self, project_id: &str) -> Vec<String> {
+        self.repo_for_project(project_id)
+            .map(|repo| repo.branch_order.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn branch_view(&self, project_id: &str, branch_name: &str) -> Option<Branch> {
+        let project = self.project(project_id)?;
+        let repo = self.repo(&project.repo_id)?;
+        let branch = repo.branches_by_name.get(branch_name)?;
+        let is_current = project.checkout.current_branch.as_deref() == Some(branch_name);
+
+        Some(Branch {
+            name: branch.name.clone(),
+            lines_added: if is_current {
+                project.checkout.lines_added
+            } else {
+                0
+            },
+            lines_removed: if is_current {
+                project.checkout.lines_removed
+            } else {
+                0
+            },
+            ahead_count: branch.ahead_count,
+            last_commit_relative: branch.last_commit_relative.clone(),
+            is_default: branch.is_default,
+            is_current,
+        })
+    }
+
+    pub fn primary_branch_for_project(
+        &self,
+        project_id: &str,
+        prefer_default: bool,
+    ) -> Option<Branch> {
+        let repo = self.repo_for_project(project_id)?;
+        let branch_name = if prefer_default {
+            repo.branch_order
+                .iter()
+                .find(|name| {
+                    repo.branches_by_name
+                        .get(name.as_str())
+                        .is_some_and(|branch| branch.is_default)
+                })
+                .cloned()
+                .or_else(|| {
+                    self.project(project_id)
+                        .and_then(|project| project.checkout.current_branch.clone())
+                })
+                .or_else(|| repo.branch_order.first().cloned())
+        } else {
+            self.project(project_id)
+                .and_then(|project| project.checkout.current_branch.clone())
+                .or_else(|| repo.branch_order.first().cloned())
+        }?;
+
+        self.branch_view(project_id, &branch_name)
+    }
+
+    pub fn default_branch_name(&self, project_id: &str) -> Option<String> {
+        let repo = self.repo_for_project(project_id)?;
+        repo.branch_order.iter().find_map(|branch_name| {
+            repo.branches_by_name
+                .get(branch_name.as_str())
+                .filter(|branch| branch.is_default)
+                .map(|branch| branch.name.clone())
+        })
+    }
+
+    pub fn current_branch_name(&self, project_id: &str) -> Option<String> {
+        self.project(project_id)
+            .and_then(|project| project.checkout.current_branch.clone())
+    }
+
+    pub fn worktree_name(&self, project_id: &str) -> Option<String> {
+        let project = self.project(project_id)?;
+        if project.kind != ProjectKind::Worktree {
+            return None;
         }
-        self.tasks.retain(|_, task_list| !task_list.is_empty());
+
+        project
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    }
+
+    pub fn project_repo_id(&self, project_id: &str) -> Option<&str> {
+        self.project(project_id)
+            .map(|project| project.repo_id.as_str())
+    }
+
+    #[allow(dead_code)]
+    pub fn remove_project(&mut self, project_id: &str) {
+        let Some(project) = self.projects_by_id.remove(project_id) else {
+            return;
+        };
+        self.project_order.retain(|id| id != project_id);
+
+        let removed_task_ids = self
+            .tasks_by_id
+            .values()
+            .filter(|task| {
+                task.root_project_id == project_id || task.target_project_id == project_id
+            })
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        for task_id in removed_task_ids {
+            let _ = self.remove_task_by_id(&task_id);
+        }
         self.terminal_sections
-            .retain(|section_key, _| !section_key.starts_with(&format!("{id}::")));
+            .retain(|section_id, _| !section_id.starts_with(&format!("{project_id}::")));
         if self
             .ui
-            .last_active_section_key
+            .last_active_section_id
             .as_ref()
-            .is_some_and(|section_key| section_key.starts_with(&format!("{id}::")))
+            .is_some_and(|section_id| section_id.starts_with(&format!("{project_id}::")))
         {
-            self.ui.last_active_section_key = None;
+            self.ui.last_active_section_id = None;
         }
+
+        let repo_id = project.repo_id.clone();
+        if !self
+            .projects_by_id
+            .values()
+            .any(|candidate| candidate.repo_id == repo_id)
+        {
+            self.repos.remove(&repo_id);
+            self.ui.expanded_repo_ids.remove(&repo_id);
+        }
+        self.rebuild_runtime_views();
         self.save();
     }
 
-    pub fn remove_task(&mut self, project_id: &str, task_id: &str) -> Option<Task> {
-        let task_list = self.tasks.get_mut(project_id)?;
-        let task_index = task_list.iter().position(|task| task.id == task_id)?;
-        let removed = task_list.remove(task_index);
-        if task_list.is_empty() {
-            self.tasks.remove(project_id);
+    pub fn remove_task(&mut self, root_project_id: &str, task_id: &str) -> Option<Task> {
+        let task = self.tasks_by_id.get(task_id)?;
+        if task.root_project_id != root_project_id {
+            return None;
+        }
+        self.remove_task_by_id(task_id)
+    }
+
+    fn remove_task_by_id(&mut self, task_id: &str) -> Option<Task> {
+        let removed = self.tasks_by_id.remove(task_id)?;
+        if let Some(task_ids) = self
+            .task_ids_by_root_project
+            .get_mut(&removed.root_project_id)
+        {
+            task_ids.retain(|id| id != task_id);
+            if task_ids.is_empty() {
+                self.task_ids_by_root_project
+                    .remove(&removed.root_project_id);
+            }
+        }
+        self.terminal_sections.remove(&removed.section_id);
+        if self.ui.last_active_section_id.as_deref() == Some(&removed.section_id) {
+            self.ui.last_active_section_id = None;
         }
         self.ui.pinned_task_ids.remove(task_id);
+        self.rebuild_runtime_views();
         Some(removed)
+    }
+
+    pub fn insert_task(&mut self, task: Task) {
+        self.task_ids_by_root_project
+            .entry(task.root_project_id.clone())
+            .or_default()
+            .push(task.id.clone());
+        self.tasks_by_id.insert(task.id.clone(), task);
+        self.rebuild_runtime_views();
     }
 
     pub fn set_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
@@ -328,44 +542,53 @@ impl ProjectStore {
         }
     }
 
-    pub fn find_task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
-        self.tasks
-            .values_mut()
-            .flat_map(|tasks| tasks.iter_mut())
-            .find(|task| task.id == task_id)
-    }
-
-    pub fn update_task_tabs(&mut self, task_id: &str, state: &PersistedSectionState) {
-        if let Some(task) = self.find_task_mut(task_id) {
-            task.tabs = state.tabs.clone();
-            task.active_tab_id = state.active_tab_id;
-            task.next_tab_id = state.next_tab_id;
-            task.cwd = state.cwd.clone();
-            self.save();
-        }
-    }
-
-    pub fn insert_project(&mut self, project: Project) -> bool {
+    pub fn insert_prepared_project(&mut self, prepared: PreparedProject) -> bool {
         if self
-            .projects
-            .iter()
-            .any(|existing| existing.path == project.path)
+            .projects_by_id
+            .values()
+            .any(|existing| existing.path == prepared.project.path)
         {
             return false;
         }
 
-        self.projects.push(project);
+        let repo_id = prepared
+            .repo
+            .common_dir
+            .as_ref()
+            .and_then(|common_dir| {
+                self.repos.iter().find_map(|(repo_id, repo)| {
+                    (repo.common_dir.as_ref() == Some(common_dir)).then(|| repo_id.clone())
+                })
+            })
+            .unwrap_or_else(|| prepared.repo.id.clone());
+
+        if let Some(repo) = self.repos.get_mut(&repo_id) {
+            *repo = merge_repo(repo.clone(), prepared.repo);
+        } else {
+            let mut repo = prepared.repo;
+            repo.id = repo_id.clone();
+            self.repos.insert(repo_id.clone(), repo);
+        }
+
+        let mut project = prepared.project;
+        project.repo_id = repo_id;
+        self.project_order.push(project.id.clone());
+        self.projects_by_id.insert(project.id.clone(), project);
+        self.rebuild_runtime_views();
         self.save();
         true
     }
 
-    /// Persist current state to disk.
     #[hotpath::measure]
     pub fn save(&self) {
         let store = StoreFile {
-            projects: self.projects.clone(),
-            tasks: self.tasks.clone(),
-            terminal_sections: self.terminal_sections.clone(),
+            version: STORE_VERSION,
+            repos: self.repos.clone(),
+            projects: self.projects_by_id.clone(),
+            project_order: self.project_order.clone(),
+            tasks: self.tasks_by_id.clone(),
+            task_ids_by_root_project: self.task_ids_by_root_project.clone(),
+            sections: self.terminal_sections.clone(),
             ui: self.ui.clone(),
         };
         if let Some(parent) = self.file_path.parent() {
@@ -384,49 +607,169 @@ impl ProjectStore {
         self.save();
     }
 
-    pub fn set_expanded_projects(&mut self, expanded_project_ids: &HashSet<String>) {
-        self.ui.expanded_project_ids = Some(expanded_project_ids.clone());
+    pub fn set_expanded_repos(&mut self, expanded_repo_ids: &HashSet<String>) {
+        self.ui.expanded_repo_ids = expanded_repo_ids.clone();
         self.save();
     }
 
-    pub fn set_last_active_section_key(&mut self, section_key: Option<String>) {
-        if self.ui.last_active_section_key == section_key {
+    pub fn set_last_active_section_id(&mut self, section_id: Option<String>) {
+        if self.ui.last_active_section_id == section_id {
             return;
         }
 
-        self.ui.last_active_section_key = section_key;
+        self.ui.last_active_section_id = section_id;
         self.save();
     }
 
-    pub fn set_terminal_section(
+    pub fn set_section_state(
         &mut self,
-        section_key: impl Into<String>,
+        section_id: impl Into<String>,
         state: PersistedSectionState,
     ) {
-        self.terminal_sections.insert(section_key.into(), state);
+        self.terminal_sections.insert(section_id.into(), state);
+        self.rebuild_runtime_views();
         self.save();
     }
 
-    pub fn remove_terminal_sections(&mut self, section_keys: &HashSet<String>) -> bool {
+    pub fn remove_sections(&mut self, section_ids: &HashSet<String>) -> bool {
         let before = self.terminal_sections.len();
         self.terminal_sections
-            .retain(|section_key, _| !section_keys.contains(section_key));
+            .retain(|section_id, _| !section_ids.contains(section_id));
         let changed = before != self.terminal_sections.len();
         if changed {
             if self
                 .ui
-                .last_active_section_key
+                .last_active_section_id
                 .as_ref()
-                .is_some_and(|section_key| section_keys.contains(section_key))
+                .is_some_and(|section_id| section_ids.contains(section_id))
             {
-                self.ui.last_active_section_key = None;
+                self.ui.last_active_section_id = None;
             }
+            self.rebuild_runtime_views();
             self.save();
         }
         changed
     }
 
-    // --- private helpers ---
+    fn sanitize(&mut self) {
+        self.project_order
+            .retain(|project_id| self.projects_by_id.contains_key(project_id));
+        let ordered_set = self.project_order.iter().cloned().collect::<HashSet<_>>();
+        let missing = self
+            .projects_by_id
+            .keys()
+            .filter(|project_id| !ordered_set.contains(*project_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.project_order.extend(missing);
+
+        self.projects_by_id
+            .retain(|_, project| self.repos.contains_key(&project.repo_id));
+        self.project_order
+            .retain(|project_id| self.projects_by_id.contains_key(project_id));
+
+        self.tasks_by_id.retain(|_, task| {
+            self.projects_by_id.contains_key(&task.root_project_id)
+                && self.projects_by_id.contains_key(&task.target_project_id)
+        });
+
+        self.task_ids_by_root_project
+            .retain(|root_project_id, task_ids| {
+                if !self.projects_by_id.contains_key(root_project_id) {
+                    return false;
+                }
+                task_ids.retain(|task_id| {
+                    self.tasks_by_id
+                        .get(task_id)
+                        .is_some_and(|task| task.root_project_id == *root_project_id)
+                });
+                !task_ids.is_empty()
+            });
+
+        let indexed_task_ids = self
+            .task_ids_by_root_project
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<HashSet<_>>();
+        for task in self.tasks_by_id.values() {
+            if !indexed_task_ids.contains(&task.id) {
+                self.task_ids_by_root_project
+                    .entry(task.root_project_id.clone())
+                    .or_default()
+                    .push(task.id.clone());
+            }
+        }
+
+        self.terminal_sections.retain(|section_id, _| {
+            let mut parts = section_id.splitn(3, "::");
+            let Some(project_id) = parts.next() else {
+                return false;
+            };
+            let Some(_branch_name) = parts.next() else {
+                return false;
+            };
+            let Some(task_id) = parts.next() else {
+                return false;
+            };
+            self.projects_by_id.contains_key(project_id)
+                && (task_id.is_empty() || self.tasks_by_id.contains_key(task_id))
+        });
+    }
+
+    fn rebuild_runtime_views(&mut self) {
+        self.projects = self
+            .project_order
+            .iter()
+            .filter_map(|project_id| {
+                let mut project = self.projects_by_id.get(project_id)?.clone();
+                project.worktree_name = if project.is_worktree() {
+                    project
+                        .path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                } else {
+                    None
+                };
+                project.repo_common_dir = self
+                    .repo_for_project(project_id)
+                    .and_then(|repo| repo.common_dir.clone());
+                Some(project)
+            })
+            .collect();
+
+        self.tasks = self
+            .task_ids_by_root_project
+            .iter()
+            .map(|(root_project_id, task_ids)| {
+                let tasks = task_ids
+                    .iter()
+                    .filter_map(|task_id| {
+                        let mut task = self.tasks_by_id.get(task_id)?.clone();
+                        task.worktree_project_id = (task.target_project_id != task.root_project_id)
+                            .then(|| task.target_project_id.clone());
+                        if let Some(section) = self.terminal_sections.get(&task.section_id) {
+                            task.tabs = section.tabs.clone();
+                            task.active_tab_id = section.active_tab_id.clone();
+                            task.next_tab_id = section.next_tab_id;
+                            task.cwd = section.cwd.clone();
+                        } else {
+                            task.tabs = Vec::new();
+                            task.active_tab_id = String::new();
+                            task.next_tab_id = 0;
+                            task.cwd = None;
+                        }
+                        Some(task)
+                    })
+                    .collect::<Vec<_>>();
+                (root_project_id.clone(), tasks)
+            })
+            .collect();
+    }
+
+    pub fn refresh_runtime_views(&mut self) {
+        self.rebuild_runtime_views();
+    }
 
     fn config_path() -> PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -434,16 +777,62 @@ impl ProjectStore {
     }
 
     fn read_from_disk(path: &Path) -> StoreFile {
-        let read_path = if path.exists() { path } else { path };
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return StoreFile::default();
+        };
+        match serde_json::from_str::<StoreFile>(&contents) {
+            Ok(store) if store.version == STORE_VERSION => store,
+            _ => {
+                Self::backup_incompatible_store(path);
+                StoreFile::default()
+            }
+        }
+    }
 
-        match std::fs::read_to_string(read_path) {
-            Ok(contents) => serde_json::from_str::<StoreFile>(&contents).unwrap_or_default(),
-            Err(_) => StoreFile::default(),
+    fn backup_incompatible_store(path: &Path) {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        let backup_path = parent.join("projects.v1.backup.json");
+        let _ = std::fs::remove_file(&backup_path);
+        let _ = std::fs::rename(path, backup_path);
+    }
+
+    pub fn set_expanded_projects(&mut self, expanded_repo_ids: &HashSet<String>) {
+        self.set_expanded_repos(expanded_repo_ids);
+    }
+
+    pub fn set_last_active_section_key(&mut self, section_id: Option<String>) {
+        self.set_last_active_section_id(section_id);
+    }
+
+    pub fn set_terminal_section(
+        &mut self,
+        section_id: impl Into<String>,
+        state: PersistedSectionState,
+    ) {
+        self.set_section_state(section_id, state);
+    }
+
+    pub fn remove_terminal_sections(&mut self, section_ids: &HashSet<String>) -> bool {
+        self.remove_sections(section_ids)
+    }
+
+    pub fn find_task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
+        self.task_mut(task_id)
+    }
+
+    pub fn update_task_tabs(&mut self, task_id: &str, state: &PersistedSectionState) {
+        let section_id = self.task(task_id).map(|task| task.section_id.clone());
+        if let Some(section_id) = section_id {
+            self.terminal_sections.insert(section_id, state.clone());
+            self.rebuild_runtime_views();
+            self.save();
         }
     }
 }
 
-pub fn prepare_project(folder: &Path) -> Result<Project, String> {
+pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {
     let canonical = folder
         .canonicalize()
         .unwrap_or_else(|_| folder.to_path_buf());
@@ -453,35 +842,109 @@ pub fn prepare_project(folder: &Path) -> Result<Project, String> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| canonical.display().to_string());
 
-    Ok(Project {
-        id: uuid::Uuid::new_v4().to_string(),
-        name,
-        path: canonical.clone(),
-        settings: ProjectSettings::default(),
-        worktrees: Vec::new(),
-        branches: detect_branches(&canonical),
-        worktree_name: detect_worktree_name(&canonical),
-        repo_common_dir: detect_repo_common_dir(&canonical),
+    let branches = detect_branches(&canonical);
+    let (branch_order, branches_by_name) = repo_branch_catalog_from_resolved(&branches);
+    let common_dir = detect_repo_common_dir(&canonical);
+    let kind = detect_project_kind(&canonical);
+
+    Ok(PreparedProject {
+        project: Project {
+            id: uuid::Uuid::new_v4().to_string(),
+            repo_id: uuid::Uuid::new_v4().to_string(),
+            name,
+            path: canonical.clone(),
+            kind,
+            checkout: checkout_state_from_resolved(&branches),
+            worktree_name: detect_worktree_name(&canonical),
+            repo_common_dir: common_dir.clone(),
+        },
+        repo: RepoRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            common_dir,
+            branch_order,
+            branches_by_name,
+        },
     })
 }
 
 #[hotpath::measure]
 pub fn read_project_git_state(path: &Path, include_metadata: bool) -> ProjectGitState {
+    let current_branch = git_current_branch(path);
     ProjectGitState {
         changed_files: list_changed_files(path),
-        ahead_count: git_current_branch(path)
-            .map(|branch| git_ahead_count(path, &branch))
+        ahead_count: current_branch
+            .as_deref()
+            .map(|branch| git_ahead_count(path, branch))
             .unwrap_or(0),
+        current_branch,
         metadata: include_metadata.then(|| read_project_git_metadata(path)),
     }
 }
 
 fn read_project_git_metadata(path: &Path) -> ProjectGitMetadata {
+    let branches = detect_branches(path);
+    let (branch_order, branches_by_name) = repo_branch_catalog_from_resolved(&branches);
     ProjectGitMetadata {
-        branches: detect_branches(path),
-        worktree_name: detect_worktree_name(path),
-        repo_common_dir: detect_repo_common_dir(path),
+        common_dir: detect_repo_common_dir(path),
+        kind: detect_project_kind(path),
+        checkout: checkout_state_from_resolved(&branches),
+        branch_order,
+        branches_by_name,
     }
+}
+
+fn repo_branch_catalog_from_resolved(
+    branches: &[Branch],
+) -> (Vec<String>, HashMap<String, RepoBranchRecord>) {
+    let branch_order = branches.iter().map(|branch| branch.name.clone()).collect();
+    let branches_by_name = branches
+        .iter()
+        .map(|branch| {
+            (
+                branch.name.clone(),
+                RepoBranchRecord {
+                    name: branch.name.clone(),
+                    last_commit_relative: branch.last_commit_relative.clone(),
+                    is_default: branch.is_default,
+                    ahead_count: branch.ahead_count,
+                },
+            )
+        })
+        .collect();
+    (branch_order, branches_by_name)
+}
+
+fn checkout_state_from_resolved(branches: &[Branch]) -> ProjectCheckoutState {
+    branches
+        .iter()
+        .find(|branch| branch.is_current)
+        .map(|branch| ProjectCheckoutState {
+            current_branch: Some(branch.name.clone()),
+            lines_added: branch.lines_added,
+            lines_removed: branch.lines_removed,
+        })
+        .unwrap_or_default()
+}
+
+fn detect_project_kind(path: &Path) -> ProjectKind {
+    if detect_worktree_name(path).is_some() {
+        ProjectKind::Worktree
+    } else {
+        ProjectKind::Root
+    }
+}
+
+fn merge_repo(mut existing: RepoRecord, incoming: RepoRecord) -> RepoRecord {
+    if existing.common_dir.is_none() {
+        existing.common_dir = incoming.common_dir;
+    }
+    if !incoming.branch_order.is_empty() {
+        existing.branch_order = incoming.branch_order;
+    }
+    if !incoming.branches_by_name.is_empty() {
+        existing.branches_by_name = incoming.branches_by_name;
+    }
+    existing
 }
 
 fn git_command(path: &Path) -> Command {
@@ -1271,18 +1734,22 @@ mod tests {
     use crate::agents::AgentProviderKind;
 
     use super::{
-        format_git_command_error, PersistedTerminalTab, Project, ProjectSettings, StoreFile, Task,
-        TaskKind,
+        format_git_command_error, PersistedSectionState, PersistedTerminalTab, Project,
+        ProjectCheckoutState, ProjectKind, RepoRecord, StoreFile, Task, TaskKind,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
         Project {
             id: id.to_string(),
+            repo_id: "repo".to_string(),
             name: format!("Project {id}"),
             path: PathBuf::from(format!("/tmp/{id}")),
-            settings: ProjectSettings::default(),
-            worktrees: Vec::new(),
-            branches: Vec::new(),
+            kind: if worktree_name.is_some() {
+                ProjectKind::Worktree
+            } else {
+                ProjectKind::Root
+            },
+            checkout: ProjectCheckoutState::default(),
             worktree_name: worktree_name.map(str::to_string),
             repo_common_dir: None,
         }
@@ -1317,75 +1784,121 @@ mod tests {
     }
 
     #[test]
-    fn store_file_defaults_new_sidebar_fields_for_old_json() {
-        let store: StoreFile =
-            serde_json::from_str(r#"{"projects":[{"id":"p1","name":"Project","path":"/tmp/p1"}]}"#)
-                .expect("old store JSON should still deserialize");
-
-        assert_eq!(store.projects.len(), 1);
-        assert!(store.tasks.is_empty());
-        assert!(store.terminal_sections.is_empty());
-        assert!(store.ui.left_sidebar_open);
-        assert_eq!(store.ui.expanded_project_ids, None);
-        assert!(store.ui.pinned_task_ids.is_empty());
-        assert_eq!(store.ui.last_active_section_key, None);
-    }
-
-    #[test]
     fn store_file_round_trip_preserves_task_state() {
         let store = StoreFile {
-            projects: vec![
-                sample_project("root", None),
-                sample_project("wt1", Some("wt1")),
-            ],
-            tasks: HashMap::from([(
-                "root".to_string(),
-                vec![
+            version: super::STORE_VERSION,
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: Some(PathBuf::from("/tmp/root/.git")),
+                    branch_order: vec![
+                        "feature/persist-tasks".to_string(),
+                        "feature/worktree".to_string(),
+                    ],
+                    branches_by_name: HashMap::new(),
+                },
+            )]),
+            projects: HashMap::from([
+                ("root".to_string(), sample_project("root", None)),
+                ("wt1".to_string(), sample_project("wt1", Some("wt1"))),
+            ]),
+            project_order: vec!["root".to_string(), "wt1".to_string()],
+            tasks: HashMap::from([
+                (
+                    "task-1".to_string(),
                     Task {
                         id: "task-1".to_string(),
                         name: "Investigate bug".to_string(),
                         kind: TaskKind::Direct,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "root".to_string(),
                         branch_name: "feature/persist-tasks".to_string(),
+                        section_id: "root::feature/persist-tasks::task-1".to_string(),
                         worktree_project_id: None,
                         tabs: vec![
                             PersistedTerminalTab {
-                                id: 0,
+                                id: "0".to_string(),
                                 title: "Terminal".to_string(),
                                 provider: None,
                             },
                             PersistedTerminalTab {
-                                id: 1,
+                                id: "1".to_string(),
                                 title: "Claude Code".to_string(),
                                 provider: Some(AgentProviderKind::ClaudeCode),
                             },
                         ],
-                        active_tab_id: 1,
+                        active_tab_id: "1".to_string(),
                         next_tab_id: 3,
                         cwd: Some(PathBuf::from("/tmp/root")),
                     },
+                ),
+                (
+                    "task-2".to_string(),
                     Task {
                         id: "task-2".to_string(),
                         name: "Friendly worktree name".to_string(),
                         kind: TaskKind::Worktree,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "wt1".to_string(),
                         branch_name: "feature/worktree".to_string(),
+                        section_id: "wt1::feature/worktree::task-2".to_string(),
                         worktree_project_id: Some("wt1".to_string()),
                         tabs: vec![PersistedTerminalTab {
-                            id: 0,
+                            id: "0".to_string(),
                             title: "Pi".to_string(),
                             provider: Some(AgentProviderKind::Pi),
                         }],
-                        active_tab_id: 0,
+                        active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(PathBuf::from("/tmp/wt1")),
                     },
-                ],
+                ),
+            ]),
+            task_ids_by_root_project: HashMap::from([(
+                "root".to_string(),
+                vec!["task-1".to_string(), "task-2".to_string()],
             )]),
-            terminal_sections: HashMap::new(),
+            sections: HashMap::from([
+                (
+                    "root::feature/persist-tasks::task-1".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "1".to_string(),
+                        next_tab_id: 3,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                        tabs: vec![
+                            PersistedTerminalTab {
+                                id: "0".to_string(),
+                                title: "Terminal".to_string(),
+                                provider: None,
+                            },
+                            PersistedTerminalTab {
+                                id: "1".to_string(),
+                                title: "Claude Code".to_string(),
+                                provider: Some(AgentProviderKind::ClaudeCode),
+                            },
+                        ],
+                    },
+                ),
+                (
+                    "wt1::feature/worktree::task-2".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt1")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Pi".to_string(),
+                            provider: Some(AgentProviderKind::Pi),
+                        }],
+                    },
+                ),
+            ]),
             ui: super::UiState {
                 left_sidebar_open: false,
-                expanded_project_ids: Some(HashSet::from(["root".to_string(), "wt1".to_string()])),
+                expanded_repo_ids: HashSet::from(["repo".to_string()]),
                 pinned_task_ids: HashSet::from(["task-1".to_string(), "task-2".to_string()]),
-                last_active_section_key: None,
+                last_active_section_id: None,
             },
         };
 
@@ -1394,26 +1907,26 @@ mod tests {
             serde_json::from_str(&json).expect("store JSON should deserialize");
 
         assert_eq!(round_trip.projects.len(), 2);
-        let root_tasks = round_trip
+        let task_1 = round_trip
             .tasks
-            .get("root")
-            .expect("tasks should round-trip");
-        assert_eq!(root_tasks.len(), 2);
-        assert_eq!(root_tasks[0].name, "Investigate bug");
-        assert_eq!(root_tasks[0].kind, TaskKind::Direct);
-        assert_eq!(root_tasks[0].tabs.len(), 2);
-        assert_eq!(root_tasks[0].active_tab_id, 1);
-        assert_eq!(root_tasks[1].name, "Friendly worktree name");
-        assert_eq!(root_tasks[1].kind, TaskKind::Worktree);
-        assert_eq!(root_tasks[1].worktree_project_id.as_deref(), Some("wt1"));
+            .get("task-1")
+            .expect("task 1 should round-trip");
+        let task_2 = round_trip
+            .tasks
+            .get("task-2")
+            .expect("task 2 should round-trip");
+        assert_eq!(task_1.name, "Investigate bug");
+        assert_eq!(task_1.kind, TaskKind::Direct);
+        assert_eq!(task_2.name, "Friendly worktree name");
+        assert_eq!(task_2.kind, TaskKind::Worktree);
+        assert_eq!(task_2.target_project_id, "wt1");
         assert_eq!(
-            root_tasks[1].tabs[0].provider,
+            round_trip.sections["wt1::feature/worktree::task-2"].tabs[0].provider,
             Some(AgentProviderKind::Pi)
         );
-        assert!(!round_trip.ui.left_sidebar_open);
         assert_eq!(
-            round_trip.ui.expanded_project_ids,
-            Some(HashSet::from(["root".to_string(), "wt1".to_string()]))
+            round_trip.ui.expanded_repo_ids,
+            HashSet::from(["repo".to_string()])
         );
         assert_eq!(
             round_trip.ui.pinned_task_ids,

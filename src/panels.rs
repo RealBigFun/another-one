@@ -113,7 +113,7 @@ impl WorkspacePane {
             for (i, tab) in state.tabs.iter().enumerate() {
                 let is_active = i == state.active_tab;
                 let tab_title: SharedString = if state.tabs.len() > 1 {
-                    format!("{} {}", tab.title, tab.id + 1).into()
+                    format!("{} {}", tab.title, i + 1).into()
                 } else {
                     tab.title.clone().into()
                 };
@@ -123,7 +123,7 @@ impl WorkspacePane {
                 let sid_close = section_id.clone();
                 let close_index = i;
                 let can_close = state.tabs.len() > 1;
-                let tab_id_val = tab.id;
+                let tab_id_val = tab.id.clone();
 
                 tab_bar = tab_bar.child(
                     div()
@@ -265,7 +265,7 @@ impl WorkspacePane {
         };
 
         let tab_label = if state.tabs.len() > 1 {
-            format!("{} {}", tab.title, tab.id + 1)
+            format!("{} {}", tab.title, state.active_tab + 1)
         } else {
             tab.title.clone()
         };

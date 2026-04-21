@@ -70,32 +70,19 @@ impl AnotherOneApp {
             .unwrap_or_else(|| format!("project:{}", project.id))
     }
 
-    fn sidebar_branch_for_project(project: &Project, prefer_default: bool) -> Option<Branch> {
-        if prefer_default {
-            project
-                .branches
-                .iter()
-                .find(|branch| branch.is_default)
-                .or_else(|| project.branches.iter().find(|branch| branch.is_current))
-                .or_else(|| project.branches.first())
-                .cloned()
-        } else {
-            project
-                .branches
-                .iter()
-                .find(|branch| branch.is_current)
-                .or_else(|| project.branches.first())
-                .cloned()
-        }
+    fn sidebar_branch_for_project(
+        &self,
+        project: &Project,
+        prefer_default: bool,
+    ) -> Option<Branch> {
+        self.project_store
+            .primary_branch_for_project(&project.id, prefer_default)
     }
 
-    fn sidebar_branch_named(project: &Project, branch_name: &str) -> Branch {
-        project
-            .branches
-            .iter()
-            .find(|branch| branch.name == branch_name)
-            .cloned()
-            .or_else(|| Self::sidebar_branch_for_project(project, false))
+    fn sidebar_branch_named(&self, project: &Project, branch_name: &str) -> Branch {
+        self.project_store
+            .branch_view(&project.id, branch_name)
+            .or_else(|| self.sidebar_branch_for_project(project, false))
             .unwrap_or_else(|| Branch {
                 name: branch_name.to_string(),
                 lines_added: 0,
@@ -168,23 +155,17 @@ impl AnotherOneApp {
                         TaskKind::Direct => (
                             root_project.id.clone(),
                             root_project.path.clone(),
-                            Self::sidebar_branch_named(&root_project, &task.branch_name),
+                            self.sidebar_branch_named(&root_project, &task.branch_name),
                         ),
                         TaskKind::Worktree | TaskKind::MultiWorktree => {
-                            let wt_project = task
-                                .worktree_project_id
-                                .as_ref()
-                                .and_then(|wt_id| {
-                                    self.project_store
-                                        .projects
-                                        .iter()
-                                        .find(|p| p.id == *wt_id)
-                                });
+                            let wt_project = task.worktree_project_id.as_ref().and_then(|wt_id| {
+                                self.project_store.projects.iter().find(|p| p.id == *wt_id)
+                            });
                             if let Some(wt) = wt_project {
-                                let branch = Self::sidebar_branch_for_project(wt, false)
-                                    .unwrap_or_else(|| {
-                                        Self::sidebar_branch_named(wt, &task.branch_name)
-                                    });
+                                let branch =
+                                    self.sidebar_branch_for_project(wt, false).unwrap_or_else(
+                                        || self.sidebar_branch_named(wt, &task.branch_name),
+                                    );
                                 (wt.id.clone(), wt.path.clone(), branch)
                             } else {
                                 continue;
@@ -257,9 +238,9 @@ impl AnotherOneApp {
 
     fn fallback_section_after_project_removal(&self) -> Option<(SectionId, PathBuf)> {
         let project = self.project_store.projects.first()?;
-        let branch = project.branches.first()?;
+        let branch_name = self.project_store.current_branch_name(&project.id)?;
         Some((
-            SectionId::new(&project.id, &branch.name),
+            SectionId::new(&project.id, &branch_name),
             project.path.clone(),
         ))
     }
@@ -267,34 +248,17 @@ impl AnotherOneApp {
     fn remove_project_group_ids(&mut self, project_ids: &[String], cx: &mut Context<Self>) {
         let project_id_set: std::collections::HashSet<String> =
             project_ids.iter().cloned().collect();
-        let removed_task_ids: std::collections::HashSet<String> = self
+        let removed_repo_ids: std::collections::HashSet<String> = self
             .project_store
-            .tasks
+            .projects
             .iter()
-            .filter(|(project_id, _)| project_id_set.contains(*project_id))
-            .flat_map(|(_, tasks)| tasks.iter().map(|task| task.id.clone()))
+            .filter(|project| project_id_set.contains(&project.id))
+            .map(|project| project.repo_id.clone())
             .collect();
 
-        self.project_store
-            .projects
-            .retain(|project| !project_id_set.contains(&project.id));
-        self.project_store
-            .tasks
-            .retain(|project_id, _| !project_id_set.contains(project_id));
-        for task_list in self.project_store.tasks.values_mut() {
-            task_list.retain(|task| {
-                task.worktree_project_id
-                    .as_ref()
-                    .map_or(true, |wt_id| !project_id_set.contains(wt_id))
-            });
+        for project_id in project_ids {
+            self.project_store.remove_project(project_id);
         }
-        self.project_store
-            .tasks
-            .retain(|_, task_list| !task_list.is_empty());
-        self.project_store
-            .ui
-            .pinned_task_ids
-            .retain(|task_id| !removed_task_ids.contains(task_id));
         self.changed_files
             .retain(|project_id, _| !project_id_set.contains(project_id));
         self.project_github_links
@@ -302,10 +266,9 @@ impl AnotherOneApp {
         self.project_github_link_checked
             .retain(|project_id| !project_id_set.contains(project_id));
         self.expanded_projects
-            .retain(|project_id| !project_id_set.contains(project_id));
+            .retain(|repo_id| !removed_repo_ids.contains(repo_id));
         self.project_store
             .set_expanded_projects(&self.expanded_projects);
-        let fallback_section = self.fallback_section_after_project_removal();
 
         if self
             .project_menu_project
@@ -359,6 +322,7 @@ impl AnotherOneApp {
         self.project_github_link_requests
             .retain(|project_id| !project_id_set.contains(project_id));
         self.project_remove_confirm = None;
+        let fallback_section = self.fallback_section_after_project_removal();
         self.project_store.save();
 
         self.workspace_pane.update(cx, |workspace, cx| {
@@ -523,9 +487,11 @@ impl AnotherOneApp {
 
         self.sidebar_task_menu = None;
         self.sidebar_task_last_click = None;
-        if self.sidebar_task_rename.as_ref().is_some_and(|rename| {
-            rename.project_id == project_id && rename.row_id == task_id
-        }) {
+        if self
+            .sidebar_task_rename
+            .as_ref()
+            .is_some_and(|rename| rename.project_id == project_id && rename.row_id == task_id)
+        {
             self.sidebar_task_rename = None;
         }
         self.workspace_pane.update(cx, |workspace, cx| {
@@ -872,6 +838,7 @@ impl AnotherOneApp {
             .collect();
         let name: SharedString = project.name.clone().into();
         let pid = project.id.clone();
+        let expand_id = project.repo_id.clone();
 
         let text_col = hsla(0., 0., 0.90, 1.);
         let hover_bg = gpui::white().opacity(0.06);
@@ -879,7 +846,7 @@ impl AnotherOneApp {
         let active_border = gpui::white().opacity(0.18);
         let chevron_col = hsla(0., 0., 0.55, 1.);
         let pid_row = pid.clone();
-        let pid_toggle = pid.clone();
+        let pid_toggle = expand_id;
         let pid_menu = pid.clone();
         let pid_plus = pid.clone();
         let github_url_for_icon = state.github_url.clone();
@@ -1609,7 +1576,7 @@ impl AnotherOneApp {
             }
 
             top += PROJECT_ROW_H + LIST_GAP;
-            if self.expanded_projects.contains(&group.root_project.id) {
+            if self.expanded_projects.contains(&group.root_project.repo_id) {
                 top += (BRANCH_ROW_H + LIST_GAP) * group.child_entries.len() as f32;
             }
         }
@@ -2243,8 +2210,9 @@ impl AnotherOneApp {
                     &group.root_project.path,
                 );
                 let root_id = &group.root_project.id;
-                let expanded = self.project_expand_target(root_id);
-                let expand_progress = self.project_expand_progress(root_id);
+                let expand_id = &group.root_project.repo_id;
+                let expanded = self.project_expand_target(expand_id);
+                let expand_progress = self.project_expand_progress(expand_id);
                 let active = active_project_page
                     .as_deref()
                     .is_some_and(|project_id| project_id == root_id);
@@ -2261,7 +2229,7 @@ impl AnotherOneApp {
                 )));
 
                 if expand_progress > 0.001 {
-                    let is_animating = self.project_expand_animations.contains_key(root_id);
+                    let is_animating = self.project_expand_animations.contains_key(expand_id);
                     let full_height = if group.child_entries.is_empty() {
                         0.0
                     } else {

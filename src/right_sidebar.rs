@@ -259,15 +259,8 @@ impl AnotherOneApp {
         };
 
         self.project_store
-            .projects
-            .iter()
-            .find(|project| project.id == section.project_id)
-            .and_then(|project| {
-                project
-                    .branches
-                    .iter()
-                    .find(|branch| branch.name == section.branch_name)
-            })
+            .branch_view(&section.project_id, &section.branch_name)
+            .as_ref()
             .map(|branch| branch.ahead_count)
             .unwrap_or(0)
     }

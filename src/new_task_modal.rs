@@ -99,13 +99,10 @@ impl AnotherOneApp {
             return;
         };
 
-        let source_branch = project
-            .branches
-            .iter()
-            .find(|branch| branch.is_default)
-            .or_else(|| project.branches.iter().find(|branch| branch.is_current))
-            .or_else(|| project.branches.first())
-            .map(|branch| branch.name.clone())
+        let source_branch = self
+            .project_store
+            .primary_branch_for_project(&project.id, true)
+            .map(|branch| branch.name)
             .unwrap_or_default();
         self.open_new_task_modal_with_branch(project_id, &source_branch);
     }
@@ -157,23 +154,10 @@ impl AnotherOneApp {
             .find(|project| project.id == state.project_id);
 
         let available_branches = project
-            .map(|project| {
-                project
-                    .branches
-                    .iter()
-                    .map(|branch| branch.name.clone())
-                    .collect::<Vec<_>>()
-            })
+            .map(|project| self.project_store.branch_names(&project.id))
             .unwrap_or_default();
         let current_branch = project
-            .and_then(|project| {
-                project
-                    .branches
-                    .iter()
-                    .find(|branch| branch.is_current)
-                    .or_else(|| project.branches.first())
-                    .map(|branch| branch.name.clone())
-            })
+            .and_then(|project| self.project_store.current_branch_name(&project.id))
             .unwrap_or_else(|| state.source_branch.clone());
 
         let project_name: SharedString = state.project_name.clone().into();
