@@ -264,6 +264,12 @@ impl WorkspacePane {
             return div().flex_1().bg(terminal_bg);
         };
 
+        let cwd_label = state
+            .cwd
+            .as_ref()
+            .map(|cwd| cwd.display().to_string())
+            .unwrap_or_else(|| "Not available".to_string());
+        let task_label = section_id.task_id.as_deref().unwrap_or("Not available");
         let tab_label = if state.tabs.len() > 1 {
             format!("{} {}", tab.title, state.active_tab + 1)
         } else {
@@ -316,16 +322,32 @@ impl WorkspacePane {
                         div()
                             .text_sm()
                             .text_color(body_col)
+                            .child(format!("Project: {}", section_id.project_id)),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(body_col)
                             .child(format!("Branch: {}", section_id.branch_name)),
                     )
-                    .when_some(section_id.task_id.as_ref(), |placeholder, task_id| {
-                        placeholder.child(
-                            gpui::div()
-                                .text_sm()
-                                .text_color(body_col)
-                                .child(format!("Task: {}", task_id)),
-                        )
-                    }),
+                    .child(
+                        gpui::div()
+                            .text_sm()
+                            .text_color(body_col)
+                            .child(format!("Task: {}", task_label)),
+                    )
+                    .child(
+                        gpui::div()
+                            .text_sm()
+                            .text_color(body_col)
+                            .child(format!("Agent/Tab: {}", tab.id)),
+                    )
+                    .child(
+                        gpui::div()
+                            .text_sm()
+                            .text_color(body_col)
+                            .child(format!("CWD: {}", cwd_label)),
+                    ),
             )
     }
 }
