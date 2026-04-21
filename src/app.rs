@@ -18,8 +18,8 @@ actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
 use crate::agents::{terminal_launch_config_for_selected_agents, TerminalLaunchConfig, AGENTS};
 use crate::layout::*;
 use crate::project_store::{
-    ChangedFile, DirectTask, PersistedSectionState, PersistedTerminalTab, ProjectGitState,
-    ProjectStore,
+    ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore, Task,
+    TaskKind,
 };
 use crate::theme;
 
@@ -323,7 +323,6 @@ struct TaskCreationFailure {
 pub(crate) struct SidebarTaskRenameState {
     pub(crate) project_id: String,
     pub(crate) row_id: String,
-    pub(crate) is_worktree: bool,
     pub(crate) original_name: String,
     pub(crate) task_name: String,
     pub(crate) task_name_cursor: usize,
@@ -358,7 +357,7 @@ pub(crate) struct SidebarTaskDeleteConfirmState {
 #[derive(Clone)]
 pub(crate) struct SidebarTaskDeleteRequest {
     pub(crate) project_id: String,
-    pub(crate) task_id: Option<String>,
+    pub(crate) task_id: String,
     pub(crate) task_name: String,
     pub(crate) branch_name: String,
     pub(crate) is_worktree: bool,
@@ -1505,6 +1504,34 @@ impl AnotherOneApp {
                 ))
             })
             .collect::<HashMap<_, _>>();
+
+        for (root_project_id, task_list) in &store.tasks {
+            for task in task_list {
+                let project_id = task
+                    .worktree_project_id
+                    .as_deref()
+                    .unwrap_or(root_project_id);
+                let section_id =
+                    SectionId::for_task(project_id, &task.branch_name, &task.id);
+                if !task.tabs.is_empty() {
+                    let persisted = PersistedSectionState {
+                        active_tab_id: task.active_tab_id,
+                        next_tab_id: task.next_tab_id,
+                        cwd: task.cwd.clone(),
+                        tabs: task.tabs.clone(),
+                    };
+                    let fallback_cwd = store
+                        .projects
+                        .iter()
+                        .find(|project| project.id == project_id)
+                        .map(|project| project.path.clone());
+                    section_states.insert(
+                        section_id,
+                        SectionState::from_persisted(persisted, fallback_cwd),
+                    );
+                }
+            }
+        }
         let initial_section = choose_initial_section(
             &store.projects,
             &section_states,
@@ -1603,16 +1630,24 @@ impl AnotherOneApp {
     }
 
     fn persist_section_state(&mut self, section_id: &SectionId, persisted: PersistedSectionState) {
-        self.project_store
-            .set_terminal_section(section_id.store_key(), persisted);
+        if let Some(task_id) = section_id.task_id.as_deref() {
+            self.project_store.update_task_tabs(task_id, &persisted);
+        } else {
+            self.project_store
+                .set_terminal_section(section_id.store_key(), persisted);
+        }
     }
 
     fn remove_persisted_sections(&mut self, section_ids: &HashSet<SectionId>) {
-        let section_keys = section_ids
+        let bare_section_keys = section_ids
             .iter()
+            .filter(|section_id| section_id.task_id.is_none())
             .map(SectionId::store_key)
             .collect::<HashSet<_>>();
-        self.project_store.remove_terminal_sections(&section_keys);
+        if !bare_section_keys.is_empty() {
+            self.project_store
+                .remove_terminal_sections(&bare_section_keys);
+        }
     }
 
     fn cleanup_removed_tab(&mut self, _section_id: &SectionId, _tab_id: usize) {}
@@ -1853,21 +1888,6 @@ impl AnotherOneApp {
             })
     }
 
-    fn activate_project_section(
-        &mut self,
-        project_id: &str,
-        branch_name: &str,
-        cwd: std::path::PathBuf,
-        launch_config: Option<TerminalLaunchConfig>,
-        cx: &mut Context<Self>,
-    ) {
-        let section_id = SectionId::new(project_id, branch_name);
-        self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.activate_section(section_id, Some(cwd), launch_config, cx);
-        });
-        self.mark_git_refresh_stale();
-    }
-
     pub(crate) fn submit_new_task_modal(&mut self, cx: &mut Context<Self>) {
         let (
             project_id,
@@ -1936,13 +1956,19 @@ impl AnotherOneApp {
             };
             let task_id = uuid::Uuid::new_v4().to_string();
             self.project_store
-                .direct_tasks
+                .tasks
                 .entry(project.id.clone())
                 .or_default()
-                .push(DirectTask {
+                .push(Task {
                     id: task_id.clone(),
                     name: task_name.clone(),
+                    kind: TaskKind::Direct,
                     branch_name: branch_name.clone(),
+                    worktree_project_id: None,
+                    tabs: Vec::new(),
+                    active_tab_id: 0,
+                    next_tab_id: 0,
+                    cwd: None,
                 });
             self.project_store.save();
             self.expanded_projects.insert(project.id.clone());
@@ -2478,18 +2504,47 @@ impl AnotherOneApp {
                             return true;
                         }
 
+                        let task_id = uuid::Uuid::new_v4().to_string();
+                        self.project_store
+                            .tasks
+                            .entry(success.original_project_id.clone())
+                            .or_default()
+                            .push(Task {
+                                id: task_id.clone(),
+                                name: success.task_name.clone(),
+                                kind: TaskKind::Worktree,
+                                branch_name: success.branch_name.clone(),
+                                worktree_project_id: Some(project.id.clone()),
+                                tabs: Vec::new(),
+                                active_tab_id: 0,
+                                next_tab_id: 0,
+                                cwd: None,
+                            });
+
                         self.expanded_projects
                             .insert(success.original_project_id.clone());
                         self.project_store
                             .set_expanded_projects(&self.expanded_projects);
-                        self.activate_project_section(
+
+                        let section_id = SectionId::for_task(
                             &project.id,
                             &success.branch_name,
-                            project.path.clone(),
-                            Some(success.launch_config),
-                            cx,
+                            &task_id,
                         );
+                        let project_path = project.path.clone();
+                        let launch_config = Some(success.launch_config);
+                        self.workspace_pane.update(cx, |workspace, cx| {
+                            workspace.activate_section(
+                                section_id,
+                                Some(project_path),
+                                launch_config,
+                                cx,
+                            );
+                        });
+                        self.mark_git_refresh_stale();
+
                         self.new_task_modal = None;
+                        self.project_store.save();
                         self.show_success_toast(
                             format!(
                                 "Created worktree task {} on {}.",

@@ -13,7 +13,7 @@ use crate::app::{
     AnotherOneApp, SectionId, SidebarTaskDeleteConfirmState, SidebarTaskDeleteRequest,
     SidebarTaskMenuState, SidebarTaskRenameState,
 };
-use crate::project_store::{Branch, Project};
+use crate::project_store::{Branch, Project, TaskKind};
 use crate::theme;
 
 const PROJECT_ROW_H: f32 = 34.;
@@ -28,9 +28,9 @@ const TASK_MENU_H: f32 = 152.;
 struct SidebarTaskEntry {
     project_id: String,
     project_path: PathBuf,
-    task_id: Option<String>,
+    task_id: String,
     task_name: String,
-    is_worktree: bool,
+    kind: TaskKind,
     branch: Branch,
 }
 
@@ -42,11 +42,10 @@ struct SidebarGroup {
 
 struct SidebarTaskMenuRequest {
     project_id: String,
-    row_id: String,
-    task_id: Option<String>,
+    task_id: String,
     task_name: String,
     branch_name: String,
-    is_worktree: bool,
+    kind: TaskKind,
 }
 
 struct ProjectRowState {
@@ -126,33 +125,12 @@ impl AnotherOneApp {
             .or_else(|| Some(project.clone()))
     }
 
-    fn sidebar_task_is_pinned(
-        &self,
-        project_id: &str,
-        task_id: Option<&str>,
-        is_worktree: bool,
-    ) -> bool {
-        if is_worktree {
-            self.project_store
-                .ui
-                .pinned_worktree_project_ids
-                .contains(project_id)
-        } else {
-            task_id.is_some_and(|task_id| {
-                self.project_store
-                    .ui
-                    .pinned_direct_task_ids
-                    .contains(task_id)
-            })
-        }
+    fn sidebar_task_is_pinned(&self, task_id: &str) -> bool {
+        self.project_store.ui.pinned_task_ids.contains(task_id)
     }
 
     fn sidebar_task_entry_is_pinned(&self, entry: &SidebarTaskEntry) -> bool {
-        self.sidebar_task_is_pinned(
-            &entry.project_id,
-            entry.task_id.as_deref(),
-            entry.is_worktree,
-        )
+        self.sidebar_task_is_pinned(&entry.task_id)
     }
 
     fn sidebar_groups(&self) -> Vec<SidebarGroup> {
@@ -184,38 +162,41 @@ impl AnotherOneApp {
             let root_project = self.project_store.projects[root_index].clone();
 
             let mut child_entries = Vec::new();
-            if let Some(tasks) = self.project_store.direct_tasks.get(&root_project.id) {
+            if let Some(tasks) = self.project_store.tasks.get(&root_project.id) {
                 for task in tasks {
+                    let (project_id, project_path, branch) = match task.kind {
+                        TaskKind::Direct => (
+                            root_project.id.clone(),
+                            root_project.path.clone(),
+                            Self::sidebar_branch_named(&root_project, &task.branch_name),
+                        ),
+                        TaskKind::Worktree | TaskKind::MultiWorktree => {
+                            let wt_project = task
+                                .worktree_project_id
+                                .as_ref()
+                                .and_then(|wt_id| {
+                                    self.project_store
+                                        .projects
+                                        .iter()
+                                        .find(|p| p.id == *wt_id)
+                                });
+                            if let Some(wt) = wt_project {
+                                let branch = Self::sidebar_branch_for_project(wt, false)
+                                    .unwrap_or_else(|| {
+                                        Self::sidebar_branch_named(wt, &task.branch_name)
+                                    });
+                                (wt.id.clone(), wt.path.clone(), branch)
+                            } else {
+                                continue;
+                            }
+                        }
+                    };
                     child_entries.push(SidebarTaskEntry {
-                        project_id: root_project.id.clone(),
-                        project_path: root_project.path.clone(),
-                        task_id: Some(task.id.clone()),
+                        project_id,
+                        project_path,
+                        task_id: task.id.clone(),
                         task_name: task.name.clone(),
-                        is_worktree: false,
-                        branch: Self::sidebar_branch_named(&root_project, &task.branch_name),
-                    });
-                }
-            }
-
-            for index in indices {
-                if *index == root_index {
-                    continue;
-                }
-
-                let project = &self.project_store.projects[*index];
-                if let Some(branch) = Self::sidebar_branch_for_project(project, false) {
-                    let display_name = self
-                        .project_store
-                        .worktree_task_names
-                        .get(&project.id)
-                        .cloned()
-                        .unwrap_or_else(|| branch.name.clone());
-                    child_entries.push(SidebarTaskEntry {
-                        project_id: project.id.clone(),
-                        project_path: project.path.clone(),
-                        task_id: None,
-                        task_name: display_name,
-                        is_worktree: true,
+                        kind: task.kind,
                         branch,
                     });
                 }
@@ -263,10 +244,9 @@ impl AnotherOneApp {
         let project_ids = self.project_group_member_ids(root_project_id);
         let open_task_count = self
             .project_store
-            .direct_tasks
+            .tasks
             .get(root_project_id)
-            .map_or(0, Vec::len)
-            + project_ids.len().saturating_sub(1);
+            .map_or(0, Vec::len);
 
         Some(crate::app::ProjectRemoveConfirmState {
             project_name: root_project.name.clone(),
@@ -287,9 +267,9 @@ impl AnotherOneApp {
     fn remove_project_group_ids(&mut self, project_ids: &[String], cx: &mut Context<Self>) {
         let project_id_set: std::collections::HashSet<String> =
             project_ids.iter().cloned().collect();
-        let removed_direct_task_ids: std::collections::HashSet<String> = self
+        let removed_task_ids: std::collections::HashSet<String> = self
             .project_store
-            .direct_tasks
+            .tasks
             .iter()
             .filter(|(project_id, _)| project_id_set.contains(*project_id))
             .flat_map(|(_, tasks)| tasks.iter().map(|task| task.id.clone()))
@@ -299,19 +279,22 @@ impl AnotherOneApp {
             .projects
             .retain(|project| !project_id_set.contains(&project.id));
         self.project_store
-            .direct_tasks
+            .tasks
             .retain(|project_id, _| !project_id_set.contains(project_id));
+        for task_list in self.project_store.tasks.values_mut() {
+            task_list.retain(|task| {
+                task.worktree_project_id
+                    .as_ref()
+                    .map_or(true, |wt_id| !project_id_set.contains(wt_id))
+            });
+        }
         self.project_store
-            .worktree_task_names
-            .retain(|project_id, _| !project_id_set.contains(project_id));
+            .tasks
+            .retain(|_, task_list| !task_list.is_empty());
         self.project_store
             .ui
-            .pinned_worktree_project_ids
-            .retain(|project_id| !project_id_set.contains(project_id));
-        self.project_store
-            .ui
-            .pinned_direct_task_ids
-            .retain(|task_id| !removed_direct_task_ids.contains(task_id));
+            .pinned_task_ids
+            .retain(|task_id| !removed_task_ids.contains(task_id));
         self.changed_files
             .retain(|project_id, _| !project_id_set.contains(project_id));
         self.project_github_links
@@ -448,25 +431,11 @@ impl AnotherOneApp {
         });
     }
 
-    fn set_sidebar_task_pinned(
-        &mut self,
-        project_id: &str,
-        task_id: Option<&str>,
-        is_worktree: bool,
-        pinned: bool,
-    ) -> bool {
-        let changed = if is_worktree {
-            self.project_store.set_worktree_pinned(project_id, pinned)
-        } else if let Some(task_id) = task_id {
-            self.project_store.set_direct_task_pinned(task_id, pinned)
-        } else {
-            false
-        };
-
+    fn set_sidebar_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
+        let changed = self.project_store.set_task_pinned(task_id, pinned);
         if changed {
             self.project_store.save();
         }
-
         changed
     }
 
@@ -478,16 +447,16 @@ impl AnotherOneApp {
     ) {
         let SidebarTaskMenuRequest {
             project_id,
-            row_id,
             task_id,
             task_name,
             branch_name,
-            is_worktree,
+            kind,
         } = request;
         let root_project_id = self
             .sidebar_root_project_for_project(&project_id)
             .map(|project| project.id)
             .unwrap_or_else(|| project_id.clone());
+        let is_worktree = kind == TaskKind::Worktree || kind == TaskKind::MultiWorktree;
 
         self.commit_sidebar_task_rename(cx);
         self.project_menu_project = None;
@@ -495,8 +464,8 @@ impl AnotherOneApp {
         self.sidebar_task_menu = Some(SidebarTaskMenuState {
             project_id,
             root_project_id,
-            row_id,
-            task_id,
+            row_id: task_id.clone(),
+            task_id: Some(task_id),
             task_name,
             branch_name,
             is_worktree,
@@ -545,7 +514,7 @@ impl AnotherOneApp {
     ) {
         if self
             .project_store
-            .remove_direct_task(project_id, task_id)
+            .remove_task(project_id, task_id)
             .is_none()
         {
             self.show_error_toast("Could not find the selected task.", cx);
@@ -555,7 +524,7 @@ impl AnotherOneApp {
         self.sidebar_task_menu = None;
         self.sidebar_task_last_click = None;
         if self.sidebar_task_rename.as_ref().is_some_and(|rename| {
-            rename.project_id == project_id && rename.row_id == task_id && !rename.is_worktree
+            rename.project_id == project_id && rename.row_id == task_id
         }) {
             self.sidebar_task_rename = None;
         }
@@ -587,7 +556,7 @@ impl AnotherOneApp {
         if is_worktree {
             let Some(confirm) = self.build_sidebar_task_delete_confirm(
                 &project_id,
-                task_id.as_deref(),
+                Some(&task_id),
                 &task_name,
                 &branch_name,
                 is_worktree,
@@ -600,14 +569,9 @@ impl AnotherOneApp {
             return;
         }
 
-        let Some(task_id) = task_id.as_deref() else {
-            self.show_error_toast("Could not find the selected task.", cx);
-            return;
-        };
-
         self.delete_direct_sidebar_task(
             &project_id,
-            task_id,
+            &task_id,
             &task_name,
             &preferred_project_id,
             cx,
@@ -626,7 +590,7 @@ impl AnotherOneApp {
                 return;
             };
             self.delete_direct_sidebar_task(
-                &confirm.project_id,
+                &confirm.root_project_id,
                 task_id,
                 &confirm.task_name,
                 &confirm.root_project_id,
@@ -650,6 +614,14 @@ impl AnotherOneApp {
                     &confirm.branch_name,
                 ) {
                     self.show_warning_toast(error, cx);
+                }
+
+                if let Some(task_id) = confirm.task_id.as_deref() {
+                    self.project_store
+                        .remove_task(&confirm.root_project_id, task_id);
+                    self.workspace_pane.update(cx, |workspace, cx| {
+                        workspace.remove_task_sections(task_id, cx);
+                    });
                 }
 
                 self.sidebar_task_delete_confirm = None;
@@ -831,14 +803,12 @@ impl AnotherOneApp {
         project_id: &str,
         row_id: &str,
         task_name: &str,
-        is_worktree: bool,
         cx: &mut Context<Self>,
     ) {
         self.sidebar_task_last_click = None;
         self.sidebar_task_rename = Some(SidebarTaskRenameState {
             project_id: project_id.to_string(),
             row_id: row_id.to_string(),
-            is_worktree,
             original_name: task_name.to_string(),
             task_name: task_name.to_string(),
             task_name_cursor: task_name.len(),
@@ -863,23 +833,8 @@ impl AnotherOneApp {
         };
 
         if final_name != rename.original_name {
-            let mut did_change = false;
-            if rename.is_worktree {
-                self.project_store
-                    .worktree_task_names
-                    .insert(rename.project_id.clone(), final_name);
-                did_change = true;
-            } else if let Some(task) = self
-                .project_store
-                .direct_tasks
-                .get_mut(&rename.project_id)
-                .and_then(|tasks| tasks.iter_mut().find(|task| task.id == rename.row_id))
-            {
+            if let Some(task) = self.project_store.find_task_mut(&rename.row_id) {
                 task.name = final_name;
-                did_change = true;
-            }
-
-            if did_change {
                 self.project_store.save();
             }
         }
@@ -1179,8 +1134,8 @@ impl AnotherOneApp {
         let task_id = entry.task_id.clone();
         let branch_name = entry.branch.name.clone();
         let task_name = entry.task_name.clone();
-        let is_worktree = entry.is_worktree;
-        let row_id = task_id.clone().unwrap_or_else(|| branch_name.clone());
+        let is_worktree = entry.kind == TaskKind::Worktree || entry.kind == TaskKind::MultiWorktree;
+        let row_id = task_id.clone();
         let root_project_id = self
             .sidebar_root_project_for_project(&project_id)
             .map(|project| project.id)
@@ -1207,11 +1162,8 @@ impl AnotherOneApp {
             .as_ref()
             .is_some_and(|menu| menu.project_id == project_id && menu.row_id == row_id);
         let keep_delete_visible = !is_editing && menu_open;
-        let row_tooltip = if task_id.is_some() || is_worktree {
-            "Open this task in the terminal. Double-click to rename it or right-click for more actions."
-        } else {
-            "Open this task in the terminal"
-        };
+        let row_tooltip =
+            "Open this task in the terminal. Double-click to rename it or right-click for more actions.";
         let task_label: AnyElement = if let Some(rename) = rename_state {
             div()
                 .id(SharedString::from(format!(
@@ -1300,7 +1252,7 @@ impl AnotherOneApp {
         let delete_tooltip = if is_worktree {
             "Delete this worktree task"
         } else {
-            "Delete this direct task"
+            "Delete this task"
         };
 
         right_controls = right_controls.child(
@@ -1372,7 +1324,7 @@ impl AnotherOneApp {
                             .text_color(muted_col),
                     )
                     .child(task_label)
-                    .when(entry.is_worktree, |row| {
+                    .when(is_worktree, |row| {
                         row.child(
                             svg()
                                 .flex_shrink_0()
@@ -1381,7 +1333,7 @@ impl AnotherOneApp {
                                 .text_color(muted_col),
                         )
                     })
-                    .when(entry.is_worktree && entry.branch.is_default, |row| {
+                    .when(is_worktree && entry.branch.is_default, |row| {
                         row.child(
                             div()
                                 .flex_shrink_0()
@@ -1399,20 +1351,15 @@ impl AnotherOneApp {
         let left_click_branch_name = branch_name.clone();
         let left_click_task_name = task_name.clone();
         let right_click_project_id = project_id.clone();
-        let right_click_row_id = row_id.clone();
         let right_click_task_id = task_id.clone();
         let right_click_task_name = task_name.clone();
         let right_click_branch_name = branch_name.clone();
-        let right_click_is_worktree = is_worktree;
+        let right_click_kind = entry.kind;
 
         let mut container = div()
             .id(SharedString::from(format!(
                 "task-{}-{}",
-                entry.project_id,
-                entry
-                    .task_id
-                    .as_deref()
-                    .unwrap_or(entry.branch.name.as_str())
+                entry.project_id, entry.task_id
             )))
             .group(row_group.clone())
             .flex()
@@ -1459,7 +1406,6 @@ impl AnotherOneApp {
                             &left_click_project_id,
                             &left_click_row_id,
                             &left_click_task_name,
-                            is_worktree,
                             cx,
                         );
                         return;
@@ -1473,18 +1419,11 @@ impl AnotherOneApp {
                     }
 
                     this.commit_sidebar_task_rename(cx);
-                    let sid = left_click_task_id
-                        .as_ref()
-                        .map(|task_id| {
-                            SectionId::for_task(
-                                &left_click_project_id,
-                                &left_click_branch_name,
-                                task_id,
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            SectionId::new(&left_click_project_id, &left_click_branch_name)
-                        });
+                    let sid = SectionId::for_task(
+                        &left_click_project_id,
+                        &left_click_branch_name,
+                        &left_click_task_id,
+                    );
                     let sid_for_state = sid.clone();
                     let project_path = project_path.clone();
                     this.workspace_pane.update(cx, |workspace, cx| {
@@ -1499,11 +1438,10 @@ impl AnotherOneApp {
                     this.open_sidebar_task_menu(
                         SidebarTaskMenuRequest {
                             project_id: right_click_project_id.clone(),
-                            row_id: right_click_row_id.clone(),
                             task_id: right_click_task_id.clone(),
                             task_name: right_click_task_name.clone(),
                             branch_name: right_click_branch_name.clone(),
-                            is_worktree: right_click_is_worktree,
+                            kind: right_click_kind,
                         },
                         ev,
                         cx,
@@ -1743,15 +1681,12 @@ impl AnotherOneApp {
         let danger_col = hsla(0., 0.78, 0.72, 1.);
         let hover_bg = gpui::white().opacity(0.06);
         let danger_hover_bg = hsla(0., 0.45, 0.34, 0.26);
-        let is_pinned = self.sidebar_task_is_pinned(
-            &menu.project_id,
-            menu.task_id.as_deref(),
-            menu.is_worktree,
-        );
+        let is_pinned = menu
+            .task_id
+            .as_deref()
+            .is_some_and(|task_id| self.sidebar_task_is_pinned(task_id));
 
-        let pin_project_id = menu.project_id.clone();
         let pin_task_id = menu.task_id.clone();
-        let pin_is_worktree = menu.is_worktree;
         let next_pinned = !is_pinned;
         let pin_label: SharedString = if is_pinned { "Unpin" } else { "Pin" }.into();
         let pin_tooltip = if is_pinned {
@@ -1766,8 +1701,6 @@ impl AnotherOneApp {
         let rename_project_id = menu.project_id.clone();
         let rename_row_id = menu.row_id.clone();
         let rename_task_name = menu.task_name.clone();
-        let rename_is_worktree = menu.is_worktree;
-
         let delete_project_id = menu.project_id.clone();
         let delete_task_id = menu.task_id.clone();
         let delete_task_name = menu.task_name.clone();
@@ -1801,12 +1734,9 @@ impl AnotherOneApp {
                 },
                 move |this, _ev, _window, cx| {
                     this.sidebar_task_menu = None;
-                    this.set_sidebar_task_pinned(
-                        &pin_project_id,
-                        pin_task_id.as_deref(),
-                        pin_is_worktree,
-                        next_pinned,
-                    );
+                    if let Some(task_id) = pin_task_id.as_deref() {
+                        this.set_sidebar_task_pinned(task_id, next_pinned);
+                    }
                     cx.stop_propagation();
                     cx.notify();
                 },
@@ -1850,7 +1780,6 @@ impl AnotherOneApp {
                         &rename_project_id,
                         &rename_row_id,
                         &rename_task_name,
-                        rename_is_worktree,
                         cx,
                     );
                     cx.stop_propagation();
@@ -1867,17 +1796,19 @@ impl AnotherOneApp {
                     hover_bg: danger_hover_bg,
                 },
                 move |this, _ev, _window, cx| {
-                    this.request_sidebar_task_delete(
-                        SidebarTaskDeleteRequest {
-                            project_id: delete_project_id.clone(),
-                            task_id: delete_task_id.clone(),
-                            task_name: delete_task_name.clone(),
-                            branch_name: delete_branch_name.clone(),
-                            is_worktree: delete_is_worktree,
-                            preferred_project_id: delete_preferred_project_id.clone(),
-                        },
-                        cx,
-                    );
+                    if let Some(task_id) = delete_task_id.clone() {
+                        this.request_sidebar_task_delete(
+                            SidebarTaskDeleteRequest {
+                                project_id: delete_project_id.clone(),
+                                task_id,
+                                task_name: delete_task_name.clone(),
+                                branch_name: delete_branch_name.clone(),
+                                is_worktree: delete_is_worktree,
+                                preferred_project_id: delete_preferred_project_id.clone(),
+                            },
+                            cx,
+                        );
+                    }
                     cx.stop_propagation();
                 },
                 cx,
@@ -2350,13 +2281,7 @@ impl AnotherOneApp {
                         .pt(px((1.0 - expand_progress) * 4.0));
                     for entry in &group.child_entries {
                         let is_active = active_section.as_ref().is_some_and(|section| {
-                            if let Some(task_id) = entry.task_id.as_deref() {
-                                section.task_id.as_deref() == Some(task_id)
-                            } else {
-                                section.project_id == entry.project_id
-                                    && section.branch_name == entry.branch.name
-                                    && section.task_id.is_none()
-                            }
+                            section.task_id.as_deref() == Some(entry.task_id.as_str())
                         });
                         child_list = child_list.child(self.branch_row(entry, is_active, cx));
                     }

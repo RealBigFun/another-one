@@ -71,11 +71,30 @@ pub struct ProjectGitState {
     pub metadata: Option<ProjectGitMetadata>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskKind {
+    Direct,
+    Worktree,
+    MultiWorktree,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DirectTask {
+pub struct Task {
     pub id: String,
     pub name: String,
+    pub kind: TaskKind,
     pub branch_name: String,
+    /// For worktree tasks: the project id of the worktree Project entry.
+    #[serde(default)]
+    pub worktree_project_id: Option<String>,
+    #[serde(default)]
+    pub tabs: Vec<PersistedTerminalTab>,
+    #[serde(default)]
+    pub active_tab_id: usize,
+    #[serde(default)]
+    pub next_tab_id: usize,
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,9 +174,7 @@ pub struct UiState {
     #[serde(default)]
     pub expanded_project_ids: Option<HashSet<String>>,
     #[serde(default)]
-    pub pinned_direct_task_ids: HashSet<String>,
-    #[serde(default)]
-    pub pinned_worktree_project_ids: HashSet<String>,
+    pub pinned_task_ids: HashSet<String>,
     #[serde(default)]
     pub last_active_section_key: Option<String>,
 }
@@ -167,8 +184,7 @@ impl Default for UiState {
         Self {
             left_sidebar_open: default_left_sidebar_open(),
             expanded_project_ids: None,
-            pinned_direct_task_ids: HashSet::new(),
-            pinned_worktree_project_ids: HashSet::new(),
+            pinned_task_ids: HashSet::new(),
             last_active_section_key: None,
         }
     }
@@ -184,9 +200,7 @@ struct StoreFile {
     #[serde(default)]
     projects: Vec<Project>,
     #[serde(default)]
-    direct_tasks: HashMap<String, Vec<DirectTask>>,
-    #[serde(default)]
-    worktree_task_names: HashMap<String, String>,
+    tasks: HashMap<String, Vec<Task>>,
     #[serde(default)]
     terminal_sections: HashMap<String, PersistedSectionState>,
     #[serde(default)]
@@ -197,8 +211,7 @@ struct StoreFile {
 #[derive(Debug, Clone)]
 pub struct ProjectStore {
     pub projects: Vec<Project>,
-    pub direct_tasks: HashMap<String, Vec<DirectTask>>,
-    pub worktree_task_names: HashMap<String, String>,
+    pub tasks: HashMap<String, Vec<Task>>,
     pub terminal_sections: HashMap<String, PersistedSectionState>,
     pub ui: UiState,
     file_path: PathBuf,
@@ -211,8 +224,7 @@ impl ProjectStore {
         let file_path = Self::config_path();
         let StoreFile {
             mut projects,
-            mut direct_tasks,
-            mut worktree_task_names,
+            mut tasks,
             mut terminal_sections,
             mut ui,
         } = Self::read_from_disk(&file_path);
@@ -224,13 +236,20 @@ impl ProjectStore {
         }
 
         let project_ids: HashSet<_> = projects.iter().map(|project| project.id.clone()).collect();
-        let direct_task_ids: HashSet<_> = direct_tasks
+        let task_ids: HashSet<_> = tasks
             .values()
             .flatten()
             .map(|task| task.id.clone())
             .collect();
-        direct_tasks.retain(|project_id, _| project_ids.contains(project_id));
-        worktree_task_names.retain(|project_id, _| project_ids.contains(project_id));
+        tasks.retain(|project_id, _| project_ids.contains(project_id));
+        for task_list in tasks.values_mut() {
+            task_list.retain(|task| {
+                task.worktree_project_id
+                    .as_ref()
+                    .map_or(true, |wt_id| project_ids.contains(wt_id))
+            });
+        }
+        tasks.retain(|_, task_list| !task_list.is_empty());
         terminal_sections.retain(|section_key, _| {
             let mut parts = section_key.splitn(3, "::");
             let Some(project_id) = parts.next() else {
@@ -244,15 +263,13 @@ impl ProjectStore {
             };
 
             project_ids.contains(project_id)
-                && (task_id.is_empty() || direct_task_ids.contains(task_id))
+                && (task_id.is_empty() || task_ids.contains(task_id))
         });
         if let Some(expanded_project_ids) = ui.expanded_project_ids.as_mut() {
             expanded_project_ids.retain(|project_id| project_ids.contains(project_id));
         }
-        ui.pinned_direct_task_ids
-            .retain(|task_id| direct_task_ids.contains(task_id));
-        ui.pinned_worktree_project_ids
-            .retain(|project_id| project_ids.contains(project_id));
+        ui.pinned_task_ids
+            .retain(|task_id| task_ids.contains(task_id));
         if ui
             .last_active_section_key
             .as_ref()
@@ -263,8 +280,7 @@ impl ProjectStore {
 
         Self {
             projects,
-            direct_tasks,
-            worktree_task_names,
+            tasks,
             terminal_sections,
             ui,
             file_path,
@@ -275,8 +291,11 @@ impl ProjectStore {
     #[allow(dead_code)]
     pub fn remove_project(&mut self, id: &str) {
         self.projects.retain(|p| p.id != id);
-        self.direct_tasks.remove(id);
-        self.worktree_task_names.remove(id);
+        self.tasks.remove(id);
+        for task_list in self.tasks.values_mut() {
+            task_list.retain(|task| task.worktree_project_id.as_deref() != Some(id));
+        }
+        self.tasks.retain(|_, task_list| !task_list.is_empty());
         self.terminal_sections
             .retain(|section_key, _| !section_key.starts_with(&format!("{id}::")));
         if self
@@ -287,36 +306,42 @@ impl ProjectStore {
         {
             self.ui.last_active_section_key = None;
         }
-        self.ui.pinned_worktree_project_ids.remove(id);
         self.save();
     }
 
-    pub fn remove_direct_task(&mut self, project_id: &str, task_id: &str) -> Option<DirectTask> {
-        let tasks = self.direct_tasks.get_mut(project_id)?;
-        let task_index = tasks.iter().position(|task| task.id == task_id)?;
-        let removed = tasks.remove(task_index);
-        if tasks.is_empty() {
-            self.direct_tasks.remove(project_id);
+    pub fn remove_task(&mut self, project_id: &str, task_id: &str) -> Option<Task> {
+        let task_list = self.tasks.get_mut(project_id)?;
+        let task_index = task_list.iter().position(|task| task.id == task_id)?;
+        let removed = task_list.remove(task_index);
+        if task_list.is_empty() {
+            self.tasks.remove(project_id);
         }
-        self.ui.pinned_direct_task_ids.remove(task_id);
+        self.ui.pinned_task_ids.remove(task_id);
         Some(removed)
     }
 
-    pub fn set_direct_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
+    pub fn set_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
         if pinned {
-            self.ui.pinned_direct_task_ids.insert(task_id.to_string())
+            self.ui.pinned_task_ids.insert(task_id.to_string())
         } else {
-            self.ui.pinned_direct_task_ids.remove(task_id)
+            self.ui.pinned_task_ids.remove(task_id)
         }
     }
 
-    pub fn set_worktree_pinned(&mut self, project_id: &str, pinned: bool) -> bool {
-        if pinned {
-            self.ui
-                .pinned_worktree_project_ids
-                .insert(project_id.to_string())
-        } else {
-            self.ui.pinned_worktree_project_ids.remove(project_id)
+    pub fn find_task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
+        self.tasks
+            .values_mut()
+            .flat_map(|tasks| tasks.iter_mut())
+            .find(|task| task.id == task_id)
+    }
+
+    pub fn update_task_tabs(&mut self, task_id: &str, state: &PersistedSectionState) {
+        if let Some(task) = self.find_task_mut(task_id) {
+            task.tabs = state.tabs.clone();
+            task.active_tab_id = state.active_tab_id;
+            task.next_tab_id = state.next_tab_id;
+            task.cwd = state.cwd.clone();
+            self.save();
         }
     }
 
@@ -339,8 +364,7 @@ impl ProjectStore {
     pub fn save(&self) {
         let store = StoreFile {
             projects: self.projects.clone(),
-            direct_tasks: self.direct_tasks.clone(),
-            worktree_task_names: self.worktree_task_names.clone(),
+            tasks: self.tasks.clone(),
             terminal_sections: self.terminal_sections.clone(),
             ui: self.ui.clone(),
         };
@@ -1247,8 +1271,8 @@ mod tests {
     use crate::agents::AgentProviderKind;
 
     use super::{
-        format_git_command_error, DirectTask, PersistedSectionState, PersistedTerminalTab, Project,
-        ProjectSettings, StoreFile,
+        format_git_command_error, PersistedTerminalTab, Project, ProjectSettings, StoreFile, Task,
+        TaskKind,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -1299,42 +1323,30 @@ mod tests {
                 .expect("old store JSON should still deserialize");
 
         assert_eq!(store.projects.len(), 1);
-        assert!(store.direct_tasks.is_empty());
-        assert!(store.worktree_task_names.is_empty());
+        assert!(store.tasks.is_empty());
         assert!(store.terminal_sections.is_empty());
         assert!(store.ui.left_sidebar_open);
         assert_eq!(store.ui.expanded_project_ids, None);
-        assert!(store.ui.pinned_direct_task_ids.is_empty());
-        assert!(store.ui.pinned_worktree_project_ids.is_empty());
+        assert!(store.ui.pinned_task_ids.is_empty());
         assert_eq!(store.ui.last_active_section_key, None);
     }
 
     #[test]
-    fn store_file_round_trip_preserves_sidebar_task_state() {
+    fn store_file_round_trip_preserves_task_state() {
         let store = StoreFile {
             projects: vec![
                 sample_project("root", None),
                 sample_project("wt1", Some("wt1")),
             ],
-            direct_tasks: HashMap::from([(
+            tasks: HashMap::from([(
                 "root".to_string(),
-                vec![DirectTask {
-                    id: "task-1".to_string(),
-                    name: "Investigate bug".to_string(),
-                    branch_name: "feature/persist-tasks".to_string(),
-                }],
-            )]),
-            worktree_task_names: HashMap::from([(
-                "wt1".to_string(),
-                "Friendly worktree name".to_string(),
-            )]),
-            terminal_sections: HashMap::from([
-                (
-                    "root::main::".to_string(),
-                    PersistedSectionState {
-                        active_tab_id: 1,
-                        next_tab_id: 3,
-                        cwd: Some(PathBuf::from("/tmp/root")),
+                vec![
+                    Task {
+                        id: "task-1".to_string(),
+                        name: "Investigate bug".to_string(),
+                        kind: TaskKind::Direct,
+                        branch_name: "feature/persist-tasks".to_string(),
+                        worktree_project_id: None,
                         tabs: vec![
                             PersistedTerminalTab {
                                 id: 0,
@@ -1347,28 +1359,33 @@ mod tests {
                                 provider: Some(AgentProviderKind::ClaudeCode),
                             },
                         ],
+                        active_tab_id: 1,
+                        next_tab_id: 3,
+                        cwd: Some(PathBuf::from("/tmp/root")),
                     },
-                ),
-                (
-                    "wt1::feature/worktree::".to_string(),
-                    PersistedSectionState {
-                        active_tab_id: 0,
-                        next_tab_id: 1,
-                        cwd: Some(PathBuf::from("/tmp/wt1")),
+                    Task {
+                        id: "task-2".to_string(),
+                        name: "Friendly worktree name".to_string(),
+                        kind: TaskKind::Worktree,
+                        branch_name: "feature/worktree".to_string(),
+                        worktree_project_id: Some("wt1".to_string()),
                         tabs: vec![PersistedTerminalTab {
                             id: 0,
                             title: "Pi".to_string(),
                             provider: Some(AgentProviderKind::Pi),
                         }],
+                        active_tab_id: 0,
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt1")),
                     },
-                ),
-            ]),
+                ],
+            )]),
+            terminal_sections: HashMap::new(),
             ui: super::UiState {
                 left_sidebar_open: false,
                 expanded_project_ids: Some(HashSet::from(["root".to_string(), "wt1".to_string()])),
-                pinned_direct_task_ids: HashSet::from(["task-1".to_string()]),
-                pinned_worktree_project_ids: HashSet::from(["wt1".to_string()]),
-                last_active_section_key: Some("root::main::".to_string()),
+                pinned_task_ids: HashSet::from(["task-1".to_string(), "task-2".to_string()]),
+                last_active_section_key: None,
             },
         };
 
@@ -1377,36 +1394,20 @@ mod tests {
             serde_json::from_str(&json).expect("store JSON should deserialize");
 
         assert_eq!(round_trip.projects.len(), 2);
+        let root_tasks = round_trip
+            .tasks
+            .get("root")
+            .expect("tasks should round-trip");
+        assert_eq!(root_tasks.len(), 2);
+        assert_eq!(root_tasks[0].name, "Investigate bug");
+        assert_eq!(root_tasks[0].kind, TaskKind::Direct);
+        assert_eq!(root_tasks[0].tabs.len(), 2);
+        assert_eq!(root_tasks[0].active_tab_id, 1);
+        assert_eq!(root_tasks[1].name, "Friendly worktree name");
+        assert_eq!(root_tasks[1].kind, TaskKind::Worktree);
+        assert_eq!(root_tasks[1].worktree_project_id.as_deref(), Some("wt1"));
         assert_eq!(
-            round_trip
-                .direct_tasks
-                .get("root")
-                .expect("direct tasks should round-trip")[0]
-                .name,
-            "Investigate bug"
-        );
-        assert_eq!(
-            round_trip
-                .worktree_task_names
-                .get("wt1")
-                .expect("worktree task name should round-trip"),
-            "Friendly worktree name"
-        );
-        assert_eq!(
-            round_trip
-                .terminal_sections
-                .get("root::main::")
-                .expect("root terminal state should round-trip")
-                .active_tab_id,
-            1
-        );
-        assert_eq!(
-            round_trip
-                .terminal_sections
-                .get("wt1::feature/worktree::")
-                .expect("worktree terminal state should round-trip")
-                .tabs[0]
-                .provider,
+            root_tasks[1].tabs[0].provider,
             Some(AgentProviderKind::Pi)
         );
         assert!(!round_trip.ui.left_sidebar_open);
@@ -1415,16 +1416,8 @@ mod tests {
             Some(HashSet::from(["root".to_string(), "wt1".to_string()]))
         );
         assert_eq!(
-            round_trip.ui.pinned_direct_task_ids,
-            HashSet::from(["task-1".to_string()])
-        );
-        assert_eq!(
-            round_trip.ui.pinned_worktree_project_ids,
-            HashSet::from(["wt1".to_string()])
-        );
-        assert_eq!(
-            round_trip.ui.last_active_section_key.as_deref(),
-            Some("root::main::")
+            round_trip.ui.pinned_task_ids,
+            HashSet::from(["task-1".to_string(), "task-2".to_string()])
         );
     }
 }

@@ -14,7 +14,7 @@ use crate::left_sidebar::open_external_url;
 struct ProjectPageTaskEntry {
     project_id: String,
     project_path: PathBuf,
-    task_id: Option<String>,
+    task_id: String,
     name: String,
     branch_name: String,
     is_worktree: bool,
@@ -71,25 +71,6 @@ const GREEN: fn() -> gpui::Hsla = || hsla(138. / 360., 0.50, 0.74, 1.);
 const RED: fn() -> gpui::Hsla = || hsla(352. / 360., 0.52, 0.76, 1.);
 
 impl WorkspacePane {
-    fn project_page_group_key(project: &crate::project_store::Project) -> String {
-        project
-            .repo_common_dir
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| format!("project:{}", project.id))
-    }
-
-    fn project_page_primary_branch(
-        project: &crate::project_store::Project,
-    ) -> Option<crate::project_store::Branch> {
-        project
-            .branches
-            .iter()
-            .find(|branch| branch.is_current)
-            .or_else(|| project.branches.first())
-            .cloned()
-    }
-
     fn project_page_tasks(app: &AnotherOneApp, project_id: &str) -> Vec<ProjectPageTaskEntry> {
         let Some(project) = app
             .project_store
@@ -100,54 +81,30 @@ impl WorkspacePane {
             return Vec::new();
         };
 
-        let group_key = Self::project_page_group_key(project);
         let mut tasks = Vec::new();
 
-        for group_project in app
-            .project_store
-            .projects
-            .iter()
-            .filter(|candidate| Self::project_page_group_key(candidate) == group_key)
-        {
-            if let Some(direct_tasks) = app.project_store.direct_tasks.get(&group_project.id) {
-                for task in direct_tasks {
-                    tasks.push(ProjectPageTaskEntry {
-                        project_id: group_project.id.clone(),
-                        project_path: group_project.path.clone(),
-                        task_id: Some(task.id.clone()),
-                        name: task.name.clone(),
-                        branch_name: task.branch_name.clone(),
-                        is_worktree: false,
-                        pinned: app
-                            .project_store
-                            .ui
-                            .pinned_direct_task_ids
-                            .contains(&task.id),
-                    });
-                }
-            }
-
-            if group_project.worktree_name.is_some() {
-                let Some(branch) = Self::project_page_primary_branch(group_project) else {
-                    continue;
+        if let Some(task_list) = app.project_store.tasks.get(&project.id) {
+            for task in task_list {
+                let is_worktree = task.kind == crate::project_store::TaskKind::Worktree
+                    || task.kind == crate::project_store::TaskKind::MultiWorktree;
+                let (pid, ppath) = if let Some(wt_id) = task.worktree_project_id.as_ref() {
+                    app.project_store
+                        .projects
+                        .iter()
+                        .find(|p| p.id == *wt_id)
+                        .map(|p| (p.id.clone(), p.path.clone()))
+                        .unwrap_or_else(|| (project.id.clone(), project.path.clone()))
+                } else {
+                    (project.id.clone(), project.path.clone())
                 };
                 tasks.push(ProjectPageTaskEntry {
-                    project_id: group_project.id.clone(),
-                    project_path: group_project.path.clone(),
-                    task_id: None,
-                    name: app
-                        .project_store
-                        .worktree_task_names
-                        .get(&group_project.id)
-                        .cloned()
-                        .unwrap_or_else(|| branch.name.clone()),
-                    branch_name: branch.name.clone(),
-                    is_worktree: true,
-                    pinned: app
-                        .project_store
-                        .ui
-                        .pinned_worktree_project_ids
-                        .contains(&group_project.id),
+                    project_id: pid,
+                    project_path: ppath,
+                    task_id: task.id.clone(),
+                    name: task.name.clone(),
+                    branch_name: task.branch_name.clone(),
+                    is_worktree,
+                    pinned: app.project_store.ui.pinned_task_ids.contains(&task.id),
                 });
             }
         }
@@ -564,9 +521,7 @@ impl WorkspacePane {
         let pid_nav = pid.clone();
         let branch_nav = branch.clone();
         let task_id_nav = task_id.clone();
-        let row_suffix = task_id
-            .clone()
-            .unwrap_or_else(|| format!("worktree-{}", pid.clone()));
+        let row_suffix = task_id.clone();
         let row_id = SharedString::from(format!("task-row-{}", row_suffix));
         let delete_tooltip = if is_worktree {
             "Delete this worktree task"
@@ -593,11 +548,7 @@ impl WorkspacePane {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                    let sid = if let Some(task_id) = task_id_nav.as_ref() {
-                        SectionId::for_task(&pid_nav, &branch_nav, task_id)
-                    } else {
-                        SectionId::new(&pid_nav, &branch_nav)
-                    };
+                    let sid = SectionId::for_task(&pid_nav, &branch_nav, &task_id_nav);
                     this.activate_section(sid, Some(project_path.clone()), None, cx);
                     this.mark_git_refresh_stale(cx);
                 }),
