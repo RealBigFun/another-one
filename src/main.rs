@@ -14,6 +14,8 @@ mod project_page;
 mod project_store;
 mod right_sidebar;
 mod settings_page;
+mod terminal_launch;
+mod terminal_runtime;
 mod theme;
 mod titlebar;
 

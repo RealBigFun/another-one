@@ -2,10 +2,13 @@
 
 use gpui::{
     div, hsla, prelude::*, px, rgb, svg, Context, MouseButton, MouseDownEvent, Render,
-    SharedString, Window,
+    SharedString, StyledText, Window,
 };
 
 use crate::app::{AnotherOneApp, WorkspacePane};
+use crate::terminal_runtime::{
+    TerminalLineSnapshot, TerminalRuntimeKey, TERMINAL_LINE_HEIGHT_RATIO,
+};
 
 impl AnotherOneApp {
     /// Generic bordered panel with a title strip and body text.
@@ -238,7 +241,7 @@ impl WorkspacePane {
                 ),
         );
 
-        let tab_content = self.render_tab_placeholder(section_id);
+        let tab_content = self.render_terminal_tab(section_id, window, cx);
 
         div()
             .flex()
@@ -249,7 +252,12 @@ impl WorkspacePane {
             .child(tab_content)
     }
 
-    fn render_tab_placeholder(&self, section_id: &crate::app::SectionId) -> gpui::Div {
+    fn render_terminal_tab(
+        &self,
+        section_id: &crate::app::SectionId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let terminal_bg = rgb(0x1e1f22);
         let panel_bg = rgb(0x25282d);
         let border = gpui::white().opacity(0.08);
@@ -264,18 +272,91 @@ impl WorkspacePane {
             return div().flex_1().bg(terminal_bg);
         };
 
+        let key = TerminalRuntimeKey {
+            section_id: section_id.clone(),
+            tab_id: tab.id.clone(),
+        };
+        let (snapshot, pending, error) = self
+            .app
+            .upgrade()
+            .map(|app_entity| {
+                let app = app_entity.read(cx);
+                (
+                    app.terminal_snapshot_for(&key),
+                    app.terminal_is_pending(&key),
+                    app.terminal_error_for(&key).map(str::to_string),
+                )
+            })
+            .unwrap_or((None, false, None));
+
+        if let Some(snapshot) = snapshot {
+            let mut body = div()
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .bg(terminal_bg)
+                .p(px(12.))
+                .font_family("Lilex Nerd Font Mono")
+                .text_size(px(self.font_size))
+                .line_height(px((self.font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0)))
+                .text_color(title_col);
+
+            for line in &snapshot.lines {
+                body = body.child(render_terminal_line(line));
+            }
+
+            return body;
+        }
+
+        let status_title = if pending {
+            "Launching terminal"
+        } else if error.is_some() {
+            "Terminal launch failed"
+        } else {
+            "Lazy restore"
+        };
+        let status_body = if pending {
+            "The tab was created immediately and its PTY is launching in the background."
+        } else if let Some(error) = error {
+            return div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_6()
+                .bg(terminal_bg)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(12.))
+                        .w_full()
+                        .max_w(px(520.))
+                        .p_6()
+                        .rounded(px(14.))
+                        .bg(panel_bg)
+                        .border_1()
+                        .border_color(border)
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(title_col)
+                                .child(status_title),
+                        )
+                        .child(div().text_sm().text_color(body_col).child(error)),
+                );
+        } else {
+            "This restored tab has metadata only. Opening it triggers launch or resume on demand."
+        };
+
         let cwd_label = state
             .cwd
             .as_ref()
             .map(|cwd| cwd.display().to_string())
             .unwrap_or_else(|| "Not available".to_string());
         let task_label = section_id.task_id.as_deref().unwrap_or("Not available");
-        let tab_label = if state.tabs.len() > 1 {
-            format!("{} {}", tab.title, state.active_tab + 1)
-        } else {
-            tab.title.clone()
-        };
-
         div()
             .flex_1()
             .flex()
@@ -307,17 +388,9 @@ impl WorkspacePane {
                             .text_sm()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(title_col)
-                            .child("Terminal Placeholder"),
+                            .child(status_title),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(body_col)
-                            .child(format!(
-                                "\"{}\" is showing placeholder content only. You can keep creating and switching tabs here, and wire terminal rendering back in later.",
-                                tab_label
-                            )),
-                    )
+                    .child(div().text_sm().text_color(body_col).child(status_body))
                     .child(
                         div()
                             .text_sm()
@@ -350,6 +423,12 @@ impl WorkspacePane {
                     ),
             )
     }
+}
+
+fn render_terminal_line(line: &TerminalLineSnapshot) -> gpui::Div {
+    let text = StyledText::new(line.text.clone()).with_runs(line.runs.clone());
+
+    div().whitespace_nowrap().child(text)
 }
 
 impl Render for WorkspacePane {

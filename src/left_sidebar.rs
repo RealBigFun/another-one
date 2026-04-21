@@ -636,7 +636,39 @@ impl AnotherOneApp {
             return;
         }
 
-        let _ = self.handle_sidebar_task_rename_key_down(ev, cx);
+        if self.handle_sidebar_task_rename_key_down(ev, cx) {
+            return;
+        }
+
+        let _ = self.handle_terminal_key_down(ev, cx);
+    }
+
+    fn handle_terminal_key_down(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        let modifiers = ev.keystroke.modifiers;
+        if modifiers.platform && ev.keystroke.key.as_str() == "v" {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                if self.paste_into_active_terminal(cx, &text) {
+                    cx.stop_propagation();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if modifiers.platform {
+            return false;
+        }
+
+        let Some(bytes) = terminal_key_bytes(ev) else {
+            return false;
+        };
+
+        if self.write_active_terminal_input(cx, &bytes) {
+            cx.stop_propagation();
+            return true;
+        }
+
+        false
     }
 
     fn handle_sidebar_task_rename_key_down(
@@ -2578,6 +2610,76 @@ fn move_sidebar_task_name_cursor_to_edge(
         state.task_name_selection_anchor = None;
     }
     state.task_name_cursor = if to_end { state.task_name.len() } else { 0 };
+}
+
+fn terminal_key_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
+    let key = ev.keystroke.key.as_str();
+    let modifiers = ev.keystroke.modifiers;
+
+    let mut bytes = match key {
+        "enter" => Some(vec![b'\r']),
+        "backspace" => Some(vec![0x7f]),
+        "tab" if modifiers.shift => Some(b"\x1b[Z".to_vec()),
+        "tab" => Some(vec![b'\t']),
+        "escape" => Some(vec![0x1b]),
+        "up" => Some(b"\x1b[A".to_vec()),
+        "down" => Some(b"\x1b[B".to_vec()),
+        "right" => Some(b"\x1b[C".to_vec()),
+        "left" => Some(b"\x1b[D".to_vec()),
+        "home" => Some(b"\x1b[H".to_vec()),
+        "end" => Some(b"\x1b[F".to_vec()),
+        "pageup" => Some(b"\x1b[5~".to_vec()),
+        "pagedown" => Some(b"\x1b[6~".to_vec()),
+        "delete" => Some(b"\x1b[3~".to_vec()),
+        _ => None,
+    };
+
+    if modifiers.control {
+        if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+            if let Some(byte) = control_key_byte(key_char) {
+                return Some(vec![byte]);
+            }
+        }
+        if let Some(byte) = control_key_byte(key) {
+            return Some(vec![byte]);
+        }
+    }
+
+    if bytes.is_none() {
+        if modifiers.control || modifiers.function {
+            return None;
+        }
+        let key_char = ev.keystroke.key_char.as_deref()?;
+        bytes = Some(key_char.as_bytes().to_vec());
+    }
+
+    let mut bytes = bytes?;
+    if modifiers.alt {
+        let mut prefixed = vec![0x1b];
+        prefixed.append(&mut bytes);
+        return Some(prefixed);
+    }
+
+    Some(bytes)
+}
+
+fn control_key_byte(value: &str) -> Option<u8> {
+    let mut chars = value.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+
+    match ch {
+        '@' | ' ' => Some(0),
+        'a'..='z' | 'A'..='Z' => Some((ch.to_ascii_uppercase() as u8) & 0x1f),
+        '[' => Some(0x1b),
+        '\\' => Some(0x1c),
+        ']' => Some(0x1d),
+        '^' => Some(0x1e),
+        '_' => Some(0x1f),
+        _ => None,
+    }
 }
 
 pub(crate) fn open_external_url(url: &str) -> Result<(), String> {

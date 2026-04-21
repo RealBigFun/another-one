@@ -7,9 +7,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use crate::agents::AgentProviderKind;
+use crate::agents::{AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus};
 
-const STORE_VERSION: u8 = 2;
+const STORE_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoBranchRecord {
@@ -178,6 +178,10 @@ pub struct PersistedTerminalTab {
     pub title: String,
     #[serde(default)]
     pub provider: Option<AgentProviderKind>,
+    #[serde(default)]
+    pub launch_config: Option<TerminalLaunchConfig>,
+    #[serde(default)]
+    pub restore_status: TerminalRestoreStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -793,7 +797,7 @@ impl ProjectStore {
         let Some(parent) = path.parent() else {
             return;
         };
-        let backup_path = parent.join("projects.v1.backup.json");
+        let backup_path = parent.join("projects.v2.backup.json");
         let _ = std::fs::remove_file(&backup_path);
         let _ = std::fs::rename(path, backup_path);
     }
@@ -1731,7 +1735,10 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
 
-    use crate::agents::AgentProviderKind;
+    use crate::agents::{
+        AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
+        TerminalSessionRef,
+    };
 
     use super::{
         format_git_command_error, PersistedSectionState, PersistedTerminalTab, Project,
@@ -1821,11 +1828,25 @@ mod tests {
                                 id: "0".to_string(),
                                 title: "Terminal".to_string(),
                                 provider: None,
+                                launch_config: Some(TerminalLaunchConfig::default()),
+                                restore_status: TerminalRestoreStatus::NotStarted,
                             },
                             PersistedTerminalTab {
                                 id: "1".to_string(),
                                 title: "Claude Code".to_string(),
                                 provider: Some(AgentProviderKind::ClaudeCode),
+                                launch_config: Some(
+                                    TerminalLaunchConfig::for_provider(
+                                        AgentProviderKind::ClaudeCode,
+                                    )
+                                    .with_session(Some(
+                                        TerminalSessionRef {
+                                            kind: TerminalSessionKind::ClaudeSession,
+                                            id: "session-123".to_string(),
+                                        },
+                                    )),
+                                ),
+                                restore_status: TerminalRestoreStatus::Ready,
                             },
                         ],
                         active_tab_id: "1".to_string(),
@@ -1848,6 +1869,14 @@ mod tests {
                             id: "0".to_string(),
                             title: "Pi".to_string(),
                             provider: Some(AgentProviderKind::Pi),
+                            launch_config: Some(
+                                TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)
+                                    .with_session(Some(TerminalSessionRef {
+                                        kind: TerminalSessionKind::PiSession,
+                                        id: "pi-session".to_string(),
+                                    })),
+                            ),
+                            restore_status: TerminalRestoreStatus::Launching,
                         }],
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
@@ -1871,11 +1900,25 @@ mod tests {
                                 id: "0".to_string(),
                                 title: "Terminal".to_string(),
                                 provider: None,
+                                launch_config: Some(TerminalLaunchConfig::default()),
+                                restore_status: TerminalRestoreStatus::NotStarted,
                             },
                             PersistedTerminalTab {
                                 id: "1".to_string(),
                                 title: "Claude Code".to_string(),
                                 provider: Some(AgentProviderKind::ClaudeCode),
+                                launch_config: Some(
+                                    TerminalLaunchConfig::for_provider(
+                                        AgentProviderKind::ClaudeCode,
+                                    )
+                                    .with_session(Some(
+                                        TerminalSessionRef {
+                                            kind: TerminalSessionKind::ClaudeSession,
+                                            id: "session-123".to_string(),
+                                        },
+                                    )),
+                                ),
+                                restore_status: TerminalRestoreStatus::Ready,
                             },
                         ],
                     },
@@ -1890,6 +1933,14 @@ mod tests {
                             id: "0".to_string(),
                             title: "Pi".to_string(),
                             provider: Some(AgentProviderKind::Pi),
+                            launch_config: Some(
+                                TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)
+                                    .with_session(Some(TerminalSessionRef {
+                                        kind: TerminalSessionKind::PiSession,
+                                        id: "pi-session".to_string(),
+                                    })),
+                            ),
+                            restore_status: TerminalRestoreStatus::Launching,
                         }],
                     },
                 ),
@@ -1923,6 +1974,14 @@ mod tests {
         assert_eq!(
             round_trip.sections["wt1::feature/worktree::task-2"].tabs[0].provider,
             Some(AgentProviderKind::Pi)
+        );
+        assert_eq!(
+            round_trip.sections["root::feature/persist-tasks::task-1"].tabs[1]
+                .launch_config
+                .as_ref()
+                .and_then(|config| config.session.as_ref())
+                .map(|session| session.id.as_str()),
+            Some("session-123")
         );
         assert_eq!(
             round_trip.ui.expanded_repo_ids,

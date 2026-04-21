@@ -46,6 +46,39 @@ impl AgentProviderKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum TerminalLaunchMode {
+    #[default]
+    RawShell,
+    Agent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum TerminalSessionKind {
+    ClaudeSession,
+    CursorChat,
+    CodexSession,
+    PiSession,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum TerminalRestoreStatus {
+    #[default]
+    NotStarted,
+    Launching,
+    Ready,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub(crate) struct TerminalSessionRef {
+    pub kind: TerminalSessionKind,
+    pub id: String,
+}
+
 pub(crate) const AGENTS: &[AgentDef] = &[
     AgentDef {
         id: "claude-code",
@@ -105,16 +138,25 @@ pub(crate) const AGENTS: &[AgentDef] = &[
 
 pub(crate) const DEFAULT_AGENT_ID: &str = "pi";
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TerminalLaunchConfig {
+    pub mode: TerminalLaunchMode,
     pub provider: Option<AgentProviderKind>,
+    pub session: Option<TerminalSessionRef>,
 }
 
 impl TerminalLaunchConfig {
     pub fn for_provider(provider: AgentProviderKind) -> Self {
         Self {
+            mode: TerminalLaunchMode::Agent,
             provider: Some(provider),
+            session: None,
         }
+    }
+
+    pub fn with_session(mut self, session: Option<TerminalSessionRef>) -> Self {
+        self.session = session;
+        self
     }
 
     pub fn default_title(&self) -> String {
@@ -136,10 +178,24 @@ pub(crate) fn terminal_launch_config_for_selected_agents(
         .unwrap_or_default()
 }
 
+pub(crate) fn terminal_launch_config_for_selected_agent(
+    selected_agent_id: Option<&str>,
+) -> Option<TerminalLaunchConfig> {
+    match selected_agent_id {
+        Some(selected_agent_id) => AGENTS
+            .iter()
+            .find(|agent| agent.id == selected_agent_id)
+            .and_then(|agent| agent.provider)
+            .map(TerminalLaunchConfig::for_provider),
+        None => Some(TerminalLaunchConfig::default()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        terminal_launch_config_for_selected_agents, AgentProviderKind, TerminalLaunchConfig,
+        terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
+        AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode,
     };
     use std::collections::HashSet;
 
@@ -157,6 +213,7 @@ mod tests {
         let config = terminal_launch_config_for_selected_agents(&HashSet::new());
 
         assert_eq!(config, TerminalLaunchConfig::default());
+        assert_eq!(config.mode, TerminalLaunchMode::RawShell);
         assert_eq!(config.default_title(), "Terminal");
     }
 
@@ -166,5 +223,20 @@ mod tests {
             terminal_launch_config_for_selected_agents(&HashSet::from(["cursor".to_string()]));
 
         assert_eq!(config.provider, Some(AgentProviderKind::CursorAgent));
+        assert_eq!(config.mode, TerminalLaunchMode::Agent);
+    }
+
+    #[test]
+    fn selected_agent_helper_returns_raw_shell_for_cli_only() {
+        let config = terminal_launch_config_for_selected_agent(None);
+
+        assert_eq!(config, Some(TerminalLaunchConfig::default()));
+    }
+
+    #[test]
+    fn selected_agent_helper_rejects_unknown_agent() {
+        let config = terminal_launch_config_for_selected_agent(Some("missing"));
+
+        assert_eq!(config, None);
     }
 }

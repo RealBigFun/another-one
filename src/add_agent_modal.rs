@@ -1,13 +1,11 @@
 //! "Add Agent" modal dialog shown when clicking the "+" button in the tab bar.
 
-use std::collections::HashSet;
-
 use gpui::{
     div, hsla, prelude::*, px, relative, rems, rgb, svg, Context, KeyDownEvent, MouseButton,
     MouseDownEvent, SharedString,
 };
 
-use crate::agents::{terminal_launch_config_for_selected_agents, AGENTS};
+use crate::agents::{terminal_launch_config_for_selected_agent, AGENTS};
 use crate::app::{AnotherOneApp, SectionId};
 
 #[derive(Clone)]
@@ -57,6 +55,7 @@ impl AnotherOneApp {
         &mut self,
         section_id: SectionId,
         selected_agent_id: Option<String>,
+        cx: &mut Context<Self>,
     ) {
         self.add_agent_modal = Some(AddAgentModalState {
             section_id,
@@ -64,6 +63,7 @@ impl AnotherOneApp {
                 .filter(|selected| AGENTS.iter().any(|agent| agent.id == selected)),
             agent_dropdown_open: false,
         });
+        self.sync_add_agent_modal_prewarm(cx);
     }
 
     pub(crate) fn add_agent_modal_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -250,6 +250,7 @@ impl AnotherOneApp {
     }
 
     fn dismiss_add_agent_modal(&mut self, cx: &mut Context<Self>) {
+        self.cancel_active_add_agent_prewarm();
         self.add_agent_modal = None;
         cx.notify();
     }
@@ -259,27 +260,30 @@ impl AnotherOneApp {
             return;
         };
 
-        let launch_config = if let Some(selected_agent_id) = state.selected_agent_id.as_ref() {
-            if !AGENTS.iter().any(|agent| agent.id == selected_agent_id) {
-                self.show_error_toast("Could not determine which agent to launch.", cx);
-                return;
-            }
-
-            terminal_launch_config_for_selected_agents(&HashSet::from([selected_agent_id.clone()]))
-        } else {
-            terminal_launch_config_for_selected_agents(&HashSet::new())
+        let Some(launch_config) =
+            terminal_launch_config_for_selected_agent(state.selected_agent_id.as_deref())
+        else {
+            self.show_error_toast("Could not determine which agent to launch.", cx);
+            return;
         };
         let section_id = state.section_id.clone();
-        let added = self.workspace_pane.update(cx, |workspace, cx| {
+        let added_tab_id = self.workspace_pane.update(cx, |workspace, cx| {
             workspace.add_tab_with_launch_config(&section_id, launch_config.clone(), cx)
         });
 
-        if !added {
+        let Some(tab_id) = added_tab_id else {
             self.show_error_toast("Could not add an agent tab for this section.", cx);
             return;
-        }
+        };
 
+        let launch_id = self.active_add_agent_warm_launch_id.take();
         self.add_agent_modal = None;
+        if let Some(launch_id) = launch_id {
+            let key = crate::terminal_runtime::TerminalRuntimeKey { section_id, tab_id };
+            if !self.attach_prewarmed_launch_to_tab(launch_id, key, cx) {
+                self.cancel_prewarmed_launch(launch_id);
+            }
+        }
         cx.notify();
     }
 
@@ -410,9 +414,17 @@ impl AnotherOneApp {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    let selection_changed = this
+                        .add_agent_modal
+                        .as_ref()
+                        .map(|state| state.selected_agent_id != next_selected_agent_id)
+                        .unwrap_or(false);
                     if let Some(state) = this.add_agent_modal.as_mut() {
                         state.selected_agent_id = next_selected_agent_id.clone();
                         state.agent_dropdown_open = false;
+                    }
+                    if selection_changed {
+                        this.sync_add_agent_modal_prewarm(cx);
                     }
                     cx.stop_propagation();
                     cx.notify();

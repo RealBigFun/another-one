@@ -15,11 +15,20 @@ use gpui::{
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
 
-use crate::agents::{terminal_launch_config_for_selected_agents, TerminalLaunchConfig, AGENTS};
+use crate::agents::{
+    terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
+    TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
+};
 use crate::layout::*;
 use crate::project_store::{
     ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore, Task,
     TaskKind,
+};
+use crate::terminal_launch::{
+    spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
+};
+use crate::terminal_runtime::{
+    LiveTerminalRuntime, TerminalGridSize, TerminalRuntimeKey, TerminalSurfaceSnapshot,
 };
 use crate::theme;
 
@@ -91,6 +100,14 @@ pub struct TerminalTab {
     pub id: String,
     pub title: String,
     pub launch_config: TerminalLaunchConfig,
+    pub restore_status: TerminalRestoreStatus,
+}
+
+struct PrewarmedTerminalLaunch {
+    section_id: SectionId,
+    launch_config: TerminalLaunchConfig,
+    attached_tab: Option<TerminalRuntimeKey>,
+    runtime: Option<LiveTerminalRuntime>,
 }
 
 /// Per-section state: which terminal tabs are open and which is active.
@@ -215,6 +232,7 @@ impl TerminalTab {
             id,
             title,
             launch_config,
+            restore_status: TerminalRestoreStatus::NotStarted,
         }
     }
 
@@ -223,20 +241,25 @@ impl TerminalTab {
             id: self.id.clone(),
             title: self.title.clone(),
             provider: self.launch_config.provider,
+            launch_config: Some(self.launch_config.clone()),
+            restore_status: self.restore_status,
         }
     }
 
     fn from_persisted(persisted: PersistedTerminalTab) -> Self {
-        let launch_config = if let Some(provider) = persisted.provider {
-            TerminalLaunchConfig::for_provider(provider)
-        } else {
-            TerminalLaunchConfig::default()
-        };
+        let launch_config = persisted.launch_config.unwrap_or_else(|| {
+            if let Some(provider) = persisted.provider {
+                TerminalLaunchConfig::for_provider(provider)
+            } else {
+                TerminalLaunchConfig::default()
+            }
+        });
 
         Self {
             id: persisted.id,
             title: persisted.title,
             launch_config,
+            restore_status: persisted.restore_status,
         }
     }
 }
@@ -252,6 +275,13 @@ struct GitActionReply {
     refresh_git_state: bool,
     toast_kind: ToastKind,
     toast_message: String,
+}
+
+struct TerminalRuntimeRequest {
+    key: TerminalRuntimeKey,
+    cwd: std::path::PathBuf,
+    launch_config: TerminalLaunchConfig,
+    size: TerminalGridSize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -688,19 +718,16 @@ impl WorkspacePane {
         section_id: &SectionId,
         launch_config: TerminalLaunchConfig,
         cx: &mut Context<Self>,
-    ) -> bool {
-        let added = self
+    ) -> Option<String> {
+        let added_tab_id = self
             .section_states
             .get_mut(section_id)
-            .is_some_and(|state| {
-                state.add_tab_with_launch_config(launch_config.clone());
-                true
-            });
-        if added {
+            .map(|state| state.add_tab_with_launch_config(launch_config.clone()));
+        if added_tab_id.is_some() {
             self.persist_section_state(section_id, cx);
             cx.notify();
         }
-        added
+        added_tab_id
     }
 
     pub(crate) fn close_tab(
@@ -820,7 +847,7 @@ impl WorkspacePane {
         let app = self.app.clone();
         cx.defer(move |cx| {
             let _ = app.update(cx, |app, app_cx| {
-                app.open_add_agent_modal(section_id.clone(), selected_agent_id.clone());
+                app.open_add_agent_modal(section_id.clone(), selected_agent_id.clone(), app_cx);
                 app_cx.notify();
             });
         });
@@ -903,6 +930,30 @@ pub struct AnotherOneApp {
     project_github_link_sender: mpsc::Sender<ProjectGitHubLinkReply>,
     /// Receiver for background project GitHub-link lookups.
     project_github_link_receiver: mpsc::Receiver<ProjectGitHubLinkReply>,
+    /// Sender used by background terminal launch/resume work.
+    terminal_launch_sender: mpsc::Sender<TerminalLaunchReply>,
+    /// Receiver for background terminal launch/resume work.
+    terminal_launch_receiver: mpsc::Receiver<TerminalLaunchReply>,
+    /// Sender used by hidden add-agent terminal prewarming work.
+    warm_terminal_launch_sender: mpsc::Sender<WarmTerminalLaunchReply>,
+    /// Receiver for hidden add-agent terminal prewarming work.
+    warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
+    /// Live PTY-backed terminal runtimes keyed by section and tab id.
+    live_terminal_runtimes: HashMap<TerminalRuntimeKey, LiveTerminalRuntime>,
+    /// Cached render snapshots for live terminal tabs.
+    terminal_surface_snapshots: HashMap<TerminalRuntimeKey, TerminalSurfaceSnapshot>,
+    /// Launches currently in flight.
+    pending_terminal_launches: HashSet<TerminalRuntimeKey>,
+    /// Last launch/exit error for a terminal tab.
+    terminal_runtime_errors: HashMap<TerminalRuntimeKey, String>,
+    /// Prewarmed launches keyed by launch id until they are canceled or exit.
+    prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
+    /// Prewarmed launch ids that were canceled before the process fully exited.
+    canceled_prewarmed_launch_ids: HashSet<u64>,
+    /// Current warm launch reserved for the open Add Agent modal.
+    pub(crate) active_add_agent_warm_launch_id: Option<u64>,
+    /// Monotonic id generator for warm launches.
+    next_prewarmed_launch_id: u64,
     /// In-flight project GitHub-link lookups keyed by project id.
     pub(crate) project_github_link_requests: HashSet<String>,
     /// Projects whose GitHub link has already been resolved this session.
@@ -1483,6 +1534,8 @@ impl AnotherOneApp {
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             mpsc::channel();
+        let (terminal_launch_sender, terminal_launch_receiver) = mpsc::channel();
+        let (warm_terminal_launch_sender, warm_terminal_launch_receiver) = mpsc::channel();
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
             let mut expanded = HashSet::new();
             if let Some(first) = store.projects.first() {
@@ -1588,6 +1641,18 @@ impl AnotherOneApp {
             project_add_receiver: None,
             project_github_link_sender,
             project_github_link_receiver,
+            terminal_launch_sender,
+            terminal_launch_receiver,
+            warm_terminal_launch_sender,
+            warm_terminal_launch_receiver,
+            live_terminal_runtimes: HashMap::new(),
+            terminal_surface_snapshots: HashMap::new(),
+            pending_terminal_launches: HashSet::new(),
+            terminal_runtime_errors: HashMap::new(),
+            prewarmed_terminal_launches: HashMap::new(),
+            canceled_prewarmed_launch_ids: HashSet::new(),
+            active_add_agent_warm_launch_id: None,
+            next_prewarmed_launch_id: 1,
             project_github_link_requests: HashSet::new(),
             project_github_link_checked: HashSet::new(),
             settings_open: false,
@@ -1616,6 +1681,525 @@ impl AnotherOneApp {
         }
     }
 
+    fn update_terminal_tab(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        cx: &mut Context<Self>,
+        update: impl FnOnce(&mut TerminalTab),
+    ) -> bool {
+        let section_id = key.section_id.clone();
+        let tab_id = key.tab_id.clone();
+        let mut update = Some(update);
+
+        self.workspace_pane.update(cx, |workspace, cx| {
+            let Some(tab) = workspace
+                .section_states
+                .get_mut(&section_id)
+                .and_then(|state| state.tabs.iter_mut().find(|tab| tab.id == tab_id))
+            else {
+                return false;
+            };
+
+            if let Some(update) = update.take() {
+                update(tab);
+            }
+
+            workspace.persist_section_state(&section_id, cx);
+            cx.notify();
+            true
+        })
+    }
+
+    fn active_terminal_request(&self, window: &Window, cx: &App) -> Option<TerminalRuntimeRequest> {
+        let workspace = self.workspace_pane.read(cx);
+        let section_id = workspace.active_section.clone()?;
+        let state = workspace.section_states.get(&section_id)?;
+        let tab = state.tabs.get(state.active_tab)?;
+        let cwd = state.cwd.clone().or_else(|| {
+            self.project_store
+                .project(&section_id.project_id)
+                .map(|project| project.path.clone())
+        })?;
+
+        Some(TerminalRuntimeRequest {
+            key: TerminalRuntimeKey {
+                section_id,
+                tab_id: tab.id.clone(),
+            },
+            cwd,
+            launch_config: tab.launch_config.clone(),
+            size: self.terminal_panel_size(window),
+        })
+    }
+
+    fn terminal_panel_size(&self, window: &Window) -> TerminalGridSize {
+        let viewport = window.viewport_size();
+        let titlebar_height = if cfg!(target_os = "macos") {
+            TITLEBAR_CHROME_H
+        } else {
+            0.0
+        };
+        let width = (f32::from(viewport.width) - self.sidebar_w - self.right_w - GUTTER * 2.0)
+            .max(MIN_MAIN);
+        let height = (f32::from(viewport.height) - FOOTER_H - titlebar_height - 36.0).max(120.0);
+        TerminalGridSize::from_panel_size(width, height, self.font_size)
+    }
+
+    fn cwd_for_section(&self, section_id: &SectionId, cx: &App) -> Option<std::path::PathBuf> {
+        self.workspace_pane
+            .read(cx)
+            .section_states
+            .get(section_id)
+            .and_then(|state| state.cwd.clone())
+            .or_else(|| {
+                self.project_store
+                    .project(&section_id.project_id)
+                    .map(|project| project.path.clone())
+            })
+    }
+
+    pub(crate) fn sync_add_agent_modal_prewarm(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.add_agent_modal.as_ref() else {
+            return;
+        };
+        let section_id = state.section_id.clone();
+        let selected_agent_id = state.selected_agent_id.clone();
+        let Some(launch_config) =
+            terminal_launch_config_for_selected_agent(selected_agent_id.as_deref())
+        else {
+            self.cancel_active_add_agent_prewarm();
+            return;
+        };
+        let Some(cwd) = self.cwd_for_section(&section_id, cx) else {
+            self.cancel_active_add_agent_prewarm();
+            return;
+        };
+
+        if let Some(launch_id) = self.active_add_agent_warm_launch_id {
+            if let Some(existing) = self.prewarmed_terminal_launches.get(&launch_id) {
+                if existing.section_id == section_id && existing.launch_config == launch_config {
+                    return;
+                }
+            }
+        }
+
+        self.cancel_active_add_agent_prewarm();
+
+        let launch_id = self.next_prewarmed_launch_id;
+        self.next_prewarmed_launch_id += 1;
+        self.prewarmed_terminal_launches.insert(
+            launch_id,
+            PrewarmedTerminalLaunch {
+                section_id,
+                launch_config: launch_config.clone(),
+                attached_tab: None,
+                runtime: None,
+            },
+        );
+        self.active_add_agent_warm_launch_id = Some(launch_id);
+        spawn_warm_terminal_launch(
+            self.warm_terminal_launch_sender.clone(),
+            launch_id,
+            Some(cwd),
+            launch_config,
+            TerminalGridSize::default(),
+        );
+    }
+
+    pub(crate) fn cancel_active_add_agent_prewarm(&mut self) {
+        if let Some(launch_id) = self.active_add_agent_warm_launch_id.take() {
+            self.cancel_prewarmed_launch(launch_id);
+        }
+    }
+
+    pub(crate) fn cancel_prewarmed_launch(&mut self, launch_id: u64) {
+        let Some(launch) = self.prewarmed_terminal_launches.remove(&launch_id) else {
+            return;
+        };
+
+        if let Some(key) = launch.attached_tab {
+            self.pending_terminal_launches.remove(&key);
+        }
+        if let Some(mut runtime) = launch.runtime {
+            runtime.kill();
+        }
+        self.canceled_prewarmed_launch_ids.insert(launch_id);
+    }
+
+    fn cancel_prewarmed_launch_for_tab(&mut self, key: &TerminalRuntimeKey) {
+        let launch_id = self
+            .prewarmed_terminal_launches
+            .iter()
+            .find_map(|(launch_id, launch)| {
+                (launch.attached_tab.as_ref() == Some(key)).then_some(*launch_id)
+            });
+        if let Some(launch_id) = launch_id {
+            if self.active_add_agent_warm_launch_id == Some(launch_id) {
+                self.active_add_agent_warm_launch_id = None;
+            }
+            self.cancel_prewarmed_launch(launch_id);
+        }
+    }
+
+    pub(crate) fn attach_prewarmed_launch_to_tab(
+        &mut self,
+        launch_id: u64,
+        key: TerminalRuntimeKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) else {
+            return false;
+        };
+
+        launch.attached_tab = Some(key.clone());
+
+        if let Some(mut runtime) = launch.runtime.take() {
+            self.pending_terminal_launches.remove(&key);
+            self.terminal_runtime_errors.remove(&key);
+            self.terminal_surface_snapshots
+                .insert(key.clone(), runtime.snapshot());
+            self.live_terminal_runtimes.insert(key.clone(), runtime);
+            let launch_config = launch.launch_config.clone();
+            self.update_terminal_tab(&key, cx, |tab| {
+                tab.launch_config = launch_config.clone();
+                tab.restore_status = TerminalRestoreStatus::Ready;
+            });
+        } else {
+            self.pending_terminal_launches.insert(key.clone());
+            let launch_config = launch.launch_config.clone();
+            self.update_terminal_tab(&key, cx, |tab| {
+                tab.launch_config = launch_config.clone();
+                tab.restore_status = TerminalRestoreStatus::Launching;
+            });
+        }
+
+        true
+    }
+
+    fn ensure_active_terminal_runtime(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(request) = self.active_terminal_request(window, cx) else {
+            return;
+        };
+
+        if let Some(runtime) = self.live_terminal_runtimes.get_mut(&request.key) {
+            match runtime.resize(request.size) {
+                Ok(true) => {
+                    self.terminal_surface_snapshots
+                        .insert(request.key.clone(), runtime.snapshot());
+                    cx.notify();
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    self.terminal_runtime_errors
+                        .insert(request.key.clone(), error.to_string());
+                    self.show_error_toast(error.to_string(), cx);
+                }
+            }
+            return;
+        }
+
+        if self.pending_terminal_launches.contains(&request.key) {
+            return;
+        }
+
+        self.pending_terminal_launches.insert(request.key.clone());
+        self.update_terminal_tab(&request.key, cx, |tab| {
+            tab.restore_status = TerminalRestoreStatus::Launching;
+        });
+        spawn_terminal_launch(
+            self.terminal_launch_sender.clone(),
+            request.key,
+            Some(request.cwd),
+            request.launch_config,
+            request.size,
+        );
+    }
+
+    fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut updated = false;
+
+        loop {
+            match self.terminal_launch_receiver.try_recv() {
+                Ok(TerminalLaunchReply::Launched {
+                    key,
+                    runtime,
+                    launch_config,
+                }) => {
+                    self.pending_terminal_launches.remove(&key);
+                    self.terminal_runtime_errors.remove(&key);
+
+                    let mut runtime = LiveTerminalRuntime::from_prepared(runtime);
+                    self.terminal_surface_snapshots
+                        .insert(key.clone(), runtime.snapshot());
+                    self.live_terminal_runtimes.insert(key.clone(), runtime);
+                    self.update_terminal_tab(&key, cx, |tab| {
+                        tab.launch_config = launch_config.clone();
+                        tab.restore_status = TerminalRestoreStatus::Ready;
+                    });
+                    updated = true;
+                }
+                Ok(TerminalLaunchReply::Output { key, bytes }) => {
+                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                        let terminal_update = runtime.apply_output(&bytes);
+                        self.terminal_surface_snapshots
+                            .insert(key.clone(), runtime.snapshot());
+                        if terminal_update.reset_title {
+                            self.update_terminal_tab(&key, cx, |tab| {
+                                tab.title = tab.launch_config.default_title();
+                            });
+                        } else if let Some(title) = terminal_update.title {
+                            self.update_terminal_tab(&key, cx, |tab| {
+                                tab.title = title.clone();
+                            });
+                        }
+                        updated = true;
+                    }
+                }
+                Ok(TerminalLaunchReply::SessionDiscovered { key, session }) => {
+                    let section_id = key.section_id.clone();
+                    let applied = self.workspace_pane.update(cx, |workspace, cx| {
+                        if !apply_terminal_session_backfill(
+                            &mut workspace.section_states,
+                            &key,
+                            session.clone(),
+                        ) {
+                            return false;
+                        }
+                        workspace.persist_section_state(&section_id, cx);
+                        cx.notify();
+                        true
+                    });
+                    updated |= applied;
+                }
+                Ok(TerminalLaunchReply::Exited { key, status }) => {
+                    self.pending_terminal_launches.remove(&key);
+                    self.terminal_surface_snapshots.remove(&key);
+                    self.terminal_runtime_errors.insert(key.clone(), status);
+                    self.live_terminal_runtimes.remove(&key);
+                    self.update_terminal_tab(&key, cx, |tab| {
+                        tab.restore_status = TerminalRestoreStatus::Failed;
+                    });
+                    updated = true;
+                }
+                Ok(TerminalLaunchReply::Failed { key, message }) => {
+                    self.pending_terminal_launches.remove(&key);
+                    self.live_terminal_runtimes.remove(&key);
+                    self.terminal_surface_snapshots.remove(&key);
+                    self.terminal_runtime_errors
+                        .insert(key.clone(), message.clone());
+                    self.update_terminal_tab(&key, cx, |tab| {
+                        tab.restore_status = TerminalRestoreStatus::Failed;
+                    });
+                    self.show_error_toast(message, cx);
+                    updated = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        updated
+    }
+
+    fn drain_warm_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut updated = false;
+
+        loop {
+            match self.warm_terminal_launch_receiver.try_recv() {
+                Ok(WarmTerminalLaunchReply::Launched {
+                    launch_id,
+                    runtime,
+                    launch_config,
+                }) => {
+                    if self.canceled_prewarmed_launch_ids.contains(&launch_id) {
+                        let mut runtime = LiveTerminalRuntime::from_prepared(runtime);
+                        runtime.kill();
+                        continue;
+                    }
+
+                    let mut runtime = LiveTerminalRuntime::from_prepared(runtime);
+                    let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) else {
+                        runtime.kill();
+                        continue;
+                    };
+
+                    launch.launch_config = launch_config.clone();
+
+                    if let Some(key) = launch.attached_tab.clone() {
+                        self.pending_terminal_launches.remove(&key);
+                        self.terminal_runtime_errors.remove(&key);
+                        self.terminal_surface_snapshots
+                            .insert(key.clone(), runtime.snapshot());
+                        self.live_terminal_runtimes.insert(key.clone(), runtime);
+                        self.update_terminal_tab(&key, cx, |tab| {
+                            tab.launch_config = launch_config.clone();
+                            tab.restore_status = TerminalRestoreStatus::Ready;
+                        });
+                        updated = true;
+                    } else {
+                        launch.runtime = Some(runtime);
+                    }
+                }
+                Ok(WarmTerminalLaunchReply::Output { launch_id, bytes }) => {
+                    let attached_key = self
+                        .prewarmed_terminal_launches
+                        .get(&launch_id)
+                        .and_then(|launch| launch.attached_tab.clone());
+
+                    if let Some(key) = attached_key {
+                        if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                            let terminal_update = runtime.apply_output(&bytes);
+                            self.terminal_surface_snapshots
+                                .insert(key.clone(), runtime.snapshot());
+                            if terminal_update.reset_title {
+                                self.update_terminal_tab(&key, cx, |tab| {
+                                    tab.title = tab.launch_config.default_title();
+                                });
+                            } else if let Some(title) = terminal_update.title {
+                                self.update_terminal_tab(&key, cx, |tab| {
+                                    tab.title = title.clone();
+                                });
+                            }
+                            updated = true;
+                        }
+                        continue;
+                    }
+
+                    if let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) {
+                        if let Some(runtime) = launch.runtime.as_mut() {
+                            let _ = runtime.apply_output(&bytes);
+                        }
+                    }
+                }
+                Ok(WarmTerminalLaunchReply::SessionDiscovered { launch_id, session }) => {
+                    let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) else {
+                        continue;
+                    };
+
+                    launch.launch_config = launch
+                        .launch_config
+                        .clone()
+                        .with_session(Some(session.clone()));
+
+                    if let Some(key) = launch.attached_tab.clone() {
+                        let section_id = key.section_id.clone();
+                        let launch_config = launch.launch_config.clone();
+                        let applied = self.workspace_pane.update(cx, |workspace, cx| {
+                            let Some(tab) =
+                                workspace.section_states.get_mut(&key.section_id).and_then(
+                                    |state| state.tabs.iter_mut().find(|tab| tab.id == key.tab_id),
+                                )
+                            else {
+                                return false;
+                            };
+
+                            tab.launch_config = launch_config.clone();
+                            workspace.persist_section_state(&section_id, cx);
+                            cx.notify();
+                            true
+                        });
+                        updated |= applied;
+                    }
+                }
+                Ok(WarmTerminalLaunchReply::Exited { launch_id, status }) => {
+                    let attached_key = self
+                        .prewarmed_terminal_launches
+                        .get(&launch_id)
+                        .and_then(|launch| launch.attached_tab.clone());
+
+                    self.prewarmed_terminal_launches.remove(&launch_id);
+                    self.canceled_prewarmed_launch_ids.remove(&launch_id);
+
+                    if let Some(key) = attached_key {
+                        self.pending_terminal_launches.remove(&key);
+                        self.terminal_surface_snapshots.remove(&key);
+                        self.terminal_runtime_errors.insert(key.clone(), status);
+                        self.live_terminal_runtimes.remove(&key);
+                        self.update_terminal_tab(&key, cx, |tab| {
+                            tab.restore_status = TerminalRestoreStatus::Failed;
+                        });
+                        updated = true;
+                    }
+                }
+                Ok(WarmTerminalLaunchReply::Failed { launch_id, message }) => {
+                    let attached_key = self
+                        .prewarmed_terminal_launches
+                        .get(&launch_id)
+                        .and_then(|launch| launch.attached_tab.clone());
+
+                    self.prewarmed_terminal_launches.remove(&launch_id);
+                    self.canceled_prewarmed_launch_ids.remove(&launch_id);
+                    if self.active_add_agent_warm_launch_id == Some(launch_id) {
+                        self.active_add_agent_warm_launch_id = None;
+                    }
+
+                    if let Some(key) = attached_key {
+                        self.pending_terminal_launches.remove(&key);
+                        self.live_terminal_runtimes.remove(&key);
+                        self.terminal_surface_snapshots.remove(&key);
+                        self.terminal_runtime_errors
+                            .insert(key.clone(), message.clone());
+                        self.update_terminal_tab(&key, cx, |tab| {
+                            tab.restore_status = TerminalRestoreStatus::Failed;
+                        });
+                        self.show_error_toast(message, cx);
+                        updated = true;
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        updated
+    }
+
+    pub(crate) fn terminal_snapshot_for(
+        &self,
+        key: &TerminalRuntimeKey,
+    ) -> Option<TerminalSurfaceSnapshot> {
+        self.terminal_surface_snapshots.get(key).cloned()
+    }
+
+    pub(crate) fn terminal_error_for(&self, key: &TerminalRuntimeKey) -> Option<&str> {
+        self.terminal_runtime_errors.get(key).map(String::as_str)
+    }
+
+    pub(crate) fn terminal_is_pending(&self, key: &TerminalRuntimeKey) -> bool {
+        self.pending_terminal_launches.contains(key)
+    }
+
+    pub(crate) fn active_terminal_key(&self, cx: &App) -> Option<TerminalRuntimeKey> {
+        let workspace = self.workspace_pane.read(cx);
+        let section_id = workspace.active_section.clone()?;
+        let state = workspace.section_states.get(&section_id)?;
+        let tab = state.tabs.get(state.active_tab)?;
+        Some(TerminalRuntimeKey {
+            section_id,
+            tab_id: tab.id.clone(),
+        })
+    }
+
+    pub(crate) fn write_active_terminal_input(&mut self, cx: &App, bytes: &[u8]) -> bool {
+        let Some(key) = self.active_terminal_key(cx) else {
+            return false;
+        };
+        let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
+            return false;
+        };
+        runtime.write_input(bytes).is_ok()
+    }
+
+    pub(crate) fn paste_into_active_terminal(&mut self, cx: &App, text: &str) -> bool {
+        let Some(key) = self.active_terminal_key(cx) else {
+            return false;
+        };
+        let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
+            return false;
+        };
+        runtime.paste_text(text).is_ok()
+    }
+
     fn remove_persisted_sections(&mut self, section_ids: &HashSet<SectionId>) {
         let bare_section_keys = section_ids
             .iter()
@@ -1628,9 +2212,33 @@ impl AnotherOneApp {
         }
     }
 
-    fn cleanup_removed_tab(&mut self, _section_id: &SectionId, _tab_id: String) {}
+    fn cleanup_removed_tab(&mut self, section_id: &SectionId, tab_id: String) {
+        let key = TerminalRuntimeKey {
+            section_id: section_id.clone(),
+            tab_id,
+        };
+        self.cancel_prewarmed_launch_for_tab(&key);
+        if let Some(mut runtime) = remove_terminal_runtime_state(
+            &mut self.live_terminal_runtimes,
+            &mut self.terminal_surface_snapshots,
+            &mut self.pending_terminal_launches,
+            &mut self.terminal_runtime_errors,
+            &key,
+        ) {
+            runtime.kill();
+        }
+    }
 
     fn cleanup_removed_sections(&mut self, section_ids: &HashSet<SectionId>) {
+        let runtime_keys = self
+            .live_terminal_runtimes
+            .keys()
+            .filter(|key| section_ids.contains(&key.section_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in runtime_keys {
+            self.cleanup_removed_tab(&key.section_id, key.tab_id.clone());
+        }
         self.remove_persisted_sections(section_ids);
     }
 
@@ -3189,7 +3797,12 @@ impl AnotherOneApp {
     }
 
     fn refresh_timer_interval(&self) -> Duration {
-        if self.toasts.is_empty() && self.copied_toast.is_none() {
+        if !self.pending_terminal_launches.is_empty()
+            || !self.live_terminal_runtimes.is_empty()
+            || !self.prewarmed_terminal_launches.is_empty()
+        {
+            TOAST_ANIMATION_REFRESH_INTERVAL
+        } else if self.toasts.is_empty() && self.copied_toast.is_none() {
             IDLE_REFRESH_INTERVAL
         } else {
             TOAST_ANIMATION_REFRESH_INTERVAL
@@ -3558,13 +4171,49 @@ fn choose_initial_section(
     })
 }
 
+fn apply_terminal_session_backfill(
+    section_states: &mut HashMap<SectionId, SectionState>,
+    key: &TerminalRuntimeKey,
+    session: TerminalSessionRef,
+) -> bool {
+    let Some(tab) = section_states
+        .get_mut(&key.section_id)
+        .and_then(|state| state.tabs.iter_mut().find(|tab| tab.id == key.tab_id))
+    else {
+        return false;
+    };
+
+    tab.launch_config = tab.launch_config.clone().with_session(Some(session));
+    true
+}
+
+fn remove_terminal_runtime_state<T>(
+    live_terminal_runtimes: &mut HashMap<TerminalRuntimeKey, T>,
+    terminal_surface_snapshots: &mut HashMap<TerminalRuntimeKey, TerminalSurfaceSnapshot>,
+    pending_terminal_launches: &mut HashSet<TerminalRuntimeKey>,
+    terminal_runtime_errors: &mut HashMap<TerminalRuntimeKey, String>,
+    key: &TerminalRuntimeKey,
+) -> Option<T> {
+    pending_terminal_launches.remove(key);
+    terminal_surface_snapshots.remove(key);
+    terminal_runtime_errors.remove(key);
+    live_terminal_runtimes.remove(key)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{choose_initial_section, SectionId, SectionState};
-    use crate::agents::{AgentProviderKind, TerminalLaunchConfig};
+    use super::{
+        apply_terminal_session_backfill, choose_initial_section, remove_terminal_runtime_state,
+        SectionId, SectionState,
+    };
+    use crate::agents::{
+        AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
+        TerminalSessionRef,
+    };
     use crate::project_store::{
         PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
     };
+    use crate::terminal_runtime::{TerminalRuntimeKey, TerminalSurfaceSnapshot};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -3573,6 +4222,8 @@ mod tests {
             id: id.to_string(),
             title: title.to_string(),
             provider: None,
+            launch_config: Some(TerminalLaunchConfig::default()),
+            restore_status: TerminalRestoreStatus::NotStarted,
         }
     }
 
@@ -3606,6 +4257,10 @@ mod tests {
                         id: "4".to_string(),
                         title: "Codex".to_string(),
                         provider: Some(AgentProviderKind::Codex),
+                        launch_config: Some(TerminalLaunchConfig::for_provider(
+                            AgentProviderKind::Codex,
+                        )),
+                        restore_status: TerminalRestoreStatus::NotStarted,
                     },
                 ],
             },
@@ -3628,6 +4283,8 @@ mod tests {
                     id: "0".to_string(),
                     title: "Pi".to_string(),
                     provider: Some(AgentProviderKind::Pi),
+                    launch_config: Some(TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)),
+                    restore_status: TerminalRestoreStatus::NotStarted,
                 }],
             },
             None,
@@ -3690,6 +4347,10 @@ mod tests {
                             id: "0".to_string(),
                             title: "Codex".to_string(),
                             provider: Some(AgentProviderKind::Codex),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::Codex,
+                            )),
+                            restore_status: TerminalRestoreStatus::NotStarted,
                         }],
                     },
                     None,
@@ -3732,6 +4393,10 @@ mod tests {
                             id: "0".to_string(),
                             title: "Claude Code".to_string(),
                             provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::NotStarted,
                         }],
                     },
                     None,
@@ -3742,6 +4407,116 @@ mod tests {
         let chosen = choose_initial_section(&[project], &section_states, None);
 
         assert_eq!(chosen, Some(task_section));
+    }
+
+    #[test]
+    fn restored_tabs_stay_lazy_until_runtime_is_requested() {
+        let section = SectionId::for_task("project-1", "main", "task-1");
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "tab-1".to_string(),
+                next_tab_id: 2,
+                cwd: Some(PathBuf::from("/tmp/project-1")),
+                tabs: vec![PersistedTerminalTab {
+                    id: "tab-1".to_string(),
+                    title: "Claude Code".to_string(),
+                    provider: Some(AgentProviderKind::ClaudeCode),
+                    launch_config: Some(TerminalLaunchConfig::for_provider(
+                        AgentProviderKind::ClaudeCode,
+                    )),
+                    restore_status: TerminalRestoreStatus::NotStarted,
+                }],
+            },
+            None,
+        );
+        let section_states = HashMap::from([(section.clone(), state)]);
+        let live_terminal_runtimes = HashMap::<TerminalRuntimeKey, usize>::new();
+
+        assert!(live_terminal_runtimes.is_empty());
+        assert_eq!(
+            section_states[&section].tabs[0].restore_status,
+            TerminalRestoreStatus::NotStarted
+        );
+    }
+
+    #[test]
+    fn async_session_backfill_updates_restored_tab_metadata() {
+        let section = SectionId::for_task("project-1", "main", "task-1");
+        let key = TerminalRuntimeKey {
+            section_id: section.clone(),
+            tab_id: "tab-1".to_string(),
+        };
+        let mut section_states = HashMap::from([(
+            section,
+            SectionState::from_persisted(
+                PersistedSectionState {
+                    active_tab_id: "tab-1".to_string(),
+                    next_tab_id: 2,
+                    cwd: Some(PathBuf::from("/tmp/project-1")),
+                    tabs: vec![PersistedTerminalTab {
+                        id: "tab-1".to_string(),
+                        title: "Codex".to_string(),
+                        provider: Some(AgentProviderKind::Codex),
+                        launch_config: Some(TerminalLaunchConfig::for_provider(
+                            AgentProviderKind::Codex,
+                        )),
+                        restore_status: TerminalRestoreStatus::Launching,
+                    }],
+                },
+                None,
+            ),
+        )]);
+
+        let applied = apply_terminal_session_backfill(
+            &mut section_states,
+            &key,
+            TerminalSessionRef {
+                kind: TerminalSessionKind::CodexSession,
+                id: "session-42".to_string(),
+            },
+        );
+
+        assert!(applied);
+        assert_eq!(
+            section_states[&key.section_id].tabs[0]
+                .launch_config
+                .session
+                .as_ref()
+                .map(|session| session.id.as_str()),
+            Some("session-42")
+        );
+    }
+
+    #[test]
+    fn closing_tab_cleanup_removes_live_runtime_state() {
+        let key = TerminalRuntimeKey {
+            section_id: SectionId::for_task("project-1", "main", "task-1"),
+            tab_id: "tab-1".to_string(),
+        };
+        let mut live_terminal_runtimes = HashMap::from([(key.clone(), 7_usize)]);
+        let mut terminal_surface_snapshots = HashMap::from([(
+            key.clone(),
+            TerminalSurfaceSnapshot {
+                text: "hello".to_string(),
+                lines: Vec::new(),
+            },
+        )]);
+        let mut pending_terminal_launches = std::collections::HashSet::from([key.clone()]);
+        let mut terminal_runtime_errors = HashMap::from([(key.clone(), "failed".to_string())]);
+
+        let removed = remove_terminal_runtime_state(
+            &mut live_terminal_runtimes,
+            &mut terminal_surface_snapshots,
+            &mut pending_terminal_launches,
+            &mut terminal_runtime_errors,
+            &key,
+        );
+
+        assert_eq!(removed, Some(7));
+        assert!(!live_terminal_runtimes.contains_key(&key));
+        assert!(!terminal_surface_snapshots.contains_key(&key));
+        assert!(!pending_terminal_launches.contains(&key));
+        assert!(!terminal_runtime_errors.contains_key(&key));
     }
 }
 
@@ -3769,6 +4544,8 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_project_add(cx);
                             should_notify |= this.drain_project_github_link_lookup();
+                            should_notify |= this.drain_terminal_launch_replies(cx);
+                            should_notify |= this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= this.tick_toasts();
                             this.maybe_schedule_active_git_refresh(cx);
                             if should_notify {
@@ -3835,6 +4612,7 @@ impl Render for AnotherOneApp {
         // ── Normal main layout ──────────────────────────────────
         self.clamp_layout(window);
         self.sync_workspace_layout(cx);
+        self.ensure_active_terminal_runtime(window, cx);
         let sw = self.sidebar_w;
         let rw = self.right_w;
         let open = self.sidebar_is_open();
