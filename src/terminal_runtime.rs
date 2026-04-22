@@ -300,6 +300,16 @@ impl LiveTerminalRuntime {
         self.write_input(payload.as_bytes())
     }
 
+    pub fn is_alternate_screen(&self) -> bool {
+        self.term
+            .mode()
+            .contains(alacritty_terminal::term::TermMode::ALT_SCREEN)
+    }
+
+    pub fn request_soft_redraw(&self) -> io::Result<()> {
+        self.write_input(b"\x0c")
+    }
+
     pub fn snapshot(&mut self) -> TerminalSurfaceSnapshot {
         if !self.dirty {
             return self.cached_snapshot.clone();

@@ -1118,7 +1118,7 @@ pub fn current_branch(path: &Path) -> Option<String> {
 
 pub fn create_task_worktree(
     repo_path: &Path,
-    project_name: &str,
+    _project_name: &str,
     requested_task_name: &str,
     fallback_task_name: &str,
     source_branch: &str,
@@ -1144,7 +1144,13 @@ pub fn create_task_worktree(
 
     let slug = slugify_task_name(&task_name);
     let branch_name = unique_branch_name(repo_path, &slug)?;
-    let worktree_path = unique_worktree_path(repo_path, project_name, &slug);
+    let worktree_path = unique_worktree_path(repo_path, &slug);
+    let Some(worktree_parent) = worktree_path.parent() else {
+        return Err("Failed to determine the worktree parent directory.".to_string());
+    };
+
+    std::fs::create_dir_all(worktree_parent)
+        .map_err(|error| format!("Failed to prepare the worktree directory: {error}"))?;
 
     let output = git_command(repo_path)
         .args([
@@ -1494,15 +1500,40 @@ fn branch_exists_anywhere(repo_path: &Path, branch_name: &str) -> Result<bool, S
     Ok(exists)
 }
 
-fn unique_worktree_path(repo_path: &Path, project_name: &str, slug: &str) -> PathBuf {
-    let base_name = slugify_task_name(project_name);
-    let parent = repo_path.parent().unwrap_or(repo_path);
+fn app_worktrees_root(home_dir: &Path) -> PathBuf {
+    home_dir.join(".another-one").join("worktrees")
+}
+
+fn worktree_repo_directory_name(repo_path: &Path) -> String {
+    let repo_root = detect_repo_common_dir(repo_path)
+        .and_then(|common_dir| common_dir.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| repo_path.to_path_buf());
+
+    repo_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(slugify_task_name)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "repo".to_string())
+}
+
+fn worktree_parent_dir_with_root(repo_path: &Path, worktrees_root: Option<PathBuf>) -> PathBuf {
+    worktrees_root
+        .map(|root| root.join(worktree_repo_directory_name(repo_path)))
+        .unwrap_or_else(|| repo_path.parent().unwrap_or(repo_path).to_path_buf())
+}
+
+fn unique_worktree_path(repo_path: &Path, slug: &str) -> PathBuf {
+    let parent = worktree_parent_dir_with_root(
+        repo_path,
+        dirs::home_dir().map(|home| app_worktrees_root(&home)),
+    );
 
     for suffix in 0..1000 {
         let directory_name = if suffix == 0 {
-            format!("{base_name}-{slug}")
+            slug.to_string()
         } else {
-            format!("{base_name}-{slug}-{}", suffix + 1)
+            format!("{slug}-{}", suffix + 1)
         };
         let candidate = parent.join(directory_name);
         if !candidate.exists() {
@@ -1510,7 +1541,7 @@ fn unique_worktree_path(repo_path: &Path, project_name: &str, slug: &str) -> Pat
         }
     }
 
-    parent.join(format!("{base_name}-{slug}-overflow"))
+    parent.join(format!("{slug}-overflow"))
 }
 
 /// Get diff stats (lines added, lines removed) for the branch.
@@ -1682,6 +1713,7 @@ fn detect_repo_common_dir(path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::fs;
     use std::path::PathBuf;
 
     use crate::agents::{
@@ -1690,8 +1722,9 @@ mod tests {
     };
 
     use super::{
-        format_git_command_error, PersistedSectionState, PersistedTerminalTab, Project,
-        ProjectCheckoutState, ProjectKind, RepoRecord, StoreFile, Task, TaskKind,
+        app_worktrees_root, format_git_command_error, worktree_parent_dir_with_root,
+        PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
+        RepoRecord, StoreFile, Task, TaskKind,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -1737,6 +1770,21 @@ mod tests {
             message,
             "Could not unstage staged changes. fatal: not a git repository"
         );
+    }
+
+    #[test]
+    fn worktree_parent_dir_with_root_uses_hidden_app_directory() {
+        let temp_root =
+            std::env::temp_dir().join(format!("another-one-test-{}", uuid::Uuid::new_v4()));
+        let repo_path = temp_root.join("repos").join("sample-app");
+        let home_dir = temp_root.join("home");
+        let expected = app_worktrees_root(&home_dir).join("sample-app");
+
+        fs::create_dir_all(&repo_path).expect("repo path should exist");
+
+        let parent = worktree_parent_dir_with_root(&repo_path, Some(app_worktrees_root(&home_dir)));
+
+        assert_eq!(parent, expected);
     }
 
     #[test]

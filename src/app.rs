@@ -2330,8 +2330,15 @@ impl AnotherOneApp {
         if let Some(runtime) = self.live_terminal_runtimes.get_mut(&request.key) {
             match runtime.resize(request.size) {
                 Ok(true) => {
+                    let redraw_error = (request.launch_config.provider.is_some()
+                        && runtime.is_alternate_screen())
+                    .then(|| runtime.request_soft_redraw().err())
+                    .flatten();
                     self.terminal_surface_snapshots
                         .insert(request.key.clone(), runtime.snapshot());
+                    if let Some(error) = redraw_error {
+                        self.show_error_toast(error.to_string(), cx);
+                    }
                     cx.notify();
                 }
                 Ok(false) => {}
