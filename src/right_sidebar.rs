@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    div, ease_in_out, hsla, percentage, prelude::*, px, rems, rgb, svg, uniform_list, Animation,
+    div, ease_in_out, hsla, percentage, prelude::*, px, rems, rgb, svg, Animation,
     AnimationExt as _, AnyElement, Context, KeyDownEvent, MouseButton, MouseDownEvent,
     SharedString, Transformation, Window,
 };
@@ -17,22 +17,6 @@ use crate::theme;
 enum ChangeGroup {
     Staged,
     Uncommitted,
-}
-
-#[derive(Clone)]
-enum ChangedFilesListEntry {
-    Header {
-        section_key: &'static str,
-        title: &'static str,
-        group: ChangeGroup,
-        file_count: usize,
-        additions: i32,
-        deletions: i32,
-    },
-    File {
-        group: ChangeGroup,
-        file_index: usize,
-    },
 }
 
 #[derive(Clone)]
@@ -92,82 +76,6 @@ pub(crate) struct ChangedFilesListSnapshot {
     staged_deletions: i32,
     unstaged_additions: i32,
     unstaged_deletions: i32,
-}
-
-impl ChangedFilesListSnapshot {
-    fn item_count(&self, staged_collapsed: bool, uncommitted_collapsed: bool) -> usize {
-        let mut count = 0;
-
-        if !self.staged_indices.is_empty() {
-            count += 1;
-            if !staged_collapsed {
-                count += self.staged_indices.len();
-            }
-        }
-
-        if !self.unstaged_indices.is_empty() {
-            count += 1;
-            if !uncommitted_collapsed {
-                count += self.unstaged_indices.len();
-            }
-        }
-
-        count
-    }
-
-    fn entry_at(
-        &self,
-        staged_collapsed: bool,
-        uncommitted_collapsed: bool,
-        mut index: usize,
-    ) -> Option<ChangedFilesListEntry> {
-        if !self.staged_indices.is_empty() {
-            if index == 0 {
-                return Some(ChangedFilesListEntry::Header {
-                    section_key: "staged",
-                    title: "Staged Changes",
-                    group: ChangeGroup::Staged,
-                    file_count: self.staged_indices.len(),
-                    additions: self.staged_additions,
-                    deletions: self.staged_deletions,
-                });
-            }
-
-            index -= 1;
-            if !staged_collapsed {
-                if index < self.staged_indices.len() {
-                    return Some(ChangedFilesListEntry::File {
-                        group: ChangeGroup::Staged,
-                        file_index: self.staged_indices[index],
-                    });
-                }
-                index -= self.staged_indices.len();
-            }
-        }
-
-        if !self.unstaged_indices.is_empty() {
-            if index == 0 {
-                return Some(ChangedFilesListEntry::Header {
-                    section_key: "uncommitted",
-                    title: "Changes",
-                    group: ChangeGroup::Uncommitted,
-                    file_count: self.unstaged_indices.len(),
-                    additions: self.unstaged_additions,
-                    deletions: self.unstaged_deletions,
-                });
-            }
-
-            index -= 1;
-            if !uncommitted_collapsed && index < self.unstaged_indices.len() {
-                return Some(ChangedFilesListEntry::File {
-                    group: ChangeGroup::Uncommitted,
-                    file_index: self.unstaged_indices[index],
-                });
-            }
-        }
-
-        None
-    }
 }
 
 impl AnotherOneApp {
@@ -304,17 +212,12 @@ impl AnotherOneApp {
         } else {
             hsla(0., 0., 0.42, 1.)
         };
-        let bg = if props.active {
-            rgb(0x262a30)
-        } else {
-            rgb(0x1e2024)
-        };
-        let border = if props.active {
+        let hover_bg = gpui::white().opacity(0.06);
+        let border_color = if props.active {
             gpui::white().opacity(0.14)
         } else {
-            gpui::white().opacity(0.08)
+            gpui::transparent_black()
         };
-        let hover_bg = gpui::white().opacity(0.06);
 
         let button = div()
             .id(SharedString::from(format!("git-toolbar-{}", props.label)))
@@ -323,10 +226,10 @@ impl AnotherOneApp {
             .h(px(30.))
             .px(px(7.))
             .rounded(px(7.))
-            .bg(bg)
             .border_1()
-            .border_color(border)
-            .opacity(if visually_enabled { 1. } else { 0.55 });
+            .border_color(border_color)
+            .opacity(if visually_enabled { 1. } else { 0.55 })
+            .when(props.active, |button| button.bg(rgb(0x262a30)));
 
         let mut content = div().flex().flex_row().items_center().gap(px(5.));
 
@@ -463,50 +366,6 @@ impl AnotherOneApp {
         }
     }
 
-    fn changed_files_list_item(
-        &self,
-        snapshot: &ChangedFilesListSnapshot,
-        entry: &ChangedFilesListEntry,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        match entry {
-            ChangedFilesListEntry::Header {
-                section_key,
-                title,
-                group,
-                file_count,
-                additions,
-                deletions,
-            } => {
-                let section_indices = match group {
-                    ChangeGroup::Staged => snapshot.staged_indices.clone(),
-                    ChangeGroup::Uncommitted => snapshot.unstaged_indices.clone(),
-                };
-                self.changed_file_section_header(
-                    ChangedFileSectionHeaderProps {
-                        section_key,
-                        title,
-                        project_id: snapshot.project_id.clone(),
-                        section_indices,
-                        group: *group,
-                        file_count: *file_count,
-                        additions: *additions,
-                        deletions: *deletions,
-                    },
-                    cx,
-                )
-                .into_any_element()
-            }
-            ChangedFilesListEntry::File { group, file_index } => snapshot
-                .rows
-                .get(*file_index)
-                .map(|row| {
-                    self.changed_file_row(&snapshot.project_id, *file_index, row, *group, cx)
-                })
-                .unwrap_or_else(|| div().into_any_element()),
-        }
-    }
-
     fn changed_file_row(
         &self,
         project_id: &str,
@@ -632,7 +491,6 @@ impl AnotherOneApp {
                 "changed-file-row-{project_id}-{group_key}-{file_index}"
             )))
             .w_full()
-            .h(px(34.))
             .flex()
             .items_center()
             .justify_between()
@@ -1147,8 +1005,6 @@ impl AnotherOneApp {
 
         let has_loaded_changed_files = self.changed_files.contains_key(&project_id);
         let changed_files = self.active_changed_files(cx);
-        let has_changes = !changed_files.is_empty();
-
         let mut body = div().flex_1().flex().flex_col().min_h_0();
         match sidebar_mode {
             RightSidebarMode::WorkingTree => {
@@ -1182,41 +1038,77 @@ impl AnotherOneApp {
                         self.collapsed_change_sections.contains("uncommitted");
                     let list_snapshot =
                         self.changed_files_list_snapshot(&project_id, &changed_files);
-                    let item_count =
-                        list_snapshot.item_count(staged_collapsed, uncommitted_collapsed);
+                    let mut rows = div()
+                        .id("right-sidebar-scroll")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .pt(px(8.));
+
+                    if !list_snapshot.staged_indices.is_empty() {
+                        rows = rows.child(self.changed_file_section_header(
+                            ChangedFileSectionHeaderProps {
+                                section_key: "staged",
+                                title: "Staged Changes",
+                                project_id: list_snapshot.project_id.clone(),
+                                section_indices: list_snapshot.staged_indices.clone(),
+                                group: ChangeGroup::Staged,
+                                file_count: list_snapshot.staged_indices.len(),
+                                additions: list_snapshot.staged_additions,
+                                deletions: list_snapshot.staged_deletions,
+                            },
+                            cx,
+                        ));
+
+                        if !staged_collapsed {
+                            for file_index in list_snapshot.staged_indices.iter().copied() {
+                                if let Some(row) = list_snapshot.rows.get(file_index) {
+                                    rows = rows.child(self.changed_file_row(
+                                        &list_snapshot.project_id,
+                                        file_index,
+                                        row,
+                                        ChangeGroup::Staged,
+                                        cx,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    if !list_snapshot.unstaged_indices.is_empty() {
+                        rows = rows.child(self.changed_file_section_header(
+                            ChangedFileSectionHeaderProps {
+                                section_key: "uncommitted",
+                                title: "Changes",
+                                project_id: list_snapshot.project_id.clone(),
+                                section_indices: list_snapshot.unstaged_indices.clone(),
+                                group: ChangeGroup::Uncommitted,
+                                file_count: list_snapshot.unstaged_indices.len(),
+                                additions: list_snapshot.unstaged_additions,
+                                deletions: list_snapshot.unstaged_deletions,
+                            },
+                            cx,
+                        ));
+
+                        if !uncommitted_collapsed {
+                            for file_index in list_snapshot.unstaged_indices.iter().copied() {
+                                if let Some(row) = list_snapshot.rows.get(file_index) {
+                                    rows = rows.child(self.changed_file_row(
+                                        &list_snapshot.project_id,
+                                        file_index,
+                                        row,
+                                        ChangeGroup::Uncommitted,
+                                        cx,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
                     body = body.child(
-                        div()
-                            .id("right-sidebar-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .child(
-                                uniform_list(
-                                    SharedString::from(format!("changed-files-list-{project_id}")),
-                                    item_count,
-                                    cx.processor(
-                                        move |this, range: std::ops::Range<usize>, _window, cx| {
-                                            let mut items =
-                                                Vec::with_capacity(range.end - range.start);
-                                            for index in range {
-                                                if let Some(entry) = list_snapshot.entry_at(
-                                                    staged_collapsed,
-                                                    uncommitted_collapsed,
-                                                    index,
-                                                ) {
-                                                    items.push(this.changed_files_list_item(
-                                                        &list_snapshot,
-                                                        &entry,
-                                                        cx,
-                                                    ));
-                                                }
-                                            }
-                                            items
-                                        },
-                                    ),
-                                )
-                                .size_full(),
-                            ),
+                        rows,
                     );
                 }
             }
@@ -1473,7 +1365,7 @@ impl AnotherOneApp {
                                         "assets/icons/icons__file_icons__changes.svg",
                                     ),
                                     trailing_icon: None,
-                                    enabled: has_changes || !has_loaded_changed_files,
+                                    enabled: true,
                                     active: sidebar_mode == RightSidebarMode::WorkingTree,
                                     tooltip_label: Some("View working tree changes"),
                                 },
