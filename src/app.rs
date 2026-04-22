@@ -35,8 +35,8 @@ use crate::layout::*;
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::panels::terminal_cell_width;
 use crate::project_store::{
-    ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore, Task,
-    TaskKind,
+    ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore,
+    RepoBranchRecord, Task, TaskKind,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
 use crate::terminal_launch::{
@@ -1719,6 +1719,25 @@ impl AnotherOneApp {
             .active_project_page
             .clone()
             .or_else(|| workspace.active_section.as_ref().map(|section| section.project_id.clone()))
+    }
+
+    pub(crate) fn active_project_ahead_count(&self, cx: &App) -> usize {
+        let workspace = self.workspace_pane.read(cx);
+
+        if let Some(section) = workspace.active_section.as_ref() {
+            return self
+                .project_store
+                .branch_view(&section.project_id, &section.branch_name)
+                .map(|branch| branch.ahead_count)
+                .unwrap_or(0);
+        }
+
+        workspace
+            .active_project_page
+            .as_deref()
+            .and_then(|project_id| self.project_store.primary_branch_for_project(project_id, false))
+            .map(|branch| branch.ahead_count)
+            .unwrap_or(0)
     }
 
     pub(crate) fn open_in_app_enabled(&self, app: OpenInAppKind) -> bool {
@@ -3689,6 +3708,20 @@ impl AnotherOneApp {
             }
         }
 
+        if self
+            .project_store
+            .project(project_id)
+            .and_then(|project| project.checkout.current_branch.as_deref())
+            != current_branch.as_deref()
+        {
+            if let Some(project) = self.project_store.project_mut(project_id) {
+                project.checkout.current_branch = current_branch.clone();
+                project.checkout.lines_added = 0;
+                project.checkout.lines_removed = 0;
+                changed = true;
+            }
+        }
+
         let repo_id = self
             .project_store
             .project(project_id)
@@ -3701,6 +3734,20 @@ impl AnotherOneApp {
                             branch.ahead_count = ahead_count;
                             changed = true;
                         }
+                    } else {
+                        repo.branches_by_name.insert(
+                            branch_name.to_string(),
+                            RepoBranchRecord {
+                                name: branch_name.to_string(),
+                                last_commit_relative: String::new(),
+                                is_default: false,
+                                ahead_count,
+                            },
+                        );
+                        if !repo.branch_order.iter().any(|name| name == branch_name) {
+                            repo.branch_order.push(branch_name.to_string());
+                        }
+                        changed = true;
                     }
                 }
             }
@@ -3778,6 +3825,14 @@ impl AnotherOneApp {
                     .iter()
                     .find(|project| project.id == section.project_id)
             })
+            .or_else(|| {
+                workspace.active_project_page.as_ref().and_then(|project_id| {
+                    self.project_store
+                        .projects
+                        .iter()
+                        .find(|project| project.id == *project_id)
+                })
+            })
             .or_else(|| self.project_store.projects.first())
             .map(|project| (project.id.clone(), project.path.clone()))
         else {
@@ -3835,6 +3890,19 @@ impl AnotherOneApp {
                     .iter()
                     .find(|project| project.id == section.project_id)
                     .map(|project| (project.id.clone(), project.path.clone()))
+            })
+            .or_else(|| {
+                self.workspace_pane
+                    .read(cx)
+                    .active_project_page
+                    .as_ref()
+                    .and_then(|project_id| {
+                        self.project_store
+                            .projects
+                            .iter()
+                            .find(|project| project.id == *project_id)
+                            .map(|project| (project.id.clone(), project.path.clone()))
+                    })
             })
     }
 
