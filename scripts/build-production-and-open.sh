@@ -7,11 +7,11 @@ ROOT_DIR="$(
 )"
 
 PACKAGE_NAME="$(
-  sed -n 's/^name = "\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1
+  sed -n 's/^name = "\(.*\)"/\1/p' "$ROOT_DIR/desktop/Cargo.toml" | head -n 1
 )"
 
 if [[ -z "$PACKAGE_NAME" ]]; then
-  echo "Could not determine the package name from Cargo.toml." >&2
+  echo "Could not determine the package name from desktop/Cargo.toml." >&2
   exit 1
 fi
 
