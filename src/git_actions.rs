@@ -6,6 +6,31 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRequestState {
+    Open,
+    Closed,
+    Merged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestStatus {
+    pub url: String,
+    pub state: PullRequestState,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubPullRequestRecord {
+    url: String,
+    state: Option<String>,
+    #[serde(rename = "mergedAt")]
+    merged_at: Option<String>,
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolbarGitAction {
     Commit,
@@ -162,14 +187,17 @@ pub fn find_github_repo_url(repo_path: &Path) -> Option<String> {
         .and_then(|remote| normalize_github_remote(&remote))
 }
 
-pub fn find_existing_pull_request_url(repo_path: &Path, head_branch: &str) -> Option<String> {
+pub fn find_latest_pull_request_status(
+    repo_path: &Path,
+    head_branch: &str,
+) -> Option<PullRequestStatus> {
     if head_branch.trim().is_empty() {
         return None;
     }
 
     let gh = find_gh_cli()?;
     let output = Command::new(gh)
-        .args(find_existing_pull_request_args(head_branch))
+        .args(find_latest_pull_request_args(head_branch))
         .current_dir(repo_path)
         .output()
         .ok()?;
@@ -178,13 +206,23 @@ pub fn find_existing_pull_request_url(repo_path: &Path, head_branch: &str) -> Op
         return None;
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let url = stdout.trim();
+    let mut pull_requests =
+        serde_json::from_slice::<Vec<GitHubPullRequestRecord>>(&output.stdout).ok()?;
+    pull_requests.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+
+    let pull_request = pull_requests
+        .iter()
+        .find(|pull_request| normalize_pull_request_state(pull_request) == PullRequestState::Open)
+        .or_else(|| pull_requests.first())?;
+    let url = pull_request.url.trim();
     if url.is_empty() {
-        None
-    } else {
-        Some(url.to_string())
+        return None;
     }
+
+    Some(PullRequestStatus {
+        url: url.to_string(),
+        state: normalize_pull_request_state(pull_request),
+    })
 }
 
 fn github_https_url(path: &str) -> String {
@@ -208,11 +246,38 @@ fn normalize_github_remote(remote: &str) -> Option<String> {
     .map(github_https_url)
 }
 
-fn find_existing_pull_request_args(head_branch: &str) -> Vec<String> {
-    ["pr", "view", head_branch, "--json", "url", "--jq", ".url"]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
+fn normalize_pull_request_state(pull_request: &GitHubPullRequestRecord) -> PullRequestState {
+    let normalized_state = pull_request.state.as_deref().map(str::trim);
+    if pull_request
+        .merged_at
+        .as_deref()
+        .is_some_and(|merged_at| !merged_at.trim().is_empty())
+        || normalized_state == Some("MERGED")
+    {
+        return PullRequestState::Merged;
+    }
+    if normalized_state == Some("CLOSED") {
+        return PullRequestState::Closed;
+    }
+    PullRequestState::Open
+}
+
+fn find_latest_pull_request_args(head_branch: &str) -> Vec<String> {
+    [
+        "pr",
+        "list",
+        "--head",
+        head_branch,
+        "--state",
+        "all",
+        "--limit",
+        "20",
+        "--json",
+        "url,state,mergedAt,updatedAt",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 fn commit_with_ai(
@@ -812,7 +877,7 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_pull_request_args, find_existing_pull_request_args, git_stdout,
+        create_pull_request_args, find_latest_pull_request_args, git_stdout,
         normalize_github_remote, parse_commit_message, push_branch, simple_toolbar_git_command,
         ToolbarGitAction,
     };
@@ -925,18 +990,21 @@ mod tests {
 
     #[test]
     fn find_existing_pull_request_args_target_branch_lookup() {
-        let args = find_existing_pull_request_args("feature/test");
+        let args = find_latest_pull_request_args("feature/test");
 
         assert_eq!(
             args,
             [
                 "pr",
-                "view",
+                "list",
+                "--head",
                 "feature/test",
+                "--state",
+                "all",
+                "--limit",
+                "20",
                 "--json",
-                "url",
-                "--jq",
-                ".url"
+                "url,state,mergedAt,updatedAt"
             ]
             .into_iter()
             .map(str::to_string)

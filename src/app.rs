@@ -445,7 +445,7 @@ struct ProjectGitHubLinkReply {
 
 struct ProjectPullRequestReply {
     lookup_key: String,
-    pull_request_url: Option<String>,
+    pull_request: Option<crate::git_actions::PullRequestStatus>,
 }
 
 struct TaskCreationSuccess {
@@ -1036,8 +1036,8 @@ pub struct AnotherOneApp {
     project_github_link_sender: mpsc::Sender<ProjectGitHubLinkReply>,
     /// Receiver for background project GitHub-link lookups.
     project_github_link_receiver: mpsc::Receiver<ProjectGitHubLinkReply>,
-    /// Cached pull request URLs keyed by `project_id:branch_name`.
-    pub(crate) project_pull_request_links: HashMap<String, String>,
+    /// Cached pull request metadata keyed by `project_id:branch_name`.
+    pub(crate) project_pull_requests: HashMap<String, crate::git_actions::PullRequestStatus>,
     /// Sender used by background pull-request lookups.
     project_pull_request_sender: mpsc::Sender<ProjectPullRequestReply>,
     /// Receiver for background pull-request lookups.
@@ -1902,9 +1902,37 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn active_project_pull_request_url(&self, cx: &App) -> Option<String> {
+        let pull_request = self.active_project_pull_request(cx)?;
+        (pull_request.state == crate::git_actions::PullRequestState::Open)
+            .then_some(pull_request.url.clone())
+    }
+
+    pub(crate) fn active_project_pull_request(
+        &self,
+        cx: &App,
+    ) -> Option<&crate::git_actions::PullRequestStatus> {
         let (project_id, branch_name, _) = self.active_project_pull_request_context(cx)?;
         let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
-        self.project_pull_request_links.get(&lookup_key).cloned()
+        self.project_pull_requests.get(&lookup_key)
+    }
+
+    pub(crate) fn project_pull_request(
+        &self,
+        project_id: &str,
+        branch_name: &str,
+    ) -> Option<&crate::git_actions::PullRequestStatus> {
+        let lookup_key = Self::project_pull_request_lookup_key(project_id, branch_name);
+        self.project_pull_requests.get(&lookup_key)
+    }
+
+    pub(crate) fn request_project_pull_request_lookup_for(
+        &mut self,
+        project_id: &str,
+        branch_name: &str,
+        project_path: &std::path::Path,
+    ) {
+        let lookup_key = Self::project_pull_request_lookup_key(project_id, branch_name);
+        self.request_project_pull_request_lookup(&lookup_key, branch_name, project_path);
     }
 
     pub(crate) fn refresh_active_project_pull_request_lookup(&mut self, cx: &App) {
@@ -1926,7 +1954,7 @@ impl AnotherOneApp {
         self.project_pull_request_requests.remove(&lookup_key);
         self.project_pull_request_checked.remove(&lookup_key);
         self.project_pull_request_checked_at.remove(&lookup_key);
-        self.project_pull_request_links.remove(&lookup_key);
+        self.project_pull_requests.remove(&lookup_key);
     }
 
     pub(crate) fn active_project_ahead_count(&self, cx: &App) -> usize {
@@ -2604,7 +2632,7 @@ impl AnotherOneApp {
             commit_file_changes_receiver,
             project_github_link_sender,
             project_github_link_receiver,
-            project_pull_request_links: HashMap::new(),
+            project_pull_requests: HashMap::new(),
             project_pull_request_sender,
             project_pull_request_receiver,
             terminal_launch_sender,
@@ -5508,11 +5536,11 @@ impl AnotherOneApp {
         let branch_name = branch_name.to_string();
         let project_path = project_path.to_path_buf();
         std::thread::spawn(move || {
-            let pull_request_url =
-                crate::git_actions::find_existing_pull_request_url(&project_path, &branch_name);
+            let pull_request =
+                crate::git_actions::find_latest_pull_request_status(&project_path, &branch_name);
             let _ = tx.send(ProjectPullRequestReply {
                 lookup_key,
-                pull_request_url,
+                pull_request,
             });
         });
     }
@@ -5527,19 +5555,14 @@ impl AnotherOneApp {
             self.project_pull_request_checked_at
                 .insert(reply.lookup_key.clone(), Instant::now());
 
-            if let Some(pull_request_url) = reply.pull_request_url {
-                if self
-                    .project_pull_request_links
-                    .get(&reply.lookup_key)
-                    .map(String::as_str)
-                    != Some(pull_request_url.as_str())
-                {
-                    self.project_pull_request_links
-                        .insert(reply.lookup_key, pull_request_url);
+            if let Some(pull_request) = reply.pull_request {
+                if self.project_pull_requests.get(&reply.lookup_key) != Some(&pull_request) {
+                    self.project_pull_requests
+                        .insert(reply.lookup_key, pull_request);
                     should_notify = true;
                 }
             } else if self
-                .project_pull_request_links
+                .project_pull_requests
                 .remove(&reply.lookup_key)
                 .is_some()
             {
