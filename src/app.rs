@@ -14,6 +14,18 @@ use gpui::{
 };
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
+actions!(
+    navigation,
+    [
+        NextTab,
+        PreviousTab,
+        NextTask,
+        PreviousTask,
+        NextProject,
+        NewTab,
+        NewTask
+    ]
+);
 
 use crate::agents::{
     terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
@@ -769,12 +781,19 @@ impl WorkspacePane {
         tab_index: usize,
         cx: &mut Context<Self>,
     ) -> bool {
+        let section_changed =
+            self.active_section.as_ref() != Some(section_id) || self.active_project_page.is_some();
         let activated = self
             .section_states
             .get_mut(section_id)
             .is_some_and(|state| state.activate_tab(tab_index));
         if activated {
+            self.active_section = Some(section_id.clone());
+            self.active_project_page = None;
             self.persist_section_state(section_id, cx);
+            if section_changed {
+                self.persist_active_section(cx);
+            }
             cx.notify();
         }
         activated
@@ -3231,6 +3250,258 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    fn next_tab(&mut self, _: &NextTab, _: &mut Window, cx: &mut Context<Self>) {
+        if self.navigate_tab_shortcut(NavigationDirection::Next, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn previous_tab(&mut self, _: &PreviousTab, _: &mut Window, cx: &mut Context<Self>) {
+        if self.navigate_tab_shortcut(NavigationDirection::Previous, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn next_task(&mut self, _: &NextTask, _: &mut Window, cx: &mut Context<Self>) {
+        if self.navigate_task_shortcut(NavigationDirection::Next, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn previous_task(&mut self, _: &PreviousTask, _: &mut Window, cx: &mut Context<Self>) {
+        if self.navigate_task_shortcut(NavigationDirection::Previous, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn new_tab(&mut self, _: &NewTab, _: &mut Window, cx: &mut Context<Self>) {
+        if self.open_new_tab_shortcut(cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn new_task(&mut self, _: &NewTask, _: &mut Window, cx: &mut Context<Self>) {
+        if self.open_new_task_shortcut(cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn next_project(&mut self, _: &NextProject, _: &mut Window, cx: &mut Context<Self>) {
+        if self.navigate_project_shortcut(cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn navigation_shortcuts_blocked(&self) -> bool {
+        self.settings_open
+            || self.new_task_modal.is_some()
+            || self.add_agent_modal.is_some()
+            || self.sidebar_task_rename.is_some()
+            || self.sidebar_task_menu.is_some()
+            || self.sidebar_task_delete_confirm.is_some()
+            || self.project_remove_confirm.is_some()
+            || self.discard_confirm.is_some()
+    }
+
+    pub(crate) fn navigate_tab_shortcut(
+        &mut self,
+        direction: NavigationDirection,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.navigation_shortcuts_blocked() {
+            return false;
+        }
+
+        let (previous_section, previous_active_project_page, previous_active_tab, targets) = {
+            let workspace = self.workspace_pane.read(cx);
+            let active_section = workspace.active_section.clone();
+            let active_project_page = workspace.active_project_page.clone();
+            let active_tab = active_section.as_ref().and_then(|section_id| {
+                workspace
+                    .section_states
+                    .get(section_id)
+                    .map(|state| state.active_tab)
+            });
+            let targets = global_tab_navigation_targets(
+                &self.project_store.projects,
+                &self.project_store.tasks,
+                &self.project_store.ui.pinned_task_ids,
+                &workspace.section_states,
+            );
+
+            (active_section, active_project_page, active_tab, targets)
+        };
+
+        let Some(target) = next_global_tab_navigation_target(
+            &targets,
+            &self.project_store.projects,
+            previous_section.as_ref(),
+            previous_active_project_page.as_deref(),
+            previous_active_tab,
+            direction,
+        )
+        .cloned() else {
+            return false;
+        };
+
+        let activated = self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.activate_tab(&target.section_id, target.tab_index, cx)
+        });
+
+        if activated && previous_section.as_ref() != Some(&target.section_id) {
+            self.mark_git_refresh_stale();
+        }
+
+        activated
+    }
+
+    pub(crate) fn navigate_task_shortcut(
+        &mut self,
+        direction: NavigationDirection,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.navigation_shortcuts_blocked() {
+            return false;
+        }
+
+        let targets = sidebar_task_navigation_targets(
+            &self.project_store.projects,
+            &self.project_store.tasks,
+            &self.project_store.ui.pinned_task_ids,
+        );
+        let (active_section, active_project_page) = {
+            let workspace = self.workspace_pane.read(cx);
+            (
+                workspace.active_section.clone(),
+                workspace.active_project_page.clone(),
+            )
+        };
+        let Some(target) = next_task_navigation_target(
+            &targets,
+            &self.project_store.projects,
+            active_section.as_ref(),
+            active_project_page.as_deref(),
+            direction,
+        )
+        .cloned() else {
+            return false;
+        };
+
+        if active_section
+            .as_ref()
+            .and_then(|section| section.task_id.as_deref())
+            == Some(target.task_id.as_str())
+        {
+            return false;
+        }
+
+        let section_id =
+            SectionId::for_task(&target.project_id, &target.branch_name, &target.task_id);
+        let project_path = target.project_path.clone();
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.activate_section(section_id, Some(project_path), None, cx);
+        });
+        self.mark_git_refresh_stale();
+        true
+    }
+
+    pub(crate) fn open_new_tab_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.navigation_shortcuts_blocked() {
+            return false;
+        }
+
+        let shortcut_target = {
+            let workspace = self.workspace_pane.read(cx);
+            workspace.active_section.clone().and_then(|section_id| {
+                workspace
+                    .section_states
+                    .get(&section_id)
+                    .and_then(|state| state.tabs.get(state.active_tab))
+                    .map(|tab| {
+                        let selected_agent_id = tab
+                            .launch_config
+                            .provider
+                            .and_then(|provider| {
+                                AGENTS
+                                    .iter()
+                                    .find(|agent| agent.provider == Some(provider))
+                                    .map(|agent| agent.id)
+                            })
+                            .map(str::to_string);
+                        (section_id, selected_agent_id)
+                    })
+            })
+        };
+
+        let Some((section_id, selected_agent_id)) = shortcut_target else {
+            self.show_error_toast("Open a task before creating a new tab.", cx);
+            return true;
+        };
+
+        self.open_add_agent_modal(section_id, selected_agent_id, cx);
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn open_new_task_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.navigation_shortcuts_blocked() {
+            return false;
+        }
+
+        let target = {
+            let workspace = self.workspace_pane.read(cx);
+            resolve_new_task_shortcut_target(
+                workspace.active_section.as_ref(),
+                workspace.active_project_page.as_deref(),
+                |task_id| {
+                    self.project_store
+                        .task(task_id)
+                        .map(|task| task.root_project_id.clone())
+                },
+            )
+        };
+
+        let Some(target) = target else {
+            self.show_error_toast("Open a project or task before creating a new task.", cx);
+            return true;
+        };
+
+        if let Some(source_branch) = target.source_branch.as_deref() {
+            self.open_new_task_modal_with_branch(&target.project_id, source_branch, cx);
+        } else {
+            self.open_new_task_modal(&target.project_id, cx);
+        }
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn navigate_project_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.navigation_shortcuts_blocked() {
+            return false;
+        }
+
+        let target_project_id = {
+            let workspace = self.workspace_pane.read(cx);
+            next_project_navigation_target(
+                &root_project_navigation_targets(&self.project_store.projects),
+                &self.project_store.projects,
+                workspace.active_section.as_ref(),
+                workspace.active_project_page.as_deref(),
+            )
+            .map(str::to_string)
+        };
+
+        let Some(project_id) = target_project_id else {
+            self.show_error_toast("Open or add a project before cycling projects.", cx);
+            return true;
+        };
+
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.activate_project_page(project_id.clone(), cx);
+        });
+        true
+    }
+
     fn git_status_refresh_interval(&self) -> Duration {
         ACTIVE_GIT_STATUS_REFRESH_INTERVAL
     }
@@ -5268,6 +5539,368 @@ fn choose_initial_section(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NavigationDirection {
+    Next,
+    Previous,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SidebarTaskNavigationTarget {
+    root_project_id: String,
+    project_id: String,
+    task_id: String,
+    branch_name: String,
+    project_path: std::path::PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GlobalTabNavigationTarget {
+    root_project_id: String,
+    section_id: SectionId,
+    tab_index: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NewTaskShortcutTarget {
+    project_id: String,
+    source_branch: Option<String>,
+}
+
+fn wrapped_index(
+    len: usize,
+    current_index: usize,
+    direction: NavigationDirection,
+) -> Option<usize> {
+    if len == 0 || current_index >= len {
+        return None;
+    }
+
+    Some(match direction {
+        NavigationDirection::Next => (current_index + 1) % len,
+        NavigationDirection::Previous => (current_index + len - 1) % len,
+    })
+}
+
+fn next_global_tab_navigation_target<'a>(
+    targets: &'a [GlobalTabNavigationTarget],
+    projects: &[crate::project_store::Project],
+    active_section: Option<&SectionId>,
+    active_project_page: Option<&str>,
+    active_tab: Option<usize>,
+    direction: NavigationDirection,
+) -> Option<&'a GlobalTabNavigationTarget> {
+    if targets.len() < 2 {
+        return None;
+    }
+
+    if let Some(project_id) = active_project_page {
+        let root_project_id = sidebar_root_project_id_for_project(projects, project_id)
+            .unwrap_or_else(|| project_id.to_string());
+        return match direction {
+            NavigationDirection::Next => targets
+                .iter()
+                .find(|target| target.root_project_id == root_project_id),
+            NavigationDirection::Previous => targets
+                .iter()
+                .rev()
+                .find(|target| target.root_project_id == root_project_id),
+        };
+    }
+
+    let active_section = active_section?;
+    let active_tab = active_tab?;
+    let current_index = targets.iter().position(|target| {
+        target.section_id == *active_section && target.tab_index == active_tab
+    })?;
+    let next_index = wrapped_index(targets.len(), current_index, direction)?;
+
+    targets.get(next_index)
+}
+
+fn global_tab_navigation_targets(
+    projects: &[crate::project_store::Project],
+    tasks_by_root_project: &HashMap<String, Vec<Task>>,
+    pinned_task_ids: &HashSet<String>,
+    section_states: &HashMap<SectionId, SectionState>,
+) -> Vec<GlobalTabNavigationTarget> {
+    let project_order = projects
+        .iter()
+        .enumerate()
+        .map(|(index, project)| (project.id.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let mut ordered_sections = Vec::new();
+    let mut seen_sections = HashSet::new();
+
+    for task_target in
+        sidebar_task_navigation_targets(projects, tasks_by_root_project, pinned_task_ids)
+    {
+        let section_id = SectionId::for_task(
+            &task_target.project_id,
+            &task_target.branch_name,
+            &task_target.task_id,
+        );
+        if section_states.contains_key(&section_id) && seen_sections.insert(section_id.clone()) {
+            ordered_sections.push((task_target.root_project_id, section_id));
+        }
+    }
+
+    let mut remaining_sections = section_states
+        .keys()
+        .filter(|section_id| !seen_sections.contains(*section_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    remaining_sections.sort_by(|left, right| {
+        project_order
+            .get(left.project_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+            .cmp(
+                &project_order
+                    .get(right.project_id.as_str())
+                    .copied()
+                    .unwrap_or(usize::MAX),
+            )
+            .then_with(|| left.project_id.cmp(&right.project_id))
+            .then_with(|| left.task_id.cmp(&right.task_id))
+            .then_with(|| left.branch_name.cmp(&right.branch_name))
+    });
+
+    ordered_sections.extend(remaining_sections.into_iter().map(|section_id| {
+        let root_project_id = sidebar_root_project_id_for_project(projects, &section_id.project_id)
+            .unwrap_or_else(|| section_id.project_id.clone());
+        (root_project_id, section_id)
+    }));
+
+    ordered_sections
+        .into_iter()
+        .flat_map(|(root_project_id, section_id)| {
+            let tab_count = section_states
+                .get(&section_id)
+                .map(|state| state.tabs.len())
+                .unwrap_or(0);
+
+            (0..tab_count).map(move |tab_index| GlobalTabNavigationTarget {
+                root_project_id: root_project_id.clone(),
+                section_id: section_id.clone(),
+                tab_index,
+            })
+        })
+        .collect()
+}
+
+fn root_project_navigation_targets(projects: &[crate::project_store::Project]) -> Vec<String> {
+    let mut group_order = Vec::new();
+    let mut grouped_indices: HashMap<String, Vec<usize>> = HashMap::new();
+
+    for (index, project) in projects.iter().enumerate() {
+        let group_key = sidebar_group_key(project);
+        grouped_indices
+            .entry(group_key.clone())
+            .and_modify(|indices| indices.push(index))
+            .or_insert_with(|| {
+                group_order.push(group_key);
+                vec![index]
+            });
+    }
+
+    group_order
+        .into_iter()
+        .filter_map(|group_key| {
+            let indices = grouped_indices.get(&group_key)?;
+            let root_index = indices
+                .iter()
+                .copied()
+                .find(|index| projects[*index].worktree_name.is_none())
+                .unwrap_or(indices[0]);
+            Some(projects[root_index].id.clone())
+        })
+        .collect()
+}
+
+fn next_project_navigation_target<'a>(
+    targets: &'a [String],
+    projects: &[crate::project_store::Project],
+    active_section: Option<&SectionId>,
+    active_project_page: Option<&str>,
+) -> Option<&'a str> {
+    if targets.is_empty() {
+        return None;
+    }
+
+    let current_project_id = active_project_page
+        .map(str::to_string)
+        .or_else(|| active_section.map(|section| section.project_id.clone()));
+
+    let Some(current_project_id) = current_project_id else {
+        return targets.first().map(String::as_str);
+    };
+
+    let current_root_project_id =
+        sidebar_root_project_id_for_project(projects, &current_project_id)
+            .unwrap_or(current_project_id);
+    let current_index = targets
+        .iter()
+        .position(|project_id| *project_id == current_root_project_id)?;
+    let next_index = wrapped_index(targets.len(), current_index, NavigationDirection::Next)?;
+
+    targets.get(next_index).map(String::as_str)
+}
+
+fn sidebar_group_key(project: &crate::project_store::Project) -> String {
+    project
+        .repo_common_dir
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| format!("project:{}", project.id))
+}
+
+fn sidebar_root_project_id_for_project(
+    projects: &[crate::project_store::Project],
+    project_id: &str,
+) -> Option<String> {
+    let project = projects.iter().find(|project| project.id == project_id)?;
+    let group_key = sidebar_group_key(project);
+
+    projects
+        .iter()
+        .find(|candidate| {
+            sidebar_group_key(candidate) == group_key && candidate.worktree_name.is_none()
+        })
+        .map(|project| project.id.clone())
+        .or_else(|| Some(project.id.clone()))
+}
+
+fn sidebar_task_navigation_targets(
+    projects: &[crate::project_store::Project],
+    tasks_by_root_project: &HashMap<String, Vec<Task>>,
+    pinned_task_ids: &HashSet<String>,
+) -> Vec<SidebarTaskNavigationTarget> {
+    let mut group_order = Vec::new();
+    let mut grouped_indices: HashMap<String, Vec<usize>> = HashMap::new();
+
+    for (index, project) in projects.iter().enumerate() {
+        let group_key = sidebar_group_key(project);
+        grouped_indices
+            .entry(group_key.clone())
+            .and_modify(|indices| indices.push(index))
+            .or_insert_with(|| {
+                group_order.push(group_key);
+                vec![index]
+            });
+    }
+
+    let mut targets = Vec::new();
+    for group_key in group_order {
+        let Some(indices) = grouped_indices.get(&group_key) else {
+            continue;
+        };
+
+        let root_index = indices
+            .iter()
+            .copied()
+            .find(|index| projects[*index].worktree_name.is_none())
+            .unwrap_or(indices[0]);
+        let root_project = &projects[root_index];
+
+        let mut group_targets = tasks_by_root_project
+            .get(&root_project.id)
+            .into_iter()
+            .flat_map(|tasks| tasks.iter())
+            .filter_map(|task| match task.kind {
+                TaskKind::Direct => Some(SidebarTaskNavigationTarget {
+                    root_project_id: root_project.id.clone(),
+                    project_id: root_project.id.clone(),
+                    task_id: task.id.clone(),
+                    branch_name: task.branch_name.clone(),
+                    project_path: root_project.path.clone(),
+                }),
+                TaskKind::Worktree | TaskKind::MultiWorktree => task
+                    .worktree_project_id
+                    .as_ref()
+                    .and_then(|worktree_project_id| {
+                        projects
+                            .iter()
+                            .find(|project| project.id == *worktree_project_id)
+                    })
+                    .map(|worktree_project| SidebarTaskNavigationTarget {
+                        root_project_id: root_project.id.clone(),
+                        project_id: worktree_project.id.clone(),
+                        task_id: task.id.clone(),
+                        branch_name: task.branch_name.clone(),
+                        project_path: worktree_project.path.clone(),
+                    }),
+            })
+            .collect::<Vec<_>>();
+
+        group_targets.sort_by_key(|target| !pinned_task_ids.contains(&target.task_id));
+        targets.extend(group_targets);
+    }
+
+    targets
+}
+
+fn next_task_navigation_target<'a>(
+    targets: &'a [SidebarTaskNavigationTarget],
+    projects: &[crate::project_store::Project],
+    active_section: Option<&SectionId>,
+    active_project_page: Option<&str>,
+    direction: NavigationDirection,
+) -> Option<&'a SidebarTaskNavigationTarget> {
+    if targets.is_empty() {
+        return None;
+    }
+
+    if let Some(project_id) = active_project_page {
+        let root_project_id = sidebar_root_project_id_for_project(projects, project_id)
+            .unwrap_or_else(|| project_id.to_string());
+        return match direction {
+            NavigationDirection::Next => targets
+                .iter()
+                .find(|target| target.root_project_id == root_project_id),
+            NavigationDirection::Previous => targets
+                .iter()
+                .rev()
+                .find(|target| target.root_project_id == root_project_id),
+        };
+    }
+
+    let active_task_id = active_section.and_then(|section| section.task_id.as_deref())?;
+    let current_index = targets
+        .iter()
+        .position(|target| target.task_id == active_task_id)?;
+    let next_index = wrapped_index(targets.len(), current_index, direction)?;
+
+    targets.get(next_index)
+}
+
+fn resolve_new_task_shortcut_target<F>(
+    active_section: Option<&SectionId>,
+    active_project_page: Option<&str>,
+    task_root_project_id: F,
+) -> Option<NewTaskShortcutTarget>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(section) = active_section {
+        let project_id = section
+            .task_id
+            .as_deref()
+            .and_then(task_root_project_id)
+            .unwrap_or_else(|| section.project_id.clone());
+
+        return Some(NewTaskShortcutTarget {
+            project_id,
+            source_branch: Some(section.branch_name.clone()),
+        });
+    }
+
+    active_project_page.map(|project_id| NewTaskShortcutTarget {
+        project_id: project_id.to_string(),
+        source_branch: None,
+    })
+}
+
 fn apply_terminal_session_backfill(
     section_states: &mut HashMap<SectionId, SectionState>,
     key: &TerminalRuntimeKey,
@@ -5302,12 +5935,15 @@ fn remove_terminal_runtime_state<T>(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_terminal_session_backfill, choose_initial_section,
-        output_mentions_missing_claude_conversation, remove_terminal_runtime_state,
+        apply_terminal_session_backfill, choose_initial_section, global_tab_navigation_targets,
+        next_global_tab_navigation_target, next_project_navigation_target,
+        next_task_navigation_target, output_mentions_missing_claude_conversation,
+        remove_terminal_runtime_state, resolve_new_task_shortcut_target,
+        root_project_navigation_targets, sidebar_task_navigation_targets,
         terminal_line_selection_range, terminal_scroll_lines, terminal_selected_text,
         terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
-        AnotherOneApp, SectionId, SectionState, TerminalCellPosition, TerminalSelectionRange,
-        TERMINAL_RECENT_OUTPUT_LIMIT,
+        AnotherOneApp, NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState,
+        TerminalCellPosition, TerminalSelectionRange, TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
@@ -5315,12 +5951,13 @@ mod tests {
     };
     use crate::project_store::{
         PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
+        Task, TaskKind,
     };
     use crate::terminal_runtime::{
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalRuntimeKey, TerminalSurfaceSnapshot,
     };
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, ScrollDelta};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
 
     fn shell_tab(id: usize, title: &str) -> PersistedTerminalTab {
@@ -5347,6 +5984,44 @@ mod tests {
             },
             worktree_name: None,
             repo_common_dir: None,
+        }
+    }
+
+    fn sample_project_in_repo(
+        id: &str,
+        repo_id: &str,
+        branch_name: &str,
+        worktree_name: Option<&str>,
+    ) -> Project {
+        let mut project = sample_project(id, branch_name);
+        project.repo_id = repo_id.to_string();
+        project.worktree_name = worktree_name.map(str::to_string);
+        project.repo_common_dir = Some(PathBuf::from(format!("/tmp/{repo_id}/.git")));
+        project
+    }
+
+    fn sample_task(
+        id: &str,
+        name: &str,
+        kind: TaskKind,
+        root_project_id: &str,
+        target_project_id: &str,
+        branch_name: &str,
+        worktree_project_id: Option<&str>,
+    ) -> Task {
+        Task {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind,
+            root_project_id: root_project_id.to_string(),
+            target_project_id: target_project_id.to_string(),
+            branch_name: branch_name.to_string(),
+            section_id: format!("{target_project_id}::{branch_name}::{id}"),
+            worktree_project_id: worktree_project_id.map(str::to_string),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 1,
+            cwd: None,
         }
     }
 
@@ -5436,6 +6111,642 @@ mod tests {
         assert_eq!(
             state.tabs[1].launch_config,
             TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode)
+        );
+    }
+
+    #[test]
+    fn global_tab_navigation_targets_follow_task_order_and_tab_order() {
+        let projects = vec![
+            sample_project_in_repo("root-a", "repo-a", "main", None),
+            sample_project_in_repo("root-a-wt", "repo-a", "feature/a2", Some("wt-a2")),
+            sample_project_in_repo("root-b", "repo-b", "main", None),
+        ];
+        let tasks = HashMap::from([
+            (
+                "root-a".to_string(),
+                vec![
+                    sample_task(
+                        "task-a1",
+                        "Task A1",
+                        TaskKind::Direct,
+                        "root-a",
+                        "root-a",
+                        "feature/a1",
+                        None,
+                    ),
+                    sample_task(
+                        "task-a2",
+                        "Task A2",
+                        TaskKind::Worktree,
+                        "root-a",
+                        "root-a-wt",
+                        "feature/a2",
+                        Some("root-a-wt"),
+                    ),
+                ],
+            ),
+            (
+                "root-b".to_string(),
+                vec![sample_task(
+                    "task-b1",
+                    "Task B1",
+                    TaskKind::Direct,
+                    "root-b",
+                    "root-b",
+                    "feature/b1",
+                    None,
+                )],
+            ),
+        ]);
+        let section_states = HashMap::from([
+            (
+                SectionId::for_task("root-a", "feature/a1", "task-a1"),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "a1-tab-1".to_string(),
+                        next_tab_id: 3,
+                        cwd: Some(PathBuf::from("/tmp/root-a")),
+                        tabs: vec![
+                            PersistedTerminalTab {
+                                id: "a1-tab-1".to_string(),
+                                title: "Codex".to_string(),
+                                provider: Some(AgentProviderKind::Codex),
+                                launch_config: Some(TerminalLaunchConfig::for_provider(
+                                    AgentProviderKind::Codex,
+                                )),
+                                restore_status: TerminalRestoreStatus::NotStarted,
+                            },
+                            PersistedTerminalTab {
+                                id: "a1-tab-2".to_string(),
+                                title: "Claude Code".to_string(),
+                                provider: Some(AgentProviderKind::ClaudeCode),
+                                launch_config: Some(TerminalLaunchConfig::for_provider(
+                                    AgentProviderKind::ClaudeCode,
+                                )),
+                                restore_status: TerminalRestoreStatus::NotStarted,
+                            },
+                        ],
+                    },
+                    None,
+                ),
+            ),
+            (
+                SectionId::for_task("root-a-wt", "feature/a2", "task-a2"),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "a2-tab-1".to_string(),
+                        next_tab_id: 2,
+                        cwd: Some(PathBuf::from("/tmp/root-a-wt")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "a2-tab-1".to_string(),
+                            title: "Pi".to_string(),
+                            provider: Some(AgentProviderKind::Pi),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::Pi,
+                            )),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                        }],
+                    },
+                    None,
+                ),
+            ),
+            (
+                SectionId::for_task("root-b", "feature/b1", "task-b1"),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "b1-tab-1".to_string(),
+                        next_tab_id: 2,
+                        cwd: Some(PathBuf::from("/tmp/root-b")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "b1-tab-1".to_string(),
+                            title: "Terminal".to_string(),
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                        }],
+                    },
+                    None,
+                ),
+            ),
+        ]);
+
+        let targets =
+            global_tab_navigation_targets(&projects, &tasks, &HashSet::new(), &section_states);
+        let ordered_targets = targets
+            .into_iter()
+            .map(|target| {
+                (
+                    target.section_id.task_id.unwrap_or_default(),
+                    target.section_id.project_id,
+                    target.tab_index,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ordered_targets,
+            vec![
+                ("task-a1".to_string(), "root-a".to_string(), 0),
+                ("task-a1".to_string(), "root-a".to_string(), 1),
+                ("task-a2".to_string(), "root-a-wt".to_string(), 0),
+                ("task-b1".to_string(), "root-b".to_string(), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn next_global_tab_navigation_target_wraps_across_sections() {
+        let projects = vec![
+            sample_project_in_repo("root-a", "repo-a", "main", None),
+            sample_project_in_repo("root-b", "repo-b", "main", None),
+        ];
+        let tasks = HashMap::from([
+            (
+                "root-a".to_string(),
+                vec![sample_task(
+                    "task-a1",
+                    "Task A1",
+                    TaskKind::Direct,
+                    "root-a",
+                    "root-a",
+                    "feature/a1",
+                    None,
+                )],
+            ),
+            (
+                "root-b".to_string(),
+                vec![sample_task(
+                    "task-b1",
+                    "Task B1",
+                    TaskKind::Direct,
+                    "root-b",
+                    "root-b",
+                    "feature/b1",
+                    None,
+                )],
+            ),
+        ]);
+        let section_states = HashMap::from([
+            (
+                SectionId::for_task("root-a", "feature/a1", "task-a1"),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "a1-tab-2".to_string(),
+                        next_tab_id: 3,
+                        cwd: Some(PathBuf::from("/tmp/root-a")),
+                        tabs: vec![
+                            PersistedTerminalTab {
+                                id: "a1-tab-1".to_string(),
+                                title: "Codex".to_string(),
+                                provider: Some(AgentProviderKind::Codex),
+                                launch_config: Some(TerminalLaunchConfig::for_provider(
+                                    AgentProviderKind::Codex,
+                                )),
+                                restore_status: TerminalRestoreStatus::NotStarted,
+                            },
+                            PersistedTerminalTab {
+                                id: "a1-tab-2".to_string(),
+                                title: "Claude Code".to_string(),
+                                provider: Some(AgentProviderKind::ClaudeCode),
+                                launch_config: Some(TerminalLaunchConfig::for_provider(
+                                    AgentProviderKind::ClaudeCode,
+                                )),
+                                restore_status: TerminalRestoreStatus::NotStarted,
+                            },
+                        ],
+                    },
+                    None,
+                ),
+            ),
+            (
+                SectionId::for_task("root-b", "feature/b1", "task-b1"),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "b1-tab-1".to_string(),
+                        next_tab_id: 2,
+                        cwd: Some(PathBuf::from("/tmp/root-b")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "b1-tab-1".to_string(),
+                            title: "Pi".to_string(),
+                            provider: Some(AgentProviderKind::Pi),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::Pi,
+                            )),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                        }],
+                    },
+                    None,
+                ),
+            ),
+        ]);
+        let targets =
+            global_tab_navigation_targets(&projects, &tasks, &HashSet::new(), &section_states);
+
+        let next = next_global_tab_navigation_target(
+            &targets,
+            &projects,
+            Some(&SectionId::for_task("root-a", "feature/a1", "task-a1")),
+            None,
+            Some(1),
+            NavigationDirection::Next,
+        )
+        .map(|target| (target.section_id.task_id.clone(), target.tab_index));
+        let previous = next_global_tab_navigation_target(
+            &targets,
+            &projects,
+            Some(&SectionId::for_task("root-a", "feature/a1", "task-a1")),
+            None,
+            Some(0),
+            NavigationDirection::Previous,
+        )
+        .map(|target| (target.section_id.task_id.clone(), target.tab_index));
+
+        assert_eq!(next, Some((Some("task-b1".to_string()), 0)));
+        assert_eq!(previous, Some((Some("task-b1".to_string()), 0)));
+    }
+
+    #[test]
+    fn next_global_tab_navigation_target_from_project_overview_uses_project_group_tabs() {
+        let projects = vec![
+            sample_project_in_repo("root-a", "repo-a", "main", None),
+            sample_project_in_repo("root-a-wt", "repo-a", "feature/a2", Some("wt-a2")),
+            sample_project_in_repo("root-b", "repo-b", "main", None),
+        ];
+        let tasks = HashMap::from([
+            (
+                "root-a".to_string(),
+                vec![sample_task(
+                    "task-a2",
+                    "Task A2",
+                    TaskKind::Worktree,
+                    "root-a",
+                    "root-a-wt",
+                    "feature/a2",
+                    Some("root-a-wt"),
+                )],
+            ),
+            (
+                "root-b".to_string(),
+                vec![sample_task(
+                    "task-b1",
+                    "Task B1",
+                    TaskKind::Direct,
+                    "root-b",
+                    "root-b",
+                    "feature/b1",
+                    None,
+                )],
+            ),
+        ]);
+        let section_states = HashMap::from([
+            (
+                SectionId::for_task("root-a-wt", "feature/a2", "task-a2"),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "a2-tab-1".to_string(),
+                        next_tab_id: 2,
+                        cwd: Some(PathBuf::from("/tmp/root-a-wt")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "a2-tab-1".to_string(),
+                            title: "Codex".to_string(),
+                            provider: Some(AgentProviderKind::Codex),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::Codex,
+                            )),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                        }],
+                    },
+                    None,
+                ),
+            ),
+            (
+                SectionId::for_task("root-b", "feature/b1", "task-b1"),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "b1-tab-1".to_string(),
+                        next_tab_id: 2,
+                        cwd: Some(PathBuf::from("/tmp/root-b")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "b1-tab-1".to_string(),
+                            title: "Pi".to_string(),
+                            provider: Some(AgentProviderKind::Pi),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::Pi,
+                            )),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                        }],
+                    },
+                    None,
+                ),
+            ),
+        ]);
+        let targets =
+            global_tab_navigation_targets(&projects, &tasks, &HashSet::new(), &section_states);
+
+        let next = next_global_tab_navigation_target(
+            &targets,
+            &projects,
+            None,
+            Some("root-a"),
+            None,
+            NavigationDirection::Next,
+        )
+        .map(|target| target.section_id.task_id.clone());
+        let previous = next_global_tab_navigation_target(
+            &targets,
+            &projects,
+            None,
+            Some("root-a"),
+            None,
+            NavigationDirection::Previous,
+        )
+        .map(|target| target.section_id.task_id.clone());
+
+        assert_eq!(next, Some(Some("task-a2".to_string())));
+        assert_eq!(previous, Some(Some("task-a2".to_string())));
+    }
+
+    #[test]
+    fn sidebar_task_navigation_targets_follow_sidebar_group_order() {
+        let projects = vec![
+            sample_project_in_repo("root-a", "repo-a", "main", None),
+            sample_project_in_repo("root-b", "repo-b", "main", None),
+        ];
+        let tasks = HashMap::from([
+            (
+                "root-a".to_string(),
+                vec![
+                    sample_task(
+                        "task-a1",
+                        "Task A1",
+                        TaskKind::Direct,
+                        "root-a",
+                        "root-a",
+                        "feature/a1",
+                        None,
+                    ),
+                    sample_task(
+                        "task-a2",
+                        "Task A2",
+                        TaskKind::Direct,
+                        "root-a",
+                        "root-a",
+                        "feature/a2",
+                        None,
+                    ),
+                ],
+            ),
+            (
+                "root-b".to_string(),
+                vec![sample_task(
+                    "task-b1",
+                    "Task B1",
+                    TaskKind::Direct,
+                    "root-b",
+                    "root-b",
+                    "feature/b1",
+                    None,
+                )],
+            ),
+        ]);
+
+        let targets = sidebar_task_navigation_targets(&projects, &tasks, &HashSet::new());
+        let ordered_task_ids = targets
+            .into_iter()
+            .map(|target| target.task_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ordered_task_ids, vec!["task-a1", "task-a2", "task-b1"]);
+    }
+
+    #[test]
+    fn sidebar_task_navigation_targets_keep_pinned_tasks_first_within_group() {
+        let projects = vec![sample_project_in_repo("root-a", "repo-a", "main", None)];
+        let tasks = HashMap::from([(
+            "root-a".to_string(),
+            vec![
+                sample_task(
+                    "task-a1",
+                    "Task A1",
+                    TaskKind::Direct,
+                    "root-a",
+                    "root-a",
+                    "feature/a1",
+                    None,
+                ),
+                sample_task(
+                    "task-a2",
+                    "Task A2",
+                    TaskKind::Direct,
+                    "root-a",
+                    "root-a",
+                    "feature/a2",
+                    None,
+                ),
+                sample_task(
+                    "task-a3",
+                    "Task A3",
+                    TaskKind::Direct,
+                    "root-a",
+                    "root-a",
+                    "feature/a3",
+                    None,
+                ),
+            ],
+        )]);
+        let pinned = HashSet::from(["task-a2".to_string()]);
+
+        let targets = sidebar_task_navigation_targets(&projects, &tasks, &pinned);
+        let ordered_task_ids = targets
+            .into_iter()
+            .map(|target| target.task_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ordered_task_ids, vec!["task-a2", "task-a1", "task-a3"]);
+    }
+
+    #[test]
+    fn next_task_navigation_target_wraps_forward_and_backward() {
+        let projects = vec![sample_project_in_repo("root-a", "repo-a", "main", None)];
+        let tasks = HashMap::from([(
+            "root-a".to_string(),
+            vec![
+                sample_task(
+                    "task-a1",
+                    "Task A1",
+                    TaskKind::Direct,
+                    "root-a",
+                    "root-a",
+                    "feature/a1",
+                    None,
+                ),
+                sample_task(
+                    "task-a2",
+                    "Task A2",
+                    TaskKind::Direct,
+                    "root-a",
+                    "root-a",
+                    "feature/a2",
+                    None,
+                ),
+                sample_task(
+                    "task-a3",
+                    "Task A3",
+                    TaskKind::Direct,
+                    "root-a",
+                    "root-a",
+                    "feature/a3",
+                    None,
+                ),
+            ],
+        )]);
+        let targets = sidebar_task_navigation_targets(&projects, &tasks, &HashSet::new());
+
+        let next = next_task_navigation_target(
+            &targets,
+            &projects,
+            Some(&SectionId::for_task("root-a", "feature/a3", "task-a3")),
+            None,
+            NavigationDirection::Next,
+        )
+        .map(|target| target.task_id.as_str());
+        let previous = next_task_navigation_target(
+            &targets,
+            &projects,
+            Some(&SectionId::for_task("root-a", "feature/a1", "task-a1")),
+            None,
+            NavigationDirection::Previous,
+        )
+        .map(|target| target.task_id.as_str());
+
+        assert_eq!(next, Some("task-a1"));
+        assert_eq!(previous, Some("task-a3"));
+    }
+
+    #[test]
+    fn next_task_navigation_target_from_project_overview_uses_first_or_last_task() {
+        let projects = vec![
+            sample_project_in_repo("root-a", "repo-a", "main", None),
+            sample_project_in_repo("root-a-wt", "repo-a", "feature/a2", Some("wt-a2")),
+        ];
+        let tasks = HashMap::from([(
+            "root-a".to_string(),
+            vec![
+                sample_task(
+                    "task-a1",
+                    "Task A1",
+                    TaskKind::Direct,
+                    "root-a",
+                    "root-a",
+                    "feature/a1",
+                    None,
+                ),
+                sample_task(
+                    "task-a2",
+                    "Task A2",
+                    TaskKind::Worktree,
+                    "root-a",
+                    "root-a-wt",
+                    "feature/a2",
+                    Some("root-a-wt"),
+                ),
+            ],
+        )]);
+        let targets = sidebar_task_navigation_targets(&projects, &tasks, &HashSet::new());
+
+        let next = next_task_navigation_target(
+            &targets,
+            &projects,
+            None,
+            Some("root-a"),
+            NavigationDirection::Next,
+        )
+        .map(|target| target.task_id.as_str());
+        let previous = next_task_navigation_target(
+            &targets,
+            &projects,
+            None,
+            Some("root-a"),
+            NavigationDirection::Previous,
+        )
+        .map(|target| target.task_id.as_str());
+
+        assert_eq!(next, Some("task-a1"));
+        assert_eq!(previous, Some("task-a2"));
+    }
+
+    #[test]
+    fn root_project_navigation_targets_follow_sidebar_group_order() {
+        let projects = vec![
+            sample_project_in_repo("root-a", "repo-a", "main", None),
+            sample_project_in_repo("root-a-wt", "repo-a", "feature/a2", Some("wt-a2")),
+            sample_project_in_repo("root-b", "repo-b", "main", None),
+        ];
+
+        let targets = root_project_navigation_targets(&projects);
+
+        assert_eq!(targets, vec!["root-a", "root-b"]);
+    }
+
+    #[test]
+    fn next_project_navigation_target_wraps_from_task_to_next_root_project() {
+        let projects = vec![
+            sample_project_in_repo("root-a", "repo-a", "main", None),
+            sample_project_in_repo("root-a-wt", "repo-a", "feature/a2", Some("wt-a2")),
+            sample_project_in_repo("root-b", "repo-b", "main", None),
+        ];
+        let targets = root_project_navigation_targets(&projects);
+
+        let next = next_project_navigation_target(
+            &targets,
+            &projects,
+            Some(&SectionId::for_task("root-a-wt", "feature/a2", "task-a2")),
+            None,
+        );
+
+        assert_eq!(next, Some("root-b"));
+    }
+
+    #[test]
+    fn next_project_navigation_target_wraps_between_project_pages() {
+        let projects = vec![
+            sample_project_in_repo("root-a", "repo-a", "main", None),
+            sample_project_in_repo("root-b", "repo-b", "main", None),
+        ];
+        let targets = root_project_navigation_targets(&projects);
+
+        let next = next_project_navigation_target(&targets, &projects, None, Some("root-b"));
+
+        assert_eq!(next, Some("root-a"));
+    }
+
+    #[test]
+    fn resolve_new_task_shortcut_target_uses_root_project_for_active_task() {
+        let section = SectionId::for_task("root-a-wt", "feature/a2", "task-a2");
+
+        let target = resolve_new_task_shortcut_target(Some(&section), None, |task_id| {
+            (task_id == "task-a2").then(|| "root-a".to_string())
+        });
+
+        assert_eq!(
+            target,
+            Some(NewTaskShortcutTarget {
+                project_id: "root-a".to_string(),
+                source_branch: Some("feature/a2".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_new_task_shortcut_target_falls_back_to_project_page() {
+        let target = resolve_new_task_shortcut_target(None, Some("root-a"), |_| None);
+
+        assert_eq!(
+            target,
+            Some(NewTaskShortcutTarget {
+                project_id: "root-a".to_string(),
+                source_branch: None,
+            })
         );
     }
 
@@ -5952,6 +7263,13 @@ impl Render for AnotherOneApp {
                         .on_action(cx.listener(Self::zoom_in))
                         .on_action(cx.listener(Self::zoom_out))
                         .on_action(cx.listener(Self::zoom_reset))
+                        .on_action(cx.listener(Self::next_tab))
+                        .on_action(cx.listener(Self::previous_tab))
+                        .on_action(cx.listener(Self::next_task))
+                        .on_action(cx.listener(Self::previous_task))
+                        .on_action(cx.listener(Self::next_project))
+                        .on_action(cx.listener(Self::new_tab))
+                        .on_action(cx.listener(Self::new_task))
                         .child(settings)
                         .child(self.toast_layer(cx)),
                     self.focus_handle.clone(),
@@ -5972,6 +7290,13 @@ impl Render for AnotherOneApp {
                         .on_action(cx.listener(Self::zoom_in))
                         .on_action(cx.listener(Self::zoom_out))
                         .on_action(cx.listener(Self::zoom_reset))
+                        .on_action(cx.listener(Self::next_tab))
+                        .on_action(cx.listener(Self::previous_tab))
+                        .on_action(cx.listener(Self::next_task))
+                        .on_action(cx.listener(Self::previous_task))
+                        .on_action(cx.listener(Self::next_project))
+                        .on_action(cx.listener(Self::new_tab))
+                        .on_action(cx.listener(Self::new_task))
                         .child(settings)
                         .child(self.toast_layer(cx)),
                     self.focus_handle.clone(),
@@ -6045,6 +7370,13 @@ impl Render for AnotherOneApp {
                     .on_action(cx.listener(Self::zoom_in))
                     .on_action(cx.listener(Self::zoom_out))
                     .on_action(cx.listener(Self::zoom_reset))
+                    .on_action(cx.listener(Self::next_tab))
+                    .on_action(cx.listener(Self::previous_tab))
+                    .on_action(cx.listener(Self::next_task))
+                    .on_action(cx.listener(Self::previous_task))
+                    .on_action(cx.listener(Self::next_project))
+                    .on_action(cx.listener(Self::new_tab))
+                    .on_action(cx.listener(Self::new_task))
                     .child(self.mac_title_strip(window, cx, busy))
                     .child(main)
                     .child(footer)
@@ -6077,6 +7409,13 @@ impl Render for AnotherOneApp {
                     .on_action(cx.listener(Self::zoom_in))
                     .on_action(cx.listener(Self::zoom_out))
                     .on_action(cx.listener(Self::zoom_reset))
+                    .on_action(cx.listener(Self::next_tab))
+                    .on_action(cx.listener(Self::previous_tab))
+                    .on_action(cx.listener(Self::next_task))
+                    .on_action(cx.listener(Self::previous_task))
+                    .on_action(cx.listener(Self::next_project))
+                    .on_action(cx.listener(Self::new_tab))
+                    .on_action(cx.listener(Self::new_task))
                     .child(main)
                     .child(footer)
                     .child(self.resource_indicator_overlay(window, cx))
