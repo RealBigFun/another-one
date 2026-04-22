@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    actions, div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, AnyView, App, Bounds,
-    ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, Focusable, GlobalElementId, InspectorElementId, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollDelta, SharedString,
-    Size, Timer, UTF16Selection, WeakEntity, Window,
+    actions, div, hsla, img, prelude::*, px, rems, rgb, svg, AnyElement, AnyView, App, Bounds,
+    ClipboardEntry, ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity,
+    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Image, InspectorElementId,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Point,
+    Render, ScrollDelta, SharedString, Size, Timer, UTF16Selection, WeakEntity, Window,
 };
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
@@ -45,6 +45,7 @@ const TOAST_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_ERROR_EXTRA_LIFETIME: Duration = Duration::from_secs(3);
 const TOAST_FADE_IN: Duration = Duration::from_millis(220);
 const TOAST_FADE_OUT: Duration = Duration::from_millis(220);
+const PASTED_IMAGE_PREVIEW_LIFETIME: Duration = Duration::from_millis(2200);
 const TOAST_STACK_LIMIT: usize = 4;
 const TOAST_SWIPE_DISMISS_THRESHOLD: f32 = 120.;
 const TOAST_COPY_FEEDBACK: Duration = Duration::from_millis(1200);
@@ -486,6 +487,13 @@ struct ToastDrag {
     toast_id: u64,
     start_x: f32,
     current_x: f32,
+}
+
+#[derive(Debug, Clone)]
+struct PastedImagePreview {
+    image: Arc<Image>,
+    shown_at: Instant,
+    dismiss_at: Instant,
 }
 
 #[derive(Clone)]
@@ -951,6 +959,7 @@ pub struct AnotherOneApp {
     next_toast_id: u64,
     toast_drag: Option<ToastDrag>,
     copied_toast: Option<(u64, Instant)>,
+    pasted_image_preview: Option<PastedImagePreview>,
     /// Pending discard confirmation: (project_id, files_to_discard).
     pub(crate) discard_confirm: Option<(String, Vec<ChangedFile>)>,
     /// Pending project removal confirmation for a project group with open tasks.
@@ -1908,6 +1917,7 @@ impl AnotherOneApp {
             next_toast_id: 1,
             toast_drag: None,
             copied_toast: None,
+            pasted_image_preview: None,
             discard_confirm: None,
             project_remove_confirm: None,
             sidebar_task_delete_confirm: None,
@@ -2873,6 +2883,46 @@ impl AnotherOneApp {
             return false;
         };
         runtime.paste_text(text).is_ok()
+    }
+
+    pub(crate) fn handle_clipboard_paste(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(item) = cx.read_from_clipboard() else {
+            return false;
+        };
+
+        if let Some(text) = item.text() {
+            if self.paste_into_active_terminal(cx, &text) {
+                cx.stop_propagation();
+                return true;
+            }
+        }
+
+        let Some(image) = Self::clipboard_image(&item) else {
+            return false;
+        };
+
+        self.show_pasted_image_preview(image, cx);
+        cx.stop_propagation();
+        cx.notify();
+        true
+    }
+
+    fn clipboard_image(item: &ClipboardItem) -> Option<Image> {
+        item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::Image(image) => Some(image.clone()),
+            ClipboardEntry::String(_) => None,
+        })
+    }
+
+    fn show_pasted_image_preview(&mut self, image: Image, cx: &mut App) {
+        self.clear_pasted_image_preview(cx);
+
+        let now = Instant::now();
+        self.pasted_image_preview = Some(PastedImagePreview {
+            image: Arc::new(image),
+            shown_at: now,
+            dismiss_at: now + PASTED_IMAGE_PREVIEW_LIFETIME,
+        });
     }
 
     pub(crate) fn terminal_selection_for(
@@ -4713,6 +4763,29 @@ impl AnotherOneApp {
             || had_copy_feedback
     }
 
+    fn clear_pasted_image_preview(&mut self, cx: &mut App) -> bool {
+        let Some(preview) = self.pasted_image_preview.take() else {
+            return false;
+        };
+
+        preview.image.remove_asset(cx);
+        true
+    }
+
+    fn tick_pasted_image_preview(&mut self, cx: &mut App) -> bool {
+        let Some(preview) = self.pasted_image_preview.as_ref() else {
+            return false;
+        };
+
+        let now = Instant::now();
+        if preview.dismiss_at <= now {
+            return self.clear_pasted_image_preview(cx);
+        }
+
+        now < preview.shown_at + TOAST_FADE_IN
+            || preview.dismiss_at.saturating_duration_since(now) <= TOAST_FADE_OUT
+    }
+
     fn refresh_timer_interval(&self) -> Duration {
         if !self.pending_terminal_launches.is_empty()
             || !self.live_terminal_runtimes.is_empty()
@@ -4720,7 +4793,10 @@ impl AnotherOneApp {
             || self.resource_indicator_open
         {
             TOAST_ANIMATION_REFRESH_INTERVAL
-        } else if self.toasts.is_empty() && self.copied_toast.is_none() {
+        } else if self.toasts.is_empty()
+            && self.copied_toast.is_none()
+            && self.pasted_image_preview.is_none()
+        {
             IDLE_REFRESH_INTERVAL
         } else {
             TOAST_ANIMATION_REFRESH_INTERVAL
@@ -4839,32 +4915,117 @@ impl AnotherOneApp {
     }
 
     fn toast_animation_state(toast: &AppToast, now: Instant) -> (f32, f32) {
+        Self::transient_animation_state(toast.shown_at, toast.dismiss_at, now)
+    }
+
+    fn pasted_image_preview_animation_state(
+        preview: &PastedImagePreview,
+        now: Instant,
+    ) -> (f32, f32) {
+        Self::transient_animation_state(preview.shown_at, preview.dismiss_at, now)
+    }
+
+    fn transient_animation_state(
+        shown_at: Instant,
+        dismiss_at: Instant,
+        now: Instant,
+    ) -> (f32, f32) {
         let fade_in_progress = if TOAST_FADE_IN.is_zero() {
             1.
         } else {
-            (now.saturating_duration_since(toast.shown_at).as_secs_f32()
-                / TOAST_FADE_IN.as_secs_f32())
-            .clamp(0., 1.)
+            (now.saturating_duration_since(shown_at).as_secs_f32() / TOAST_FADE_IN.as_secs_f32())
+                .clamp(0., 1.)
         };
         let fade_in = fade_in_progress * fade_in_progress * (3. - 2. * fade_in_progress);
 
-        let fade_out_progress = if now >= toast.dismiss_at {
+        let fade_out_progress = if now >= dismiss_at {
             0.
         } else if TOAST_FADE_OUT.is_zero() {
             1.
         } else {
-            (toast
-                .dismiss_at
-                .saturating_duration_since(now)
-                .as_secs_f32()
-                / TOAST_FADE_OUT.as_secs_f32())
-            .clamp(0., 1.)
+            (dismiss_at.saturating_duration_since(now).as_secs_f32() / TOAST_FADE_OUT.as_secs_f32())
+                .clamp(0., 1.)
         };
         let fade_out = fade_out_progress * fade_out_progress * (3. - 2. * fade_out_progress);
 
         let opacity = fade_in.min(fade_out);
         let slide_offset = (1. - fade_in) * 14.;
         (opacity, slide_offset)
+    }
+
+    fn pasted_image_preview_card(
+        &self,
+        preview: &PastedImagePreview,
+        opacity: f32,
+    ) -> impl IntoElement {
+        let label_color = hsla(208. / 360., 0.60, 0.72, 1.);
+        let text_color = hsla(0., 0., 0.92, 1.);
+        let format_color = hsla(0., 0., 0.70, 1.);
+
+        div()
+            .w(px(220.))
+            .rounded(px(12.))
+            .border_1()
+            .border_color(hsla(208. / 360., 0.36, 0.32, 0.55))
+            .bg(rgb(0x202329))
+            .shadow_md()
+            .overflow_hidden()
+            .occlude()
+            .opacity(opacity)
+            .child(
+                div().h(px(150.)).w_full().bg(rgb(0x17191d)).child(
+                    img(preview.image.clone())
+                        .size_full()
+                        .object_fit(ObjectFit::Contain),
+                ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(10.))
+                    .px(px(12.))
+                    .py(px(10.))
+                    .child(
+                        div()
+                            .min_w(px(0.))
+                            .child(
+                                div()
+                                    .text_size(rems(11. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(label_color)
+                                    .child("Clipboard image"),
+                            )
+                            .child(
+                                div()
+                                    .pt(px(2.))
+                                    .text_size(rems(12. / 16.))
+                                    .text_color(text_color)
+                                    .child("Preview"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(rems(11. / 16.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(format_color)
+                            .child(Self::image_format_label(preview.image.format())),
+                    ),
+            )
+    }
+
+    fn image_format_label(format: gpui::ImageFormat) -> &'static str {
+        match format {
+            gpui::ImageFormat::Png => "PNG",
+            gpui::ImageFormat::Jpeg => "JPEG",
+            gpui::ImageFormat::Webp => "WEBP",
+            gpui::ImageFormat::Gif => "GIF",
+            gpui::ImageFormat::Svg => "SVG",
+            gpui::ImageFormat::Bmp => "BMP",
+            gpui::ImageFormat::Tiff => "TIFF",
+        }
     }
 
     fn toast_card(
@@ -4997,7 +5158,7 @@ impl AnotherOneApp {
     }
 
     fn toast_layer(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.toasts.is_empty() {
+        if self.toasts.is_empty() && self.pasted_image_preview.is_none() {
             return div().id("toast-layer");
         }
 
@@ -5013,6 +5174,19 @@ impl AnotherOneApp {
             .gap(px(8.))
             .pr(px(14.))
             .pb(px(14.));
+
+        if let Some(preview) = self.pasted_image_preview.as_ref() {
+            let (opacity, slide_offset) = Self::pasted_image_preview_animation_state(preview, now);
+            layer = layer.child(
+                div()
+                    .relative()
+                    .top(px(slide_offset))
+                    .w(px(220.))
+                    .flex()
+                    .justify_end()
+                    .child(self.pasted_image_preview_card(preview, opacity)),
+            );
+        }
 
         for (index, toast) in self.toasts.iter().enumerate() {
             let (opacity, slide_offset) = Self::toast_animation_state(toast, now);
@@ -5127,7 +5301,7 @@ mod tests {
         output_mentions_missing_claude_conversation, remove_terminal_runtime_state,
         terminal_line_selection_range, terminal_scroll_lines, terminal_selected_text,
         terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
-        SectionId, SectionState, TerminalCellPosition, TerminalSelectionRange,
+        AnotherOneApp, SectionId, SectionState, TerminalCellPosition, TerminalSelectionRange,
         TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
@@ -5140,7 +5314,7 @@ mod tests {
     use crate::terminal_runtime::{
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalRuntimeKey, TerminalSurfaceSnapshot,
     };
-    use gpui::{point, px, ScrollDelta};
+    use gpui::{point, px, ClipboardItem, Image, ImageFormat, ScrollDelta};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -5169,6 +5343,21 @@ mod tests {
             worktree_name: None,
             repo_common_dir: None,
         }
+    }
+
+    #[test]
+    fn clipboard_image_returns_first_image_entry() {
+        let image = Image::from_bytes(ImageFormat::Png, vec![1, 2, 3, 4]);
+        let item = ClipboardItem::new_image(&image);
+
+        assert_eq!(AnotherOneApp::clipboard_image(&item), Some(image));
+    }
+
+    #[test]
+    fn clipboard_image_ignores_text_only_clipboards() {
+        let item = ClipboardItem::new_string("hello".to_string());
+
+        assert_eq!(AnotherOneApp::clipboard_image(&item), None);
     }
 
     #[test]
@@ -5721,6 +5910,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= this.tick_toasts();
                             should_notify |= this.tick_resource_usage();
+                            should_notify |= this.tick_pasted_image_preview(cx);
                             this.maybe_schedule_active_git_refresh(cx);
                             if should_notify {
                                 cx.notify();
