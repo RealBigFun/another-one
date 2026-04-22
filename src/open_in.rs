@@ -190,7 +190,9 @@ fn macos_app_candidates(app_name: &str) -> Vec<PathBuf> {
 }
 
 fn command_exists(commands: &[&str]) -> bool {
-    commands.iter().any(|command| command_in_path(command).is_some())
+    commands
+        .iter()
+        .any(|command| command_in_path(command).is_some())
 }
 
 fn command_in_path(command: &str) -> Option<PathBuf> {
@@ -275,8 +277,7 @@ mod tests {
             OpenInAppKind::VsCode,
             OpenInAppKind::Cursor,
         ];
-        let configured =
-            HashSet::from([OpenInAppKind::VsCode, OpenInAppKind::Cursor]);
+        let configured = HashSet::from([OpenInAppKind::VsCode, OpenInAppKind::Cursor]);
 
         assert_eq!(
             effective_enabled_open_in_apps(&available, Some(&configured)),
