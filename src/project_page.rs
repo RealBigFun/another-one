@@ -250,10 +250,7 @@ impl WorkspacePane {
                     .hover(|s| s.bg(gpui::white().opacity(0.06)))
                     .cursor_pointer()
                     .tooltip(move |_window, cx| {
-                        AnotherOneApp::action_tooltip_view(
-                            "Open project-specific settings",
-                            cx,
-                        )
+                        AnotherOneApp::action_tooltip_view("Open project-specific settings", cx)
                     })
                     .on_mouse_down(
                         MouseButton::Left,
