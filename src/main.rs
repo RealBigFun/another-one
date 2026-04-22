@@ -30,6 +30,28 @@ use gpui::{
 use app::{AnotherOneApp, ZoomIn, ZoomOut, ZoomReset};
 use assets::ProjectAssets;
 
+#[cfg(target_os = "macos")]
+fn set_dock_icon() {
+    use cocoa::appkit::{NSApp, NSApplication, NSImage};
+    use cocoa::base::nil;
+    use cocoa::foundation::NSString;
+    use objc::runtime::Object;
+
+    let icon_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/app-icon/macos/AnotherOne.icns");
+    if !icon_path.exists() {
+        return;
+    }
+    unsafe {
+        let path_str = NSString::alloc(nil).init_str(icon_path.to_str().unwrap());
+        let image: *mut Object = NSImage::alloc(nil).initWithContentsOfFile_(path_str);
+        if image != nil {
+            let app = NSApp();
+            app.setApplicationIconImage_(image);
+        }
+    }
+}
+
 #[hotpath::main]
 fn main() {
     Application::new()
@@ -37,6 +59,8 @@ fn main() {
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         })
         .run(|cx: &mut App| {
+            #[cfg(target_os = "macos")]
+            set_dock_icon();
             // Register bundled Lilex Nerd Font Mono so it's available without
             // the user having to install it system-wide.
             let font_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts");
