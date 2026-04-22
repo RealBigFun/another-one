@@ -6,14 +6,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolbarGitAction {
     Commit,
     CommitAndPush,
     Fetch,
     Pull,
-    Push { force: bool },
-    CreatePr { draft: bool },
+    Push {
+        force: bool,
+    },
+    CreatePr {
+        draft: bool,
+        base_branch: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +59,9 @@ pub fn execute_toolbar_git_action(
         ToolbarGitAction::Fetch => run_simple_git_command(repo_path, ToolbarGitAction::Fetch),
         ToolbarGitAction::Pull => run_simple_git_command(repo_path, ToolbarGitAction::Pull),
         ToolbarGitAction::Push { force } => push_branch(repo_path, force),
-        ToolbarGitAction::CreatePr { draft } => create_pull_request(repo_path, draft),
+        ToolbarGitAction::CreatePr { draft, base_branch } => {
+            create_pull_request(repo_path, draft, base_branch.as_deref())
+        }
     }
 }
 
@@ -247,6 +254,7 @@ fn push_branch(repo_path: &Path, force: bool) -> Result<ToolbarActionOutcome, To
 fn create_pull_request(
     repo_path: &Path,
     draft: bool,
+    base_branch: Option<&str>,
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
     let gh = find_gh_cli().ok_or_else(|| {
         ToolbarActionError::from_message(
@@ -260,12 +268,8 @@ fn create_pull_request(
     })?;
 
     let mut cmd = Command::new(gh);
-    cmd.args(["pr", "create", "--fill", "--head"])
-        .arg(&head_branch)
+    cmd.args(create_pull_request_args(&head_branch, draft, base_branch))
         .current_dir(repo_path);
-    if draft {
-        cmd.arg("--draft");
-    }
 
     let output = cmd
         .output()
@@ -286,15 +290,49 @@ fn create_pull_request(
     let url = extract_url(&stdout);
 
     Ok(toolbar_action_outcome(
-        match (draft, url.as_deref()) {
-            (true, Some(url)) => format!("Created draft pull request: {url}"),
-            (false, Some(url)) => format!("Created pull request: {url}"),
-            (true, None) => "Created draft pull request.".to_string(),
-            (false, None) => "Created pull request.".to_string(),
+        match (draft, url.as_deref(), base_branch) {
+            (true, Some(url), Some(base_branch)) => {
+                format!("Created draft pull request into {base_branch}: {url}")
+            }
+            (false, Some(url), Some(base_branch)) => {
+                format!("Created pull request into {base_branch}: {url}")
+            }
+            (true, None, Some(base_branch)) => {
+                format!("Created draft pull request into {base_branch}.")
+            }
+            (false, None, Some(base_branch)) => {
+                format!("Created pull request into {base_branch}.")
+            }
+            (true, Some(url), None) => format!("Created draft pull request: {url}"),
+            (false, Some(url), None) => format!("Created pull request: {url}"),
+            (true, None, None) => "Created draft pull request.".to_string(),
+            (false, None, None) => "Created pull request.".to_string(),
         },
         false,
         false,
     ))
+}
+
+fn create_pull_request_args(
+    head_branch: &str,
+    draft: bool,
+    base_branch: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "pr".to_string(),
+        "create".to_string(),
+        "--fill".to_string(),
+        "--head".to_string(),
+        head_branch.to_string(),
+    ];
+    if let Some(base_branch) = base_branch {
+        args.push("--base".to_string());
+        args.push(base_branch.to_string());
+    }
+    if draft {
+        args.push("--draft".to_string());
+    }
+    args
 }
 
 impl ToolbarActionError {
@@ -635,7 +673,8 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_github_remote, parse_commit_message, simple_toolbar_git_command, ToolbarGitAction,
+        create_pull_request_args, normalize_github_remote, parse_commit_message,
+        simple_toolbar_git_command, ToolbarGitAction,
     };
 
     #[test]
@@ -686,5 +725,46 @@ mod tests {
             "Pulled remote updates with fast-forward only."
         );
         assert!(command.refresh_git_state);
+    }
+
+    #[test]
+    fn create_pull_request_args_include_base_when_configured() {
+        let args = create_pull_request_args("feature/test", false, Some("main"));
+
+        assert_eq!(
+            args,
+            [
+                "pr",
+                "create",
+                "--fill",
+                "--head",
+                "feature/test",
+                "--base",
+                "main"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn create_pull_request_args_omit_base_when_unset() {
+        let args = create_pull_request_args("feature/test", true, None);
+
+        assert_eq!(
+            args,
+            [
+                "pr",
+                "create",
+                "--fill",
+                "--head",
+                "feature/test",
+                "--draft"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        );
     }
 }

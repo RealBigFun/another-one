@@ -10,7 +10,7 @@ use gpui::{
     SharedString, Transformation, Window,
 };
 
-use crate::app::AnotherOneApp;
+use crate::app::{AnotherOneApp, RightSidebarMode};
 use crate::theme;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -304,13 +304,20 @@ impl AnotherOneApp {
         } else {
             hsla(0., 0., 0.42, 1.)
         };
-        let bg = rgb(0x1e2024);
-        let border = gpui::white().opacity(0.08);
+        let bg = if props.active {
+            rgb(0x262a30)
+        } else {
+            rgb(0x1e2024)
+        };
+        let border = if props.active {
+            gpui::white().opacity(0.14)
+        } else {
+            gpui::white().opacity(0.08)
+        };
         let hover_bg = gpui::white().opacity(0.06);
 
-        let mut button = div()
+        let button = div()
             .id(SharedString::from(format!("git-toolbar-{}", props.label)))
-            .relative()
             .flex()
             .items_center()
             .h(px(30.))
@@ -325,8 +332,7 @@ impl AnotherOneApp {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(5.))
-            .opacity(if props.active { 0. } else { 1. });
+            .gap(px(5.));
 
         if let Some(icon_path) = props.leading_icon {
             content = content.child(svg().path(icon_path).size(px(12.)).text_color(icon_col));
@@ -344,19 +350,7 @@ impl AnotherOneApp {
             content = content.child(svg().path(icon_path).size(px(11.)).text_color(icon_col));
         }
 
-        button = button.child(content);
-
-        if props.active {
-            button = button.child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(Self::toolbar_spinner(icon_col, 12.)),
-            );
-        }
+        let mut button = button.child(content);
 
         if let Some(tip) = props.tooltip_label {
             button = button.tooltip(move |_window, cx| Self::action_tooltip_view(tip, cx));
@@ -889,6 +883,112 @@ impl AnotherOneApp {
             )
     }
 
+    fn branch_compare_row(
+        &self,
+        project_id: &str,
+        file: &crate::project_store::BranchCompareFile,
+    ) -> AnyElement {
+        let title_col = hsla(0., 0., 0.94, 1.);
+        let path_col = hsla(0., 0., 0.58, 1.);
+        let row_hover = gpui::white().opacity(0.04);
+        let file_name = Path::new(&file.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file.path.as_str())
+            .to_string();
+        let parent_dir = Path::new(&file.path)
+            .parent()
+            .and_then(|parent| parent.to_str())
+            .filter(|parent| !parent.is_empty() && *parent != ".")
+            .unwrap_or_default()
+            .to_string();
+        let status_color = Self::changed_file_status_color(file.status);
+
+        let mut stats = div().flex().flex_row().items_center().gap(px(8.));
+        if file.additions > 0 {
+            stats = stats.child(Self::git_diff_badge(file.additions, true, 12.));
+        }
+        if file.deletions > 0 {
+            stats = stats.child(Self::git_diff_badge(file.deletions, false, 12.));
+        }
+
+        div()
+            .id(SharedString::from(format!(
+                "branch-compare-row-{project_id}-{}",
+                file.path
+            )))
+            .w_full()
+            .min_h(px(34.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .pl(px(18.))
+            .pr(px(14.))
+            .py(px(8.))
+            .rounded_md()
+            .mx(px(4.))
+            .hover(move |style| style.bg(row_hover))
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(12.))
+                    .min_w(px(0.))
+                    .flex_1()
+                    .child(
+                        div()
+                            .min_w(px(18.))
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(status_color)
+                            .child(file.status.to_string()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .min_w(px(0.))
+                            .flex_1()
+                            .child(
+                                div()
+                                    .min_w(px(0.))
+                                    .truncate()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(title_col)
+                                    .child(file_name),
+                            )
+                            .when(!parent_dir.is_empty(), |entry| {
+                                entry.child(
+                                    div()
+                                        .min_w(px(0.))
+                                        .truncate()
+                                        .text_size(rems(11. / 16.))
+                                        .text_color(path_col)
+                                        .child(parent_dir.clone()),
+                                )
+                            })
+                            .when(file.original_path.is_some(), |entry| {
+                                entry.child(
+                                    div()
+                                        .min_w(px(0.))
+                                        .truncate()
+                                        .text_size(rems(11. / 16.))
+                                        .text_color(path_col)
+                                        .child(format!(
+                                            "Renamed from {}",
+                                            file.original_path.clone().unwrap_or_default()
+                                        )),
+                                )
+                            }),
+                    ),
+            )
+            .child(stats)
+            .into_any_element()
+    }
+
     pub(crate) fn changed_files_panel(
         &mut self,
         window: &Window,
@@ -896,84 +996,186 @@ impl AnotherOneApp {
     ) -> AnyElement {
         let bg = theme::chrome_bg(window);
         let muted_col = hsla(0., 0., 0.54, 1.);
-        let Some(project_id) = self
-            .workspace_pane
-            .read(cx)
-            .active_section
-            .as_ref()
-            .map(|section| section.project_id.clone())
-        else {
+        let Some(active_section) = self.workspace_pane.read(cx).active_section.clone() else {
             return Self::panel("Changed files", "", bg, true).into_any_element();
         };
+        let project_id = active_section.project_id.clone();
+        let sidebar_mode = self.active_right_sidebar_mode(cx);
+        let compare_target_branch = self.active_compare_target_branch(cx);
+        let compare_state = self.active_branch_compare_state(cx).cloned();
 
         let has_loaded_changed_files = self.changed_files.contains_key(&project_id);
         let changed_files = self.active_changed_files(cx);
         let has_changes = !changed_files.is_empty();
 
         let mut body = div().flex_1().flex().flex_col().min_h_0();
-        if !has_loaded_changed_files {
-            body = body.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .px(px(18.))
-                    .text_sm()
-                    .text_color(muted_col)
-                    .child("Loading changes..."),
-            );
-        } else if changed_files.is_empty() {
-            body = body.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .px(px(18.))
-                    .text_sm()
-                    .text_color(muted_col)
-                    .child("Working tree clean"),
-            );
-        } else {
-            let staged_collapsed = self.collapsed_change_sections.contains("staged");
-            let uncommitted_collapsed = self.collapsed_change_sections.contains("uncommitted");
-            let list_snapshot = self.changed_files_list_snapshot(&project_id, &changed_files);
-            let item_count = list_snapshot.item_count(staged_collapsed, uncommitted_collapsed);
-            body = body.child(
-                div()
-                    .id("right-sidebar-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .child(
-                        uniform_list(
-                            SharedString::from(format!("changed-files-list-{project_id}")),
-                            item_count,
-                            cx.processor(
-                                move |this, range: std::ops::Range<usize>, _window, cx| {
-                                    let mut items = Vec::with_capacity(range.end - range.start);
-                                    for index in range {
-                                        if let Some(entry) = list_snapshot.entry_at(
-                                            staged_collapsed,
-                                            uncommitted_collapsed,
-                                            index,
-                                        ) {
-                                            items.push(this.changed_files_list_item(
-                                                &list_snapshot,
-                                                &entry,
-                                                cx,
-                                            ));
-                                        }
-                                    }
-                                    items
-                                },
+        match sidebar_mode {
+            RightSidebarMode::WorkingTree => {
+                if !has_loaded_changed_files {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child("Loading changes..."),
+                    );
+                } else if changed_files.is_empty() {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child("Working tree clean"),
+                    );
+                } else {
+                    let staged_collapsed = self.collapsed_change_sections.contains("staged");
+                    let uncommitted_collapsed =
+                        self.collapsed_change_sections.contains("uncommitted");
+                    let list_snapshot =
+                        self.changed_files_list_snapshot(&project_id, &changed_files);
+                    let item_count =
+                        list_snapshot.item_count(staged_collapsed, uncommitted_collapsed);
+                    body = body.child(
+                        div()
+                            .id("right-sidebar-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .child(
+                                uniform_list(
+                                    SharedString::from(format!("changed-files-list-{project_id}")),
+                                    item_count,
+                                    cx.processor(
+                                        move |this, range: std::ops::Range<usize>, _window, cx| {
+                                            let mut items =
+                                                Vec::with_capacity(range.end - range.start);
+                                            for index in range {
+                                                if let Some(entry) = list_snapshot.entry_at(
+                                                    staged_collapsed,
+                                                    uncommitted_collapsed,
+                                                    index,
+                                                ) {
+                                                    items.push(this.changed_files_list_item(
+                                                        &list_snapshot,
+                                                        &entry,
+                                                        cx,
+                                                    ));
+                                                }
+                                            }
+                                            items
+                                        },
+                                    ),
+                                )
+                                .size_full(),
                             ),
+                    );
+                }
+            }
+            RightSidebarMode::Compare => {
+                let target_branch = compare_target_branch.clone().unwrap_or_default();
+                let current_branch = compare_state
+                    .as_ref()
+                    .and_then(|state| state.current_branch.clone())
+                    .unwrap_or_else(|| active_section.branch_name.clone());
+
+                body = body.child(
+                    div()
+                        .px(px(14.))
+                        .py(px(10.))
+                        .border_b_1()
+                        .border_color(gpui::white().opacity(0.06))
+                        .child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(hsla(0., 0., 0.88, 1.))
+                                .child(format!(
+                                    "Comparing {} against {}",
+                                    current_branch, target_branch
+                                )),
                         )
-                        .size_full(),
-                    ),
-            );
+                        .child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .text_color(muted_col)
+                                .child("Read-only branch diff. Stage, unstage, and discard actions are unavailable in compare mode."),
+                        ),
+                );
+
+                if compare_state.is_none() {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child("Loading compare view..."),
+                    );
+                } else if compare_state
+                    .as_ref()
+                    .is_some_and(|state| state.files.is_empty())
+                {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child(format!("No differences from {}.", target_branch)),
+                    );
+                } else if let Some(compare_state) = compare_state {
+                    let mut rows = div()
+                        .id("right-sidebar-compare-scroll")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .px(px(4.))
+                        .py(px(8.))
+                        .gap(px(2.));
+
+                    for file in &compare_state.files {
+                        rows = rows.child(self.branch_compare_row(&project_id, file));
+                    }
+
+                    body = body.child(rows);
+                }
+            }
         }
+
+        let compare_button = compare_target_branch.as_ref().map(|_target_branch| {
+            Self::git_toolbar_button(
+                GitToolbarButtonProps {
+                    label: "Compare",
+                    leading_icon: Some("assets/icons/icons__git-split.svg"),
+                    trailing_icon: None,
+                    enabled: true,
+                    active: sidebar_mode == RightSidebarMode::Compare,
+                    tooltip_label: Some(
+                        "Compare the current branch against the configured target branch",
+                    ),
+                },
+                move |this, _ev, _window, cx| {
+                    this.set_right_sidebar_mode(RightSidebarMode::Compare, cx);
+                },
+                cx,
+            )
+        });
 
         div()
             .relative()
@@ -991,20 +1193,30 @@ impl AnotherOneApp {
                     .justify_between()
                     .px(px(8.))
                     .py(px(6.))
-                    .child(Self::git_toolbar_button(
-                        GitToolbarButtonProps {
-                            label: "Changes",
-                            leading_icon: Some("assets/icons/icons__file_icons__changes.svg"),
-                            trailing_icon: None,
-                            enabled: has_changes,
-                            active: false,
-                            tooltip_label: Some("View changed files"),
-                        },
-                        move |_this, _ev, _window, cx| {
-                            cx.stop_propagation();
-                        },
-                        cx,
-                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(Self::git_toolbar_button(
+                                GitToolbarButtonProps {
+                                    label: "Changes",
+                                    leading_icon: Some(
+                                        "assets/icons/icons__file_icons__changes.svg",
+                                    ),
+                                    trailing_icon: None,
+                                    enabled: has_changes || !has_loaded_changed_files,
+                                    active: sidebar_mode == RightSidebarMode::WorkingTree,
+                                    tooltip_label: Some("View working tree changes"),
+                                },
+                                move |this, _ev, _window, cx| {
+                                    this.set_right_sidebar_mode(RightSidebarMode::WorkingTree, cx);
+                                },
+                                cx,
+                            ))
+                            .when_some(compare_button, |container, button| container.child(button)),
+                    )
                     .child(
                         div()
                             .flex()

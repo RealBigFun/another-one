@@ -59,6 +59,14 @@ pub struct ProjectCheckoutState {
     pub lines_removed: i32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectBranchSettings {
+    #[serde(default)]
+    pub default_branch: Option<String>,
+    #[serde(default)]
+    pub default_target_branch: Option<String>,
+}
+
 /// A git branch with optional diff stats resolved for a specific project/worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {
@@ -81,6 +89,8 @@ pub struct Project {
     pub kind: ProjectKind,
     #[serde(default)]
     pub checkout: ProjectCheckoutState,
+    #[serde(default)]
+    pub branch_settings: ProjectBranchSettings,
     #[serde(skip)]
     pub worktree_name: Option<String>,
     #[serde(skip)]
@@ -109,6 +119,46 @@ pub struct ProjectGitState {
     pub ahead_count: usize,
     pub behind_count: usize,
     pub metadata: Option<ProjectGitMetadata>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectBranchSettingField {
+    DefaultBranch,
+    DefaultTargetBranch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProjectBranchSettings {
+    pub root_project_id: String,
+    pub available_branches: Vec<String>,
+    pub configured_default_branch: Option<String>,
+    pub effective_default_branch: Option<String>,
+    pub configured_default_target_branch: Option<String>,
+    pub effective_default_target_branch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidProjectBranchSetting {
+    pub root_project_id: String,
+    pub field: ProjectBranchSettingField,
+    pub branch_name: String,
+    pub fallback_branch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchCompareFile {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub status: char,
+    pub additions: i32,
+    pub deletions: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectBranchCompareState {
+    pub current_branch: Option<String>,
+    pub target_branch: String,
+    pub files: Vec<BranchCompareFile>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -368,10 +418,211 @@ impl ProjectStore {
         self.tasks_by_id.get_mut(task_id)
     }
 
+    pub fn root_project_id_for_project(&self, project_id: &str) -> Option<String> {
+        let project = self.project(project_id)?;
+
+        self.projects_by_id
+            .values()
+            .find(|candidate| {
+                candidate.repo_id == project.repo_id && candidate.kind == ProjectKind::Root
+            })
+            .map(|project| project.id.clone())
+            .or_else(|| Some(project.id.clone()))
+    }
+
+    pub fn root_project_for_project(&self, project_id: &str) -> Option<&Project> {
+        let root_project_id = self.root_project_id_for_project(project_id)?;
+        self.project(&root_project_id)
+    }
+
     pub fn branch_names(&self, project_id: &str) -> Vec<String> {
         self.repo_for_project(project_id)
             .map(|repo| repo.branch_order.clone())
             .unwrap_or_default()
+    }
+
+    fn automatic_primary_branch_name(
+        &self,
+        project_id: &str,
+        prefer_default: bool,
+    ) -> Option<String> {
+        let repo = self.repo_for_project(project_id)?;
+
+        if prefer_default {
+            repo.branch_order
+                .iter()
+                .find(|name| {
+                    repo.branches_by_name
+                        .get(name.as_str())
+                        .is_some_and(|branch| branch.is_default)
+                })
+                .cloned()
+                .or_else(|| self.current_branch_name(project_id))
+                .or_else(|| repo.branch_order.first().cloned())
+        } else {
+            self.current_branch_name(project_id)
+                .or_else(|| repo.branch_order.first().cloned())
+        }
+    }
+
+    pub fn resolved_branch_settings(
+        &self,
+        project_id: &str,
+    ) -> Option<ResolvedProjectBranchSettings> {
+        let root_project = self.root_project_for_project(project_id)?;
+        let available_branches = self.branch_names(&root_project.id);
+        let configured_default_branch = root_project.branch_settings.default_branch.clone();
+        let configured_default_target_branch =
+            root_project.branch_settings.default_target_branch.clone();
+
+        let effective_default_branch = configured_default_branch
+            .as_ref()
+            .filter(|branch| {
+                available_branches
+                    .iter()
+                    .any(|candidate| candidate == *branch)
+            })
+            .cloned()
+            .or_else(|| self.automatic_primary_branch_name(project_id, true));
+        let effective_default_target_branch = configured_default_target_branch
+            .as_ref()
+            .filter(|branch| {
+                available_branches
+                    .iter()
+                    .any(|candidate| candidate == *branch)
+            })
+            .cloned();
+
+        Some(ResolvedProjectBranchSettings {
+            root_project_id: root_project.id.clone(),
+            available_branches,
+            configured_default_branch,
+            effective_default_branch,
+            configured_default_target_branch,
+            effective_default_target_branch,
+        })
+    }
+
+    fn update_branch_setting(
+        &mut self,
+        project_id: &str,
+        field: ProjectBranchSettingField,
+        branch_name: Option<String>,
+    ) -> Result<bool, String> {
+        let root_project_id = self
+            .root_project_id_for_project(project_id)
+            .ok_or_else(|| "Could not find the project group for this repository.".to_string())?;
+        let available_branches = self.branch_names(&root_project_id);
+        if let Some(branch_name) = branch_name.as_deref() {
+            if !available_branches
+                .iter()
+                .any(|branch| branch == branch_name)
+            {
+                return Err(format!(
+                    "The selected branch `{branch_name}` is not available in this repository."
+                ));
+            }
+        }
+
+        let Some(project) = self.project_mut(&root_project_id) else {
+            return Err("Could not find the root project for this repository.".to_string());
+        };
+
+        let slot = match field {
+            ProjectBranchSettingField::DefaultBranch => &mut project.branch_settings.default_branch,
+            ProjectBranchSettingField::DefaultTargetBranch => {
+                &mut project.branch_settings.default_target_branch
+            }
+        };
+
+        if *slot == branch_name {
+            return Ok(false);
+        }
+
+        *slot = branch_name;
+        self.refresh_runtime_views();
+        self.save();
+        Ok(true)
+    }
+
+    pub fn update_default_branch(
+        &mut self,
+        project_id: &str,
+        branch_name: Option<String>,
+    ) -> Result<bool, String> {
+        self.update_branch_setting(
+            project_id,
+            ProjectBranchSettingField::DefaultBranch,
+            branch_name,
+        )
+    }
+
+    pub fn update_default_target_branch(
+        &mut self,
+        project_id: &str,
+        branch_name: Option<String>,
+    ) -> Result<bool, String> {
+        self.update_branch_setting(
+            project_id,
+            ProjectBranchSettingField::DefaultTargetBranch,
+            branch_name,
+        )
+    }
+
+    pub fn clear_missing_branch_settings(
+        &mut self,
+        project_id: &str,
+    ) -> Vec<InvalidProjectBranchSetting> {
+        let Some(root_project_id) = self.root_project_id_for_project(project_id) else {
+            return Vec::new();
+        };
+        let available_branches = self.branch_names(&root_project_id);
+        let default_branch_fallback = self.automatic_primary_branch_name(&root_project_id, true);
+        let mut invalid = Vec::new();
+        let mut changed = false;
+
+        let Some(project) = self.project_mut(&root_project_id) else {
+            return Vec::new();
+        };
+
+        if let Some(branch_name) = project.branch_settings.default_branch.clone() {
+            if !available_branches
+                .iter()
+                .any(|branch| branch == &branch_name)
+            {
+                project.branch_settings.default_branch = None;
+                invalid.push(InvalidProjectBranchSetting {
+                    root_project_id: root_project_id.clone(),
+                    field: ProjectBranchSettingField::DefaultBranch,
+                    branch_name,
+                    fallback_branch: default_branch_fallback.clone(),
+                });
+                changed = true;
+            }
+        }
+
+        if let Some(branch_name) = project.branch_settings.default_target_branch.clone() {
+            if !available_branches
+                .iter()
+                .any(|branch| branch == &branch_name)
+            {
+                project.branch_settings.default_target_branch = None;
+                invalid.push(InvalidProjectBranchSetting {
+                    root_project_id: root_project_id.clone(),
+                    field: ProjectBranchSettingField::DefaultTargetBranch,
+                    branch_name,
+                    fallback_branch: None,
+                });
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.refresh_runtime_views();
+            self.save();
+        }
+
+        invalid
     }
 
     pub fn branch_view(&self, project_id: &str, branch_name: &str) -> Option<Branch> {
@@ -405,25 +656,12 @@ impl ProjectStore {
         project_id: &str,
         prefer_default: bool,
     ) -> Option<Branch> {
-        let repo = self.repo_for_project(project_id)?;
         let branch_name = if prefer_default {
-            repo.branch_order
-                .iter()
-                .find(|name| {
-                    repo.branches_by_name
-                        .get(name.as_str())
-                        .is_some_and(|branch| branch.is_default)
-                })
-                .cloned()
-                .or_else(|| {
-                    self.project(project_id)
-                        .and_then(|project| project.checkout.current_branch.clone())
-                })
-                .or_else(|| repo.branch_order.first().cloned())
+            self.resolved_branch_settings(project_id)
+                .and_then(|settings| settings.effective_default_branch)
+                .or_else(|| self.automatic_primary_branch_name(project_id, true))
         } else {
-            self.project(project_id)
-                .and_then(|project| project.checkout.current_branch.clone())
-                .or_else(|| repo.branch_order.first().cloned())
+            self.automatic_primary_branch_name(project_id, false)
         }?;
 
         self.branch_view(project_id, &branch_name)
@@ -929,6 +1167,7 @@ pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {
             path: canonical.clone(),
             kind,
             checkout: checkout_state_from_resolved(&branches),
+            branch_settings: ProjectBranchSettings::default(),
             worktree_name: detect_worktree_name(&canonical),
             repo_common_dir: common_dir.clone(),
         },
@@ -957,6 +1196,65 @@ pub fn read_project_git_state(path: &Path, include_metadata: bool) -> ProjectGit
         current_branch,
         metadata: include_metadata.then(|| read_project_git_metadata(path)),
     }
+}
+
+pub fn read_project_branch_compare_state(
+    path: &Path,
+    target_branch: &str,
+) -> Result<ProjectBranchCompareState, String> {
+    let spec = format!("{target_branch}...HEAD");
+    let name_status_output = git_command(path)
+        .args(["diff", "--name-status", "-M", "-z", &spec])
+        .output()
+        .map_err(|error| {
+            format!("Could not compare the current branch against {target_branch}: {error}")
+        })?;
+    if !name_status_output.status.success() {
+        return Err(format_git_command_failure(
+            &format!("Could not compare the current branch against {target_branch}"),
+            &name_status_output,
+        ));
+    }
+
+    let numstat_output = git_command(path)
+        .args(["diff", "--numstat", "-M", "-z", &spec])
+        .output()
+        .map_err(|error| {
+            format!("Could not inspect compare stats against {target_branch}: {error}")
+        })?;
+    if !numstat_output.status.success() {
+        return Err(format_git_command_failure(
+            &format!("Could not inspect compare stats against {target_branch}"),
+            &numstat_output,
+        ));
+    }
+
+    let mut stats_by_key = parse_branch_compare_numstat_entries(&numstat_output.stdout)
+        .into_iter()
+        .map(|entry| ((entry.path.clone(), entry.original_path.clone()), entry))
+        .collect::<HashMap<_, _>>();
+
+    let mut files = parse_branch_compare_name_status_entries(&name_status_output.stdout)
+        .into_iter()
+        .map(|entry| {
+            let stats = stats_by_key.remove(&(entry.path.clone(), entry.original_path.clone()));
+            BranchCompareFile {
+                path: entry.path,
+                original_path: entry.original_path,
+                status: entry.status,
+                additions: stats.as_ref().map_or(0, |entry| entry.additions),
+                deletions: stats.as_ref().map_or(0, |entry| entry.deletions),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+
+    Ok(ProjectBranchCompareState {
+        current_branch: git_current_branch(path),
+        target_branch: target_branch.to_string(),
+        files,
+    })
 }
 
 fn read_project_git_metadata(path: &Path) -> ProjectGitMetadata {
@@ -991,6 +1289,126 @@ fn repo_branch_catalog_from_resolved(
         })
         .collect();
     (branch_order, branches_by_name)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BranchCompareNameStatusEntry {
+    path: String,
+    original_path: Option<String>,
+    status: char,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BranchCompareNumStatEntry {
+    path: String,
+    original_path: Option<String>,
+    additions: i32,
+    deletions: i32,
+}
+
+fn parse_branch_compare_name_status_entries(bytes: &[u8]) -> Vec<BranchCompareNameStatusEntry> {
+    let fields = bytes
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    let mut index = 0;
+
+    while index < fields.len() {
+        let status_field = String::from_utf8_lossy(fields[index]).to_string();
+        index += 1;
+
+        let Some(status) = status_field.chars().next() else {
+            continue;
+        };
+
+        if matches!(status, 'R' | 'C') {
+            let Some(original_path) = fields
+                .get(index)
+                .map(|field| String::from_utf8_lossy(field).to_string())
+            else {
+                break;
+            };
+            let Some(path) = fields
+                .get(index + 1)
+                .map(|field| String::from_utf8_lossy(field).to_string())
+            else {
+                break;
+            };
+            index += 2;
+            entries.push(BranchCompareNameStatusEntry {
+                path,
+                original_path: Some(original_path),
+                status,
+            });
+            continue;
+        }
+
+        let Some(path) = fields
+            .get(index)
+            .map(|field| String::from_utf8_lossy(field).to_string())
+        else {
+            break;
+        };
+        index += 1;
+        entries.push(BranchCompareNameStatusEntry {
+            path,
+            original_path: None,
+            status,
+        });
+    }
+
+    entries
+}
+
+fn parse_branch_compare_numstat_entries(bytes: &[u8]) -> Vec<BranchCompareNumStatEntry> {
+    let mut entries = Vec::new();
+    let mut fields = bytes.split(|byte| *byte == 0).peekable();
+
+    while let Some(header) = fields.next() {
+        if header.is_empty() {
+            continue;
+        }
+
+        let header = String::from_utf8_lossy(header);
+        let mut parts = header.split('\t');
+        let additions = parse_branch_compare_numstat_value(parts.next().unwrap_or("").as_bytes());
+        let deletions = parse_branch_compare_numstat_value(parts.next().unwrap_or("").as_bytes());
+        let path_field = parts.next().unwrap_or_default();
+
+        let (path, original_path) = if path_field.is_empty() {
+            let original_path = fields
+                .find(|field| !field.is_empty())
+                .map(|field| String::from_utf8_lossy(field).to_string());
+            let path = fields
+                .find(|field| !field.is_empty())
+                .map(|field| String::from_utf8_lossy(field).to_string());
+            let Some(path) = path else {
+                break;
+            };
+            (path, original_path)
+        } else {
+            (path_field.to_string(), None)
+        };
+
+        entries.push(BranchCompareNumStatEntry {
+            path,
+            original_path,
+            additions,
+            deletions,
+        });
+    }
+
+    entries
+}
+
+fn parse_branch_compare_numstat_value(field: &[u8]) -> i32 {
+    let value = String::from_utf8_lossy(field);
+    if value == "-" {
+        0
+    } else {
+        value.parse::<i32>().unwrap_or(0)
+    }
 }
 
 fn checkout_state_from_resolved(branches: &[Branch]) -> ProjectCheckoutState {
@@ -1871,9 +2289,11 @@ mod tests {
     use crate::shortcuts::ShortcutSettings;
 
     use super::{
-        app_worktrees_root, format_git_command_error, worktree_parent_dir_with_root,
-        PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
-        RepoDefaultCommitAction, RepoRecord, StoreFile, Task, TaskKind,
+        app_worktrees_root, format_git_command_error, parse_branch_compare_name_status_entries,
+        parse_branch_compare_numstat_entries, worktree_parent_dir_with_root, PersistedSectionState,
+        PersistedTerminalTab, Project, ProjectBranchSettingField, ProjectBranchSettings,
+        ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task,
+        TaskKind,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -1888,6 +2308,7 @@ mod tests {
                 ProjectKind::Root
             },
             checkout: ProjectCheckoutState::default(),
+            branch_settings: ProjectBranchSettings::default(),
             worktree_name: worktree_name.map(str::to_string),
             repo_common_dir: None,
         }
@@ -1934,6 +2355,89 @@ mod tests {
         let parent = worktree_parent_dir_with_root(&repo_path, Some(app_worktrees_root(&home_dir)));
 
         assert_eq!(parent, expected);
+    }
+
+    #[test]
+    fn store_file_deserializes_projects_without_branch_settings() {
+        let json = serde_json::json!({
+            "version": super::STORE_VERSION,
+            "repos": {
+                "repo": {
+                    "id": "repo",
+                    "common_dir": "/tmp/root/.git",
+                    "branch_order": ["main"],
+                    "branches_by_name": {
+                        "main": {
+                            "name": "main",
+                            "last_commit_relative": "1 day ago",
+                            "is_default": true,
+                            "ahead_count": 0,
+                            "behind_count": 0
+                        }
+                    }
+                }
+            },
+            "projects": {
+                "root": {
+                    "id": "root",
+                    "repo_id": "repo",
+                    "name": "Root",
+                    "path": "/tmp/root",
+                    "kind": "Root",
+                    "checkout": {
+                        "current_branch": "main",
+                        "lines_added": 0,
+                        "lines_removed": 0
+                    }
+                }
+            },
+            "project_order": ["root"],
+            "tasks": {},
+            "task_ids_by_root_project": {},
+            "sections": {},
+            "ui": {
+                "left_sidebar_open": true,
+                "expanded_repo_ids": [],
+                "repo_default_commit_actions": {},
+                "pinned_task_ids": [],
+                "last_active_section_id": null,
+                "enabled_open_in_apps": null,
+                "preferred_open_in_app": null,
+                "shortcuts": ShortcutSettings::default()
+            }
+        });
+
+        let store: StoreFile =
+            serde_json::from_value(json).expect("legacy store JSON should deserialize");
+        let project = store.projects.get("root").expect("project should exist");
+
+        assert_eq!(project.branch_settings, ProjectBranchSettings::default());
+    }
+
+    #[test]
+    fn project_branch_settings_round_trip() {
+        let mut store = StoreFile::default();
+        let mut project = sample_project("root", None);
+        project.branch_settings = ProjectBranchSettings {
+            default_branch: Some("main".to_string()),
+            default_target_branch: Some("release".to_string()),
+        };
+        store.projects.insert(project.id.clone(), project);
+
+        let json = serde_json::to_string(&store).expect("store should serialize");
+        let round_trip: StoreFile = serde_json::from_str(&json).expect("store should deserialize");
+        let project = round_trip
+            .projects
+            .get("root")
+            .expect("project should exist after round-trip");
+
+        assert_eq!(
+            project.branch_settings,
+            ProjectBranchSettings {
+                default_branch: Some("main".to_string()),
+                default_target_branch: Some("release".to_string()),
+            }
+        );
     }
 
     #[test]
@@ -2148,6 +2652,181 @@ mod tests {
             round_trip.ui.pinned_task_ids,
             HashSet::from(["task-1".to_string(), "task-2".to_string()])
         );
+    }
+
+    #[test]
+    fn clear_missing_branch_settings_removes_stale_values_and_reports_fallbacks() {
+        let mut root_project = sample_project("root", None);
+        root_project.branch_settings = ProjectBranchSettings {
+            default_branch: Some("release".to_string()),
+            default_target_branch: Some("staging".to_string()),
+        };
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    branch_order: vec!["main".to_string(), "feature".to_string()],
+                    branches_by_name: HashMap::from([(
+                        "main".to_string(),
+                        super::RepoBranchRecord {
+                            name: "main".to_string(),
+                            last_commit_relative: "1 day ago".to_string(),
+                            is_default: true,
+                            ahead_count: 0,
+                            behind_count: 0,
+                        },
+                    )]),
+                },
+            )]),
+            projects_by_id: HashMap::from([("root".to_string(), root_project)]),
+            projects: Vec::new(),
+            project_order: vec!["root".to_string()],
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: super::UiState::default(),
+            file_path: PathBuf::from("/tmp/projects.json"),
+        };
+        store.refresh_runtime_views();
+
+        let invalid = store.clear_missing_branch_settings("root");
+        let project = store.project("root").expect("root project should exist");
+
+        assert_eq!(project.branch_settings, ProjectBranchSettings::default());
+        assert_eq!(invalid.len(), 2);
+        assert!(invalid.iter().any(|entry| {
+            entry.field == ProjectBranchSettingField::DefaultBranch
+                && entry.branch_name == "release"
+                && entry.fallback_branch.as_deref() == Some("main")
+        }));
+        assert!(invalid.iter().any(|entry| {
+            entry.field == ProjectBranchSettingField::DefaultTargetBranch
+                && entry.branch_name == "staging"
+                && entry.fallback_branch.is_none()
+        }));
+    }
+
+    #[test]
+    fn root_project_resolution_uses_root_for_worktree_projects() {
+        let mut root_project = sample_project("root", None);
+        root_project.repo_id = "repo".to_string();
+        let mut worktree_project = sample_project("wt", Some("wt"));
+        worktree_project.repo_id = "repo".to_string();
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    branch_order: vec!["main".to_string()],
+                    branches_by_name: HashMap::new(),
+                },
+            )]),
+            projects_by_id: HashMap::from([
+                ("root".to_string(), root_project),
+                ("wt".to_string(), worktree_project),
+            ]),
+            projects: Vec::new(),
+            project_order: vec!["root".to_string(), "wt".to_string()],
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: super::UiState::default(),
+            file_path: PathBuf::from("/tmp/projects.json"),
+        };
+        store.refresh_runtime_views();
+
+        assert_eq!(
+            store.root_project_id_for_project("wt").as_deref(),
+            Some("root")
+        );
+    }
+
+    #[test]
+    fn primary_branch_for_project_prefers_saved_default_branch() {
+        let mut root_project = sample_project("root", None);
+        root_project.checkout.current_branch = Some("feature".to_string());
+        root_project.branch_settings.default_branch = Some("main".to_string());
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    branch_order: vec!["main".to_string(), "feature".to_string()],
+                    branches_by_name: HashMap::from([
+                        (
+                            "main".to_string(),
+                            super::RepoBranchRecord {
+                                name: "main".to_string(),
+                                last_commit_relative: "1 day ago".to_string(),
+                                is_default: true,
+                                ahead_count: 0,
+                                behind_count: 0,
+                            },
+                        ),
+                        (
+                            "feature".to_string(),
+                            super::RepoBranchRecord {
+                                name: "feature".to_string(),
+                                last_commit_relative: "1 hour ago".to_string(),
+                                is_default: false,
+                                ahead_count: 0,
+                                behind_count: 0,
+                            },
+                        ),
+                    ]),
+                },
+            )]),
+            projects_by_id: HashMap::from([("root".to_string(), root_project)]),
+            projects: Vec::new(),
+            project_order: vec!["root".to_string()],
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: super::UiState::default(),
+            file_path: PathBuf::from("/tmp/projects.json"),
+        };
+        store.refresh_runtime_views();
+
+        let branch = store
+            .primary_branch_for_project("root", true)
+            .expect("preferred branch should resolve");
+
+        assert_eq!(branch.name, "main");
+    }
+
+    #[test]
+    fn parse_branch_compare_entries_support_renames() {
+        let name_status = b"R100\0old/path.rs\0new/path.rs\0M\0src/app.rs\0";
+        let numstat = [
+            b"12\t0\t\0".as_slice(),
+            b"old/path.rs\0".as_slice(),
+            b"new/path.rs\0".as_slice(),
+            b"5\t1\tsrc/app.rs\0".as_slice(),
+        ]
+        .concat();
+
+        let statuses = parse_branch_compare_name_status_entries(name_status);
+        let stats = parse_branch_compare_numstat_entries(&numstat);
+
+        assert_eq!(statuses.len(), 2);
+        assert_eq!(statuses[0].status, 'R');
+        assert_eq!(statuses[0].original_path.as_deref(), Some("old/path.rs"));
+        assert_eq!(statuses[0].path, "new/path.rs");
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].original_path.as_deref(), Some("old/path.rs"));
+        assert_eq!(stats[0].path, "new/path.rs");
+        assert_eq!(stats[0].additions, 12);
+        assert_eq!(stats[1].deletions, 1);
     }
 
     #[test]

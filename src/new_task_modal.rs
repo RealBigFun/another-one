@@ -91,11 +91,15 @@ struct SourceBranchSectionProps<'a> {
 
 impl AnotherOneApp {
     pub(crate) fn open_new_task_modal(&mut self, project_id: &str, cx: &mut Context<Self>) {
+        let root_project_id = self
+            .project_store
+            .root_project_id_for_project(project_id)
+            .unwrap_or_else(|| project_id.to_string());
         let Some(project) = self
             .project_store
             .projects
             .iter()
-            .find(|project| project.id == project_id)
+            .find(|project| project.id == root_project_id)
         else {
             return;
         };
@@ -105,7 +109,7 @@ impl AnotherOneApp {
             .primary_branch_for_project(&project.id, true)
             .map(|branch| branch.name)
             .unwrap_or_default();
-        self.open_new_task_modal_with_branch(project_id, &source_branch, cx);
+        self.open_new_task_modal_with_branch(&root_project_id, &source_branch, cx);
     }
 
     pub(crate) fn open_new_task_modal_with_branch(
@@ -114,11 +118,15 @@ impl AnotherOneApp {
         source_branch: &str,
         cx: &mut Context<Self>,
     ) {
+        let root_project_id = self
+            .project_store
+            .root_project_id_for_project(project_id)
+            .unwrap_or_else(|| project_id.to_string());
         let Some(project) = self
             .project_store
             .projects
             .iter()
-            .find(|project| project.id == project_id)
+            .find(|project| project.id == root_project_id)
         else {
             return;
         };

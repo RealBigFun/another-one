@@ -9,7 +9,7 @@ use gpui::{
 
 use crate::app::{AnotherOneApp, SectionId, SidebarTaskDeleteRequest, WorkspacePane};
 use crate::left_sidebar::open_external_url;
-use crate::settings_page::SettingsSection;
+use crate::project_store::{ProjectBranchSettingField, ResolvedProjectBranchSettings};
 
 #[derive(Clone)]
 struct ProjectPageTaskEntry {
@@ -158,6 +158,10 @@ impl WorkspacePane {
         let project_id_owned = project_id.to_string();
 
         let github_url = app.project_github_links.get(project_id).cloned();
+        let branch_settings = app.project_store.resolved_branch_settings(project_id);
+        let config_panel_expanded = app.project_page_config_panel_expanded;
+        let config_panel_targeted = app.project_page_config_panel_targeted;
+        let config_dropdown = app.project_page_config_dropdown;
 
         let tasks = Self::project_page_tasks(app, project_id);
 
@@ -197,7 +201,17 @@ impl WorkspacePane {
                         &pid_for_new_task,
                         cx,
                     ))
-                    .child(self.project_page_prs_section(cx)),
+                    .child(self.project_page_prs_section(cx))
+                    .when_some(branch_settings.as_ref(), |container, settings| {
+                        container.child(self.project_page_configuration_section(
+                            &project_id_owned,
+                            settings,
+                            config_panel_expanded,
+                            config_panel_targeted,
+                            config_dropdown,
+                            cx,
+                        ))
+                    }),
             )
     }
 
@@ -211,6 +225,7 @@ impl WorkspacePane {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let project_id_for_remove = project_id.to_string();
+        let project_id_for_config = project_id.to_string();
         let has_github = github_url.is_some();
 
         div()
@@ -250,13 +265,16 @@ impl WorkspacePane {
                     .hover(|s| s.bg(gpui::white().opacity(0.06)))
                     .cursor_pointer()
                     .tooltip(move |_window, cx| {
-                        AnotherOneApp::action_tooltip_view("Open project-specific settings", cx)
+                        AnotherOneApp::action_tooltip_view(
+                            "Jump to this project's branch configuration",
+                            cx,
+                        )
                     })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                             let _ = this.app.update(cx, |app, app_cx| {
-                                app.open_settings_section(SettingsSection::OpenIn, app_cx);
+                                app.focus_project_page_config_panel(&project_id_for_config, app_cx);
                             });
                         }),
                     )
@@ -1011,5 +1029,356 @@ impl WorkspacePane {
 
         row = row.child(bottom);
         row
+    }
+
+    fn project_page_configuration_section(
+        &self,
+        project_id: &str,
+        settings: &ResolvedProjectBranchSettings,
+        expanded: bool,
+        targeted: bool,
+        open_dropdown: Option<ProjectBranchSettingField>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let chevron_icon = if expanded {
+            "assets/icons/icons__chevron-down.svg"
+        } else {
+            "assets/icons/icons__chevron-right.svg"
+        };
+
+        let mut section = div()
+            .id("project-page-configuration-panel")
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .mt(px(28.))
+            .mb(px(24.))
+            .rounded(px(12.))
+            .bg(rgb(0x24262b))
+            .border_1()
+            .border_color(if targeted {
+                hsla(210. / 360., 0.72, 0.64, 1.)
+            } else {
+                gpui::white().opacity(0.08)
+            })
+            .child(
+                div()
+                    .id("project-page-configuration-header")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .px(px(16.))
+                    .py(px(14.))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(gpui::white().opacity(0.03)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                            let _ = this.app.update(cx, |app, app_cx| {
+                                app.toggle_project_page_config_panel(app_cx);
+                            });
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                svg()
+                                    .path(chevron_icon)
+                                    .size(px(15.))
+                                    .text_color(TEXT_SECONDARY()),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(2.))
+                                    .child(
+                                        div()
+                                            .text_size(rems(13. / 16.))
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(TEXT_PRIMARY())
+                                            .child("Configuration"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(rems(11. / 16.))
+                                            .text_color(TEXT_MUTED())
+                                            .child(
+                                                "These defaults apply to the whole project group.",
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .when(targeted, |header| {
+                        header.child(
+                            div()
+                                .px(px(8.))
+                                .py(px(3.))
+                                .rounded(px(999.))
+                                .bg(hsla(210. / 360., 0.45, 0.30, 1.))
+                                .text_size(rems(10. / 16.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(hsla(210. / 360., 0.72, 0.80, 1.))
+                                .child("Targeted"),
+                        )
+                    }),
+            );
+
+        if !expanded {
+            return section;
+        }
+
+        section = section.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .px(px(16.))
+                .pb(px(16.))
+                .child(self.project_page_branch_config_row(
+                    project_id,
+                    "Default Branch",
+                    "Preferred base branch for new tasks and worktrees.",
+                    settings,
+                    ProjectBranchSettingField::DefaultBranch,
+                    settings.configured_default_branch.as_deref(),
+                    settings.effective_default_branch.as_deref(),
+                    open_dropdown == Some(ProjectBranchSettingField::DefaultBranch),
+                    cx,
+                ))
+                .child(self.project_page_branch_config_row(
+                    project_id,
+                    "Default Target Branch",
+                    "Used for PR creation and the compare view in the right sidebar.",
+                    settings,
+                    ProjectBranchSettingField::DefaultTargetBranch,
+                    settings.configured_default_target_branch.as_deref(),
+                    settings.effective_default_target_branch.as_deref(),
+                    open_dropdown == Some(ProjectBranchSettingField::DefaultTargetBranch),
+                    cx,
+                )),
+        );
+
+        section
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn project_page_branch_config_row(
+        &self,
+        project_id: &str,
+        title: &'static str,
+        description: &'static str,
+        settings: &ResolvedProjectBranchSettings,
+        field: ProjectBranchSettingField,
+        configured_value: Option<&str>,
+        effective_value: Option<&str>,
+        dropdown_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let trigger_id = match field {
+            ProjectBranchSettingField::DefaultBranch => "project-page-default-branch",
+            ProjectBranchSettingField::DefaultTargetBranch => "project-page-default-target-branch",
+        };
+        let selected_label: SharedString = configured_value
+            .map(str::to_string)
+            .unwrap_or_else(|| "Automatic".to_string())
+            .into();
+        let helper_text = match (field, configured_value, effective_value) {
+            (ProjectBranchSettingField::DefaultBranch, Some(_), Some(branch)) => {
+                format!("New worktree tasks will start from {}.", branch)
+            }
+            (ProjectBranchSettingField::DefaultBranch, None, Some(branch)) => {
+                format!("Currently resolving automatically to {}.", branch)
+            }
+            (ProjectBranchSettingField::DefaultBranch, _, None) => {
+                "No branches are currently available.".to_string()
+            }
+            (ProjectBranchSettingField::DefaultTargetBranch, Some(branch), _) => {
+                format!("PRs and compare mode currently target {}.", branch)
+            }
+            (ProjectBranchSettingField::DefaultTargetBranch, None, _) => {
+                "Unset keeps GitHub PR targeting on its default base and hides compare mode."
+                    .to_string()
+            }
+        };
+        let project_id = project_id.to_string();
+
+        let mut row = div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .rounded(px(10.))
+            .bg(gpui::white().opacity(0.03))
+            .border_1()
+            .border_color(gpui::white().opacity(0.06))
+            .p(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(TEXT_PRIMARY())
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(11. / 16.))
+                                    .text_color(TEXT_MUTED())
+                                    .child(description),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id(trigger_id)
+                            .min_w(px(220.))
+                            .h(px(36.))
+                            .px(px(12.))
+                            .rounded(px(8.))
+                            .bg(rgb(0x1e2024))
+                            .border_1()
+                            .border_color(gpui::white().opacity(0.08))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(gpui::white().opacity(0.06)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                    let _ = this.app.update(cx, |app, app_cx| {
+                                        app.toggle_project_page_config_dropdown(field, app_cx);
+                                    });
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .text_color(TEXT_PRIMARY())
+                                    .child(selected_label.clone()),
+                            )
+                            .child(
+                                svg()
+                                    .path("assets/icons/icons__chevron-down.svg")
+                                    .size(px(11.))
+                                    .text_color(TEXT_SECONDARY()),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(rems(11. / 16.))
+                    .text_color(TEXT_MUTED())
+                    .child(helper_text),
+            );
+
+        if dropdown_open {
+            let mut options = div()
+                .rounded(px(8.))
+                .bg(rgb(0x1e2024))
+                .border_1()
+                .border_color(gpui::white().opacity(0.08))
+                .overflow_hidden()
+                .child(self.project_page_branch_config_option(
+                    &project_id,
+                    field,
+                    None,
+                    configured_value.is_none(),
+                    cx,
+                ));
+
+            for branch in &settings.available_branches {
+                options = options.child(self.project_page_branch_config_option(
+                    &project_id,
+                    field,
+                    Some(branch.as_str()),
+                    configured_value == Some(branch.as_str()),
+                    cx,
+                ));
+            }
+
+            row = row.child(options);
+        }
+
+        row
+    }
+
+    fn project_page_branch_config_option(
+        &self,
+        project_id: &str,
+        field: ProjectBranchSettingField,
+        branch_name: Option<&str>,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let project_id = project_id.to_string();
+        let branch_name_owned = branch_name.map(str::to_string);
+        let label: SharedString = branch_name
+            .map(str::to_string)
+            .unwrap_or_else(|| "Automatic".to_string())
+            .into();
+
+        div()
+            .id(SharedString::from(format!(
+                "project-page-config-option-{:?}-{}",
+                field, label
+            )))
+            .h(px(36.))
+            .px(px(12.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .cursor_pointer()
+            .bg(if selected {
+                gpui::white().opacity(0.08)
+            } else {
+                gpui::white().opacity(0.0)
+            })
+            .hover(|style| style.bg(gpui::white().opacity(0.06)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    let _ = this.app.update(cx, |app, app_cx| {
+                        app.update_project_page_branch_setting(
+                            &project_id,
+                            field,
+                            branch_name_owned.clone(),
+                            app_cx,
+                        );
+                    });
+                }),
+            )
+            .child(
+                div()
+                    .text_size(rems(12. / 16.))
+                    .text_color(TEXT_PRIMARY())
+                    .child(label.clone()),
+            )
+            .when(selected, |option| {
+                option.child(
+                    div()
+                        .text_size(rems(10. / 16.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(TEXT_SECONDARY())
+                        .child("Selected"),
+                )
+            })
     }
 }

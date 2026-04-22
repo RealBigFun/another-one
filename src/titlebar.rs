@@ -117,12 +117,12 @@ fn resolve_active_git_action_presentation(
             icon_path: "assets/icons/icons__cloud-upload.svg",
             danger: true,
         },
-        ToolbarGitAction::CreatePr { draft: false } => ActiveToolbarGitActionPresentation {
+        ToolbarGitAction::CreatePr { draft: false, .. } => ActiveToolbarGitActionPresentation {
             label: "Creating PR...",
             icon_path: "assets/icons/icons__github.svg",
             danger: false,
         },
-        ToolbarGitAction::CreatePr { draft: true } => ActiveToolbarGitActionPresentation {
+        ToolbarGitAction::CreatePr { draft: true, .. } => ActiveToolbarGitActionPresentation {
             label: "Creating Draft PR...",
             icon_path: "assets/icons/icons__github.svg",
             danger: false,
@@ -399,6 +399,7 @@ impl AnotherOneApp {
         let primary_action = self.idle_titlebar_primary_git_action(cx);
         let active_presentation = self
             .active_git_action
+            .clone()
             .map(resolve_active_git_action_presentation);
         let active = self.active_git_action.is_some();
         let interactive = !active;
@@ -459,7 +460,10 @@ impl AnotherOneApp {
                                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                                     this.project_page_open_in_menu_project_id = None;
                                     this.git_actions_menu_open = false;
-                                    this.start_toolbar_git_action(primary_toolbar_action, cx);
+                                    this.start_toolbar_git_action(
+                                        primary_toolbar_action.clone(),
+                                        cx,
+                                    );
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -855,7 +859,10 @@ impl AnotherOneApp {
                                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                                     this.git_actions_menu_open = false;
                                     this.start_toolbar_git_action(
-                                        ToolbarGitAction::CreatePr { draft: false },
+                                        ToolbarGitAction::CreatePr {
+                                            draft: false,
+                                            base_branch: None,
+                                        },
                                         cx,
                                     );
                                     cx.stop_propagation();
@@ -900,7 +907,10 @@ impl AnotherOneApp {
                                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                                     this.git_actions_menu_open = false;
                                     this.start_toolbar_git_action(
-                                        ToolbarGitAction::CreatePr { draft: true },
+                                        ToolbarGitAction::CreatePr {
+                                            draft: true,
+                                            base_branch: None,
+                                        },
                                         cx,
                                     );
                                     cx.stop_propagation();
@@ -1103,13 +1113,19 @@ mod tests {
                 "Force Pushing..."
             );
             assert_eq!(
-                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr { draft: false })
-                    .label,
+                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr {
+                    draft: false,
+                    base_branch: None,
+                })
+                .label,
                 "Creating PR..."
             );
             assert_eq!(
-                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr { draft: true })
-                    .label,
+                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr {
+                    draft: true,
+                    base_branch: None,
+                })
+                .label,
                 "Creating Draft PR..."
             );
         }

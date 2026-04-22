@@ -35,7 +35,8 @@ use crate::layout::*;
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::panels::terminal_cell_width;
 use crate::project_store::{
-    ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore,
+    ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
+    ProjectBranchCompareState, ProjectBranchSettingField, ProjectGitState, ProjectStore,
     RepoBranchRecord, RepoDefaultCommitAction, Task, TaskKind,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
@@ -344,6 +345,7 @@ struct GitRefreshReply {
     project_id: String,
     include_metadata: bool,
     state: ProjectGitState,
+    compare_state: Option<Result<ProjectBranchCompareState, String>>,
 }
 
 struct GitActionReply {
@@ -351,6 +353,12 @@ struct GitActionReply {
     refresh_git_state: bool,
     toast_kind: ToastKind,
     toast_message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RightSidebarMode {
+    WorkingTree,
+    Compare,
 }
 
 struct TerminalRuntimeRequest {
@@ -1077,8 +1085,18 @@ pub struct AnotherOneApp {
     pub(crate) available_open_in_apps: Vec<OpenInAppKind>,
     /// Project id whose header "Open In" menu is currently expanded.
     pub(crate) project_page_open_in_menu_project_id: Option<String>,
+    /// Whether the bottom project configuration panel is expanded.
+    pub(crate) project_page_config_panel_expanded: bool,
+    /// Whether the project configuration panel should render as targeted.
+    pub(crate) project_page_config_panel_targeted: bool,
+    /// Which project configuration dropdown is currently open.
+    pub(crate) project_page_config_dropdown: Option<ProjectBranchSettingField>,
     /// Shortcut row currently waiting for key capture in settings.
     pub(crate) shortcut_capture_action: Option<crate::shortcuts::ShortcutAction>,
+    /// Active right-sidebar mode for task views.
+    pub(crate) right_sidebar_mode: RightSidebarMode,
+    /// Cached branch-vs-target compare snapshots keyed by project id.
+    pub(crate) branch_compare_states: HashMap<String, ProjectBranchCompareState>,
     /// UI font size (adjusted by Cmd+/Cmd- zoom).
     pub(crate) font_size: f32,
     /// Last observed viewport size used to detect real resize events.
@@ -1723,6 +1741,73 @@ impl AnotherOneApp {
         })
     }
 
+    pub(crate) fn active_compare_target_branch(&self, cx: &App) -> Option<String> {
+        let project_id = self
+            .workspace_pane
+            .read(cx)
+            .active_section
+            .as_ref()?
+            .project_id
+            .clone();
+        self.project_store
+            .resolved_branch_settings(&project_id)
+            .and_then(|settings| settings.effective_default_target_branch)
+    }
+
+    pub(crate) fn active_branch_compare_state(
+        &self,
+        cx: &App,
+    ) -> Option<&ProjectBranchCompareState> {
+        let project_id = self
+            .workspace_pane
+            .read(cx)
+            .active_section
+            .as_ref()?
+            .project_id
+            .clone();
+        let target_branch = self.active_compare_target_branch(cx)?;
+        self.branch_compare_states
+            .get(&project_id)
+            .filter(|state| state.target_branch == target_branch)
+    }
+
+    pub(crate) fn active_right_sidebar_mode(&self, cx: &App) -> RightSidebarMode {
+        if self.right_sidebar_mode == RightSidebarMode::Compare
+            && self.active_compare_target_branch(cx).is_some()
+        {
+            RightSidebarMode::Compare
+        } else {
+            RightSidebarMode::WorkingTree
+        }
+    }
+
+    fn clear_branch_compare_states_for_project_group(&mut self, project_id: &str) {
+        let Some(repo_id) = self
+            .project_store
+            .project(project_id)
+            .map(|project| project.repo_id.clone())
+        else {
+            return;
+        };
+
+        self.branch_compare_states.retain(|cached_project_id, _| {
+            self.project_store
+                .project(cached_project_id)
+                .is_some_and(|project| project.repo_id != repo_id)
+        });
+    }
+
+    fn sync_right_sidebar_mode(&mut self, cx: &App) -> bool {
+        if self.right_sidebar_mode == RightSidebarMode::Compare
+            && self.active_compare_target_branch(cx).is_none()
+        {
+            self.right_sidebar_mode = RightSidebarMode::WorkingTree;
+            return true;
+        }
+
+        false
+    }
+
     pub(crate) fn active_toolbar_repo_id(&self, cx: &App) -> Option<String> {
         let project_id = self.active_open_in_project_id(cx)?;
         self.project_store
@@ -1796,7 +1881,194 @@ impl AnotherOneApp {
         let had_open_in = self.project_page_open_in_menu_project_id.take().is_some();
         let had_git_actions = self.git_actions_menu_open;
         self.git_actions_menu_open = false;
-        had_open_in || had_git_actions
+        let had_project_config = self.project_page_config_dropdown.take().is_some();
+        if had_project_config {
+            self.project_page_config_panel_targeted = false;
+        }
+        had_open_in || had_git_actions || had_project_config
+    }
+
+    pub(crate) fn focus_project_page_config_panel(
+        &mut self,
+        _project_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.project_page_open_in_menu_project_id = None;
+        self.git_actions_menu_open = false;
+        self.project_page_config_panel_expanded = true;
+        self.project_page_config_panel_targeted = true;
+        self.project_page_config_dropdown = None;
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_project_page_config_panel(&mut self, cx: &mut Context<Self>) {
+        self.project_page_config_panel_expanded = !self.project_page_config_panel_expanded;
+        if !self.project_page_config_panel_expanded {
+            self.project_page_config_dropdown = None;
+            self.project_page_config_panel_targeted = false;
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_project_page_config_dropdown(
+        &mut self,
+        field: ProjectBranchSettingField,
+        cx: &mut Context<Self>,
+    ) {
+        self.project_page_open_in_menu_project_id = None;
+        self.git_actions_menu_open = false;
+        self.project_page_config_panel_expanded = true;
+        self.project_page_config_panel_targeted = false;
+        self.project_page_config_dropdown = if self.project_page_config_dropdown == Some(field) {
+            None
+        } else {
+            Some(field)
+        };
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn show_invalid_project_branch_setting_toast(
+        &mut self,
+        invalid: InvalidProjectBranchSetting,
+        cx: &mut Context<Self>,
+    ) {
+        match invalid.field {
+            ProjectBranchSettingField::DefaultBranch => {
+                if let Some(fallback_branch) = invalid.fallback_branch {
+                    self.show_warning_toast(
+                        format!(
+                            "Saved default branch {} is no longer available. Falling back to {}.",
+                            invalid.branch_name, fallback_branch
+                        ),
+                        cx,
+                    );
+                } else {
+                    self.show_warning_toast(
+                        format!(
+                            "Saved default branch {} is no longer available. Falling back to automatic branch detection.",
+                            invalid.branch_name
+                        ),
+                        cx,
+                    );
+                }
+            }
+            ProjectBranchSettingField::DefaultTargetBranch => {
+                self.show_warning_toast(
+                    format!(
+                        "Saved default target branch {} is no longer available. Compare mode is disabled until you choose a new target branch.",
+                        invalid.branch_name
+                    ),
+                    cx,
+                );
+            }
+        }
+    }
+
+    fn handle_invalid_project_branch_settings(
+        &mut self,
+        project_id: &str,
+        invalid_settings: Vec<InvalidProjectBranchSetting>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if invalid_settings.is_empty() {
+            return false;
+        }
+
+        self.clear_branch_compare_states_for_project_group(project_id);
+        let mut changed = self.sync_right_sidebar_mode(cx);
+        for invalid in invalid_settings {
+            self.show_invalid_project_branch_setting_toast(invalid, cx);
+            changed = true;
+        }
+        changed
+    }
+
+    pub(crate) fn update_project_page_branch_setting(
+        &mut self,
+        project_id: &str,
+        field: ProjectBranchSettingField,
+        branch_name: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let update = match field {
+            ProjectBranchSettingField::DefaultBranch => self
+                .project_store
+                .update_default_branch(project_id, branch_name.clone()),
+            ProjectBranchSettingField::DefaultTargetBranch => self
+                .project_store
+                .update_default_target_branch(project_id, branch_name.clone()),
+        };
+
+        match update {
+            Ok(changed) => {
+                self.project_page_config_dropdown = None;
+                self.project_page_config_panel_targeted = false;
+                if !changed {
+                    cx.notify();
+                    return;
+                }
+
+                self.clear_branch_compare_states_for_project_group(project_id);
+                let _ = self.sync_right_sidebar_mode(cx);
+                self.mark_git_refresh_stale();
+
+                match (field, branch_name.as_deref()) {
+                    (ProjectBranchSettingField::DefaultBranch, Some(branch_name)) => {
+                        self.show_success_toast(
+                            format!("Default branch set to {}.", branch_name),
+                            cx,
+                        );
+                    }
+                    (ProjectBranchSettingField::DefaultBranch, None) => {
+                        self.show_success_toast(
+                            "Default branch cleared. New tasks will use automatic branch detection.",
+                            cx,
+                        );
+                    }
+                    (ProjectBranchSettingField::DefaultTargetBranch, Some(branch_name)) => {
+                        self.show_success_toast(
+                            format!("Default target branch set to {}.", branch_name),
+                            cx,
+                        );
+                    }
+                    (ProjectBranchSettingField::DefaultTargetBranch, None) => {
+                        self.show_success_toast("Default target branch cleared.", cx);
+                    }
+                }
+                cx.notify();
+            }
+            Err(error) => {
+                self.show_error_toast(error, cx);
+            }
+        }
+    }
+
+    pub(crate) fn set_right_sidebar_mode(
+        &mut self,
+        mode: RightSidebarMode,
+        cx: &mut Context<Self>,
+    ) {
+        if mode == RightSidebarMode::Compare && self.active_compare_target_branch(cx).is_none() {
+            self.show_warning_toast(
+                "Compare mode is only available when a default target branch is configured.",
+                cx,
+            );
+            return;
+        }
+
+        if self.right_sidebar_mode == mode {
+            return;
+        }
+
+        self.right_sidebar_mode = mode;
+        if mode == RightSidebarMode::Compare {
+            self.mark_git_refresh_stale();
+        }
+        cx.stop_propagation();
+        cx.notify();
     }
 
     pub(crate) fn toggle_project_page_open_in_menu(
@@ -2156,7 +2428,12 @@ impl AnotherOneApp {
             settings_section: crate::settings_page::SettingsSection::Agents,
             available_open_in_apps,
             project_page_open_in_menu_project_id: None,
+            project_page_config_panel_expanded: true,
+            project_page_config_panel_targeted: false,
+            project_page_config_dropdown: None,
             shortcut_capture_action: None,
+            right_sidebar_mode: RightSidebarMode::WorkingTree,
+            branch_compare_states: HashMap::new(),
             marked_text: None,
             add_agent_modal: None,
             sidebar_task_last_click: None,
@@ -3820,7 +4097,25 @@ impl AnotherOneApp {
         changed
     }
 
-    fn drain_git_refresh(&mut self) -> bool {
+    fn set_branch_compare_state(
+        &mut self,
+        project_id: &str,
+        state: Option<ProjectBranchCompareState>,
+    ) -> bool {
+        match state {
+            Some(state) => {
+                if self.branch_compare_states.get(project_id) == Some(&state) {
+                    return false;
+                }
+                self.branch_compare_states
+                    .insert(project_id.to_string(), state);
+                true
+            }
+            None => self.branch_compare_states.remove(project_id).is_some(),
+        }
+    }
+
+    fn drain_git_refresh(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(receiver) = self.git_refresh_receiver.as_ref() else {
             return false;
         };
@@ -3839,7 +4134,32 @@ impl AnotherOneApp {
                 if reply.include_metadata {
                     self.last_git_metadata_refresh = self.last_git_status_refresh;
                 }
-                self.apply_project_git_state(&reply.project_id, reply.state)
+                let mut changed = self.apply_project_git_state(&reply.project_id, reply.state);
+                if reply.include_metadata {
+                    let invalid_settings = self
+                        .project_store
+                        .clear_missing_branch_settings(&reply.project_id);
+                    changed |= self.handle_invalid_project_branch_settings(
+                        &reply.project_id,
+                        invalid_settings,
+                        cx,
+                    );
+                }
+                match reply.compare_state {
+                    Some(Ok(compare_state)) => {
+                        changed |=
+                            self.set_branch_compare_state(&reply.project_id, Some(compare_state));
+                    }
+                    Some(Err(error)) => {
+                        changed |= self.set_branch_compare_state(&reply.project_id, None);
+                        self.show_warning_toast(error, cx);
+                    }
+                    None => {
+                        changed |= self.set_branch_compare_state(&reply.project_id, None);
+                    }
+                }
+                changed |= self.sync_right_sidebar_mode(cx);
+                changed
             }
             Err(mpsc::TryRecvError::Empty) => false,
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -3897,6 +4217,20 @@ impl AnotherOneApp {
             return;
         }
 
+        let compare_target_branch = if self.right_sidebar_mode == RightSidebarMode::Compare {
+            workspace.active_section.as_ref().and_then(|section| {
+                if section.project_id == project_id {
+                    self.project_store
+                        .resolved_branch_settings(&section.project_id)
+                        .and_then(|settings| settings.effective_default_target_branch)
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
         let include_metadata = metadata_due;
         self.git_refresh_in_flight = true;
         let (tx, rx) = mpsc::channel();
@@ -3904,16 +4238,26 @@ impl AnotherOneApp {
         std::thread::spawn(move || {
             let state =
                 crate::project_store::read_project_git_state(&project_path, include_metadata);
+            let compare_state = compare_target_branch.as_deref().map(|target_branch| {
+                crate::project_store::read_project_branch_compare_state(
+                    &project_path,
+                    target_branch,
+                )
+            });
             let _ = tx.send(GitRefreshReply {
                 project_id,
                 include_metadata,
                 state,
+                compare_state,
             });
         });
     }
 
     #[hotpath::measure]
-    pub(crate) fn refresh_project_git_state(&mut self, project_id: &str) {
+    pub(crate) fn refresh_project_git_state(
+        &mut self,
+        project_id: &str,
+    ) -> Vec<InvalidProjectBranchSetting> {
         let Some(project_path) = self
             .project_store
             .projects
@@ -3921,13 +4265,15 @@ impl AnotherOneApp {
             .find(|project| project.id == project_id)
             .map(|project| project.path.clone())
         else {
-            return;
+            return Vec::new();
         };
 
         let state = crate::project_store::read_project_git_state(&project_path, true);
         self.apply_project_git_state(project_id, state);
+        let invalid_settings = self.project_store.clear_missing_branch_settings(project_id);
         self.last_git_status_refresh = Instant::now();
         self.last_git_metadata_refresh = self.last_git_status_refresh;
+        invalid_settings
     }
 
     fn active_project_context(&self, cx: &App) -> Option<(String, std::path::PathBuf)> {
@@ -4105,6 +4451,7 @@ impl AnotherOneApp {
                             path: created.path.clone(),
                             kind: crate::project_store::ProjectKind::Worktree,
                             checkout: crate::project_store::ProjectCheckoutState::default(),
+                            branch_settings: crate::project_store::ProjectBranchSettings::default(),
                             worktree_name: created
                                 .path
                                 .file_name()
@@ -4429,7 +4776,20 @@ impl AnotherOneApp {
             self.show_error_toast("No active project is selected.", cx);
             return;
         };
-        let start_message = match action {
+        let action = match action {
+            crate::git_actions::ToolbarGitAction::CreatePr { draft, .. } => {
+                crate::git_actions::ToolbarGitAction::CreatePr {
+                    draft,
+                    base_branch: self
+                        .project_store
+                        .resolved_branch_settings(&project_id)
+                        .and_then(|settings| settings.effective_default_target_branch),
+                }
+            }
+            other => other,
+        };
+
+        let start_message = match &action {
             crate::git_actions::ToolbarGitAction::Commit => {
                 if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
                     self.project_store
@@ -4456,18 +4816,42 @@ impl AnotherOneApp {
             crate::git_actions::ToolbarGitAction::Push { force: true } => {
                 "Force-pushing the current branch with lease..."
             }
-            crate::git_actions::ToolbarGitAction::CreatePr { draft: false } => {
-                "Creating a pull request..."
+            crate::git_actions::ToolbarGitAction::CreatePr {
+                draft: false,
+                base_branch: Some(base_branch),
+            } => {
+                self.show_info_toast(
+                    format!("Creating a pull request into {}...", base_branch),
+                    cx,
+                );
+                ""
             }
-            crate::git_actions::ToolbarGitAction::CreatePr { draft: true } => {
-                "Creating a draft pull request..."
+            crate::git_actions::ToolbarGitAction::CreatePr {
+                draft: true,
+                base_branch: Some(base_branch),
+            } => {
+                self.show_info_toast(
+                    format!("Creating a draft pull request into {}...", base_branch),
+                    cx,
+                );
+                ""
             }
+            crate::git_actions::ToolbarGitAction::CreatePr {
+                draft: false,
+                base_branch: None,
+            } => "Creating a pull request...",
+            crate::git_actions::ToolbarGitAction::CreatePr {
+                draft: true,
+                base_branch: None,
+            } => "Creating a draft pull request...",
         };
-        self.show_info_toast(start_message, cx);
+        if !start_message.is_empty() {
+            self.show_info_toast(start_message, cx);
+        }
 
         let (tx, rx) = mpsc::channel();
         self.git_actions_menu_open = false;
-        self.active_git_action = Some(action);
+        self.active_git_action = Some(action.clone());
         self.git_action_receiver = Some(rx);
         std::thread::spawn(move || {
             let reply = match crate::git_actions::execute_toolbar_git_action(&project_path, action)
@@ -4504,7 +4888,12 @@ impl AnotherOneApp {
                 self.active_git_action = None;
                 self.git_action_receiver = None;
                 if reply.refresh_git_state {
-                    self.refresh_project_git_state(&reply.project_id);
+                    let invalid_settings = self.refresh_project_git_state(&reply.project_id);
+                    let _ = self.handle_invalid_project_branch_settings(
+                        &reply.project_id,
+                        invalid_settings,
+                        cx,
+                    );
                 }
                 match reply.toast_kind {
                     ToastKind::Success => self.show_success_toast(reply.toast_message, cx),
@@ -4853,7 +5242,7 @@ impl AnotherOneApp {
 
         let reverted = crate::project_store::revert_changed_file(&project_path, changed);
         if reverted {
-            self.refresh_project_git_state(project_id);
+            let _ = self.refresh_project_git_state(project_id);
         }
         reverted
     }
@@ -4879,7 +5268,7 @@ impl AnotherOneApp {
         }
 
         if reverted_any {
-            self.refresh_project_git_state(project_id);
+            let _ = self.refresh_project_git_state(project_id);
         }
 
         reverted_any
@@ -6254,6 +6643,7 @@ mod tests {
                 lines_added: 0,
                 lines_removed: 0,
             },
+            branch_settings: crate::project_store::ProjectBranchSettings::default(),
             worktree_name: None,
             repo_common_dir: None,
         }
@@ -7523,7 +7913,7 @@ impl Render for AnotherOneApp {
                             let mut should_notify = false;
                             should_notify |= this.drain_git_action(cx);
                             should_notify |= this.drain_changed_files_git_mutations(cx);
-                            should_notify |= this.drain_git_refresh();
+                            should_notify |= this.drain_git_refresh(cx);
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_project_add(cx);
                             should_notify |= this.drain_project_github_link_lookup();
