@@ -1,26 +1,13 @@
 //! Project page rendered in the centre panel when a project is selected.
 
-use std::path::PathBuf;
-
 use gpui::{
     div, hsla, prelude::*, px, rems, rgb, svg, Context, MouseButton, MouseDownEvent, SharedString,
     Window,
 };
 
-use crate::app::{AnotherOneApp, SectionId, SidebarTaskDeleteRequest, WorkspacePane};
+use crate::app::{AnotherOneApp, WorkspacePane};
 use crate::left_sidebar::open_external_url;
 use crate::project_store::{ProjectBranchSettingField, ResolvedProjectBranchSettings};
-
-#[derive(Clone)]
-struct ProjectPageTaskEntry {
-    project_id: String,
-    project_path: PathBuf,
-    task_id: String,
-    name: String,
-    branch_name: String,
-    is_worktree: bool,
-    pinned: bool,
-}
 
 // ── Mock PR data (UI only, not wired) ────────────────────────────────
 
@@ -72,48 +59,6 @@ const GREEN: fn() -> gpui::Hsla = || hsla(138. / 360., 0.50, 0.74, 1.);
 const RED: fn() -> gpui::Hsla = || hsla(352. / 360., 0.52, 0.76, 1.);
 
 impl WorkspacePane {
-    fn project_page_tasks(app: &AnotherOneApp, project_id: &str) -> Vec<ProjectPageTaskEntry> {
-        let Some(project) = app
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-        else {
-            return Vec::new();
-        };
-
-        let mut tasks = Vec::new();
-
-        if let Some(task_list) = app.project_store.tasks.get(&project.id) {
-            for task in task_list {
-                let is_worktree = task.kind == crate::project_store::TaskKind::Worktree
-                    || task.kind == crate::project_store::TaskKind::MultiWorktree;
-                let (pid, ppath) = if let Some(wt_id) = task.worktree_project_id.as_ref() {
-                    app.project_store
-                        .projects
-                        .iter()
-                        .find(|p| p.id == *wt_id)
-                        .map(|p| (p.id.clone(), p.path.clone()))
-                        .unwrap_or_else(|| (project.id.clone(), project.path.clone()))
-                } else {
-                    (project.id.clone(), project.path.clone())
-                };
-                tasks.push(ProjectPageTaskEntry {
-                    project_id: pid,
-                    project_path: ppath,
-                    task_id: task.id.clone(),
-                    name: task.name.clone(),
-                    branch_name: task.branch_name.clone(),
-                    is_worktree,
-                    pinned: app.project_store.ui.pinned_task_ids.contains(&task.id),
-                });
-            }
-        }
-
-        tasks.sort_by_key(|task| !task.pinned);
-        tasks
-    }
-
     // ── Public entry point ───────────────────────────────────────────
 
     pub(crate) fn render_project_page(
@@ -163,21 +108,6 @@ impl WorkspacePane {
         let config_panel_targeted = app.project_page_config_panel_targeted;
         let config_dropdown = app.project_page_config_dropdown;
 
-        let tasks = Self::project_page_tasks(app, project_id);
-
-        let task_count = tasks.len();
-        let search = self.project_page_task_search.to_lowercase();
-        let filtered_tasks: Vec<_> = if search.is_empty() {
-            tasks
-        } else {
-            tasks
-                .into_iter()
-                .filter(|t| t.name.to_lowercase().contains(&search))
-                .collect()
-        };
-
-        let pid_for_new_task = project_id_owned.clone();
-
         div()
             .flex()
             .flex_col()
@@ -194,13 +124,6 @@ impl WorkspacePane {
                     .overflow_y_scroll()
                     .px(px(24.))
                     .py(px(20.))
-                    .child(self.project_page_tasks_section(
-                        &project_name,
-                        task_count,
-                        &filtered_tasks,
-                        &pid_for_new_task,
-                        cx,
-                    ))
                     .child(self.project_page_prs_section(cx))
                     .when_some(branch_settings.as_ref(), |container, settings| {
                         container.child(self.project_page_configuration_section(
@@ -224,8 +147,8 @@ impl WorkspacePane {
         github_url: Option<String>,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let project_id_for_new_task = project_id.to_string();
         let project_id_for_remove = project_id.to_string();
-        let project_id_for_config = project_id.to_string();
         let has_github = github_url.is_some();
 
         div()
@@ -248,10 +171,9 @@ impl WorkspacePane {
                     .truncate()
                     .child(project_name.clone()),
             )
-            // Configuration button
             .child(
                 div()
-                    .id("project-page-config-btn")
+                    .id("project-page-new-task-btn")
                     .flex()
                     .flex_row()
                     .items_center()
@@ -264,32 +186,25 @@ impl WorkspacePane {
                     .border_color(gpui::white().opacity(0.08))
                     .hover(|s| s.bg(gpui::white().opacity(0.06)))
                     .cursor_pointer()
-                    .tooltip(move |_window, cx| {
-                        AnotherOneApp::action_tooltip_view(
-                            "Jump to this project's branch configuration",
-                            cx,
-                        )
-                    })
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                            let _ = this.app.update(cx, |app, app_cx| {
-                                app.focus_project_page_config_panel(&project_id_for_config, app_cx);
-                            });
+                        cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                            this.focus_handle.focus(window);
+                            this.open_new_task_modal(&project_id_for_new_task, cx);
                         }),
                     )
                     .child(
                         svg()
-                            .path("assets/icons/icons__settings.svg")
+                            .path("assets/icons/icons__plus.svg")
                             .size(px(12.))
-                            .text_color(TEXT_SECONDARY()),
+                            .text_color(TEXT_PRIMARY()),
                     )
                     .child(
                         div()
                             .text_size(rems(11. / 16.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(TEXT_PRIMARY())
-                            .child("Configuration"),
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("New Task"),
                     ),
             )
             // View on GitHub button
@@ -364,301 +279,6 @@ impl WorkspacePane {
                             .path("assets/icons/icons__trash.svg")
                             .size(px(14.))
                             .text_color(TEXT_SECONDARY()),
-                    ),
-            )
-    }
-
-    // ── Tasks section ────────────────────────────────────────────────
-
-    fn project_page_tasks_section(
-        &self,
-        project_name: &SharedString,
-        task_count: usize,
-        tasks: &[ProjectPageTaskEntry],
-        pid_for_new_task: &str,
-        cx: &mut Context<Self>,
-    ) -> gpui::Div {
-        let pid_new = pid_for_new_task.to_string();
-        let count_label: SharedString = format!("{task_count} tasks with {project_name}").into();
-
-        let mut section = div().flex().flex_col().gap(px(12.)).mb(px(28.));
-
-        // Title row
-        section = section.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.))
-                        .child(
-                            div()
-                                .text_color(TEXT_PRIMARY())
-                                .text_size(rems(13. / 16.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child("Tasks"),
-                        )
-                        .child(
-                            div()
-                                .text_size(rems(11. / 16.))
-                                .text_color(TEXT_MUTED())
-                                .child("Spin up a fresh, isolated task for this project."),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("project-page-new-task-btn")
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(5.))
-                        .h(px(30.))
-                        .px(px(7.))
-                        .rounded(px(7.))
-                        .bg(rgb(0x1e2024))
-                        .border_1()
-                        .border_color(gpui::white().opacity(0.08))
-                        .hover(|s| s.bg(gpui::white().opacity(0.06)))
-                        .cursor_pointer()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
-                                this.focus_handle.focus(window);
-                                this.open_new_task_modal(&pid_new, cx);
-                            }),
-                        )
-                        .child(
-                            svg()
-                                .path("assets/icons/icons__plus.svg")
-                                .size(px(12.))
-                                .text_color(TEXT_PRIMARY()),
-                        )
-                        .child(
-                            div()
-                                .text_size(rems(11. / 16.))
-                                .text_color(TEXT_PRIMARY())
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child("New Task"),
-                        ),
-                ),
-        );
-
-        // Search bar
-        section = section.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .px(px(12.))
-                .py(px(8.))
-                .rounded(px(7.))
-                .bg(gpui::white().opacity(0.05))
-                .border_1()
-                .border_color(gpui::white().opacity(0.08))
-                .child(
-                    svg()
-                        .path("assets/icons/icons__file_icons__magnifying_glass.svg")
-                        .size(px(14.))
-                        .text_color(TEXT_MUTED()),
-                )
-                .child(div().text_sm().text_color(TEXT_MUTED()).child(
-                    if self.project_page_task_search.is_empty() {
-                        "Search tasks...".to_string()
-                    } else {
-                        self.project_page_task_search.clone()
-                    },
-                )),
-        );
-
-        // Task count + Select
-        section = section.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(TEXT_SECONDARY())
-                                .child(count_label),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(TEXT_PRIMARY())
-                                .text_decoration_1()
-                                .cursor_pointer()
-                                .child("Select"),
-                        ),
-                )
-                .child(
-                    div().cursor_pointer().child(
-                        svg()
-                            .path("assets/icons/icons__ellipsis.svg")
-                            .size(px(16.))
-                            .text_color(TEXT_SECONDARY()),
-                    ),
-                ),
-        );
-
-        // Task rows
-        for task in tasks {
-            section = section.child(self.project_page_task_row(task, pid_for_new_task, cx));
-        }
-
-        // Empty state
-        if tasks.is_empty() {
-            section = section.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .py(px(24.))
-                    .text_sm()
-                    .text_color(TEXT_MUTED())
-                    .child("No tasks yet. Create one to get started."),
-            );
-        }
-
-        section
-    }
-
-    fn project_page_task_row(
-        &self,
-        task: &ProjectPageTaskEntry,
-        preferred_project_id: &str,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let task_name: SharedString = task.name.clone().into();
-        let pid = task.project_id.clone();
-        let project_path = task.project_path.clone();
-        let branch = task.branch_name.clone();
-        let task_id = task.task_id.clone();
-        let is_worktree = task.is_worktree;
-        let preferred_project_id = preferred_project_id.to_string();
-        let pid_nav = pid.clone();
-        let branch_nav = branch.clone();
-        let task_id_nav = task_id.clone();
-        let row_suffix = task_id.clone();
-        let row_id = SharedString::from(format!("task-row-{}", row_suffix));
-        let delete_tooltip = if is_worktree {
-            "Delete this worktree task"
-        } else {
-            "Delete this direct task"
-        };
-        let delete_project_id = pid.clone();
-        let delete_task_id = task_id.clone();
-        let delete_task_name = task.name.clone();
-        let delete_branch_name = branch.clone();
-        let delete_preferred_project_id = preferred_project_id.clone();
-
-        div()
-            .id(row_id)
-            .flex()
-            .flex_row()
-            .items_center()
-            .py(px(10.))
-            .px(px(4.))
-            .border_b_1()
-            .border_color(gpui::white().opacity(0.06))
-            .hover(|s| s.bg(gpui::white().opacity(0.03)))
-            .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                    let sid = SectionId::for_task(&pid_nav, &branch_nav, &task_id_nav);
-                    this.activate_section(sid, Some(project_path.clone()), None, cx);
-                    this.mark_git_refresh_stale(cx);
-                }),
-            )
-            // Status circle
-            .child(
-                div()
-                    .w(px(12.))
-                    .h(px(12.))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(TEXT_SECONDARY())
-                    .mr(px(12.)),
-            )
-            // Task name
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .text_sm()
-                    .text_color(TEXT_PRIMARY())
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .truncate()
-                    .child(task_name),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(10.))
-                    .ml(px(12.))
-                    .child(
-                        div()
-                            .px(px(6.))
-                            .py(px(2.))
-                            .rounded(px(10.))
-                            .bg(gpui::white().opacity(0.06))
-                            .text_xs()
-                            .text_color(TEXT_SECONDARY())
-                            .child(if is_worktree { "Worktree" } else { "Direct" }),
-                    )
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("task-trash-{}", row_suffix)))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(28.))
-                            .h(px(28.))
-                            .rounded(px(5.))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(gpui::white().opacity(0.10)))
-                            .tooltip(move |_window, cx| {
-                                AnotherOneApp::action_tooltip_view(delete_tooltip, cx)
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                                    cx.stop_propagation();
-                                    this.request_sidebar_task_delete(
-                                        SidebarTaskDeleteRequest {
-                                            project_id: delete_project_id.clone(),
-                                            task_id: delete_task_id.clone(),
-                                            task_name: delete_task_name.clone(),
-                                            branch_name: delete_branch_name.clone(),
-                                            is_worktree,
-                                            preferred_project_id: delete_preferred_project_id
-                                                .clone(),
-                                        },
-                                        cx,
-                                    );
-                                }),
-                            )
-                            .child(
-                                svg()
-                                    .path("assets/icons/icons__trash.svg")
-                                    .size(px(15.))
-                                    .text_color(TEXT_SECONDARY()),
-                            ),
                     ),
             )
     }

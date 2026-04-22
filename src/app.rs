@@ -569,8 +569,6 @@ pub(crate) struct WorkspacePane {
     pub(crate) active_section: Option<SectionId>,
     /// Currently displayed project page (project_id). Mutually exclusive with terminal view.
     pub(crate) active_project_page: Option<String>,
-    /// Search text for the tasks list on the project page.
-    pub(crate) project_page_task_search: String,
     /// Whether the Open PRs section is collapsed on the project page.
     pub(crate) project_page_prs_collapsed: bool,
     /// Active PR filter tab index (0=All Open, 1=Needs My Review, 2=My PRs, 3=Draft).
@@ -597,7 +595,6 @@ impl WorkspacePane {
             font_size,
             active_section,
             active_project_page: None,
-            project_page_task_search: String::new(),
             project_page_prs_collapsed: false,
             project_page_pr_filter: 0,
             section_states,
@@ -852,10 +849,6 @@ impl WorkspacePane {
         removed_tab_id
     }
 
-    pub(crate) fn mark_git_refresh_stale(&self, cx: &mut Context<Self>) {
-        let _ = self.app.update(cx, |app, _| app.mark_git_refresh_stale());
-    }
-
     pub(crate) fn show_error_toast(
         &self,
         message: impl Into<SharedString>,
@@ -955,18 +948,6 @@ impl WorkspacePane {
         });
     }
 
-    pub(crate) fn request_sidebar_task_delete(
-        &self,
-        request: SidebarTaskDeleteRequest,
-        cx: &mut Context<Self>,
-    ) {
-        let app = self.app.clone();
-        cx.defer(move |cx| {
-            let _ = app.update(cx, |app, app_cx| {
-                app.request_sidebar_task_delete(request, app_cx);
-            });
-        });
-    }
 }
 
 pub struct AnotherOneApp {
@@ -1919,20 +1900,6 @@ impl AnotherOneApp {
             self.project_page_config_panel_targeted = false;
         }
         had_open_in || had_git_actions || had_project_config
-    }
-
-    pub(crate) fn focus_project_page_config_panel(
-        &mut self,
-        _project_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        self.project_page_open_in_menu_project_id = None;
-        self.git_actions_menu_open = false;
-        self.project_page_config_panel_expanded = true;
-        self.project_page_config_panel_targeted = true;
-        self.project_page_config_dropdown = None;
-        cx.stop_propagation();
-        cx.notify();
     }
 
     pub(crate) fn toggle_project_page_config_panel(&mut self, cx: &mut Context<Self>) {
