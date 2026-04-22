@@ -605,7 +605,12 @@ impl AnotherOneApp {
                         workspace.activate_project_page(root_project_id, cx);
                     });
                 }
-                self.show_success_toast(format!("Deleted worktree {}.", confirm.task_name), cx);
+                let worktree_display_name = confirm
+                    .project_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| confirm.task_name.clone());
+                self.show_success_toast(format!("Deleted worktree {}.", worktree_display_name), cx);
                 cx.notify();
             }
             Err(error) => {
@@ -2045,9 +2050,14 @@ impl AnotherOneApp {
         let btn_hover = gpui::white().opacity(0.14);
         let danger_bg = hsla(0., 0.62, 0.50, 1.);
         let danger_hover = hsla(0., 0.62, 0.58, 1.);
+        let worktree_display_name = confirm
+            .project_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| confirm.task_name.clone());
         let message: SharedString = format!(
             "Delete worktree \"{}\" and remove the local branch \"{}\"?",
-            confirm.task_name, confirm.branch_name
+            worktree_display_name, confirm.branch_name
         )
         .into();
 

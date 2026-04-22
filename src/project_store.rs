@@ -1858,7 +1858,8 @@ pub fn create_task_worktree(
 
     let slug = slugify_task_name(&task_name);
     let branch_name = unique_branch_name(repo_path, &slug)?;
-    let worktree_path = unique_worktree_path(repo_path, &slug);
+    let worktree_slug = format!("{slug}-wt");
+    let worktree_path = unique_worktree_path(repo_path, &worktree_slug);
     let Some(worktree_parent) = worktree_path.parent() else {
         return Err("Failed to determine the worktree parent directory.".to_string());
     };
