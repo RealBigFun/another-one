@@ -28,6 +28,8 @@ pub struct RepoBranchRecord {
     pub is_default: bool,
     #[serde(default)]
     pub ahead_count: usize,
+    #[serde(default)]
+    pub behind_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +66,7 @@ pub struct Branch {
     pub lines_added: i32,
     pub lines_removed: i32,
     pub ahead_count: usize,
+    pub behind_count: usize,
     pub last_commit_relative: String,
     pub is_default: bool,
     pub is_current: bool,
@@ -104,6 +107,7 @@ pub struct ProjectGitState {
     pub changed_files: Vec<ChangedFile>,
     pub current_branch: Option<String>,
     pub ahead_count: usize,
+    pub behind_count: usize,
     pub metadata: Option<ProjectGitMetadata>,
 }
 
@@ -389,6 +393,7 @@ impl ProjectStore {
                 0
             },
             ahead_count: branch.ahead_count,
+            behind_count: branch.behind_count,
             last_commit_relative: branch.last_commit_relative.clone(),
             is_default: branch.is_default,
             is_current,
@@ -945,6 +950,10 @@ pub fn read_project_git_state(path: &Path, include_metadata: bool) -> ProjectGit
             .as_deref()
             .map(|branch| git_ahead_count(path, branch))
             .unwrap_or(0),
+        behind_count: current_branch
+            .as_deref()
+            .map(|branch| git_behind_count(path, branch))
+            .unwrap_or(0),
         current_branch,
         metadata: include_metadata.then(|| read_project_git_metadata(path)),
     }
@@ -976,6 +985,7 @@ fn repo_branch_catalog_from_resolved(
                     last_commit_relative: branch.last_commit_relative.clone(),
                     is_default: branch.is_default,
                     ahead_count: branch.ahead_count,
+                    behind_count: branch.behind_count,
                 },
             )
         })
@@ -1417,12 +1427,14 @@ fn detect_branches(path: &Path) -> Vec<Branch> {
             (0, 0)
         };
         let ahead_count = git_ahead_count(path, name);
+        let behind_count = git_behind_count(path, name);
 
         branches.push(Branch {
             name: name.to_string(),
             lines_added,
             lines_removed,
             ahead_count,
+            behind_count,
             last_commit_relative: last_commit_relative.trim().to_string(),
             is_default: default_branch
                 .as_deref()
@@ -1468,6 +1480,7 @@ fn detect_branches(path: &Path) -> Vec<Branch> {
                     lines_added: 0,
                     lines_removed: 0,
                     ahead_count: 0,
+                    behind_count: 0,
                     last_commit_relative: last_commit_relative.trim().to_string(),
                     is_default: false,
                     is_current: false,
@@ -1500,6 +1513,7 @@ fn fallback_branches(
         lines_added: added,
         lines_removed: removed,
         ahead_count: git_ahead_count(path, &branch_name),
+        behind_count: git_behind_count(path, &branch_name),
         last_commit_relative: last_commit,
         is_default: default_branch
             .as_deref()
@@ -1704,6 +1718,23 @@ fn git_ahead_count(path: &Path, branch: &str) -> usize {
     let upstream = format!("{branch}@{{upstream}}");
     if let Ok(out) = git_command(path)
         .args(["rev-list", "--count", &format!("{upstream}..{branch}")])
+        .output()
+    {
+        if out.status.success() {
+            return String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .parse()
+                .unwrap_or(0);
+        }
+    }
+
+    0
+}
+
+fn git_behind_count(path: &Path, branch: &str) -> usize {
+    let upstream = format!("{branch}@{{upstream}}");
+    if let Ok(out) = git_command(path)
+        .args(["rev-list", "--count", &format!("{branch}..{upstream}")])
         .output()
     {
         if out.status.success() {

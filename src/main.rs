@@ -2,6 +2,7 @@
 //! (https://github.com/zed-industries/zed, crate `gpui`).
 
 mod add_agent_modal;
+mod agent_icons;
 mod agents;
 mod app;
 mod assets;

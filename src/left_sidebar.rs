@@ -89,6 +89,7 @@ impl AnotherOneApp {
                 lines_added: 0,
                 lines_removed: 0,
                 ahead_count: 0,
+                behind_count: 0,
                 last_commit_relative: String::new(),
                 is_default: false,
                 is_current: false,

@@ -8,6 +8,7 @@ use gpui::{
 };
 use uuid::Uuid;
 
+use crate::agent_icons::branded_icon;
 use crate::agents::{AGENTS, DEFAULT_AGENT_ID};
 use crate::app::AnotherOneApp;
 
@@ -811,12 +812,7 @@ impl AnotherOneApp {
                                 .flex_row()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(
-                                    svg()
-                                        .path(trigger_icon)
-                                        .size(px(18.))
-                                        .text_color(title_col()),
-                                )
+                                .child(branded_icon(trigger_icon, 18., Some(title_col())))
                                 .child(
                                     div()
                                         .text_size(rems(13. / 16.))
@@ -928,7 +924,7 @@ impl AnotherOneApp {
                                 )
                             }),
                     )
-                    .child(svg().path(icon_path).size(px(18.)).text_color(title_col()))
+                    .child(branded_icon(icon_path, 18., Some(title_col())))
                     .child(
                         div()
                             .text_size(rems(13. / 16.))

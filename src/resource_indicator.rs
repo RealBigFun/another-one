@@ -2,6 +2,7 @@ use gpui::{
     div, hsla, prelude::*, px, rems, rgb, svg, Context, MouseButton, MouseDownEvent, Window,
 };
 
+use crate::agent_icons::branded_icon;
 use crate::app::AnotherOneApp;
 use crate::resource_usage::{
     format_memory, ResourceUsageProject, ResourceUsageSession, ResourceUsageTask,
@@ -23,6 +24,7 @@ impl AnotherOneApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_titlebar_dropdowns();
         self.resource_indicator_open = !self.resource_indicator_open;
         if self.resource_indicator_open {
             self.refresh_resource_usage();
@@ -479,12 +481,7 @@ impl AnotherOneApp {
                     .gap(px(8.))
                     .min_w(px(0.))
                     .flex_1()
-                    .child(
-                        svg()
-                            .path(session.icon_path)
-                            .size(px(16.))
-                            .text_color(title_col),
-                    )
+                    .child(branded_icon(session.icon_path, 16., Some(title_col)))
                     .child(
                         div()
                             .text_size(rems(12.5 / 16.))

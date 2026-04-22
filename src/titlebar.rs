@@ -19,7 +19,7 @@ const TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT: f32 = 6.;
 const TITLEBAR_RIGHT_TOGGLE_SPACE: f32 = 36.;
 const TITLEBAR_OPEN_IN_MENU_W: f32 = TITLEBAR_OPEN_IN_BUTTON_W;
 const TITLEBAR_GIT_ACTIONS_MENU_W: f32 = 188.;
-const TITLEBAR_OPEN_IN_MENU_TOP: f32 = TITLEBAR_CHROME_H + 6.;
+const TITLEBAR_MENU_OFFSET_TOP: f32 = 6.;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TitlebarPrimaryGitAction {
@@ -48,10 +48,7 @@ impl TitlebarPrimaryGitAction {
         match self {
             Self::Commit => SharedString::from("Commit"),
             Self::CommitAndPush => SharedString::from("Commit & Push"),
-            Self::Push { ahead_count } if ahead_count > 0 => {
-                SharedString::from(format!("Push ({ahead_count})"))
-            }
-            Self::Push { .. } => SharedString::from("Push"),
+            Self::Push { ahead_count } => count_git_action_label("Push", ahead_count),
         }
     }
 }
@@ -61,6 +58,14 @@ struct ActiveToolbarGitActionPresentation {
     label: &'static str,
     icon_path: &'static str,
     danger: bool,
+}
+
+fn count_git_action_label(action: &'static str, count: usize) -> SharedString {
+    if count > 0 {
+        SharedString::from(format!("{action} ({count})"))
+    } else {
+        SharedString::from(action)
+    }
 }
 
 fn resolve_idle_primary_git_action(
@@ -132,6 +137,7 @@ impl AnotherOneApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_titlebar_dropdowns();
         cx.stop_propagation();
         self.toggle_sidebar(window, cx);
     }
@@ -142,8 +148,27 @@ impl AnotherOneApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_titlebar_dropdowns();
         cx.stop_propagation();
         self.toggle_right_sidebar(window, cx);
+    }
+
+    pub fn titlebar_background_mouse(
+        &mut self,
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dismissed = self.dismiss_titlebar_dropdowns();
+        cx.stop_propagation();
+        if ev.click_count == 2 {
+            window.titlebar_double_click();
+        } else {
+            window.start_window_move();
+        }
+        if dismissed {
+            cx.notify();
+        }
     }
 
     pub fn sidebar_toggle_svg(window: &Window) -> impl IntoElement {
@@ -295,7 +320,7 @@ impl AnotherOneApp {
             .id("titlebar-open-in-menu")
             .absolute()
             .right(px(overlay_right))
-            .top(px(TITLEBAR_OPEN_IN_MENU_TOP))
+            .top(px(TITLEBAR_MENU_OFFSET_TOP))
             .w(px(TITLEBAR_OPEN_IN_MENU_W))
             .rounded(px(12.))
             .bg(rgb(0x2b2d31))
@@ -349,7 +374,7 @@ impl AnotherOneApp {
         div()
             .id("titlebar-open-in-overlay")
             .absolute()
-            .top(px(0.))
+            .top(px(TITLEBAR_CHROME_H))
             .left(px(0.))
             .right(px(0.))
             .bottom(px(0.))
@@ -511,14 +536,8 @@ impl AnotherOneApp {
         let danger_col = hsla(0., 0.78, 0.72, 1.);
         let danger_hover = hsla(0., 0.45, 0.34, 0.26);
         let divider = gpui::white().opacity(0.08);
-        let push_label = {
-            let ahead_count = self.active_project_ahead_count(cx);
-            if ahead_count > 0 {
-                SharedString::from(format!("Push ({ahead_count})"))
-            } else {
-                SharedString::from("Push")
-            }
-        };
+        let push_label = count_git_action_label("Push", self.active_project_ahead_count(cx));
+        let pull_label = count_git_action_label("Pull", self.active_project_behind_count(cx));
 
         let menu = div()
             .id("titlebar-git-actions-menu")
@@ -528,7 +547,7 @@ impl AnotherOneApp {
                     + RESOURCE_INDICATOR_BUTTON_W
                     + TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT,
             ))
-            .top(px(TITLEBAR_OPEN_IN_MENU_TOP))
+            .top(px(TITLEBAR_MENU_OFFSET_TOP))
             .w(px(TITLEBAR_GIT_ACTIONS_MENU_W))
             .rounded(px(12.))
             .bg(bg)
@@ -719,7 +738,7 @@ impl AnotherOneApp {
                             .text_size(rems(12. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(text_col)
-                            .child("Pull"),
+                            .child(pull_label),
                     ),
             )
             .child(
@@ -907,7 +926,7 @@ impl AnotherOneApp {
         div()
             .id("titlebar-git-actions-overlay")
             .absolute()
-            .top(px(0.))
+            .top(px(TITLEBAR_CHROME_H))
             .left(px(0.))
             .right(px(0.))
             .bottom(px(0.))
@@ -964,18 +983,10 @@ impl AnotherOneApp {
                     .when(busy, |d| d.opacity(0.45))
                     .child(Self::sidebar_toggle_svg(window)),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .on_mouse_down(MouseButton::Left, |ev, window, _cx| {
-                        if ev.click_count == 2 {
-                            window.titlebar_double_click();
-                        } else {
-                            window.start_window_move();
-                        }
-                    }),
-            )
+            .child(div().flex_1().h_full().on_mouse_down(
+                MouseButton::Left,
+                cx.listener(Self::titlebar_background_mouse),
+            ))
             .child(self.titlebar_open_in_button(cx))
             .child(self.titlebar_git_actions_button(cx))
             .child(self.resource_indicator_button(window, cx))
@@ -1011,8 +1022,8 @@ impl AnotherOneApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_active_git_action_presentation, resolve_idle_primary_git_action,
-        TitlebarPrimaryGitAction,
+        count_git_action_label, resolve_active_git_action_presentation,
+        resolve_idle_primary_git_action, TitlebarPrimaryGitAction,
     };
     use crate::git_actions::ToolbarGitAction;
     use crate::project_store::RepoDefaultCommitAction;
@@ -1101,6 +1112,16 @@ mod tests {
                     .label,
                 "Creating Draft PR..."
             );
+        }
+    }
+
+    mod count_git_action_label_tests {
+        use super::count_git_action_label;
+
+        #[test]
+        fn includes_the_count_only_when_non_zero() {
+            assert_eq!(count_git_action_label("Pull", 0), "Pull");
+            assert_eq!(count_git_action_label("Pull", 4), "Pull (4)");
         }
     }
 }

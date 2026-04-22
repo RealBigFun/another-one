@@ -1752,6 +1752,28 @@ impl AnotherOneApp {
             .unwrap_or(0)
     }
 
+    pub(crate) fn active_project_behind_count(&self, cx: &App) -> usize {
+        let workspace = self.workspace_pane.read(cx);
+
+        if let Some(section) = workspace.active_section.as_ref() {
+            return self
+                .project_store
+                .branch_view(&section.project_id, &section.branch_name)
+                .map(|branch| branch.behind_count)
+                .unwrap_or(0);
+        }
+
+        workspace
+            .active_project_page
+            .as_deref()
+            .and_then(|project_id| {
+                self.project_store
+                    .primary_branch_for_project(project_id, false)
+            })
+            .map(|branch| branch.behind_count)
+            .unwrap_or(0)
+    }
+
     pub(crate) fn open_in_app_enabled(&self, app: OpenInAppKind) -> bool {
         self.project_store
             .open_in_app_enabled(app, &self.available_open_in_apps)
@@ -1765,9 +1787,16 @@ impl AnotherOneApp {
         self.settings_open = true;
         self.settings_section = section;
         self.shortcut_capture_action = None;
-        self.project_page_open_in_menu_project_id = None;
+        self.dismiss_titlebar_dropdowns();
         cx.stop_propagation();
         cx.notify();
+    }
+
+    pub(crate) fn dismiss_titlebar_dropdowns(&mut self) -> bool {
+        let had_open_in = self.project_page_open_in_menu_project_id.take().is_some();
+        let had_git_actions = self.git_actions_menu_open;
+        self.git_actions_menu_open = false;
+        had_open_in || had_git_actions
     }
 
     pub(crate) fn toggle_project_page_open_in_menu(
@@ -1785,6 +1814,7 @@ impl AnotherOneApp {
         } else {
             self.project_page_open_in_menu_project_id = Some(project_id.to_string());
         }
+        self.git_actions_menu_open = false;
 
         cx.stop_propagation();
         cx.notify();
@@ -1813,8 +1843,8 @@ impl AnotherOneApp {
             return;
         };
 
-        self.project_page_open_in_menu_project_id = None;
         let project_path = project.path.clone();
+        self.dismiss_titlebar_dropdowns();
         if let Err(err) = open_path_in_app(&project_path, app) {
             self.show_error_toast(err, cx);
         } else {
@@ -3683,6 +3713,7 @@ impl AnotherOneApp {
         let ProjectGitState {
             changed_files,
             ahead_count,
+            behind_count,
             metadata,
             current_branch,
         } = state;
@@ -3746,6 +3777,10 @@ impl AnotherOneApp {
                             branch.ahead_count = ahead_count;
                             changed = true;
                         }
+                        if branch.behind_count != behind_count {
+                            branch.behind_count = behind_count;
+                            changed = true;
+                        }
                     } else {
                         repo.branches_by_name.insert(
                             branch_name.to_string(),
@@ -3754,6 +3789,7 @@ impl AnotherOneApp {
                                 last_commit_relative: String::new(),
                                 is_default: false,
                                 ahead_count,
+                                behind_count,
                             },
                         );
                         if !repo.branch_order.iter().any(|name| name == branch_name) {
