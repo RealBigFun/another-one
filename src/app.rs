@@ -36,7 +36,7 @@ use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppK
 use crate::panels::terminal_cell_width;
 use crate::project_store::{
     ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore,
-    RepoBranchRecord, Task, TaskKind,
+    RepoBranchRecord, RepoDefaultCommitAction, Task, TaskKind,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
 use crate::terminal_launch::{
@@ -1719,6 +1719,13 @@ impl AnotherOneApp {
             .active_project_page
             .clone()
             .or_else(|| workspace.active_section.as_ref().map(|section| section.project_id.clone()))
+    }
+
+    pub(crate) fn active_toolbar_repo_id(&self, cx: &App) -> Option<String> {
+        let project_id = self.active_open_in_project_id(cx)?;
+        self.project_store
+            .project(&project_id)
+            .map(|project| project.repo_id.clone())
     }
 
     pub(crate) fn active_project_ahead_count(&self, cx: &App) -> usize {
@@ -4080,13 +4087,11 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn active_changed_files(&self, cx: &App) -> Arc<[ChangedFile]> {
-        self.workspace_pane
-            .read(cx)
-            .active_section
-            .as_ref()
-            .and_then(|section| self.changed_files.get(&section.project_id))
+        self.active_open_in_project_id(cx)
+            .as_deref()
+            .and_then(|project_id| self.changed_files.get(project_id))
             .cloned()
-            .unwrap_or_else(|| Arc::from(Vec::<ChangedFile>::new()))
+            .unwrap_or_else(Self::empty_changed_files)
     }
 
     fn set_changed_files_snapshot(
@@ -4382,10 +4387,26 @@ impl AnotherOneApp {
         };
         let start_message = match action {
             crate::git_actions::ToolbarGitAction::Commit => {
+                if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
+                    self.project_store.set_repo_default_commit_action(
+                        repo_id,
+                        RepoDefaultCommitAction::Commit,
+                    );
+                }
                 "Generating an AI commit message for staged changes..."
             }
             crate::git_actions::ToolbarGitAction::CommitAndPush => {
+                if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
+                    self.project_store.set_repo_default_commit_action(
+                        repo_id,
+                        RepoDefaultCommitAction::CommitAndPush,
+                    );
+                }
                 "Generating an AI commit message before commit and push..."
+            }
+            crate::git_actions::ToolbarGitAction::Fetch => "Fetching remote updates...",
+            crate::git_actions::ToolbarGitAction::Pull => {
+                "Pulling remote updates with fast-forward only..."
             }
             crate::git_actions::ToolbarGitAction::Push { force: false } => {
                 "Pushing the current branch..."

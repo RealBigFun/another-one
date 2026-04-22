@@ -1,24 +1,139 @@
 //! Titlebar strip and sidebar toggle button (platform-aware).
 
 use gpui::{
-    div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, Context, MouseButton,
+    div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, App, Context, MouseButton,
     MouseDownEvent, SharedString, Window,
 };
 
 use crate::app::AnotherOneApp;
 use crate::git_actions::ToolbarGitAction;
 use crate::layout::*;
+use crate::project_store::RepoDefaultCommitAction;
 use crate::resource_indicator::RESOURCE_INDICATOR_BUTTON_W;
 use crate::theme;
 
 const TITLEBAR_OPEN_IN_BUTTON_W: f32 = 114.;
 const TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT: f32 = 6.;
-const TITLEBAR_GIT_ACTIONS_BUTTON_W: f32 = 128.;
+const TITLEBAR_GIT_ACTIONS_BUTTON_W: f32 = 236.;
 const TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT: f32 = 6.;
 const TITLEBAR_RIGHT_TOGGLE_SPACE: f32 = 36.;
 const TITLEBAR_OPEN_IN_MENU_W: f32 = TITLEBAR_OPEN_IN_BUTTON_W;
-const TITLEBAR_GIT_ACTIONS_MENU_W: f32 = 176.;
+const TITLEBAR_GIT_ACTIONS_MENU_W: f32 = 188.;
 const TITLEBAR_OPEN_IN_MENU_TOP: f32 = TITLEBAR_CHROME_H + 6.;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TitlebarPrimaryGitAction {
+    Commit,
+    CommitAndPush,
+    Push { ahead_count: usize },
+}
+
+impl TitlebarPrimaryGitAction {
+    fn toolbar_action(self) -> ToolbarGitAction {
+        match self {
+            Self::Commit => ToolbarGitAction::Commit,
+            Self::CommitAndPush => ToolbarGitAction::CommitAndPush,
+            Self::Push { .. } => ToolbarGitAction::Push { force: false },
+        }
+    }
+
+    fn icon_path(self) -> &'static str {
+        match self {
+            Self::Commit => "assets/icons/icons__git-commit.svg",
+            Self::CommitAndPush | Self::Push { .. } => "assets/icons/icons__cloud-upload.svg",
+        }
+    }
+
+    fn label(self) -> SharedString {
+        match self {
+            Self::Commit => SharedString::from("Commit"),
+            Self::CommitAndPush => SharedString::from("Commit & Push"),
+            Self::Push { ahead_count } if ahead_count > 0 => {
+                SharedString::from(format!("Push ({ahead_count})"))
+            }
+            Self::Push { .. } => SharedString::from("Push"),
+        }
+    }
+
+    fn tooltip(self) -> &'static str {
+        match self {
+            Self::Commit => "Commit changes, staging all files first if needed",
+            Self::CommitAndPush => {
+                "Commit changes and push, staging all files first if needed"
+            }
+            Self::Push { .. } => "Push the current checked-out branch to its remote",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ActiveToolbarGitActionPresentation {
+    label: &'static str,
+    icon_path: &'static str,
+    danger: bool,
+}
+
+fn resolve_idle_primary_git_action(
+    has_local_changes: bool,
+    preferred_commit_action: Option<RepoDefaultCommitAction>,
+    ahead_count: usize,
+) -> TitlebarPrimaryGitAction {
+    if has_local_changes {
+        match preferred_commit_action {
+            Some(RepoDefaultCommitAction::CommitAndPush) => TitlebarPrimaryGitAction::CommitAndPush,
+            Some(RepoDefaultCommitAction::Commit) | None => TitlebarPrimaryGitAction::Commit,
+        }
+    } else {
+        TitlebarPrimaryGitAction::Push { ahead_count }
+    }
+}
+
+fn resolve_active_git_action_presentation(
+    action: ToolbarGitAction,
+) -> ActiveToolbarGitActionPresentation {
+    match action {
+        ToolbarGitAction::Commit => ActiveToolbarGitActionPresentation {
+            label: "Committing...",
+            icon_path: "assets/icons/icons__git-commit.svg",
+            danger: false,
+        },
+        ToolbarGitAction::CommitAndPush => ActiveToolbarGitActionPresentation {
+            label: "Committing & Pushing...",
+            icon_path: "assets/icons/icons__cloud-upload.svg",
+            danger: false,
+        },
+        ToolbarGitAction::Fetch => ActiveToolbarGitActionPresentation {
+            label: "Fetching...",
+            icon_path: "assets/icons/icons__tool-download.svg",
+            danger: false,
+        },
+        ToolbarGitAction::Pull => ActiveToolbarGitActionPresentation {
+            label: "Pulling...",
+            icon_path: "assets/icons/icons__git-pull.svg",
+            danger: false,
+        },
+        ToolbarGitAction::Push { force: false } => ActiveToolbarGitActionPresentation {
+            label: "Pushing...",
+            icon_path: "assets/icons/icons__cloud-upload.svg",
+            danger: false,
+        },
+        ToolbarGitAction::Push { force: true } => ActiveToolbarGitActionPresentation {
+            label: "Force Pushing...",
+            icon_path: "assets/icons/icons__cloud-upload.svg",
+            danger: true,
+        },
+        ToolbarGitAction::CreatePr { draft: false } => ActiveToolbarGitActionPresentation {
+            label: "Creating PR...",
+            icon_path: "assets/icons/icons__github.svg",
+            danger: false,
+        },
+        ToolbarGitAction::CreatePr { draft: true } => ActiveToolbarGitActionPresentation {
+            label: "Creating Draft PR...",
+            icon_path: "assets/icons/icons__github.svg",
+            danger: false,
+        },
+    }
+}
 
 impl AnotherOneApp {
     pub fn titlebar_toggle_mouse(
@@ -55,6 +170,19 @@ impl AnotherOneApp {
             .path("assets/right_sidebar_toggle.svg")
             .size(px(15.))
             .text_color(color)
+    }
+
+    fn idle_titlebar_primary_git_action(&self, cx: &App) -> TitlebarPrimaryGitAction {
+        let preferred_commit_action = self
+            .active_toolbar_repo_id(cx)
+            .as_deref()
+            .and_then(|repo_id| self.project_store.repo_default_commit_action(repo_id));
+
+        resolve_idle_primary_git_action(
+            !self.active_changed_files(cx).is_empty(),
+            preferred_commit_action,
+            self.active_project_ahead_count(cx),
+        )
     }
 
     pub fn titlebar_open_in_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -251,6 +379,8 @@ impl AnotherOneApp {
             return div().into_any_element();
         }
 
+        let primary_action = self.idle_titlebar_primary_git_action(cx);
+        let active_presentation = self.active_git_action.map(resolve_active_git_action_presentation);
         let active = self.active_git_action.is_some();
         let interactive = !active;
         let is_open = self.git_actions_menu_open;
@@ -262,9 +392,24 @@ impl AnotherOneApp {
         let hover_bg = gpui::white().opacity(0.08);
         let border = gpui::white().opacity(0.08);
         let divider = gpui::white().opacity(0.06);
-        let text_col = gpui::white().opacity(0.86);
-        let icon_col = gpui::white().opacity(0.92);
+        let danger_col = hsla(0., 0.78, 0.72, 1.);
+        let text_col = active_presentation
+            .filter(|presentation| presentation.danger)
+            .map(|_| danger_col)
+            .unwrap_or_else(|| gpui::white().opacity(0.86));
+        let icon_col = active_presentation
+            .filter(|presentation| presentation.danger)
+            .map(|_| danger_col)
+            .unwrap_or_else(|| gpui::white().opacity(0.92));
         let chevron_col = gpui::white().opacity(0.68);
+        let trigger_label = active_presentation
+            .map(|presentation| SharedString::from(presentation.label))
+            .unwrap_or_else(|| primary_action.label());
+        let trigger_icon = active_presentation
+            .map(|presentation| presentation.icon_path)
+            .unwrap_or_else(|| primary_action.icon_path());
+        let primary_toolbar_action = primary_action.toolbar_action();
+        let primary_tooltip = primary_action.tooltip();
 
         div()
             .id("titlebar-git-actions-trigger")
@@ -279,7 +424,6 @@ impl AnotherOneApp {
             .bg(button_bg)
             .border_1()
             .border_color(border)
-            .opacity(if interactive { 1. } else { 0.7 })
             .child(
                 div()
                     .flex()
@@ -293,12 +437,16 @@ impl AnotherOneApp {
                     .border_color(divider)
                     .when(interactive, |d| {
                         d.cursor_pointer()
+                            .tooltip(move |_window, cx| {
+                                Self::action_tooltip_view(primary_tooltip, cx)
+                            })
                             .hover(move |style| style.bg(hover_bg))
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                                     this.project_page_open_in_menu_project_id = None;
-                                    this.git_actions_menu_open = !this.git_actions_menu_open;
+                                    this.git_actions_menu_open = false;
+                                    this.start_toolbar_git_action(primary_toolbar_action, cx);
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -306,7 +454,7 @@ impl AnotherOneApp {
                     })
                     .child(
                         svg()
-                            .path("assets/icons/icons__tool-git.svg")
+                            .path(trigger_icon)
                             .size(px(14.))
                             .text_color(icon_col),
                     )
@@ -315,8 +463,17 @@ impl AnotherOneApp {
                             .text_size(rems(12. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(text_col)
-                            .child("Git actions"),
+                            .child(trigger_label),
                     ),
+            )
+            .when(active, |button| {
+                button.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .pr(px(9.))
+                        .child(Self::toolbar_spinner(icon_col, 12.)),
+                )
             )
             .child(
                 div()
@@ -346,17 +503,6 @@ impl AnotherOneApp {
                             .text_color(chevron_col),
                     ),
             )
-            .when(active, |button| {
-                button.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(Self::toolbar_spinner(icon_col, 12.)),
-                )
-            })
             .into_any_element()
     }
 
@@ -381,18 +527,7 @@ impl AnotherOneApp {
         let danger_hover = hsla(0., 0.45, 0.34, 0.26);
         let divider = gpui::white().opacity(0.08);
         let push_label = {
-            let ahead_count = self
-                .workspace_pane
-                .read(cx)
-                .active_section
-                .as_ref()
-                .and_then(|section| {
-                    self.project_store
-                        .branch_view(&section.project_id, &section.branch_name)
-                        .as_ref()
-                        .map(|branch| branch.ahead_count)
-                })
-                .unwrap_or(0);
+            let ahead_count = self.active_project_ahead_count(cx);
             if ahead_count > 0 {
                 SharedString::from(format!("Push ({ahead_count})"))
             } else {
@@ -518,6 +653,90 @@ impl AnotherOneApp {
                     ),
             )
             .child(div().h(px(1.)).mx(px(8.)).bg(divider))
+            .child(
+                div()
+                    .id("titlebar-git-actions-fetch")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(34.))
+                    .px(px(12.))
+                    .opacity(if toolbar_enabled { 1. } else { 0.55 })
+                    .when(toolbar_enabled, |d| {
+                        d.cursor_pointer()
+                            .hover(move |s| s.bg(hover_bg))
+                            .tooltip(move |_window, cx| {
+                                Self::action_tooltip_view(
+                                    "Fetch remote updates without changing the local checkout",
+                                    cx,
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                    this.git_actions_menu_open = false;
+                                    this.start_toolbar_git_action(ToolbarGitAction::Fetch, cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                    })
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__tool-download.svg")
+                            .size(px(14.))
+                            .text_color(text_col),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(text_col)
+                            .child("Fetch"),
+                    ),
+            )
+            .child(
+                div()
+                    .id("titlebar-git-actions-pull")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(34.))
+                    .px(px(12.))
+                    .opacity(if toolbar_enabled { 1. } else { 0.55 })
+                    .when(toolbar_enabled, |d| {
+                        d.cursor_pointer()
+                            .hover(move |s| s.bg(hover_bg))
+                            .tooltip(move |_window, cx| {
+                                Self::action_tooltip_view(
+                                    "Pull remote updates with fast-forward only",
+                                    cx,
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                    this.git_actions_menu_open = false;
+                                    this.start_toolbar_git_action(ToolbarGitAction::Pull, cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                    })
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__git-pull.svg")
+                            .size(px(14.))
+                            .text_color(text_col),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(text_col)
+                            .child("Pull"),
+                    ),
+            )
             .child(
                 div()
                     .id("titlebar-git-actions-push")
@@ -801,5 +1020,109 @@ impl AnotherOneApp {
                     .when(busy, |d| d.opacity(0.45))
                     .child(Self::right_sidebar_toggle_svg(window)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        resolve_active_git_action_presentation, resolve_idle_primary_git_action,
+        TitlebarPrimaryGitAction,
+    };
+    use crate::git_actions::ToolbarGitAction;
+    use crate::project_store::RepoDefaultCommitAction;
+
+    mod resolve_idle_primary_git_action_tests {
+        use super::{
+            resolve_idle_primary_git_action, RepoDefaultCommitAction, TitlebarPrimaryGitAction,
+        };
+
+        #[test]
+        fn returns_commit_when_changes_exist_and_preference_is_commit() {
+            let action = resolve_idle_primary_git_action(
+                true,
+                Some(RepoDefaultCommitAction::Commit),
+                3,
+            );
+
+            assert_eq!(action, TitlebarPrimaryGitAction::Commit);
+        }
+
+        #[test]
+        fn returns_commit_and_push_when_changes_exist_and_preference_is_commit_and_push() {
+            let action = resolve_idle_primary_git_action(
+                true,
+                Some(RepoDefaultCommitAction::CommitAndPush),
+                3,
+            );
+
+            assert_eq!(action, TitlebarPrimaryGitAction::CommitAndPush);
+        }
+
+        #[test]
+        fn returns_commit_when_changes_exist_and_preference_is_missing() {
+            let action = resolve_idle_primary_git_action(true, None, 3);
+
+            assert_eq!(action, TitlebarPrimaryGitAction::Commit);
+        }
+
+        #[test]
+        fn returns_push_when_changes_do_not_exist() {
+            let action = resolve_idle_primary_git_action(
+                false,
+                Some(RepoDefaultCommitAction::CommitAndPush),
+                3,
+            );
+
+            assert_eq!(action, TitlebarPrimaryGitAction::Push { ahead_count: 3 });
+        }
+    }
+
+    mod resolve_active_git_action_presentation_tests {
+        use super::{resolve_active_git_action_presentation, ToolbarGitAction};
+
+        #[test]
+        fn maps_every_toolbar_action_to_the_expected_progress_label() {
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::Commit).label,
+                "Committing..."
+            );
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::CommitAndPush).label,
+                "Committing & Pushing..."
+            );
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::Fetch).label,
+                "Fetching..."
+            );
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::Pull).label,
+                "Pulling..."
+            );
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::Push { force: false })
+                    .label,
+                "Pushing..."
+            );
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::Push { force: true })
+                    .label,
+                "Force Pushing..."
+            );
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr {
+                    draft: false,
+                })
+                .label,
+                "Creating PR..."
+            );
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr {
+                    draft: true,
+                })
+                .label,
+                "Creating Draft PR..."
+            );
+        }
     }
 }

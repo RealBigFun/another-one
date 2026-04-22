@@ -10,6 +10,8 @@ use std::process::{Command, Output, Stdio};
 pub enum ToolbarGitAction {
     Commit,
     CommitAndPush,
+    Fetch,
+    Pull,
     Push { force: bool },
     CreatePr { draft: bool },
 }
@@ -33,6 +35,15 @@ struct GeneratedCommitMessage {
     body: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SimpleToolbarGitCommand {
+    args: &'static [&'static str],
+    failure_prefix: &'static str,
+    success_toast: &'static str,
+    warning: bool,
+    refresh_git_state: bool,
+}
+
 pub fn execute_toolbar_git_action(
     repo_path: &Path,
     action: ToolbarGitAction,
@@ -40,6 +51,8 @@ pub fn execute_toolbar_git_action(
     match action {
         ToolbarGitAction::Commit => commit_with_ai(repo_path, false),
         ToolbarGitAction::CommitAndPush => commit_with_ai(repo_path, true),
+        ToolbarGitAction::Fetch => run_simple_git_command(repo_path, ToolbarGitAction::Fetch),
+        ToolbarGitAction::Pull => run_simple_git_command(repo_path, ToolbarGitAction::Pull),
         ToolbarGitAction::Push { force } => push_branch(repo_path, force),
         ToolbarGitAction::CreatePr { draft } => create_pull_request(repo_path, draft),
     }
@@ -55,6 +68,58 @@ fn toolbar_action_outcome(
         warning,
         refresh_git_state,
     }
+}
+
+fn simple_toolbar_git_command(action: ToolbarGitAction) -> Option<SimpleToolbarGitCommand> {
+    match action {
+        ToolbarGitAction::Fetch => Some(SimpleToolbarGitCommand {
+            args: &["fetch"],
+            failure_prefix: "Fetch failed",
+            success_toast: "Fetched remote updates.",
+            warning: false,
+            refresh_git_state: true,
+        }),
+        ToolbarGitAction::Pull => Some(SimpleToolbarGitCommand {
+            args: &["pull", "--ff-only"],
+            failure_prefix: "Pull failed",
+            success_toast: "Pulled remote updates with fast-forward only.",
+            warning: false,
+            refresh_git_state: true,
+        }),
+        _ => None,
+    }
+}
+
+fn run_simple_git_command(
+    repo_path: &Path,
+    action: ToolbarGitAction,
+) -> Result<ToolbarActionOutcome, ToolbarActionError> {
+    let Some(command) = simple_toolbar_git_command(action) else {
+        return Err(ToolbarActionError::from_message(
+            "The requested git action is not supported.",
+        ));
+    };
+
+    let output = Command::new("git")
+        .args(command.args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|err| {
+            ToolbarActionError::from_message(format!("{}: {err}", command.failure_prefix))
+        })?;
+
+    if !output.status.success() {
+        return Err(ToolbarActionError::from_message(command_failure(
+            command.failure_prefix,
+            &output,
+        )));
+    }
+
+    Ok(toolbar_action_outcome(
+        command.success_toast,
+        command.warning,
+        command.refresh_git_state,
+    ))
 }
 
 fn git_stdout(repo_path: &Path, args: &[&str]) -> Option<String> {
@@ -569,7 +634,10 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_github_remote, parse_commit_message};
+    use super::{
+        normalize_github_remote, parse_commit_message, simple_toolbar_git_command,
+        ToolbarGitAction,
+    };
 
     #[test]
     fn normalizes_supported_github_remote_formats() {
@@ -594,5 +662,30 @@ mod tests {
 
         assert_eq!(message.subject, "feat: simplify parser");
         assert_eq!(message.body.as_deref(), Some("Keeps behavior."));
+    }
+
+    #[test]
+    fn simple_toolbar_git_command_uses_fetch_args_and_refreshes_state() {
+        let command = simple_toolbar_git_command(ToolbarGitAction::Fetch)
+            .expect("fetch should use a simple git command");
+
+        assert_eq!(command.args, &["fetch"]);
+        assert_eq!(command.failure_prefix, "Fetch failed");
+        assert_eq!(command.success_toast, "Fetched remote updates.");
+        assert!(command.refresh_git_state);
+    }
+
+    #[test]
+    fn simple_toolbar_git_command_uses_ff_only_pull_args_and_refreshes_state() {
+        let command = simple_toolbar_git_command(ToolbarGitAction::Pull)
+            .expect("pull should use a simple git command");
+
+        assert_eq!(command.args, &["pull", "--ff-only"]);
+        assert_eq!(command.failure_prefix, "Pull failed");
+        assert_eq!(
+            command.success_toast,
+            "Pulled remote updates with fast-forward only."
+        );
+        assert!(command.refresh_git_state);
     }
 }

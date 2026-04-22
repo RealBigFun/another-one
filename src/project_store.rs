@@ -13,6 +13,12 @@ use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 
 const STORE_VERSION: u8 = 3;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RepoDefaultCommitAction {
+    Commit,
+    CommitAndPush,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoBranchRecord {
     pub name: String,
@@ -203,6 +209,8 @@ pub struct UiState {
     #[serde(default)]
     pub expanded_repo_ids: HashSet<String>,
     #[serde(default)]
+    pub repo_default_commit_actions: HashMap<String, RepoDefaultCommitAction>,
+    #[serde(default)]
     pub pinned_task_ids: HashSet<String>,
     #[serde(default)]
     pub last_active_section_id: Option<String>,
@@ -219,6 +227,7 @@ impl Default for UiState {
         Self {
             left_sidebar_open: default_left_sidebar_open(),
             expanded_repo_ids: HashSet::new(),
+            repo_default_commit_actions: HashMap::new(),
             pinned_task_ids: HashSet::new(),
             last_active_section_id: None,
             enabled_open_in_apps: None,
@@ -311,6 +320,8 @@ impl ProjectStore {
         store.rebuild_runtime_views();
         ui.expanded_repo_ids
             .retain(|repo_id| store.repos.contains_key(repo_id));
+        ui.repo_default_commit_actions
+            .retain(|repo_id, _| store.repos.contains_key(repo_id));
         ui.pinned_task_ids
             .retain(|task_id| store.tasks_by_id.contains_key(task_id));
         if ui
@@ -418,6 +429,24 @@ impl ProjectStore {
             .and_then(|project| project.checkout.current_branch.clone())
     }
 
+    pub fn repo_default_commit_action(&self, repo_id: &str) -> Option<RepoDefaultCommitAction> {
+        self.ui.repo_default_commit_actions.get(repo_id).copied()
+    }
+
+    pub fn set_repo_default_commit_action(
+        &mut self,
+        repo_id: impl Into<String>,
+        action: RepoDefaultCommitAction,
+    ) {
+        let repo_id = repo_id.into();
+        if self.ui.repo_default_commit_actions.get(&repo_id) == Some(&action) {
+            return;
+        }
+
+        self.ui.repo_default_commit_actions.insert(repo_id, action);
+        self.save();
+    }
+
     #[allow(dead_code)]
     pub fn remove_project(&mut self, project_id: &str) {
         let Some(project) = self.projects_by_id.remove(project_id) else {
@@ -455,6 +484,7 @@ impl ProjectStore {
         {
             self.repos.remove(&repo_id);
             self.ui.expanded_repo_ids.remove(&repo_id);
+            self.ui.repo_default_commit_actions.remove(&repo_id);
         }
         self.rebuild_runtime_views();
         self.save();
@@ -707,6 +737,9 @@ impl ProjectStore {
             .retain(|_, project| self.repos.contains_key(&project.repo_id));
         self.project_order
             .retain(|project_id| self.projects_by_id.contains_key(project_id));
+        self.ui
+            .repo_default_commit_actions
+            .retain(|repo_id, _| self.repos.contains_key(repo_id));
 
         self.tasks_by_id.retain(|_, task| {
             self.projects_by_id.contains_key(&task.root_project_id)
@@ -1813,7 +1846,7 @@ mod tests {
     use super::{
         app_worktrees_root, format_git_command_error, worktree_parent_dir_with_root,
         PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
-        RepoRecord, StoreFile, Task, TaskKind,
+        RepoDefaultCommitAction, RepoRecord, StoreFile, Task, TaskKind,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -2034,6 +2067,10 @@ mod tests {
             ui: super::UiState {
                 left_sidebar_open: false,
                 expanded_repo_ids: HashSet::from(["repo".to_string()]),
+                repo_default_commit_actions: HashMap::from([(
+                    "repo".to_string(),
+                    RepoDefaultCommitAction::CommitAndPush,
+                )]),
                 pinned_task_ids: HashSet::from(["task-1".to_string(), "task-2".to_string()]),
                 last_active_section_id: None,
                 enabled_open_in_apps: None,
@@ -2077,8 +2114,52 @@ mod tests {
             HashSet::from(["repo".to_string()])
         );
         assert_eq!(
+            round_trip.ui.repo_default_commit_actions,
+            HashMap::from([("repo".to_string(), RepoDefaultCommitAction::CommitAndPush)])
+        );
+        assert_eq!(
             round_trip.ui.pinned_task_ids,
             HashSet::from(["task-1".to_string(), "task-2".to_string()])
+        );
+    }
+
+    #[test]
+    fn sanitize_removes_stale_repo_default_commit_actions() {
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: None,
+                    branch_order: Vec::new(),
+                    branches_by_name: HashMap::new(),
+                },
+            )]),
+            projects_by_id: HashMap::from([("root".to_string(), sample_project("root", None))]),
+            projects: Vec::new(),
+            project_order: vec!["root".to_string()],
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: super::UiState {
+                repo_default_commit_actions: HashMap::from([
+                    ("repo".to_string(), RepoDefaultCommitAction::Commit),
+                    (
+                        "stale".to_string(),
+                        RepoDefaultCommitAction::CommitAndPush,
+                    ),
+                ]),
+                ..super::UiState::default()
+            },
+            file_path: PathBuf::from("/tmp/test-projects.json"),
+        };
+
+        store.sanitize();
+
+        assert_eq!(
+            store.ui.repo_default_commit_actions,
+            HashMap::from([("repo".to_string(), RepoDefaultCommitAction::Commit)])
         );
     }
 
