@@ -973,10 +973,8 @@ pub struct AnotherOneApp {
     pub(crate) sidebar_task_menu: Option<SidebarTaskMenuState>,
     /// Collapsed change-file sections in the right sidebar (e.g. "staged", "uncommitted").
     pub(crate) collapsed_change_sections: HashSet<String>,
-    /// Whether the Create PR dropdown menu is open.
-    pub(crate) create_pr_menu_open: bool,
-    /// Whether the Push dropdown menu is open.
-    pub(crate) push_menu_open: bool,
+    /// Whether the right-sidebar git actions dropdown menu is open.
+    pub(crate) git_actions_menu_open: bool,
     /// Active transient notifications displayed above the app chrome.
     toasts: Vec<AppToast>,
     next_toast_id: u64,
@@ -2046,8 +2044,7 @@ impl AnotherOneApp {
             project_menu_project: None,
             sidebar_task_menu: None,
             collapsed_change_sections: HashSet::new(),
-            create_pr_menu_open: false,
-            push_menu_open: false,
+            git_actions_menu_open: false,
             toasts: Vec::new(),
             next_toast_id: 1,
             toast_drag: None,
@@ -4338,8 +4335,7 @@ impl AnotherOneApp {
         self.show_info_toast(start_message, cx);
 
         let (tx, rx) = mpsc::channel();
-        self.push_menu_open = false;
-        self.create_pr_menu_open = false;
+        self.git_actions_menu_open = false;
         self.active_git_action = Some(action);
         self.git_action_receiver = Some(rx);
         std::thread::spawn(move || {
@@ -7559,6 +7555,7 @@ impl Render for AnotherOneApp {
                     .child(main)
                     .child(footer)
                     .child(self.titlebar_open_in_overlay(cx))
+                    .child(self.titlebar_git_actions_overlay(cx))
                     .child(self.resource_indicator_overlay(window, cx))
                     .child(self.project_menu_overlay(sw, cx))
                     .child(self.sidebar_task_menu_overlay(window, cx))
