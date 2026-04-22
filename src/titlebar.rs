@@ -14,7 +14,7 @@ use crate::theme;
 
 const TITLEBAR_OPEN_IN_BUTTON_W: f32 = 114.;
 const TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT: f32 = 6.;
-const TITLEBAR_GIT_ACTIONS_BUTTON_W: f32 = 236.;
+const TITLEBAR_GIT_ACTIONS_BUTTON_W: f32 = 156.;
 const TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT: f32 = 6.;
 const TITLEBAR_RIGHT_TOGGLE_SPACE: f32 = 36.;
 const TITLEBAR_OPEN_IN_MENU_W: f32 = TITLEBAR_OPEN_IN_BUTTON_W;
@@ -52,16 +52,6 @@ impl TitlebarPrimaryGitAction {
                 SharedString::from(format!("Push ({ahead_count})"))
             }
             Self::Push { .. } => SharedString::from("Push"),
-        }
-    }
-
-    fn tooltip(self) -> &'static str {
-        match self {
-            Self::Commit => "Commit changes, staging all files first if needed",
-            Self::CommitAndPush => {
-                "Commit changes and push, staging all files first if needed"
-            }
-            Self::Push { .. } => "Push the current checked-out branch to its remote",
         }
     }
 }
@@ -212,7 +202,9 @@ impl AnotherOneApp {
         let project_id_for_chevron = project_id.clone();
 
         div()
-            .id(SharedString::from(format!("titlebar-open-in-trigger-{project_id}")))
+            .id(SharedString::from(format!(
+                "titlebar-open-in-trigger-{project_id}"
+            )))
             .flex()
             .flex_shrink_0()
             .flex_row()
@@ -380,7 +372,9 @@ impl AnotherOneApp {
         }
 
         let primary_action = self.idle_titlebar_primary_git_action(cx);
-        let active_presentation = self.active_git_action.map(resolve_active_git_action_presentation);
+        let active_presentation = self
+            .active_git_action
+            .map(resolve_active_git_action_presentation);
         let active = self.active_git_action.is_some();
         let interactive = !active;
         let is_open = self.git_actions_menu_open;
@@ -405,11 +399,7 @@ impl AnotherOneApp {
         let trigger_label = active_presentation
             .map(|presentation| SharedString::from(presentation.label))
             .unwrap_or_else(|| primary_action.label());
-        let trigger_icon = active_presentation
-            .map(|presentation| presentation.icon_path)
-            .unwrap_or_else(|| primary_action.icon_path());
         let primary_toolbar_action = primary_action.toolbar_action();
-        let primary_tooltip = primary_action.tooltip();
 
         div()
             .id("titlebar-git-actions-trigger")
@@ -428,6 +418,7 @@ impl AnotherOneApp {
                 div()
                     .flex()
                     .flex_1()
+                    .min_w(px(0.))
                     .flex_row()
                     .items_center()
                     .gap(px(6.))
@@ -437,9 +428,6 @@ impl AnotherOneApp {
                     .border_color(divider)
                     .when(interactive, |d| {
                         d.cursor_pointer()
-                            .tooltip(move |_window, cx| {
-                                Self::action_tooltip_view(primary_tooltip, cx)
-                            })
                             .hover(move |style| style.bg(hover_bg))
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -452,28 +440,25 @@ impl AnotherOneApp {
                                 }),
                             )
                     })
-                    .child(
+                    .child(if active {
+                        Self::toolbar_spinner(icon_col, 12.).into_any_element()
+                    } else {
                         svg()
-                            .path(trigger_icon)
+                            .path(primary_action.icon_path())
                             .size(px(14.))
-                            .text_color(icon_col),
-                    )
+                            .text_color(icon_col)
+                            .into_any_element()
+                    })
                     .child(
                         div()
+                            .flex_1()
+                            .min_w(px(0.))
                             .text_size(rems(12. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(text_col)
+                            .truncate()
                             .child(trigger_label),
                     ),
-            )
-            .when(active, |button| {
-                button.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .pr(px(9.))
-                        .child(Self::toolbar_spinner(icon_col, 12.)),
-                )
             )
             .child(
                 div()
@@ -1039,11 +1024,8 @@ mod tests {
 
         #[test]
         fn returns_commit_when_changes_exist_and_preference_is_commit() {
-            let action = resolve_idle_primary_git_action(
-                true,
-                Some(RepoDefaultCommitAction::Commit),
-                3,
-            );
+            let action =
+                resolve_idle_primary_git_action(true, Some(RepoDefaultCommitAction::Commit), 3);
 
             assert_eq!(action, TitlebarPrimaryGitAction::Commit);
         }
@@ -1110,17 +1092,13 @@ mod tests {
                 "Force Pushing..."
             );
             assert_eq!(
-                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr {
-                    draft: false,
-                })
-                .label,
+                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr { draft: false })
+                    .label,
                 "Creating PR..."
             );
             assert_eq!(
-                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr {
-                    draft: true,
-                })
-                .label,
+                resolve_active_git_action_presentation(ToolbarGitAction::CreatePr { draft: true })
+                    .label,
                 "Creating Draft PR..."
             );
         }

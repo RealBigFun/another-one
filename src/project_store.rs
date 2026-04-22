@@ -642,11 +642,7 @@ impl ProjectStore {
             .or_else(|| enabled.first().copied())
     }
 
-    pub fn open_in_app_enabled(
-        &self,
-        app: OpenInAppKind,
-        available: &[OpenInAppKind],
-    ) -> bool {
+    pub fn open_in_app_enabled(&self, app: OpenInAppKind, available: &[OpenInAppKind]) -> bool {
         self.enabled_open_in_apps(available).contains(&app)
     }
 
@@ -2145,10 +2141,7 @@ mod tests {
             ui: super::UiState {
                 repo_default_commit_actions: HashMap::from([
                     ("repo".to_string(), RepoDefaultCommitAction::Commit),
-                    (
-                        "stale".to_string(),
-                        RepoDefaultCommitAction::CommitAndPush,
-                    ),
+                    ("stale".to_string(), RepoDefaultCommitAction::CommitAndPush),
                 ]),
                 ..super::UiState::default()
             },

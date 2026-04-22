@@ -197,12 +197,7 @@ impl AnotherOneApp {
                     ),
             )
             .child(self.settings_nav_item(SettingsSection::Agents, active, section_active_bg, cx))
-            .child(self.settings_nav_item(
-                SettingsSection::OpenIn,
-                active,
-                section_active_bg,
-                cx,
-            ))
+            .child(self.settings_nav_item(SettingsSection::OpenIn, active, section_active_bg, cx))
             .child(self.settings_nav_item(
                 SettingsSection::Keybindings,
                 active,
