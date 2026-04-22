@@ -655,11 +655,8 @@ impl AnotherOneApp {
         }
 
         if modifiers.platform && ev.keystroke.key.as_str() == "v" {
-            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                if self.paste_into_active_terminal(cx, &text) {
-                    cx.stop_propagation();
-                    return true;
-                }
+            if self.handle_clipboard_paste(cx) {
+                return true;
             }
             return false;
         }
