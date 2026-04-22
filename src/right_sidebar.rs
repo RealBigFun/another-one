@@ -882,75 +882,79 @@ impl AnotherOneApp {
             .w_full()
             .min_w(px(0.))
             .flex()
-            .items_start()
-            .gap(px(10.))
+            .flex_col()
+            .gap(px(2.))
             .px(px(12.))
             .py(px(6.))
             .child(
                 div()
-                    .flex()
-                    .items_start()
-                    .gap(px(8.))
+                    .w_full()
                     .min_w(px(0.))
-                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.))
                     .child(
                         div()
-                            .min_w(px(12.))
-                            .pt(px(1.))
-                            .text_size(rems(10. / 16.))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(status_color)
-                            .child(file.status.to_string()),
-                    )
-                    .child(
-                        div()
-                            .w_full()
                             .flex()
-                            .flex_col()
-                            .gap(px(2.))
+                            .items_center()
+                            .gap(px(12.))
                             .min_w(px(0.))
                             .flex_1()
                             .child(
                                 div()
-                                    .w_full()
-                                    .min_w(px(0.))
-                                    .overflow_hidden()
-                                    .truncate()
-                                    .text_size(rems(10. / 16.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(title_col)
-                                    .child(file_name),
+                                    .min_w(px(18.))
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(status_color)
+                                    .child(file.status.to_string()),
                             )
-                            .when(!parent_dir.is_empty(), |entry| {
-                                entry.child(
-                                    div()
-                                        .w_full()
-                                        .min_w(px(0.))
-                                        .overflow_hidden()
-                                        .truncate()
-                                        .text_size(rems(10. / 16.))
-                                        .text_color(path_col)
-                                        .child(parent_dir.clone()),
-                                )
-                            })
-                            .when(file.original_path.is_some(), |entry| {
-                                entry.child(
-                                    div()
-                                        .w_full()
-                                        .min_w(px(0.))
-                                        .overflow_hidden()
-                                        .truncate()
-                                        .text_size(rems(10. / 16.))
-                                        .text_color(path_col)
-                                        .child(format!(
-                                            "Renamed from {}",
-                                            file.original_path.clone().unwrap_or_default()
-                                        )),
-                                )
-                            }),
-                    ),
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .min_w(px(0.))
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .min_w(px(0.))
+                                            .truncate()
+                                            .text_size(rems(12. / 16.))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(title_col)
+                                            .child(file_name),
+                                    )
+                                    .when(!parent_dir.is_empty(), |entry| {
+                                        entry.child(
+                                            div()
+                                                .min_w(px(0.))
+                                                .truncate()
+                                                .text_size(rems(11. / 16.))
+                                                .text_color(path_col)
+                                                .child(parent_dir.clone()),
+                                        )
+                                    }),
+                            ),
+                    )
+                    .child(div().flex_shrink_0().child(stats)),
             )
-            .child(div().flex_shrink_0().pt(px(1.)).child(stats))
+            .when(file.original_path.is_some(), |row| {
+                row.child(
+                    div()
+                        .ml(px(30.))
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_size(rems(11. / 16.))
+                        .text_color(path_col)
+                        .child(format!(
+                            "Renamed from {}",
+                            file.original_path.clone().unwrap_or_default()
+                        )),
+                )
+            })
             .into_any_element()
     }
 
