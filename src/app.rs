@@ -358,6 +358,19 @@ struct GitActionReply {
     toast_message: String,
 }
 
+struct CommitFileChangesReply {
+    project_id: String,
+    commit_id: String,
+    result: Result<Vec<crate::project_store::BranchCompareFile>, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CommitFileChangesState {
+    Loading,
+    Loaded(Arc<[crate::project_store::BranchCompareFile]>),
+    Failed(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RightSidebarMode {
     WorkingTree,
@@ -947,7 +960,6 @@ impl WorkspacePane {
             });
         });
     }
-
 }
 
 pub struct AnotherOneApp {
@@ -1010,6 +1022,10 @@ pub struct AnotherOneApp {
     task_creation_receiver: Option<mpsc::Receiver<TaskCreationReply>>,
     /// Receiver for the in-flight add-project background preparation result.
     project_add_receiver: Option<mpsc::Receiver<ProjectAddReply>>,
+    /// Sender used by background commit file-change lookups.
+    commit_file_changes_sender: mpsc::Sender<CommitFileChangesReply>,
+    /// Receiver for background commit file-change lookups.
+    commit_file_changes_receiver: mpsc::Receiver<CommitFileChangesReply>,
     /// Sender used by background project GitHub-link lookups.
     project_github_link_sender: mpsc::Sender<ProjectGitHubLinkReply>,
     /// Receiver for background project GitHub-link lookups.
@@ -1086,6 +1102,8 @@ pub struct AnotherOneApp {
     pub(crate) commit_page_sizes: HashMap<String, usize>,
     /// Cached recent-commit snapshots keyed by project id.
     pub(crate) branch_commit_states: HashMap<String, ProjectBranchCommitState>,
+    /// Cached per-commit file-change snapshots keyed by `project_id:commit_id`.
+    pub(crate) commit_file_changes_states: HashMap<String, CommitFileChangesState>,
     /// Cached branch-vs-target compare snapshots keyed by project id.
     pub(crate) branch_compare_states: HashMap<String, ProjectBranchCompareState>,
     /// UI font size (adjusted by Cmd+/Cmd- zoom).
@@ -1805,6 +1823,12 @@ impl AnotherOneApp {
                 .project(cached_project_id)
                 .is_some_and(|project| project.repo_id != repo_id)
         });
+        self.commit_file_changes_states.retain(|key, _| {
+            let cached_project_id = key.split(':').next().unwrap_or_default();
+            self.project_store
+                .project(cached_project_id)
+                .is_some_and(|project| project.repo_id != repo_id)
+        });
         self.branch_compare_states.retain(|cached_project_id, _| {
             self.project_store
                 .project(cached_project_id)
@@ -2098,9 +2122,57 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    fn commit_file_changes_key(project_id: &str, commit_id: &str) -> String {
+        format!("{project_id}:{commit_id}")
+    }
+
     pub(crate) fn commit_row_expanded(&self, project_id: &str, commit_id: &str) -> bool {
         self.expanded_commit_rows
-            .contains(&format!("{project_id}:{commit_id}"))
+            .contains(&Self::commit_file_changes_key(project_id, commit_id))
+    }
+
+    pub(crate) fn commit_file_changes_state(
+        &self,
+        project_id: &str,
+        commit_id: &str,
+    ) -> Option<&CommitFileChangesState> {
+        self.commit_file_changes_states
+            .get(&Self::commit_file_changes_key(project_id, commit_id))
+    }
+
+    fn request_commit_file_changes(&mut self, project_id: &str, commit_id: &str) {
+        let key = Self::commit_file_changes_key(project_id, commit_id);
+        match self.commit_file_changes_states.get(&key) {
+            Some(CommitFileChangesState::Loading) | Some(CommitFileChangesState::Loaded(_)) => {
+                return
+            }
+            Some(CommitFileChangesState::Failed(_)) | None => {}
+        }
+
+        let Some(project_path) = self
+            .project_store
+            .project(project_id)
+            .map(|project| project.path.clone())
+        else {
+            return;
+        };
+
+        self.commit_file_changes_states
+            .insert(key, CommitFileChangesState::Loading);
+
+        let tx = self.commit_file_changes_sender.clone();
+        let project_id = project_id.to_string();
+        let commit_id = commit_id.to_string();
+        std::thread::spawn(move || {
+            let result =
+                crate::project_store::read_project_commit_file_changes(&project_path, &commit_id)
+                    .map(|state| state.files);
+            let _ = tx.send(CommitFileChangesReply {
+                project_id,
+                commit_id,
+                result,
+            });
+        });
     }
 
     pub(crate) fn toggle_commit_row_expanded(
@@ -2109,9 +2181,11 @@ impl AnotherOneApp {
         commit_id: &str,
         cx: &mut Context<Self>,
     ) {
-        let key = format!("{project_id}:{commit_id}");
+        let key = Self::commit_file_changes_key(project_id, commit_id);
         if !self.expanded_commit_rows.insert(key.clone()) {
             self.expanded_commit_rows.remove(&key);
+        } else {
+            self.request_commit_file_changes(project_id, commit_id);
         }
         cx.notify();
     }
@@ -2339,6 +2413,7 @@ impl AnotherOneApp {
         let store = ProjectStore::load();
         let left_sidebar_open = store.ui.left_sidebar_open;
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
+        let (commit_file_changes_sender, commit_file_changes_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             mpsc::channel();
         let (terminal_launch_sender, terminal_launch_receiver) = mpsc::channel();
@@ -2448,6 +2523,8 @@ impl AnotherOneApp {
             git_refresh_receiver: None,
             task_creation_receiver: None,
             project_add_receiver: None,
+            commit_file_changes_sender,
+            commit_file_changes_receiver,
             project_github_link_sender,
             project_github_link_receiver,
             terminal_launch_sender,
@@ -2481,6 +2558,7 @@ impl AnotherOneApp {
             right_sidebar_mode: RightSidebarMode::WorkingTree,
             commit_page_sizes: HashMap::new(),
             branch_commit_states: HashMap::new(),
+            commit_file_changes_states: HashMap::new(),
             branch_compare_states: HashMap::new(),
             marked_text: None,
             add_agent_modal: None,
@@ -5237,6 +5315,28 @@ impl AnotherOneApp {
                 true
             }
         }
+    }
+
+    fn drain_commit_file_changes(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut should_notify = false;
+
+        while let Ok(reply) = self.commit_file_changes_receiver.try_recv() {
+            let key = Self::commit_file_changes_key(&reply.project_id, &reply.commit_id);
+            let state = match reply.result {
+                Ok(files) => CommitFileChangesState::Loaded(Arc::from(files)),
+                Err(error) => {
+                    self.show_warning_toast(error.clone(), cx);
+                    CommitFileChangesState::Failed(error)
+                }
+            };
+
+            if self.commit_file_changes_states.get(&key) != Some(&state) {
+                self.commit_file_changes_states.insert(key, state);
+                should_notify = true;
+            }
+        }
+
+        should_notify
     }
 
     pub(crate) fn request_project_github_link_lookup(
@@ -8021,6 +8121,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_git_refresh(cx);
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_project_add(cx);
+                            should_notify |= this.drain_commit_file_changes(cx);
                             should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.drain_terminal_launch_replies(cx);
                             should_notify |= this.drain_warm_terminal_launch_replies(cx);
