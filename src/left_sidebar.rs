@@ -1370,7 +1370,9 @@ impl AnotherOneApp {
                 div()
                     .flex()
                     .flex_row()
+                    .items_center()
                     .gap(px(4.))
+                    .pt(px(1.))
                     .text_xs()
                     .child(div().text_color(green).child(added_text))
                     .child(div().text_color(red).child(removed_text)),
