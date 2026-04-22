@@ -763,7 +763,9 @@ impl AnotherOneApp {
 
     fn handle_terminal_key_down(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
         let modifiers = ev.keystroke.modifiers;
-        if modifiers.platform && ev.keystroke.key.as_str() == "c" {
+        let is_clipboard_combo = is_terminal_clipboard_shortcut(modifiers);
+
+        if is_clipboard_combo && ev.keystroke.key.as_str() == "c" {
             if let Some(text) = self.selected_terminal_text(cx) {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
                 cx.stop_propagation();
@@ -772,7 +774,7 @@ impl AnotherOneApp {
             return false;
         }
 
-        if modifiers.platform && ev.keystroke.key.as_str() == "v" {
+        if is_clipboard_combo && ev.keystroke.key.as_str() == "v" {
             if self.handle_clipboard_paste(cx) {
                 return true;
             }
@@ -2801,6 +2803,20 @@ fn move_sidebar_task_name_cursor_to_edge(
         state.task_name_selection_anchor = None;
     }
     state.task_name_cursor = if to_end { state.task_name.len() } else { 0 };
+}
+
+fn is_terminal_clipboard_shortcut(modifiers: gpui::Modifiers) -> bool {
+    if modifiers.alt || modifiers.function {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        modifiers.platform && !modifiers.control
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        modifiers.control && !modifiers.platform
+    }
 }
 
 fn terminal_key_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
