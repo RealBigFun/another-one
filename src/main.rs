@@ -27,7 +27,9 @@ mod titlebar;
 
 use std::path::PathBuf;
 
-use gpui::{px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions};
+use gpui::{
+    px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions,
+};
 
 use app::{AnotherOneApp, ZoomIn, ZoomOut, ZoomReset};
 use assets::ProjectAssets;

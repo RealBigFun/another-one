@@ -1254,6 +1254,9 @@ impl AnotherOneApp {
         let muted_col = hsla(0., 0., 0.50, 1.);
         let green = hsla(138. / 360., 0.50, 0.74, 1.);
         let red = hsla(352. / 360., 0.52, 0.76, 1.);
+        let pull_request_open = rgb(0x059669);
+        let pull_request_closed = rgb(0x71717a);
+        let pull_request_merged = rgb(0x7c3aed);
         let hover_bg = gpui::white().opacity(0.05);
         let active_bg = gpui::white().opacity(0.03);
         let active_border = gpui::white().opacity(0.18);
@@ -1269,6 +1272,20 @@ impl AnotherOneApp {
         let task_name = entry.task_name.clone();
         let is_worktree = entry.kind == TaskKind::Worktree || entry.kind == TaskKind::MultiWorktree;
         let row_id = task_id.clone();
+        let pull_request = self
+            .project_pull_request(&project_id, &branch_name)
+            .cloned();
+        let pull_request_color =
+            pull_request
+                .as_ref()
+                .map(|pull_request| match pull_request.state {
+                    crate::git_actions::PullRequestState::Open => pull_request_open,
+                    crate::git_actions::PullRequestState::Closed => pull_request_closed,
+                    crate::git_actions::PullRequestState::Merged => pull_request_merged,
+                });
+        let pull_request_url = pull_request
+            .as_ref()
+            .map(|pull_request| pull_request.url.clone());
         let root_project_id = self
             .sidebar_root_project_for_project(&project_id)
             .map(|project| project.id)
@@ -1362,22 +1379,7 @@ impl AnotherOneApp {
 
         let row_group = SharedString::from(format!("task-row-{project_id}-{row_id}"));
         let mut right_controls = div().flex().flex_row().items_center().gap(px(6.));
-
-        if entry.branch.lines_added > 0 || entry.branch.lines_removed > 0 {
-            let added_text: SharedString = format!("+{}", entry.branch.lines_added).into();
-            let removed_text: SharedString = format!("-{}", entry.branch.lines_removed).into();
-            right_controls = right_controls.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.))
-                    .pt(px(1.))
-                    .text_xs()
-                    .child(div().text_color(green).child(added_text))
-                    .child(div().text_color(red).child(removed_text)),
-            );
-        }
+        let has_diff = entry.branch.lines_added > 0 || entry.branch.lines_removed > 0;
 
         let delete_project_id = project_id.clone();
         let delete_task_id = task_id.clone();
@@ -1451,17 +1453,41 @@ impl AnotherOneApp {
                     .flex_1()
                     .min_w(px(0.))
                     .overflow_hidden()
-                    .when(is_worktree, |row| {
-                        row.child(
-                            svg()
-                                .flex_shrink_0()
-                                .path("assets/icons/icons__git-split.svg")
-                                .size(px(13.))
-                                .text_color(muted_col),
-                        )
-                    })
-                    .when(!is_worktree, |row| {
-                        row.child(div().flex_shrink_0().w(px(13.)))
+                    .child(if let Some(color) = pull_request_color {
+                        let pull_request_url = pull_request_url.clone();
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .flex_shrink_0()
+                            .w(px(14.))
+                            .h(px(14.))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                    cx.stop_propagation();
+                                    this.sidebar_task_menu = None;
+                                    if let Some(pull_request_url) = pull_request_url.clone() {
+                                        if let Err(err) = open_external_url(&pull_request_url) {
+                                            this.show_error_toast(err, cx);
+                                        }
+                                    }
+                                }),
+                            )
+                            .child(
+                                svg()
+                                    .path("assets/icons/icons__pull-request.svg")
+                                    .size(px(13.))
+                                    .text_color(color),
+                            )
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex_shrink_0()
+                            .w(px(14.))
+                            .h(px(14.))
+                            .into_any_element()
                     })
                     .child(task_label)
                     .when(is_worktree && entry.branch.is_default, |row| {
@@ -1581,14 +1607,43 @@ impl AnotherOneApp {
             )
             .child(top_row);
 
-        if !meta.is_empty() {
+        if !meta.is_empty() || has_diff {
+            let added_text: SharedString = format!("+{}", entry.branch.lines_added).into();
+            let removed_text: SharedString = format!("-{}", entry.branch.lines_removed).into();
             container = container.child(
                 div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.))
                     .pl(px(meta_indent))
                     .text_xs()
                     .text_color(muted_col)
-                    .truncate()
-                    .child(meta),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(4.))
+                            .min_w(px(0.))
+                            .flex_1()
+                            .when(!meta.is_empty(), |row| {
+                                row.child(div().min_w(px(0.)).truncate().child(meta.clone()))
+                            })
+                            .when(!meta.is_empty() && has_diff, |row| row.child("•"))
+                            .when(has_diff, |row| {
+                                row.child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(4.))
+                                        .text_xs()
+                                        .child(div().text_color(green).child(added_text))
+                                        .child(div().text_color(red).child(removed_text)),
+                                )
+                            }),
+                    ),
             );
         }
 
@@ -2411,6 +2466,11 @@ impl AnotherOneApp {
                         .gap(px(LIST_GAP))
                         .pt(px((1.0 - expand_progress) * 4.0));
                     for entry in &group.child_entries {
+                        self.request_project_pull_request_lookup_for(
+                            &entry.project_id,
+                            &entry.branch.name,
+                            &entry.project_path,
+                        );
                         let is_active = active_section.as_ref().is_some_and(|section| {
                             section.task_id.as_deref() == Some(entry.task_id.as_str())
                         });

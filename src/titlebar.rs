@@ -510,7 +510,11 @@ impl AnotherOneApp {
                                 MouseButton::Left,
                                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                                     this.project_page_open_in_menu_project_id = None;
-                                    this.git_actions_menu_open = !this.git_actions_menu_open;
+                                    let opening = !this.git_actions_menu_open;
+                                    this.git_actions_menu_open = opening;
+                                    if opening {
+                                        this.refresh_active_project_pull_request_lookup(cx);
+                                    }
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -548,6 +552,12 @@ impl AnotherOneApp {
         let divider = gpui::white().opacity(0.08);
         let push_label = count_git_action_label("Push", self.active_project_ahead_count(cx));
         let pull_label = count_git_action_label("Pull", self.active_project_behind_count(cx));
+        let pull_request_url = self.active_project_pull_request_url(cx);
+        let pull_request_lookup_checked = self.active_project_pull_request_lookup_checked(cx);
+        let has_existing_pull_request = pull_request_url.is_some();
+        let can_create_pull_request =
+            toolbar_enabled && pull_request_lookup_checked && !has_existing_pull_request;
+        let can_view_pull_request = toolbar_enabled && has_existing_pull_request;
 
         let menu = div()
             .id("titlebar-git-actions-menu")
@@ -850,8 +860,8 @@ impl AnotherOneApp {
                     .gap(px(8.))
                     .h(px(34.))
                     .px(px(12.))
-                    .opacity(if toolbar_enabled { 1. } else { 0.55 })
-                    .when(toolbar_enabled, |d| {
+                    .opacity(if can_create_pull_request { 1. } else { 0.55 })
+                    .when(can_create_pull_request, |d| {
                         d.cursor_pointer()
                             .hover(move |s| s.bg(hover_bg))
                             .tooltip(move |_window, cx| {
@@ -898,8 +908,8 @@ impl AnotherOneApp {
                     .gap(px(8.))
                     .h(px(34.))
                     .px(px(12.))
-                    .opacity(if toolbar_enabled { 1. } else { 0.55 })
-                    .when(toolbar_enabled, |d| {
+                    .opacity(if can_create_pull_request { 1. } else { 0.55 })
+                    .when(can_create_pull_request, |d| {
                         d.cursor_pointer()
                             .hover(move |s| s.bg(hover_bg))
                             .tooltip(move |_window, cx| {
@@ -936,6 +946,57 @@ impl AnotherOneApp {
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(text_col)
                             .child("Draft PR"),
+                    ),
+            )
+            .child(
+                div()
+                    .id("titlebar-git-actions-view-pr")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(34.))
+                    .px(px(12.))
+                    .opacity(if can_view_pull_request { 1. } else { 0.55 })
+                    .when(can_view_pull_request, |d| {
+                        let pull_request_url = pull_request_url.clone();
+                        d.cursor_pointer()
+                            .hover(move |s| s.bg(hover_bg))
+                            .tooltip(move |_window, cx| {
+                                Self::action_tooltip_view(
+                                    "Open the existing pull request in the browser",
+                                    cx,
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                    this.git_actions_menu_open = false;
+                                    if let Some(pull_request_url) = pull_request_url.clone() {
+                                        if let Err(err) =
+                                            crate::platform::CurrentPlatform::open_external_url(
+                                                &pull_request_url,
+                                            )
+                                        {
+                                            this.show_error_toast(err, cx);
+                                        }
+                                    }
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                    })
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__external-link.svg")
+                            .size(px(14.))
+                            .text_color(text_col),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(text_col)
+                            .child("View PR"),
                     ),
             );
 

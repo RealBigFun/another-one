@@ -64,6 +64,7 @@ const PASTED_IMAGE_PREVIEW_LIFETIME: Duration = Duration::from_millis(2200);
 const TOAST_STACK_LIMIT: usize = 4;
 const TOAST_SWIPE_DISMISS_THRESHOLD: f32 = 120.;
 const TOAST_COPY_FEEDBACK: Duration = Duration::from_millis(1200);
+const PULL_REQUEST_LOOKUP_TTL: Duration = Duration::from_secs(30);
 pub(crate) const SIDEBAR_TASK_DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 const PROJECT_EXPAND_ANIMATION_DURATION: Duration = Duration::from_millis(160);
 const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
@@ -358,6 +359,19 @@ struct GitActionReply {
     toast_message: String,
 }
 
+struct CommitFileChangesReply {
+    project_id: String,
+    commit_id: String,
+    result: Result<Vec<crate::project_store::BranchCompareFile>, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CommitFileChangesState {
+    Loading,
+    Loaded(Arc<[crate::project_store::BranchCompareFile]>),
+    Failed(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RightSidebarMode {
     WorkingTree,
@@ -427,6 +441,11 @@ struct ProjectAddReply {
 struct ProjectGitHubLinkReply {
     project_id: String,
     github_url: Option<String>,
+}
+
+struct ProjectPullRequestReply {
+    lookup_key: String,
+    pull_request: Option<crate::git_actions::PullRequestStatus>,
 }
 
 struct TaskCreationSuccess {
@@ -947,7 +966,6 @@ impl WorkspacePane {
             });
         });
     }
-
 }
 
 pub struct AnotherOneApp {
@@ -1010,10 +1028,20 @@ pub struct AnotherOneApp {
     task_creation_receiver: Option<mpsc::Receiver<TaskCreationReply>>,
     /// Receiver for the in-flight add-project background preparation result.
     project_add_receiver: Option<mpsc::Receiver<ProjectAddReply>>,
+    /// Sender used by background commit file-change lookups.
+    commit_file_changes_sender: mpsc::Sender<CommitFileChangesReply>,
+    /// Receiver for background commit file-change lookups.
+    commit_file_changes_receiver: mpsc::Receiver<CommitFileChangesReply>,
     /// Sender used by background project GitHub-link lookups.
     project_github_link_sender: mpsc::Sender<ProjectGitHubLinkReply>,
     /// Receiver for background project GitHub-link lookups.
     project_github_link_receiver: mpsc::Receiver<ProjectGitHubLinkReply>,
+    /// Cached pull request metadata keyed by `project_id:branch_name`.
+    pub(crate) project_pull_requests: HashMap<String, crate::git_actions::PullRequestStatus>,
+    /// Sender used by background pull-request lookups.
+    project_pull_request_sender: mpsc::Sender<ProjectPullRequestReply>,
+    /// Receiver for background pull-request lookups.
+    project_pull_request_receiver: mpsc::Receiver<ProjectPullRequestReply>,
     /// Sender used by background terminal launch/resume work.
     terminal_launch_sender: mpsc::Sender<TerminalLaunchReply>,
     /// Receiver for background terminal launch/resume work.
@@ -1054,6 +1082,12 @@ pub struct AnotherOneApp {
     pub(crate) project_github_link_requests: HashSet<String>,
     /// Projects whose GitHub link has already been resolved this session.
     pub(crate) project_github_link_checked: HashSet<String>,
+    /// In-flight pull-request lookups keyed by `project_id:branch_name`.
+    pub(crate) project_pull_request_requests: HashSet<String>,
+    /// Branches whose pull-request lookup has been resolved at least once.
+    pub(crate) project_pull_request_checked: HashSet<String>,
+    /// Last successful lookup completion time keyed by `project_id:branch_name`.
+    pub(crate) project_pull_request_checked_at: HashMap<String, Instant>,
     /// New Task modal state. Some when open, None when closed.
     pub(crate) new_task_modal: Option<crate::new_task_modal::NewTaskModalState>,
     /// Add Agent modal state. Some when open, None when closed.
@@ -1086,6 +1120,8 @@ pub struct AnotherOneApp {
     pub(crate) commit_page_sizes: HashMap<String, usize>,
     /// Cached recent-commit snapshots keyed by project id.
     pub(crate) branch_commit_states: HashMap<String, ProjectBranchCommitState>,
+    /// Cached per-commit file-change snapshots keyed by `project_id:commit_id`.
+    pub(crate) commit_file_changes_states: HashMap<String, CommitFileChangesState>,
     /// Cached branch-vs-target compare snapshots keyed by project id.
     pub(crate) branch_compare_states: HashMap<String, ProjectBranchCompareState>,
     /// UI font size (adjusted by Cmd+/Cmd- zoom).
@@ -1805,6 +1841,12 @@ impl AnotherOneApp {
                 .project(cached_project_id)
                 .is_some_and(|project| project.repo_id != repo_id)
         });
+        self.commit_file_changes_states.retain(|key, _| {
+            let cached_project_id = key.split(':').next().unwrap_or_default();
+            self.project_store
+                .project(cached_project_id)
+                .is_some_and(|project| project.repo_id != repo_id)
+        });
         self.branch_compare_states.retain(|cached_project_id, _| {
             self.project_store
                 .project(cached_project_id)
@@ -1827,6 +1869,92 @@ impl AnotherOneApp {
         self.project_store
             .project(&project_id)
             .map(|project| project.repo_id.clone())
+    }
+
+    fn project_pull_request_lookup_key(project_id: &str, branch_name: &str) -> String {
+        format!("{project_id}:{branch_name}")
+    }
+
+    fn project_pull_request_lookup_is_fresh(&self, lookup_key: &str) -> bool {
+        self.project_pull_request_checked_at
+            .get(lookup_key)
+            .is_some_and(|checked_at| checked_at.elapsed() < PULL_REQUEST_LOOKUP_TTL)
+    }
+
+    fn active_project_pull_request_context(
+        &self,
+        cx: &App,
+    ) -> Option<(String, String, std::path::PathBuf)> {
+        let project_id = self.active_open_in_project_id(cx)?;
+        let branch_name = self.project_store.current_branch_name(&project_id)?;
+        let project_path = self.project_path(&project_id)?;
+        Some((project_id, branch_name, project_path))
+    }
+
+    pub(crate) fn active_project_pull_request_lookup_checked(&self, cx: &App) -> bool {
+        let Some((project_id, branch_name, _)) = self.active_project_pull_request_context(cx)
+        else {
+            return false;
+        };
+        let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
+        self.project_pull_request_checked.contains(&lookup_key)
+            && self.project_pull_request_lookup_is_fresh(&lookup_key)
+    }
+
+    pub(crate) fn active_project_pull_request_url(&self, cx: &App) -> Option<String> {
+        let pull_request = self.active_project_pull_request(cx)?;
+        (pull_request.state == crate::git_actions::PullRequestState::Open)
+            .then_some(pull_request.url.clone())
+    }
+
+    pub(crate) fn active_project_pull_request(
+        &self,
+        cx: &App,
+    ) -> Option<&crate::git_actions::PullRequestStatus> {
+        let (project_id, branch_name, _) = self.active_project_pull_request_context(cx)?;
+        let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
+        self.project_pull_requests.get(&lookup_key)
+    }
+
+    pub(crate) fn project_pull_request(
+        &self,
+        project_id: &str,
+        branch_name: &str,
+    ) -> Option<&crate::git_actions::PullRequestStatus> {
+        let lookup_key = Self::project_pull_request_lookup_key(project_id, branch_name);
+        self.project_pull_requests.get(&lookup_key)
+    }
+
+    pub(crate) fn request_project_pull_request_lookup_for(
+        &mut self,
+        project_id: &str,
+        branch_name: &str,
+        project_path: &std::path::Path,
+    ) {
+        let lookup_key = Self::project_pull_request_lookup_key(project_id, branch_name);
+        self.request_project_pull_request_lookup(&lookup_key, branch_name, project_path);
+    }
+
+    pub(crate) fn refresh_active_project_pull_request_lookup(&mut self, cx: &App) {
+        let Some((project_id, branch_name, project_path)) =
+            self.active_project_pull_request_context(cx)
+        else {
+            return;
+        };
+        let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
+        self.request_project_pull_request_lookup(&lookup_key, &branch_name, &project_path);
+    }
+
+    fn invalidate_active_project_pull_request_lookup(&mut self, cx: &App) {
+        let Some((project_id, branch_name, _)) = self.active_project_pull_request_context(cx)
+        else {
+            return;
+        };
+        let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
+        self.project_pull_request_requests.remove(&lookup_key);
+        self.project_pull_request_checked.remove(&lookup_key);
+        self.project_pull_request_checked_at.remove(&lookup_key);
+        self.project_pull_requests.remove(&lookup_key);
     }
 
     pub(crate) fn active_project_ahead_count(&self, cx: &App) -> usize {
@@ -2098,9 +2226,57 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    fn commit_file_changes_key(project_id: &str, commit_id: &str) -> String {
+        format!("{project_id}:{commit_id}")
+    }
+
     pub(crate) fn commit_row_expanded(&self, project_id: &str, commit_id: &str) -> bool {
         self.expanded_commit_rows
-            .contains(&format!("{project_id}:{commit_id}"))
+            .contains(&Self::commit_file_changes_key(project_id, commit_id))
+    }
+
+    pub(crate) fn commit_file_changes_state(
+        &self,
+        project_id: &str,
+        commit_id: &str,
+    ) -> Option<&CommitFileChangesState> {
+        self.commit_file_changes_states
+            .get(&Self::commit_file_changes_key(project_id, commit_id))
+    }
+
+    fn request_commit_file_changes(&mut self, project_id: &str, commit_id: &str) {
+        let key = Self::commit_file_changes_key(project_id, commit_id);
+        match self.commit_file_changes_states.get(&key) {
+            Some(CommitFileChangesState::Loading) | Some(CommitFileChangesState::Loaded(_)) => {
+                return
+            }
+            Some(CommitFileChangesState::Failed(_)) | None => {}
+        }
+
+        let Some(project_path) = self
+            .project_store
+            .project(project_id)
+            .map(|project| project.path.clone())
+        else {
+            return;
+        };
+
+        self.commit_file_changes_states
+            .insert(key, CommitFileChangesState::Loading);
+
+        let tx = self.commit_file_changes_sender.clone();
+        let project_id = project_id.to_string();
+        let commit_id = commit_id.to_string();
+        std::thread::spawn(move || {
+            let result =
+                crate::project_store::read_project_commit_file_changes(&project_path, &commit_id)
+                    .map(|state| state.files);
+            let _ = tx.send(CommitFileChangesReply {
+                project_id,
+                commit_id,
+                result,
+            });
+        });
     }
 
     pub(crate) fn toggle_commit_row_expanded(
@@ -2109,9 +2285,11 @@ impl AnotherOneApp {
         commit_id: &str,
         cx: &mut Context<Self>,
     ) {
-        let key = format!("{project_id}:{commit_id}");
+        let key = Self::commit_file_changes_key(project_id, commit_id);
         if !self.expanded_commit_rows.insert(key.clone()) {
             self.expanded_commit_rows.remove(&key);
+        } else {
+            self.request_commit_file_changes(project_id, commit_id);
         }
         cx.notify();
     }
@@ -2339,6 +2517,8 @@ impl AnotherOneApp {
         let store = ProjectStore::load();
         let left_sidebar_open = store.ui.left_sidebar_open;
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
+        let (project_pull_request_sender, project_pull_request_receiver) = mpsc::channel();
+        let (commit_file_changes_sender, commit_file_changes_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             mpsc::channel();
         let (terminal_launch_sender, terminal_launch_receiver) = mpsc::channel();
@@ -2448,8 +2628,13 @@ impl AnotherOneApp {
             git_refresh_receiver: None,
             task_creation_receiver: None,
             project_add_receiver: None,
+            commit_file_changes_sender,
+            commit_file_changes_receiver,
             project_github_link_sender,
             project_github_link_receiver,
+            project_pull_requests: HashMap::new(),
+            project_pull_request_sender,
+            project_pull_request_receiver,
             terminal_launch_sender,
             terminal_launch_receiver,
             warm_terminal_launch_sender,
@@ -2470,6 +2655,9 @@ impl AnotherOneApp {
             next_prewarmed_launch_id: 1,
             project_github_link_requests: HashSet::new(),
             project_github_link_checked: HashSet::new(),
+            project_pull_request_requests: HashSet::new(),
+            project_pull_request_checked: HashSet::new(),
+            project_pull_request_checked_at: HashMap::new(),
             settings_open: false,
             settings_section: crate::settings_page::SettingsSection::Agents,
             available_open_in_apps,
@@ -2481,6 +2669,7 @@ impl AnotherOneApp {
             right_sidebar_mode: RightSidebarMode::WorkingTree,
             commit_page_sizes: HashMap::new(),
             branch_commit_states: HashMap::new(),
+            commit_file_changes_states: HashMap::new(),
             branch_compare_states: HashMap::new(),
             marked_text: None,
             add_agent_modal: None,
@@ -4990,6 +5179,11 @@ impl AnotherOneApp {
 
         match receiver.try_recv() {
             Ok(reply) => {
+                let refresh_pull_request_lookup =
+                    matches!(
+                        self.active_git_action,
+                        Some(crate::git_actions::ToolbarGitAction::CreatePr { .. })
+                    ) && matches!(reply.toast_kind, ToastKind::Success);
                 self.active_git_action = None;
                 self.git_action_receiver = None;
                 if reply.refresh_git_state {
@@ -5005,6 +5199,10 @@ impl AnotherOneApp {
                     ToastKind::Error => self.show_error_toast(reply.toast_message, cx),
                     ToastKind::Warning => self.show_warning_toast(reply.toast_message, cx),
                     ToastKind::Info => self.show_info_toast(reply.toast_message, cx),
+                }
+                if refresh_pull_request_lookup {
+                    self.invalidate_active_project_pull_request_lookup(cx);
+                    self.refresh_active_project_pull_request_lookup(cx);
                 }
                 true
             }
@@ -5239,6 +5437,28 @@ impl AnotherOneApp {
         }
     }
 
+    fn drain_commit_file_changes(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut should_notify = false;
+
+        while let Ok(reply) = self.commit_file_changes_receiver.try_recv() {
+            let key = Self::commit_file_changes_key(&reply.project_id, &reply.commit_id);
+            let state = match reply.result {
+                Ok(files) => CommitFileChangesState::Loaded(Arc::from(files)),
+                Err(error) => {
+                    self.show_warning_toast(error.clone(), cx);
+                    CommitFileChangesState::Failed(error)
+                }
+            };
+
+            if self.commit_file_changes_states.get(&key) != Some(&state) {
+                self.commit_file_changes_states.insert(key, state);
+                should_notify = true;
+            }
+        }
+
+        should_notify
+    }
+
     pub(crate) fn request_project_github_link_lookup(
         &mut self,
         project_id: &str,
@@ -5287,6 +5507,63 @@ impl AnotherOneApp {
             } else if self
                 .project_github_links
                 .remove(&reply.project_id)
+                .is_some()
+            {
+                should_notify = true;
+            }
+        }
+
+        should_notify
+    }
+
+    fn request_project_pull_request_lookup(
+        &mut self,
+        lookup_key: &str,
+        branch_name: &str,
+        project_path: &std::path::Path,
+    ) {
+        if self.project_pull_request_lookup_is_fresh(lookup_key)
+            || self.project_pull_request_requests.contains(lookup_key)
+        {
+            return;
+        }
+
+        self.project_pull_request_requests
+            .insert(lookup_key.to_string());
+
+        let tx = self.project_pull_request_sender.clone();
+        let lookup_key = lookup_key.to_string();
+        let branch_name = branch_name.to_string();
+        let project_path = project_path.to_path_buf();
+        std::thread::spawn(move || {
+            let pull_request =
+                crate::git_actions::find_latest_pull_request_status(&project_path, &branch_name);
+            let _ = tx.send(ProjectPullRequestReply {
+                lookup_key,
+                pull_request,
+            });
+        });
+    }
+
+    fn drain_project_pull_request_lookup(&mut self) -> bool {
+        let mut should_notify = false;
+
+        while let Ok(reply) = self.project_pull_request_receiver.try_recv() {
+            self.project_pull_request_requests.remove(&reply.lookup_key);
+            self.project_pull_request_checked
+                .insert(reply.lookup_key.clone());
+            self.project_pull_request_checked_at
+                .insert(reply.lookup_key.clone(), Instant::now());
+
+            if let Some(pull_request) = reply.pull_request {
+                if self.project_pull_requests.get(&reply.lookup_key) != Some(&pull_request) {
+                    self.project_pull_requests
+                        .insert(reply.lookup_key, pull_request);
+                    should_notify = true;
+                }
+            } else if self
+                .project_pull_requests
+                .remove(&reply.lookup_key)
                 .is_some()
             {
                 should_notify = true;
@@ -8021,7 +8298,9 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_git_refresh(cx);
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_project_add(cx);
+                            should_notify |= this.drain_commit_file_changes(cx);
                             should_notify |= this.drain_project_github_link_lookup();
+                            should_notify |= this.drain_project_pull_request_lookup();
                             should_notify |= this.drain_terminal_launch_replies(cx);
                             should_notify |= this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= this.tick_toasts();

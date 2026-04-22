@@ -286,10 +286,7 @@ mod tests {
         let snap_dir = tmp.path().join("snap-bin");
         make_exec(&snap_dir, "code");
         let launcher = find_launcher_in_dirs(OpenInAppKind::VsCode, &[snap_dir.clone()]);
-        assert_eq!(
-            launcher,
-            Some(LinuxLauncher::Binary(snap_dir.join("code")))
-        );
+        assert_eq!(launcher, Some(LinuxLauncher::Binary(snap_dir.join("code"))));
     }
 
     #[test]

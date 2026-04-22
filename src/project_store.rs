@@ -178,6 +178,12 @@ pub struct ProjectBranchCommitState {
     pub commits: Vec<BranchCommit>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectCommitFileChanges {
+    pub commit_id: String,
+    pub files: Vec<BranchCompareFile>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskKind {
     Direct,
@@ -1302,6 +1308,51 @@ pub fn read_project_branch_commit_state(
     })
 }
 
+pub fn read_project_commit_file_changes(
+    path: &Path,
+    commit_id: &str,
+) -> Result<ProjectCommitFileChanges, String> {
+    let name_status_output = git_command(path)
+        .args([
+            "show",
+            "--format=",
+            "--name-status",
+            "-M",
+            "-m",
+            "-z",
+            commit_id,
+        ])
+        .output()
+        .map_err(|error| format!("Could not list file changes for commit {commit_id}: {error}"))?;
+    if !name_status_output.status.success() {
+        return Err(format_git_command_failure(
+            &format!("Could not list file changes for commit {commit_id}"),
+            &name_status_output,
+        ));
+    }
+
+    let numstat_output = git_command(path)
+        .args(["show", "--format=", "--numstat", "-M", "-z", commit_id])
+        .output()
+        .map_err(|error| format!("Could not inspect diff stats for commit {commit_id}: {error}"))?;
+    if !numstat_output.status.success() {
+        return Err(format_git_command_failure(
+            &format!("Could not inspect diff stats for commit {commit_id}"),
+            &numstat_output,
+        ));
+    }
+
+    let files = combine_commit_file_changes(
+        parse_branch_compare_name_status_entries(&name_status_output.stdout),
+        parse_branch_compare_numstat_entries(&numstat_output.stdout),
+    );
+
+    Ok(ProjectCommitFileChanges {
+        commit_id: commit_id.to_string(),
+        files,
+    })
+}
+
 fn read_project_git_metadata(path: &Path) -> ProjectGitMetadata {
     let branches = detect_branches(path);
     let (branch_order, branches_by_name) = repo_branch_catalog_from_resolved(&branches);
@@ -1454,6 +1505,40 @@ fn parse_branch_compare_numstat_value(field: &[u8]) -> i32 {
     } else {
         value.parse::<i32>().unwrap_or(0)
     }
+}
+
+fn combine_commit_file_changes(
+    name_status_entries: Vec<BranchCompareNameStatusEntry>,
+    numstat_entries: Vec<BranchCompareNumStatEntry>,
+) -> Vec<BranchCompareFile> {
+    let mut stats_by_key = numstat_entries
+        .into_iter()
+        .map(|entry| ((entry.path.clone(), entry.original_path.clone()), entry))
+        .collect::<HashMap<_, _>>();
+    let mut seen = HashSet::new();
+    let mut files = Vec::new();
+
+    for entry in name_status_entries {
+        if !seen.insert((
+            entry.path.clone(),
+            entry.original_path.clone(),
+            entry.status,
+        )) {
+            continue;
+        }
+
+        let stats = stats_by_key.remove(&(entry.path.clone(), entry.original_path.clone()));
+        files.push(BranchCompareFile {
+            path: entry.path,
+            original_path: entry.original_path,
+            status: entry.status,
+            additions: stats.as_ref().map_or(0, |entry| entry.additions),
+            deletions: stats.as_ref().map_or(0, |entry| entry.deletions),
+        });
+    }
+
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    files
 }
 
 fn parse_branch_commit_entries(bytes: &[u8]) -> Vec<BranchCommit> {
@@ -2374,12 +2459,13 @@ mod tests {
     use crate::shortcuts::ShortcutSettings;
 
     use super::{
-        app_worktrees_root, format_git_command_error, parse_branch_commit_entries,
-        parse_branch_compare_name_status_entries, parse_branch_compare_numstat_entries,
-        parse_recent_branch_commit_page, worktree_parent_dir_with_root, PersistedSectionState,
-        PersistedTerminalTab, Project, ProjectBranchSettingField, ProjectBranchSettings,
-        ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task,
-        TaskKind,
+        app_worktrees_root, combine_commit_file_changes, format_git_command_error,
+        parse_branch_commit_entries, parse_branch_compare_name_status_entries,
+        parse_branch_compare_numstat_entries, parse_recent_branch_commit_page,
+        worktree_parent_dir_with_root, BranchCompareNameStatusEntry, BranchCompareNumStatEntry,
+        PersistedSectionState, PersistedTerminalTab, Project, ProjectBranchSettingField,
+        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
+        RepoRecord, StoreFile, Task, TaskKind,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -2927,6 +3013,50 @@ mod tests {
         assert_eq!(commits[0].subject, "Add panel");
         assert_eq!(commits[1].author_name, "Sam");
         assert_eq!(commits[1].authored_relative, "2 hours ago");
+    }
+
+    #[test]
+    fn combine_commit_file_changes_deduplicates_merge_name_status_entries() {
+        let files = combine_commit_file_changes(
+            vec![
+                BranchCompareNameStatusEntry {
+                    path: "AGENTS.md".to_string(),
+                    original_path: None,
+                    status: 'M',
+                },
+                BranchCompareNameStatusEntry {
+                    path: "AGENTS.md".to_string(),
+                    original_path: None,
+                    status: 'M',
+                },
+                BranchCompareNameStatusEntry {
+                    path: "src/app.rs".to_string(),
+                    original_path: None,
+                    status: 'A',
+                },
+            ],
+            vec![
+                BranchCompareNumStatEntry {
+                    path: "AGENTS.md".to_string(),
+                    original_path: None,
+                    additions: 30,
+                    deletions: 0,
+                },
+                BranchCompareNumStatEntry {
+                    path: "src/app.rs".to_string(),
+                    original_path: None,
+                    additions: 12,
+                    deletions: 3,
+                },
+            ],
+        );
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "AGENTS.md");
+        assert_eq!(files[0].additions, 30);
+        assert_eq!(files[1].path, "src/app.rs");
+        assert_eq!(files[1].status, 'A');
+        assert_eq!(files[1].deletions, 3);
     }
 
     #[test]
