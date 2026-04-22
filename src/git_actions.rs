@@ -10,6 +10,7 @@ use std::process::{Command, Output, Stdio};
 pub enum ToolbarGitAction {
     Commit,
     CommitAndPush,
+    UndoLastCommit,
     Fetch,
     Pull,
     Push {
@@ -56,6 +57,7 @@ pub fn execute_toolbar_git_action(
     match action {
         ToolbarGitAction::Commit => commit_with_ai(repo_path, false),
         ToolbarGitAction::CommitAndPush => commit_with_ai(repo_path, true),
+        ToolbarGitAction::UndoLastCommit => undo_last_commit(repo_path),
         ToolbarGitAction::Fetch => run_simple_git_command(repo_path, ToolbarGitAction::Fetch),
         ToolbarGitAction::Pull => run_simple_git_command(repo_path, ToolbarGitAction::Pull),
         ToolbarGitAction::Push { force } => push_branch(repo_path, force),
@@ -79,6 +81,13 @@ fn toolbar_action_outcome(
 
 fn simple_toolbar_git_command(action: ToolbarGitAction) -> Option<SimpleToolbarGitCommand> {
     match action {
+        ToolbarGitAction::UndoLastCommit => Some(SimpleToolbarGitCommand {
+            args: &["reset", "--soft", "HEAD~1"],
+            failure_prefix: "Undo last commit failed",
+            success_toast: "Undid the last commit.",
+            warning: true,
+            refresh_git_state: true,
+        }),
         ToolbarGitAction::Fetch => Some(SimpleToolbarGitCommand {
             args: &["fetch"],
             failure_prefix: "Fetch failed",
@@ -127,6 +136,10 @@ fn run_simple_git_command(
         command.warning,
         command.refresh_git_state,
     ))
+}
+
+fn undo_last_commit(repo_path: &Path) -> Result<ToolbarActionOutcome, ToolbarActionError> {
+    run_simple_git_command(repo_path, ToolbarGitAction::UndoLastCommit)
 }
 
 fn git_stdout(repo_path: &Path, args: &[&str]) -> Option<String> {
@@ -710,6 +723,18 @@ mod tests {
         assert_eq!(command.args, &["fetch"]);
         assert_eq!(command.failure_prefix, "Fetch failed");
         assert_eq!(command.success_toast, "Fetched remote updates.");
+        assert!(command.refresh_git_state);
+    }
+
+    #[test]
+    fn simple_toolbar_git_command_uses_soft_reset_for_undo_last_commit() {
+        let command = simple_toolbar_git_command(ToolbarGitAction::UndoLastCommit)
+            .expect("undo last commit should use a simple git command");
+
+        assert_eq!(command.args, &["reset", "--soft", "HEAD~1"]);
+        assert_eq!(command.failure_prefix, "Undo last commit failed");
+        assert_eq!(command.success_toast, "Undid the last commit.");
+        assert!(command.warning);
         assert!(command.refresh_git_state);
     }
 

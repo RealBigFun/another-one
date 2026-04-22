@@ -328,11 +328,7 @@ impl AnotherOneApp {
             .border_color(border)
             .opacity(if visually_enabled { 1. } else { 0.55 });
 
-        let mut content = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(5.));
+        let mut content = div().flex().flex_row().items_center().gap(px(5.));
 
         if let Some(icon_path) = props.leading_icon {
             content = content.child(svg().path(icon_path).size(px(12.)).text_color(icon_col));
@@ -820,7 +816,7 @@ impl AnotherOneApp {
 
         div()
             .w_full()
-            .h(px(34.))
+            .min_h(px(44.))
             .id(SharedString::from(format!(
                 "change-section-header-{}",
                 section_key
@@ -854,6 +850,8 @@ impl AnotherOneApp {
                     .flex()
                     .items_center()
                     .gap(px(6.))
+                    .min_w(px(0.))
+                    .flex_1()
                     .child(
                         svg()
                             .path(if collapsed {
@@ -866,7 +864,7 @@ impl AnotherOneApp {
                     )
                     .child(
                         div()
-                            .text_size(rems(13. / 16.))
+                            .text_size(rems(11. / 16.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(title_col)
                             .child(format!("{title} ({file_count})")),
@@ -989,6 +987,148 @@ impl AnotherOneApp {
             .into_any_element()
     }
 
+    fn branch_commit_row(
+        &self,
+        project_id: &str,
+        commit: &crate::project_store::BranchCommit,
+        show_undo_button: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let title_col = hsla(0., 0., 0.94, 1.);
+        let meta_col = hsla(0., 0., 0.58, 1.);
+        let row_hover = gpui::white().opacity(0.04);
+        let undo_icon_col = hsla(0., 0., 0.72, 1.);
+        let undo_hover = gpui::white().opacity(0.08);
+        let expanded = self.commit_row_expanded(project_id, &commit.id);
+        let row_min_height = if expanded { px(40.) } else { px(30.) };
+        let row_vertical_padding = if expanded { px(7.) } else { px(5.) };
+        let row_content_gap = if expanded { px(5.) } else { px(3.) };
+        let toggle_project_id = project_id.to_string();
+        let toggle_commit_id = commit.id.clone();
+        let undo_busy = matches!(
+            self.active_git_action.as_ref(),
+            Some(crate::git_actions::ToolbarGitAction::UndoLastCommit)
+        );
+        let undo_enabled = show_undo_button && self.active_git_action.is_none();
+
+        div()
+            .id(SharedString::from(format!(
+                "branch-commit-row-{project_id}-{}",
+                commit.id
+            )))
+            .w_full()
+            .min_h(row_min_height)
+            .pl(px(14.))
+            .pr(px(14.))
+            .py(row_vertical_padding)
+            .rounded_md()
+            .cursor_pointer()
+            .hover(move |style| style.bg(row_hover))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    this.toggle_commit_row_expanded(&toggle_project_id, &toggle_commit_id, cx);
+                }),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.))
+                    .flex()
+                    .flex_col()
+                    .gap(row_content_gap)
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w(px(0.))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                svg()
+                                    .path(if expanded {
+                                        "assets/icons/icons__chevron-down.svg"
+                                    } else {
+                                        "assets/icons/icons__chevron-right.svg"
+                                    })
+                                    .flex_shrink_0()
+                                    .size(px(8.))
+                                    .text_color(meta_col),
+                            )
+                            .child(
+                                div()
+                                    .min_w(px(0.))
+                                    .flex_1()
+                                    .truncate()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(title_col)
+                                    .child(commit.subject.clone()),
+                            )
+                            .when(show_undo_button && undo_busy, |row| {
+                                row.child(Self::changed_file_action_pending(undo_icon_col))
+                            })
+                            .when(show_undo_button && !undo_busy, |row| {
+                                row.child(Self::changed_file_action_button(
+                                    ChangedFileActionButtonProps {
+                                        button_id: SharedString::from(format!(
+                                            "commit-row-undo-{project_id}-{}",
+                                            commit.id
+                                        ))
+                                        .into(),
+                                        icon_path: "assets/icons/icons__discard.svg",
+                                        enabled: undo_enabled,
+                                        hover_bg: undo_hover,
+                                        icon_color: undo_icon_col,
+                                        tooltip_label: Some("Undo the most recent commit"),
+                                    },
+                                    move |this, _ev, _window, cx| {
+                                        cx.stop_propagation();
+                                        this.start_toolbar_git_action(
+                                            crate::git_actions::ToolbarGitAction::UndoLastCommit,
+                                            cx,
+                                        );
+                                    },
+                                    cx,
+                                ))
+                            }),
+                    )
+                    .when(expanded, |row| {
+                        row.child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .pl(px(14.))
+                                .pb(px(2.))
+                                .min_w(px(0.))
+                                .child(
+                                    div()
+                                        .min_w(px(0.))
+                                        .truncate()
+                                        .text_size(rems(11. / 16.))
+                                        .text_color(meta_col)
+                                        .child(commit.author_name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(rems(11. / 16.))
+                                        .text_color(meta_col)
+                                        .child("\u{00B7}"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(rems(11. / 16.))
+                                        .text_color(meta_col)
+                                        .child(commit.authored_relative.clone()),
+                                ),
+                        )
+                    }),
+            )
+            .into_any_element()
+    }
+
     pub(crate) fn changed_files_panel(
         &mut self,
         window: &Window,
@@ -1001,6 +1141,7 @@ impl AnotherOneApp {
         };
         let project_id = active_section.project_id.clone();
         let sidebar_mode = self.active_right_sidebar_mode(cx);
+        let commit_state = self.active_branch_commit_state(cx).cloned();
         let compare_target_branch = self.active_compare_target_branch(cx);
         let compare_state = self.active_branch_compare_state(cx).cloned();
 
@@ -1077,6 +1218,117 @@ impl AnotherOneApp {
                                 .size_full(),
                             ),
                     );
+                }
+            }
+            RightSidebarMode::Commits => {
+                let current_branch = commit_state
+                    .as_ref()
+                    .and_then(|state| state.current_branch.clone())
+                    .unwrap_or_else(|| active_section.branch_name.clone());
+                let commit_count = commit_state.as_ref().map_or(0, |state| state.commits.len());
+                let commit_summary = commit_state.as_ref().map_or_else(
+                    || "Recent commits from HEAD.".to_string(),
+                    |state| {
+                        if state.has_more {
+                            format!("{commit_count} shown")
+                        } else {
+                            format!("{commit_count} recent commits")
+                        }
+                    },
+                );
+
+                body = body.child(
+                    div()
+                        .px(px(14.))
+                        .py(px(10.))
+                        .border_b_1()
+                        .border_color(gpui::white().opacity(0.06))
+                        .child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(hsla(0., 0., 0.88, 1.))
+                                .child(format!("Recent commits on {}", current_branch)),
+                        )
+                        .child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .text_color(muted_col)
+                                .child(commit_summary),
+                        ),
+                );
+
+                if commit_state.is_none() {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child("Loading commits..."),
+                    );
+                } else if commit_state
+                    .as_ref()
+                    .is_some_and(|state| state.commits.is_empty())
+                {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child("No commits yet on this branch."),
+                    );
+                } else if let Some(commit_state) = commit_state {
+                    let mut rows = div()
+                        .id("right-sidebar-commits-scroll")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .px(px(0.))
+                        .py(px(8.))
+                        .gap(px(0.));
+
+                    for (index, commit) in commit_state.commits.iter().enumerate() {
+                        rows =
+                            rows.child(self.branch_commit_row(&project_id, commit, index == 0, cx));
+                    }
+
+                    if commit_state.has_more {
+                        let load_more_project_id = project_id.clone();
+                        rows = rows.child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .justify_center()
+                                .pt(px(10.))
+                                .pb(px(6.))
+                                .child(Self::git_toolbar_button(
+                                    GitToolbarButtonProps {
+                                        label: "Load more",
+                                        leading_icon: None,
+                                        trailing_icon: None,
+                                        enabled: true,
+                                        active: false,
+                                        tooltip_label: Some("Show 20 more recent commits"),
+                                    },
+                                    move |this, _ev, _window, cx| {
+                                        this.load_more_commits(&load_more_project_id, cx);
+                                    },
+                                    cx,
+                                )),
+                        );
+                    }
+
+                    body = body.child(rows);
                 }
             }
             RightSidebarMode::Compare => {
@@ -1158,6 +1410,21 @@ impl AnotherOneApp {
             }
         }
 
+        let commits_button = Self::git_toolbar_button(
+            GitToolbarButtonProps {
+                label: "Commits",
+                leading_icon: Some("assets/icons/icons__git-commit.svg"),
+                trailing_icon: None,
+                enabled: true,
+                active: sidebar_mode == RightSidebarMode::Commits,
+                tooltip_label: Some("View recent commits on the current branch"),
+            },
+            move |this, _ev, _window, cx| {
+                this.set_right_sidebar_mode(RightSidebarMode::Commits, cx);
+            },
+            cx,
+        );
+
         let compare_button = compare_target_branch.as_ref().map(|_target_branch| {
             Self::git_toolbar_button(
                 GitToolbarButtonProps {
@@ -1215,6 +1482,7 @@ impl AnotherOneApp {
                                 },
                                 cx,
                             ))
+                            .child(commits_button)
                             .when_some(compare_button, |container, button| container.child(button)),
                     )
                     .child(

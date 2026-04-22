@@ -161,6 +161,23 @@ pub struct ProjectBranchCompareState {
     pub files: Vec<BranchCompareFile>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchCommit {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+    pub author_name: String,
+    pub authored_relative: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectBranchCommitState {
+    pub current_branch: Option<String>,
+    pub requested_limit: usize,
+    pub has_more: bool,
+    pub commits: Vec<BranchCommit>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskKind {
     Direct,
@@ -1257,6 +1274,34 @@ pub fn read_project_branch_compare_state(
     })
 }
 
+pub fn read_project_branch_commit_state(
+    path: &Path,
+    requested_limit: usize,
+) -> Result<ProjectBranchCommitState, String> {
+    let overfetch_limit = requested_limit.saturating_add(1);
+    let output = git_command(path)
+        .args(["log", "--format=%H%x00%h%x00%s%x00%an%x00%cr%x1e", "-n"])
+        .arg(overfetch_limit.to_string())
+        .arg("HEAD")
+        .output()
+        .map_err(|error| format!("Could not list recent commits: {error}"))?;
+    if !output.status.success() {
+        return Err(format_git_command_failure(
+            "Could not list recent commits",
+            &output,
+        ));
+    }
+
+    let (commits, has_more) = parse_recent_branch_commit_page(&output.stdout, requested_limit);
+
+    Ok(ProjectBranchCommitState {
+        current_branch: git_current_branch(path),
+        requested_limit,
+        has_more,
+        commits,
+    })
+}
+
 fn read_project_git_metadata(path: &Path) -> ProjectGitMetadata {
     let branches = detect_branches(path);
     let (branch_order, branches_by_name) = repo_branch_catalog_from_resolved(&branches);
@@ -1409,6 +1454,46 @@ fn parse_branch_compare_numstat_value(field: &[u8]) -> i32 {
     } else {
         value.parse::<i32>().unwrap_or(0)
     }
+}
+
+fn parse_branch_commit_entries(bytes: &[u8]) -> Vec<BranchCommit> {
+    bytes
+        .split(|byte| *byte == 0x1e)
+        .filter_map(|record| {
+            let record = String::from_utf8_lossy(record);
+            let record = record.trim();
+            if record.is_empty() {
+                return None;
+            }
+
+            let mut fields = record.split('\0');
+            let id = fields.next()?.to_string();
+            let short_id = fields.next()?.to_string();
+            let subject = fields.next()?.to_string();
+            let author_name = fields.next()?.to_string();
+            let authored_relative = fields.next()?.to_string();
+
+            Some(BranchCommit {
+                id,
+                short_id,
+                subject,
+                author_name,
+                authored_relative,
+            })
+        })
+        .collect()
+}
+
+fn parse_recent_branch_commit_page(
+    bytes: &[u8],
+    requested_limit: usize,
+) -> (Vec<BranchCommit>, bool) {
+    let mut commits = parse_branch_commit_entries(bytes);
+    let has_more = commits.len() > requested_limit;
+    if has_more {
+        commits.truncate(requested_limit);
+    }
+    (commits, has_more)
 }
 
 fn checkout_state_from_resolved(branches: &[Branch]) -> ProjectCheckoutState {
@@ -2289,8 +2374,9 @@ mod tests {
     use crate::shortcuts::ShortcutSettings;
 
     use super::{
-        app_worktrees_root, format_git_command_error, parse_branch_compare_name_status_entries,
-        parse_branch_compare_numstat_entries, worktree_parent_dir_with_root, PersistedSectionState,
+        app_worktrees_root, format_git_command_error, parse_branch_commit_entries,
+        parse_branch_compare_name_status_entries, parse_branch_compare_numstat_entries,
+        parse_recent_branch_commit_page, worktree_parent_dir_with_root, PersistedSectionState,
         PersistedTerminalTab, Project, ProjectBranchSettingField, ProjectBranchSettings,
         ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task,
         TaskKind,
@@ -2827,6 +2913,59 @@ mod tests {
         assert_eq!(stats[0].path, "new/path.rs");
         assert_eq!(stats[0].additions, 12);
         assert_eq!(stats[1].deletions, 1);
+    }
+
+    #[test]
+    fn parse_branch_commit_entries_supports_trailing_newlines() {
+        let commits = parse_branch_commit_entries(
+            b"abc123\0abc123\0Add panel\0Jeff\01 hour ago\x1e\n\
+              def456\0def456\0Fix empty state\0Sam\02 hours ago\x1e\n",
+        );
+
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].id, "abc123");
+        assert_eq!(commits[0].subject, "Add panel");
+        assert_eq!(commits[1].author_name, "Sam");
+        assert_eq!(commits[1].authored_relative, "2 hours ago");
+    }
+
+    #[test]
+    fn recent_commit_page_exact_limit_has_no_more_results() {
+        let bytes = (0..20)
+            .map(|index| {
+                format!(
+                    "commit-{index}\0{:07x}\0Commit {index}\0Jeff\0{} hour ago\x1e\n",
+                    index + 1,
+                    index + 1
+                )
+            })
+            .collect::<String>();
+
+        let (commits, has_more) = parse_recent_branch_commit_page(bytes.as_bytes(), 20);
+
+        assert_eq!(commits.len(), 20);
+        assert!(!has_more);
+        assert_eq!(commits[0].id, "commit-0");
+        assert_eq!(commits[19].subject, "Commit 19");
+    }
+
+    #[test]
+    fn recent_commit_page_overfetch_sets_has_more() {
+        let bytes = (0..21)
+            .map(|index| {
+                format!(
+                    "commit-{index}\0{:07x}\0Commit {index}\0Jeff\0{} hour ago\x1e\n",
+                    index + 1,
+                    index + 1
+                )
+            })
+            .collect::<String>();
+
+        let (commits, has_more) = parse_recent_branch_commit_page(bytes.as_bytes(), 20);
+
+        assert_eq!(commits.len(), 20);
+        assert!(has_more);
+        assert_eq!(commits[19].id, "commit-19");
     }
 
     #[test]

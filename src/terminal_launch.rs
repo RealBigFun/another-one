@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
+use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
@@ -20,6 +21,7 @@ use crate::terminal_runtime::{PreparedTerminalRuntime, TerminalGridSize, Termina
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const CODEX_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(400);
+const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const ANOTHER_ONE_PI_SESSION_CAPTURE_ENV: &str = "ANOTHER_ONE_PI_SESSION_CAPTURE";
 
 pub(crate) enum TerminalLaunchReply {
@@ -284,8 +286,8 @@ fn launch_warm_terminal(
 
 #[derive(Clone, Debug)]
 enum DiscoveryKind {
+    Codex { root: PathBuf },
     Pi { capture: PiSessionCapture },
-    Codex,
 }
 
 #[derive(Clone, Debug)]
@@ -332,11 +334,22 @@ fn build_command(
         }
         AgentProviderKind::Codex => {
             let mut builder = CommandBuilder::new("codex");
+            let (launch_config, codex_home_override) = resolve_codex_home_override(launch_config)?;
+            if let Some(codex_home_override) = codex_home_override.as_ref() {
+                builder.env(
+                    CODEX_HOME_ENV,
+                    codex_home_override.to_string_lossy().into_owned(),
+                );
+            }
             let discovery = if let Some(session) = launch_config.session.clone() {
                 builder.args(["resume", session.id.as_str()]);
                 None
             } else {
-                Some(DiscoveryKind::Codex)
+                Some(DiscoveryKind::Codex {
+                    root: codex_home_override
+                        .clone()
+                        .expect("fresh codex launches should always have an isolated home"),
+                })
             };
             Ok((builder, launch_config, discovery))
         }
@@ -500,6 +513,129 @@ impl PiSessionCapture {
     }
 }
 
+fn resolve_codex_home_override(
+    launch_config: TerminalLaunchConfig,
+) -> anyhow::Result<(TerminalLaunchConfig, Option<PathBuf>)> {
+    if let Some(home_override) = launch_config.home_override.clone() {
+        prepare_codex_home_override(&home_override)?;
+        return Ok((launch_config, Some(home_override)));
+    }
+
+    if launch_config.session.is_some() {
+        return Ok((launch_config, None));
+    }
+
+    let home_override = create_codex_home_override_path()?;
+    prepare_codex_home_override(&home_override)?;
+    Ok((
+        launch_config.with_home_override(Some(home_override.clone())),
+        Some(home_override),
+    ))
+}
+
+fn create_codex_home_override_path() -> anyhow::Result<PathBuf> {
+    let codex_homes_dir = dirs::config_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("another-one")
+        .join("codex-homes");
+    fs::create_dir_all(&codex_homes_dir)
+        .with_context(|| format!("failed to create {}", codex_homes_dir.display()))?;
+    Ok(codex_homes_dir.join(Uuid::new_v4().to_string()))
+}
+
+fn default_codex_home() -> Option<PathBuf> {
+    std::env::var_os(CODEX_HOME_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))
+}
+
+fn prepare_codex_home_override(home_override: &Path) -> anyhow::Result<()> {
+    prepare_codex_home_override_from(default_codex_home().as_deref(), home_override)
+}
+
+fn prepare_codex_home_override_from(
+    source_home: Option<&Path>,
+    home_override: &Path,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(home_override)
+        .with_context(|| format!("failed to create {}", home_override.display()))?;
+
+    let Some(source_home) = source_home else {
+        return Ok(());
+    };
+    if source_home == home_override {
+        return Ok(());
+    }
+
+    copy_file_if_exists(
+        &source_home.join("config.toml"),
+        &home_override.join("config.toml"),
+    )?;
+    copy_file_if_exists(
+        &source_home.join("installation_id"),
+        &home_override.join("installation_id"),
+    )?;
+    copy_file_if_exists(
+        &source_home.join("version.json"),
+        &home_override.join("version.json"),
+    )?;
+    ensure_symlink_if_exists(
+        &source_home.join("auth.json"),
+        &home_override.join("auth.json"),
+    )?;
+    ensure_symlink_if_exists(&source_home.join("plugins"), &home_override.join("plugins"))?;
+    ensure_symlink_if_exists(&source_home.join("skills"), &home_override.join("skills"))?;
+    ensure_symlink_if_exists(
+        &source_home.join("vendor_imports"),
+        &home_override.join("vendor_imports"),
+    )?;
+
+    Ok(())
+}
+
+fn copy_file_if_exists(source: &Path, target: &Path) -> anyhow::Result<()> {
+    if !source.is_file() {
+        return Ok(());
+    }
+    fs::copy(source, target).with_context(|| {
+        format!(
+            "failed to copy shared codex file from {} to {}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn ensure_symlink_if_exists(source: &Path, target: &Path) -> anyhow::Result<()> {
+    if !source.exists() {
+        return Ok(());
+    }
+
+    if let Ok(existing_target) = fs::read_link(target) {
+        if existing_target == source {
+            return Ok(());
+        }
+        fs::remove_file(target)
+            .or_else(|_| fs::remove_dir_all(target))
+            .ok();
+    } else if target.exists() {
+        fs::remove_file(target)
+            .or_else(|_| fs::remove_dir_all(target))
+            .ok();
+    }
+
+    unix_fs::symlink(source, target).with_context(|| {
+        format!(
+            "failed to symlink shared codex path from {} to {}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
 fn prepare_pi_session_capture() -> anyhow::Result<PiSessionCapture> {
     let capture_dir = dirs::config_dir()
         .unwrap_or_else(std::env::temp_dir)
@@ -562,10 +698,12 @@ fn discover_session(
     let deadline = SystemTime::now() + discovery_timeout_for_kind(&kind);
     loop {
         let discovered = match &kind {
+            DiscoveryKind::Codex { root } => {
+                discover_codex_session(launch_started_at, cwd, Some(root))
+            }
             DiscoveryKind::Pi { capture } => {
                 discover_pi_session(launch_started_at, cwd, Some(&capture.path))
             }
-            DiscoveryKind::Codex => discover_codex_session(launch_started_at, cwd),
         };
         if discovered.is_some() {
             return discovered;
@@ -581,7 +719,7 @@ fn discovery_timeout_for_kind(kind: &DiscoveryKind) -> Duration {
     match kind {
         // Codex can delay creation of the resumable rollout file until after
         // the first real turn, so keep discovery alive well past startup.
-        DiscoveryKind::Codex => CODEX_DISCOVERY_TIMEOUT,
+        DiscoveryKind::Codex { .. } => CODEX_DISCOVERY_TIMEOUT,
         DiscoveryKind::Pi { .. } => DISCOVERY_TIMEOUT,
     }
 }
@@ -619,9 +757,13 @@ fn discover_pi_session(
     })
 }
 
-fn discover_codex_session(launch_started_at: SystemTime, cwd: &Path) -> Option<TerminalSessionRef> {
-    discover_codex_session_from_saved_sessions(launch_started_at, cwd, None)
-        .or_else(|| discover_codex_session_from_index(launch_started_at, None))
+fn discover_codex_session(
+    launch_started_at: SystemTime,
+    cwd: &Path,
+    codex_root: Option<&Path>,
+) -> Option<TerminalSessionRef> {
+    discover_codex_session_from_saved_sessions(launch_started_at, cwd, codex_root)
+        .or_else(|| discover_codex_session_from_index(launch_started_at, codex_root))
 }
 
 fn discover_codex_session_from_saved_sessions(
@@ -841,11 +983,12 @@ fn newest_matching_jsonl(
 #[cfg(test)]
 mod tests {
     use super::{
-        claude_project_dir_name, claude_session_exists, discover_codex_session_from_index,
-        discover_codex_session_from_saved_sessions, discover_pi_session,
-        discovery_timeout_for_kind, pi_session_exists, read_session_capture,
-        resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
-        SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
+        claude_project_dir_name, claude_session_exists, discover_codex_session,
+        discover_codex_session_from_index, discover_codex_session_from_saved_sessions,
+        discover_pi_session, discovery_timeout_for_kind, pi_session_exists,
+        prepare_codex_home_override_from, read_session_capture, resolve_claude_session,
+        resolve_pi_session, DiscoveryKind, PiSessionCapture, SessionCaptureState,
+        TerminalSessionKind, TerminalSessionRef,
     };
     use std::env;
     use std::fs;
@@ -873,7 +1016,9 @@ mod tests {
     #[test]
     fn codex_discovery_timeout_is_long_lived() {
         assert_eq!(
-            discovery_timeout_for_kind(&DiscoveryKind::Codex),
+            discovery_timeout_for_kind(&DiscoveryKind::Codex {
+                root: PathBuf::from("/tmp/codex-home"),
+            }),
             Duration::from_secs(60 * 60)
         );
         assert_eq!(
@@ -945,6 +1090,82 @@ mod tests {
                 id: "match-session".to_string(),
             })
         );
+
+        let _ = fs::remove_dir_all(codex_root);
+    }
+
+    #[test]
+    fn codex_home_override_copies_shared_files_without_hooks() {
+        let source_home = temp_codex_root();
+        let target_home = temp_codex_root();
+        fs::create_dir_all(source_home.join("plugins")).expect("plugins dir should be created");
+        fs::create_dir_all(source_home.join("skills")).expect("skills dir should be created");
+        fs::create_dir_all(source_home.join("vendor_imports"))
+            .expect("vendor imports dir should be created");
+        fs::write(source_home.join("config.toml"), "model = \"gpt-5.4\"\n")
+            .expect("config should be written");
+        fs::write(source_home.join("installation_id"), "install-123")
+            .expect("installation id should be written");
+        fs::write(source_home.join("version.json"), "{\"version\":\"1\"}")
+            .expect("version should be written");
+        fs::write(source_home.join("auth.json"), "{\"access_token\":\"abc\"}")
+            .expect("auth should be written");
+        fs::write(source_home.join("hooks.json"), "{\"hooks\":{}}")
+            .expect("hooks should be written");
+
+        prepare_codex_home_override_from(Some(&source_home), &target_home)
+            .expect("codex home override should be prepared");
+
+        assert_eq!(
+            fs::read_to_string(target_home.join("config.toml")).expect("config should exist"),
+            "model = \"gpt-5.4\"\n"
+        );
+        assert_eq!(
+            fs::read_to_string(target_home.join("installation_id"))
+                .expect("installation id should exist"),
+            "install-123"
+        );
+        assert_eq!(
+            fs::read_to_string(target_home.join("version.json")).expect("version should exist"),
+            "{\"version\":\"1\"}"
+        );
+        assert!(fs::symlink_metadata(target_home.join("auth.json"))
+            .expect("auth symlink should exist")
+            .file_type()
+            .is_symlink());
+        assert!(fs::symlink_metadata(target_home.join("plugins"))
+            .expect("plugins symlink should exist")
+            .file_type()
+            .is_symlink());
+        assert!(fs::symlink_metadata(target_home.join("skills"))
+            .expect("skills symlink should exist")
+            .file_type()
+            .is_symlink());
+        assert!(fs::symlink_metadata(target_home.join("vendor_imports"))
+            .expect("vendor imports symlink should exist")
+            .file_type()
+            .is_symlink());
+        assert!(
+            !target_home.join("hooks.json").exists(),
+            "isolated codex homes should not inherit hooks"
+        );
+
+        let _ = fs::remove_dir_all(source_home);
+        let _ = fs::remove_dir_all(target_home);
+    }
+
+    #[test]
+    fn codex_discovery_returns_none_when_isolated_home_has_no_sessions() {
+        let codex_root = temp_codex_root();
+        fs::create_dir_all(&codex_root).expect("codex root should be created");
+
+        let session = discover_codex_session(
+            SystemTime::now(),
+            Path::new("/tmp/project"),
+            Some(&codex_root),
+        );
+
+        assert_eq!(session, None);
 
         let _ = fs::remove_dir_all(codex_root);
     }

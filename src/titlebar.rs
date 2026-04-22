@@ -98,6 +98,11 @@ fn resolve_active_git_action_presentation(
             icon_path: "assets/icons/icons__cloud-upload.svg",
             danger: false,
         },
+        ToolbarGitAction::UndoLastCommit => ActiveToolbarGitActionPresentation {
+            label: "Undoing Last Commit...",
+            icon_path: "assets/icons/icons__discard.svg",
+            danger: true,
+        },
         ToolbarGitAction::Fetch => ActiveToolbarGitActionPresentation {
             label: "Fetching...",
             icon_path: "assets/icons/icons__tool-download.svg",
@@ -1097,6 +1102,10 @@ mod tests {
             assert_eq!(
                 resolve_active_git_action_presentation(ToolbarGitAction::CommitAndPush).label,
                 "Committing & Pushing..."
+            );
+            assert_eq!(
+                resolve_active_git_action_presentation(ToolbarGitAction::UndoLastCommit).label,
+                "Undoing Last Commit..."
             );
             assert_eq!(
                 resolve_active_git_action_presentation(ToolbarGitAction::Fetch).label,

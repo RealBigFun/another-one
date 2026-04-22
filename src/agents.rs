@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 pub(crate) struct AgentDef {
     pub id: &'static str,
@@ -143,6 +144,8 @@ pub(crate) struct TerminalLaunchConfig {
     pub mode: TerminalLaunchMode,
     pub provider: Option<AgentProviderKind>,
     pub session: Option<TerminalSessionRef>,
+    #[serde(default)]
+    pub home_override: Option<PathBuf>,
 }
 
 impl TerminalLaunchConfig {
@@ -151,11 +154,17 @@ impl TerminalLaunchConfig {
             mode: TerminalLaunchMode::Agent,
             provider: Some(provider),
             session: None,
+            home_override: None,
         }
     }
 
     pub fn with_session(mut self, session: Option<TerminalSessionRef>) -> Self {
         self.session = session;
+        self
+    }
+
+    pub fn with_home_override(mut self, home_override: Option<PathBuf>) -> Self {
+        self.home_override = home_override;
         self
     }
 
