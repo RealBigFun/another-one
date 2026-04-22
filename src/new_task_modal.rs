@@ -1777,20 +1777,139 @@ fn move_task_name_cursor_to_edge(
 
 fn generate_task_name() -> String {
     const FIRST: &[&str] = &[
-        "quiet", "silver", "bright", "steady", "wild", "mellow", "brisk", "neat",
+        "quiet",
+        "silver",
+        "bright",
+        "steady",
+        "wild",
+        "mellow",
+        "brisk",
+        "neat",
+        "rad",
+        "fresh",
+        "fly",
+        "phat",
+        "pixel",
+        "neon",
+        "grunge",
+        "turbo",
+        "cosmic",
+        "mall",
+        "arcade",
+        "saturday",
+        "vhs",
+        "tamagotchi",
+        "zelda",
+        "sonic",
+        "clueless",
+        "spice",
+        "matrix",
+        "dialup",
     ];
     const SECOND: &[&str] = &[
-        "river", "meadow", "comet", "signal", "forest", "ember", "harbor", "planet",
+        "river",
+        "meadow",
+        "comet",
+        "signal",
+        "forest",
+        "ember",
+        "harbor",
+        "planet",
+        "sitcom",
+        "beeper",
+        "rewind",
+        "moonwalk",
+        "blockbuster",
+        "gameboy",
+        "dreamcast",
+        "trapper",
+        "windbreaker",
+        "discman",
+        "boyband",
+        "chatroom",
+        "supernova",
+        "slammer",
+        "ranger",
+        "tamagotchi",
+        "seinfeld",
+        "xfiles",
+        "jukebox",
+        "afterparty",
     ];
     const THIRD: &[&str] = &[
-        "sparks", "travels", "builds", "drifts", "guides", "moves", "lands", "echoes",
+        "sparks",
+        "travels",
+        "builds",
+        "drifts",
+        "guides",
+        "moves",
+        "lands",
+        "echoes",
+        "remix",
+        "rewinds",
+        "glows",
+        "bounces",
+        "rips",
+        "slaps",
+        "glitches",
+        "downloads",
+        "pages",
+        "beams",
+        "boogies",
+        "radicals",
+        "jams",
+        "surfs",
+        "shuffles",
+        "blasts",
+        "hangs",
+        "grooves",
+        "rules",
+        "zooms",
+    ];
+    const PHRASES: &[&str] = &[
+        "you-sure-about-that",
+        "why-the-tables",
+        "coffin-flop",
+        "corncob-tv",
+        "sloppy-steaks",
+        "lets-slop-em-up",
+        "white-ferrari",
+        "ghost-tour",
+        "santa-brought-it-early",
+        "baby-of-the-year",
+        "karl-havoc",
+        "im-so-hot",
+        "dan-flashes",
+        "jamie-taco",
+        "gimme-dat",
+        "brians-hat",
+        "turbo-team",
+        "tc-tuggers",
+        "calico-cut-pants",
+        "its-not-a-joke",
+        "you-gotta-give",
+        "motorcycle-guys",
     ];
 
     let bytes = *Uuid::new_v4().as_bytes();
-    format!(
-        "{}-{}-{}",
-        FIRST[bytes[0] as usize % FIRST.len()],
-        SECOND[bytes[5] as usize % SECOND.len()],
-        THIRD[bytes[10] as usize % THIRD.len()]
-    )
+    let combo_count = FIRST.len() * SECOND.len() * THIRD.len();
+    let total_count = combo_count + PHRASES.len();
+    let choice =
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize % total_count;
+
+    if choice < combo_count {
+        let third_count = THIRD.len();
+        let second_third_count = SECOND.len() * third_count;
+        let first_index = choice / second_third_count;
+        let remainder = choice % second_third_count;
+        let second_index = remainder / third_count;
+        let third_index = remainder % third_count;
+
+        format!(
+            "{}-{}-{}",
+            FIRST[first_index], SECOND[second_index], THIRD[third_index]
+        )
+    } else {
+        PHRASES[choice - combo_count].to_string()
+    }
 }

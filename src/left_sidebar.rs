@@ -1591,8 +1591,14 @@ impl AnotherOneApp {
                     let sid_for_state = sid.clone();
                     let project_path = project_path.clone();
                     this.workspace_pane.update(cx, |workspace, cx| {
-                        workspace.activate_section(sid_for_state, Some(project_path), None, cx);
+                        workspace.activate_section(
+                            sid_for_state,
+                            Some(project_path.clone()),
+                            None,
+                            cx,
+                        );
                     });
+                    this.prefetch_section_pull_request_and_checks(&sid, &project_path);
                     this.mark_git_refresh_stale();
                 }),
             )

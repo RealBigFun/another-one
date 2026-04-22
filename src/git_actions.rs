@@ -17,12 +17,33 @@ pub enum PullRequestState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequestStatus {
+    pub number: u64,
     pub url: String,
     pub state: PullRequestState,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRequestCheckBucket {
+    Pass,
+    Fail,
+    Pending,
+    Skipping,
+    Cancel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestCheck {
+    pub name: String,
+    pub state: String,
+    pub bucket: PullRequestCheckBucket,
+    pub description: Option<String>,
+    pub link: Option<String>,
+    pub duration_text: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct GitHubPullRequestRecord {
+    number: u64,
     url: String,
     state: Option<String>,
     #[serde(rename = "mergedAt")]
@@ -220,9 +241,106 @@ pub fn find_latest_pull_request_status(
     }
 
     Some(PullRequestStatus {
+        number: pull_request.number,
         url: url.to_string(),
         state: normalize_pull_request_state(pull_request),
     })
+}
+
+pub fn find_pull_request_checks(
+    repo_path: &Path,
+    pull_request_number: Option<u64>,
+) -> Result<Option<Vec<PullRequestCheck>>, String> {
+    let gh = find_gh_cli().ok_or_else(|| {
+        "Could not load PR checks. GitHub CLI (`gh`) is not installed or not on the app PATH."
+            .to_string()
+    })?;
+    let mut command = Command::new(gh);
+    command.args(["pr", "checks"]);
+    if let Some(pull_request_number) = pull_request_number {
+        command.arg(pull_request_number.to_string());
+    }
+    let output = command
+        .current_dir(repo_path)
+        .output()
+        .map_err(|err| format!("Could not load PR checks: {err}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let checks = parse_pull_request_checks_output(&stdout);
+    if !checks.is_empty() {
+        return Ok(Some(checks));
+    }
+
+    let detail = [stderr.trim(), stdout.trim()]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if indicates_missing_pull_request(&detail) {
+        return Ok(None);
+    }
+
+    if output.status.success() {
+        return Ok(Some(Vec::new()));
+    }
+
+    Err(if detail.is_empty() {
+        "Could not load PR checks. No additional details were reported.".to_string()
+    } else {
+        format!("Could not load PR checks. {detail}")
+    })
+}
+
+fn parse_pull_request_checks_output(output: &str) -> Vec<PullRequestCheck> {
+    output
+        .split(['\n', '\r'])
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .flat_map(|line| {
+            let columns = line.split('\t').collect::<Vec<_>>();
+            let [name, state, duration_text, link, description @ ..] = columns.as_slice() else {
+                return Vec::new();
+            };
+
+            vec![PullRequestCheck {
+                name: name.trim().to_string(),
+                state: state.trim().to_string(),
+                bucket: normalize_pull_request_check_bucket(state),
+                description: {
+                    let joined = description.join("\t").trim().to_string();
+                    (!joined.is_empty()).then_some(joined)
+                },
+                link: {
+                    let trimmed = link.trim();
+                    (!trimmed.is_empty()).then_some(trimmed.to_string())
+                },
+                duration_text: {
+                    let trimmed = duration_text.trim();
+                    (!trimmed.is_empty()).then_some(trimmed.to_string())
+                },
+            }]
+        })
+        .collect()
+}
+
+fn normalize_pull_request_check_bucket(state: &str) -> PullRequestCheckBucket {
+    match state.trim().to_ascii_lowercase().as_str() {
+        "pass" => PullRequestCheckBucket::Pass,
+        "fail" => PullRequestCheckBucket::Fail,
+        "skipping" | "skipped" => PullRequestCheckBucket::Skipping,
+        "cancel" | "cancelled" => PullRequestCheckBucket::Cancel,
+        _ => PullRequestCheckBucket::Pending,
+    }
+}
+
+fn indicates_missing_pull_request(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    lowered.contains("no pull request found")
+        || lowered.contains("no pull requests found")
+        || lowered.contains("no associated pull requests")
+        || lowered.contains("pull request not found")
 }
 
 fn github_https_url(path: &str) -> String {
@@ -273,7 +391,7 @@ fn find_latest_pull_request_args(head_branch: &str) -> Vec<String> {
         "--limit",
         "20",
         "--json",
-        "url,state,mergedAt,updatedAt",
+        "number,url,state,mergedAt,updatedAt",
     ]
     .into_iter()
     .map(str::to_string)
@@ -878,8 +996,10 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 mod tests {
     use super::{
         create_pull_request_args, find_latest_pull_request_args, git_stdout,
-        normalize_github_remote, parse_commit_message, push_branch, simple_toolbar_git_command,
-        ToolbarGitAction,
+        indicates_missing_pull_request, normalize_github_remote,
+        normalize_pull_request_check_bucket, parse_commit_message,
+        parse_pull_request_checks_output, push_branch, simple_toolbar_git_command,
+        PullRequestCheckBucket, ToolbarGitAction,
     };
     use std::path::Path;
     use std::process::Command;
@@ -1004,12 +1124,63 @@ mod tests {
                 "--limit",
                 "20",
                 "--json",
-                "url,state,mergedAt,updatedAt"
+                "number,url,state,mergedAt,updatedAt"
             ]
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn normalize_pull_request_check_bucket_maps_expected_states() {
+        assert_eq!(
+            normalize_pull_request_check_bucket("pass"),
+            PullRequestCheckBucket::Pass
+        );
+        assert_eq!(
+            normalize_pull_request_check_bucket("fail"),
+            PullRequestCheckBucket::Fail
+        );
+        assert_eq!(
+            normalize_pull_request_check_bucket("skipped"),
+            PullRequestCheckBucket::Skipping
+        );
+        assert_eq!(
+            normalize_pull_request_check_bucket("cancelled"),
+            PullRequestCheckBucket::Cancel
+        );
+        assert_eq!(
+            normalize_pull_request_check_bucket("pending"),
+            PullRequestCheckBucket::Pending
+        );
+    }
+
+    #[test]
+    fn parse_pull_request_checks_output_parses_tab_separated_rows() {
+        let checks = parse_pull_request_checks_output(
+            "build\tpass\t1m 12s\thttps://example.com/build\tmain workflow\nunit\tfail\t\t\t",
+        );
+
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].name, "build");
+        assert_eq!(checks[0].bucket, PullRequestCheckBucket::Pass);
+        assert_eq!(checks[0].duration_text.as_deref(), Some("1m 12s"));
+        assert_eq!(checks[0].link.as_deref(), Some("https://example.com/build"));
+        assert_eq!(checks[0].description.as_deref(), Some("main workflow"));
+        assert_eq!(checks[1].bucket, PullRequestCheckBucket::Fail);
+        assert!(checks[1].duration_text.is_none());
+        assert!(checks[1].link.is_none());
+        assert!(checks[1].description.is_none());
+    }
+
+    #[test]
+    fn indicates_missing_pull_request_matches_common_gh_messages() {
+        assert!(indicates_missing_pull_request(
+            "no pull requests found for branch feature/test"
+        ));
+        assert!(indicates_missing_pull_request("pull request not found"));
+        assert!(!indicates_missing_pull_request("GraphQL request failed"));
     }
 
     #[test]

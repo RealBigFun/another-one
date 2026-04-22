@@ -10,7 +10,8 @@ use gpui::{
     SharedString, Transformation, Window,
 };
 
-use crate::app::{AnotherOneApp, CommitFileChangesState, RightSidebarMode};
+use crate::app::{AnotherOneApp, CommitFileChangesState, ProjectCheckRunsState, RightSidebarMode};
+use crate::platform::PlatformServices;
 use crate::theme;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1184,6 +1185,153 @@ impl AnotherOneApp {
             .into_any_element()
     }
 
+    fn check_run_sort_priority(bucket: crate::git_actions::PullRequestCheckBucket) -> u8 {
+        match bucket {
+            crate::git_actions::PullRequestCheckBucket::Fail => 0,
+            crate::git_actions::PullRequestCheckBucket::Pending => 1,
+            crate::git_actions::PullRequestCheckBucket::Pass => 2,
+            crate::git_actions::PullRequestCheckBucket::Skipping
+            | crate::git_actions::PullRequestCheckBucket::Cancel => 3,
+        }
+    }
+
+    fn check_run_visual(
+        bucket: crate::git_actions::PullRequestCheckBucket,
+    ) -> (&'static str, gpui::Hsla) {
+        match bucket {
+            crate::git_actions::PullRequestCheckBucket::Pass => (
+                "assets/icons/icons__badge-check.svg",
+                hsla(138. / 360., 0.50, 0.74, 1.),
+            ),
+            crate::git_actions::PullRequestCheckBucket::Fail => (
+                "assets/icons/icons__badge-x.svg",
+                hsla(352. / 360., 0.52, 0.76, 1.),
+            ),
+            crate::git_actions::PullRequestCheckBucket::Pending => (
+                "assets/icons/icons__badge-clock.svg",
+                hsla(42. / 360., 0.90, 0.66, 1.),
+            ),
+            crate::git_actions::PullRequestCheckBucket::Skipping
+            | crate::git_actions::PullRequestCheckBucket::Cancel => {
+                ("assets/icons/icons__minus.svg", hsla(0., 0., 0.56, 1.))
+            }
+        }
+    }
+
+    fn check_runs_summary_badge(
+        label: impl Into<SharedString>,
+        text_color: gpui::Hsla,
+    ) -> impl IntoElement {
+        div()
+            .px(px(8.))
+            .py(px(3.))
+            .rounded(px(999.))
+            .bg(gpui::white().opacity(0.06))
+            .text_size(rems(11. / 16.))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(text_color)
+            .child(label.into())
+    }
+
+    fn check_run_row(
+        &self,
+        check: &crate::git_actions::PullRequestCheck,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let title_col = hsla(0., 0., 0.94, 1.);
+        let meta_col = hsla(0., 0., 0.58, 1.);
+        let hover_bg = gpui::white().opacity(0.04);
+        let action_hover = gpui::white().opacity(0.08);
+        let action_icon = hsla(0., 0., 0.72, 1.);
+        let (icon_path, icon_color) = Self::check_run_visual(check.bucket);
+        let open_url = check.link.clone();
+
+        div()
+            .id(SharedString::from(format!("check-run-row-{index}")))
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap(px(10.))
+            .px(px(14.))
+            .py(px(0.5))
+            .rounded_md()
+            .hover(move |style| style.bg(hover_bg))
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size(px(16.))
+                    .flex_shrink_0()
+                    .text_color(icon_color),
+            )
+            .child(
+                div()
+                    .min_w(px(0.))
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(title_col)
+                            .truncate()
+                            .child(check.name.clone()),
+                    )
+                    .when_some(check.description.clone(), |col, description| {
+                        col.child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .text_color(meta_col)
+                                .truncate()
+                                .child(description),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .flex_shrink_0()
+                    .when_some(check.duration_text.clone(), |row, duration| {
+                        row.child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .text_color(meta_col)
+                                .child(duration),
+                        )
+                    })
+                    .when(open_url.is_some(), |row| {
+                        row.child(Self::changed_file_action_button(
+                            ChangedFileActionButtonProps {
+                                button_id: SharedString::from(format!("check-run-open-{index}"))
+                                    .into(),
+                                icon_path: "assets/icons/icons__external-link.svg",
+                                enabled: true,
+                                hover_bg: action_hover,
+                                icon_color: action_icon,
+                                tooltip_label: Some("Open this check in GitHub"),
+                            },
+                            move |this, _ev, _window, cx| {
+                                cx.stop_propagation();
+                                if let Some(url) = open_url.clone() {
+                                    if let Err(err) =
+                                        crate::platform::CurrentPlatform::open_external_url(&url)
+                                    {
+                                        this.show_error_toast(err, cx);
+                                    }
+                                }
+                            },
+                            cx,
+                        ))
+                    }),
+            )
+            .into_any_element()
+    }
+
     pub(crate) fn changed_files_panel(
         &mut self,
         window: &Window,
@@ -1199,6 +1347,8 @@ impl AnotherOneApp {
         let commit_state = self.active_branch_commit_state(cx).cloned();
         let compare_target_branch = self.active_compare_target_branch(cx);
         let compare_state = self.active_branch_compare_state(cx).cloned();
+        self.request_active_project_check_runs_lookup(cx);
+        let check_runs_state = self.active_project_check_runs_state(cx).cloned();
 
         let has_loaded_changed_files = self.changed_files.contains_key(&project_id);
         let changed_files = self.active_changed_files(cx);
@@ -1418,6 +1568,175 @@ impl AnotherOneApp {
                     body = body.child(rows);
                 }
             }
+            RightSidebarMode::Checks => {
+                let current_branch = active_section.branch_name.clone();
+
+                body = body.child(
+                    div()
+                        .px(px(14.))
+                        .py(px(10.))
+                        .border_b_1()
+                        .border_color(gpui::white().opacity(0.06))
+                        .child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(hsla(0., 0., 0.88, 1.))
+                                .child(format!("CI checks for {}", current_branch)),
+                        )
+                        .child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .text_color(muted_col)
+                                .child("Shows GitHub PR checks for the current branch when a pull request exists."),
+                        ),
+                );
+
+                match check_runs_state {
+                    None | Some(ProjectCheckRunsState::Loading) => {
+                        body = body.child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px(px(18.))
+                                .text_sm()
+                                .text_color(muted_col)
+                                .child("Loading checks..."),
+                        );
+                    }
+                    Some(ProjectCheckRunsState::NoPullRequest) => {
+                        body = body.child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px(px(18.))
+                                .text_sm()
+                                .text_color(muted_col)
+                                .child("No pull request exists for this branch."),
+                        );
+                    }
+                    Some(ProjectCheckRunsState::Failed(error)) => {
+                        body = body.child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px(px(18.))
+                                .text_sm()
+                                .text_color(muted_col)
+                                .child(error),
+                        );
+                    }
+                    Some(ProjectCheckRunsState::Loaded(checks)) if checks.is_empty() => {
+                        body = body.child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px(px(18.))
+                                .text_sm()
+                                .text_color(muted_col)
+                                .child("No CI checks found for this pull request."),
+                        );
+                    }
+                    Some(ProjectCheckRunsState::Loaded(checks)) => {
+                        let mut checks = checks;
+                        checks.sort_by(|a, b| {
+                            Self::check_run_sort_priority(a.bucket)
+                                .cmp(&Self::check_run_sort_priority(b.bucket))
+                                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                        });
+
+                        let passed = checks
+                            .iter()
+                            .filter(|check| {
+                                check.bucket == crate::git_actions::PullRequestCheckBucket::Pass
+                            })
+                            .count();
+                        let failed = checks
+                            .iter()
+                            .filter(|check| {
+                                check.bucket == crate::git_actions::PullRequestCheckBucket::Fail
+                            })
+                            .count();
+                        let pending = checks
+                            .iter()
+                            .filter(|check| {
+                                check.bucket == crate::git_actions::PullRequestCheckBucket::Pending
+                            })
+                            .count();
+                        let skipped = checks
+                            .iter()
+                            .filter(|check| {
+                                matches!(
+                                    check.bucket,
+                                    crate::git_actions::PullRequestCheckBucket::Skipping
+                                        | crate::git_actions::PullRequestCheckBucket::Cancel
+                                )
+                            })
+                            .count();
+
+                        body = body.child(
+                            div()
+                                .px(px(14.))
+                                .py(px(8.))
+                                .border_b_1()
+                                .border_color(gpui::white().opacity(0.06))
+                                .flex()
+                                .flex_row()
+                                .flex_wrap()
+                                .gap(px(6.))
+                                .when(passed > 0, |row| {
+                                    row.child(Self::check_runs_summary_badge(
+                                        format!("{passed} passed"),
+                                        hsla(138. / 360., 0.50, 0.74, 1.),
+                                    ))
+                                })
+                                .when(failed > 0, |row| {
+                                    row.child(Self::check_runs_summary_badge(
+                                        format!("{failed} failed"),
+                                        hsla(352. / 360., 0.52, 0.76, 1.),
+                                    ))
+                                })
+                                .when(pending > 0, |row| {
+                                    row.child(Self::check_runs_summary_badge(
+                                        format!("{pending} pending"),
+                                        hsla(42. / 360., 0.90, 0.66, 1.),
+                                    ))
+                                })
+                                .when(skipped > 0, |row| {
+                                    row.child(Self::check_runs_summary_badge(
+                                        format!("{skipped} skipped"),
+                                        hsla(0., 0., 0.62, 1.),
+                                    ))
+                                }),
+                        );
+
+                        let mut rows = div()
+                            .id("right-sidebar-checks-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .px(px(4.))
+                            .py(px(6.))
+                            .gap(px(0.));
+
+                        for (index, check) in checks.iter().enumerate() {
+                            rows = rows.child(self.check_run_row(check, index, cx));
+                        }
+
+                        body = body.child(rows);
+                    }
+                }
+            }
             RightSidebarMode::Compare => {
                 let target_branch = compare_target_branch.clone().unwrap_or_default();
                 let current_branch = compare_state
@@ -1512,6 +1831,21 @@ impl AnotherOneApp {
             cx,
         );
 
+        let checks_button = Self::git_toolbar_button(
+            GitToolbarButtonProps {
+                label: "Checks",
+                leading_icon: Some("assets/icons/icons__tool-check.svg"),
+                trailing_icon: None,
+                enabled: true,
+                active: sidebar_mode == RightSidebarMode::Checks,
+                tooltip_label: Some("View CI checks for the current pull request"),
+            },
+            move |this, _ev, _window, cx| {
+                this.set_right_sidebar_mode(RightSidebarMode::Checks, cx);
+            },
+            cx,
+        );
+
         let compare_button = compare_target_branch.as_ref().map(|_target_branch| {
             Self::git_toolbar_button(
                 GitToolbarButtonProps {
@@ -1570,6 +1904,7 @@ impl AnotherOneApp {
                                 cx,
                             ))
                             .child(commits_button)
+                            .child(checks_button)
                             .when_some(compare_button, |container, button| container.child(button)),
                     )
                     .child(

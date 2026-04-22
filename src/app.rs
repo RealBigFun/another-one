@@ -65,6 +65,8 @@ const TOAST_STACK_LIMIT: usize = 4;
 const TOAST_SWIPE_DISMISS_THRESHOLD: f32 = 120.;
 const TOAST_COPY_FEEDBACK: Duration = Duration::from_millis(1200);
 const PULL_REQUEST_LOOKUP_TTL: Duration = Duration::from_secs(30);
+const CHECK_RUNS_LOOKUP_TTL: Duration = Duration::from_secs(30);
+const PENDING_CHECK_RUNS_LOOKUP_TTL: Duration = Duration::from_secs(10);
 pub(crate) const SIDEBAR_TASK_DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 const PROJECT_EXPAND_ANIMATION_DURATION: Duration = Duration::from_millis(160);
 const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
@@ -376,6 +378,7 @@ pub(crate) enum CommitFileChangesState {
 pub(crate) enum RightSidebarMode {
     WorkingTree,
     Commits,
+    Checks,
     Compare,
 }
 
@@ -446,6 +449,19 @@ struct ProjectGitHubLinkReply {
 struct ProjectPullRequestReply {
     lookup_key: String,
     pull_request: Option<crate::git_actions::PullRequestStatus>,
+}
+
+struct ProjectCheckRunsReply {
+    lookup_key: String,
+    result: Result<Option<Vec<crate::git_actions::PullRequestCheck>>, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProjectCheckRunsState {
+    Loading,
+    Loaded(Arc<[crate::git_actions::PullRequestCheck]>),
+    NoPullRequest,
+    Failed(String),
 }
 
 struct TaskCreationSuccess {
@@ -1042,6 +1058,10 @@ pub struct AnotherOneApp {
     project_pull_request_sender: mpsc::Sender<ProjectPullRequestReply>,
     /// Receiver for background pull-request lookups.
     project_pull_request_receiver: mpsc::Receiver<ProjectPullRequestReply>,
+    /// Sender used by background PR check lookups.
+    project_check_runs_sender: mpsc::Sender<ProjectCheckRunsReply>,
+    /// Receiver for background PR check lookups.
+    project_check_runs_receiver: mpsc::Receiver<ProjectCheckRunsReply>,
     /// Sender used by background terminal launch/resume work.
     terminal_launch_sender: mpsc::Sender<TerminalLaunchReply>,
     /// Receiver for background terminal launch/resume work.
@@ -1088,6 +1108,12 @@ pub struct AnotherOneApp {
     pub(crate) project_pull_request_checked: HashSet<String>,
     /// Last successful lookup completion time keyed by `project_id:branch_name`.
     pub(crate) project_pull_request_checked_at: HashMap<String, Instant>,
+    /// Cached PR check-run state keyed by `project_id:branch_name`.
+    pub(crate) project_check_runs_states: HashMap<String, ProjectCheckRunsState>,
+    /// In-flight PR check lookups keyed by `project_id:branch_name`.
+    pub(crate) project_check_runs_requests: HashSet<String>,
+    /// Last successful check-run lookup completion time keyed by `project_id:branch_name`.
+    pub(crate) project_check_runs_checked_at: HashMap<String, Instant>,
     /// New Task modal state. Some when open, None when closed.
     pub(crate) new_task_modal: Option<crate::new_task_modal::NewTaskModalState>,
     /// Add Agent modal state. Some when open, None when closed.
@@ -1820,6 +1846,7 @@ impl AnotherOneApp {
         match self.right_sidebar_mode {
             RightSidebarMode::WorkingTree => RightSidebarMode::WorkingTree,
             RightSidebarMode::Commits => RightSidebarMode::Commits,
+            RightSidebarMode::Checks => RightSidebarMode::Checks,
             RightSidebarMode::Compare if self.active_compare_target_branch(cx).is_some() => {
                 RightSidebarMode::Compare
             }
@@ -1852,6 +1879,24 @@ impl AnotherOneApp {
                 .project(cached_project_id)
                 .is_some_and(|project| project.repo_id != repo_id)
         });
+        self.project_check_runs_states.retain(|key, _| {
+            let cached_project_id = key.split(':').next().unwrap_or_default();
+            self.project_store
+                .project(cached_project_id)
+                .is_some_and(|project| project.repo_id != repo_id)
+        });
+        self.project_check_runs_requests.retain(|key| {
+            let cached_project_id = key.split(':').next().unwrap_or_default();
+            self.project_store
+                .project(cached_project_id)
+                .is_some_and(|project| project.repo_id != repo_id)
+        });
+        self.project_check_runs_checked_at.retain(|key, _| {
+            let cached_project_id = key.split(':').next().unwrap_or_default();
+            self.project_store
+                .project(cached_project_id)
+                .is_some_and(|project| project.repo_id != repo_id)
+        });
     }
 
     fn sync_right_sidebar_mode(&mut self, cx: &App) -> bool {
@@ -1875,10 +1920,62 @@ impl AnotherOneApp {
         format!("{project_id}:{branch_name}")
     }
 
+    fn project_check_runs_lookup_key(project_id: &str, branch_name: &str) -> String {
+        format!("{project_id}:{branch_name}")
+    }
+
+    pub(crate) fn prefetch_section_pull_request_and_checks(
+        &mut self,
+        section_id: &SectionId,
+        project_path: &std::path::Path,
+    ) {
+        self.request_project_pull_request_lookup_for(
+            &section_id.project_id,
+            &section_id.branch_name,
+            project_path,
+        );
+
+        if let Some(pull_request) = self
+            .project_pull_request(&section_id.project_id, &section_id.branch_name)
+            .cloned()
+        {
+            let lookup_key = Self::project_check_runs_lookup_key(
+                &section_id.project_id,
+                &section_id.branch_name,
+            );
+            self.request_project_check_runs_lookup(
+                &lookup_key,
+                project_path,
+                Some(pull_request.number),
+            );
+        }
+    }
+
     fn project_pull_request_lookup_is_fresh(&self, lookup_key: &str) -> bool {
         self.project_pull_request_checked_at
             .get(lookup_key)
             .is_some_and(|checked_at| checked_at.elapsed() < PULL_REQUEST_LOOKUP_TTL)
+    }
+
+    fn project_check_runs_lookup_ttl(&self, lookup_key: &str) -> Duration {
+        match self.project_check_runs_states.get(lookup_key) {
+            Some(ProjectCheckRunsState::Loaded(checks))
+                if checks.iter().any(|check| {
+                    check.bucket == crate::git_actions::PullRequestCheckBucket::Pending
+                }) =>
+            {
+                PENDING_CHECK_RUNS_LOOKUP_TTL
+            }
+            _ => CHECK_RUNS_LOOKUP_TTL,
+        }
+    }
+
+    fn project_check_runs_lookup_is_fresh(&self, lookup_key: &str) -> bool {
+        self.project_check_runs_checked_at
+            .get(lookup_key)
+            .is_some_and(|checked_at| {
+                checked_at.elapsed() < self.project_check_runs_lookup_ttl(lookup_key)
+            })
     }
 
     fn active_project_pull_request_context(
@@ -1889,6 +1986,23 @@ impl AnotherOneApp {
         let branch_name = self.project_store.current_branch_name(&project_id)?;
         let project_path = self.project_path(&project_id)?;
         Some((project_id, branch_name, project_path))
+    }
+
+    fn active_project_check_runs_context(
+        &self,
+        cx: &App,
+    ) -> Option<(String, String, std::path::PathBuf, Option<u64>)> {
+        let section = self.workspace_pane.read(cx).active_section.clone()?;
+        let project_path = self.project_path(&section.project_id)?;
+        let pull_request_number = self
+            .project_pull_request(&section.project_id, &section.branch_name)
+            .map(|pull_request| pull_request.number);
+        Some((
+            section.project_id,
+            section.branch_name,
+            project_path,
+            pull_request_number,
+        ))
     }
 
     pub(crate) fn active_project_pull_request_lookup_checked(&self, cx: &App) -> bool {
@@ -1925,6 +2039,15 @@ impl AnotherOneApp {
         self.project_pull_requests.get(&lookup_key)
     }
 
+    pub(crate) fn active_project_check_runs_state(
+        &self,
+        cx: &App,
+    ) -> Option<&ProjectCheckRunsState> {
+        let (project_id, branch_name, _, _) = self.active_project_check_runs_context(cx)?;
+        let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
+        self.project_check_runs_states.get(&lookup_key)
+    }
+
     pub(crate) fn request_project_pull_request_lookup_for(
         &mut self,
         project_id: &str,
@@ -1945,6 +2068,30 @@ impl AnotherOneApp {
         self.request_project_pull_request_lookup(&lookup_key, &branch_name, &project_path);
     }
 
+    pub(crate) fn request_active_project_check_runs_lookup(&mut self, cx: &App) {
+        let Some((project_id, branch_name, project_path, pull_request_number)) =
+            self.active_project_check_runs_context(cx)
+        else {
+            return;
+        };
+        if pull_request_number.is_none() && !self.active_project_pull_request_lookup_checked(cx) {
+            self.refresh_active_project_pull_request_lookup(cx);
+            return;
+        }
+        let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
+        self.request_project_check_runs_lookup(&lookup_key, &project_path, pull_request_number);
+    }
+
+    pub(crate) fn refresh_active_project_check_runs_lookup(&mut self, cx: &App) {
+        let Some((project_id, branch_name, project_path, pull_request_number)) =
+            self.active_project_check_runs_context(cx)
+        else {
+            return;
+        };
+        let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
+        self.request_project_check_runs_lookup(&lookup_key, &project_path, pull_request_number);
+    }
+
     fn invalidate_active_project_pull_request_lookup(&mut self, cx: &App) {
         let Some((project_id, branch_name, _)) = self.active_project_pull_request_context(cx)
         else {
@@ -1955,6 +2102,17 @@ impl AnotherOneApp {
         self.project_pull_request_checked.remove(&lookup_key);
         self.project_pull_request_checked_at.remove(&lookup_key);
         self.project_pull_requests.remove(&lookup_key);
+    }
+
+    fn invalidate_active_project_check_runs_lookup(&mut self, cx: &App) {
+        let Some((project_id, branch_name, _, _)) = self.active_project_check_runs_context(cx)
+        else {
+            return;
+        };
+        let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
+        self.project_check_runs_requests.remove(&lookup_key);
+        self.project_check_runs_checked_at.remove(&lookup_key);
+        self.project_check_runs_states.remove(&lookup_key);
     }
 
     pub(crate) fn active_project_ahead_count(&self, cx: &App) -> usize {
@@ -2518,6 +2676,7 @@ impl AnotherOneApp {
         let left_sidebar_open = store.ui.left_sidebar_open;
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
         let (project_pull_request_sender, project_pull_request_receiver) = mpsc::channel();
+        let (project_check_runs_sender, project_check_runs_receiver) = mpsc::channel();
         let (commit_file_changes_sender, commit_file_changes_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             mpsc::channel();
@@ -2635,6 +2794,8 @@ impl AnotherOneApp {
             project_pull_requests: HashMap::new(),
             project_pull_request_sender,
             project_pull_request_receiver,
+            project_check_runs_sender,
+            project_check_runs_receiver,
             terminal_launch_sender,
             terminal_launch_receiver,
             warm_terminal_launch_sender,
@@ -2658,6 +2819,9 @@ impl AnotherOneApp {
             project_pull_request_requests: HashSet::new(),
             project_pull_request_checked: HashSet::new(),
             project_pull_request_checked_at: HashMap::new(),
+            project_check_runs_states: HashMap::new(),
+            project_check_runs_requests: HashSet::new(),
+            project_check_runs_checked_at: HashMap::new(),
             settings_open: false,
             settings_section: crate::settings_page::SettingsSection::Agents,
             available_open_in_apps,
@@ -4127,8 +4291,9 @@ impl AnotherOneApp {
             SectionId::for_task(&target.project_id, &target.branch_name, &target.task_id);
         let project_path = target.project_path.clone();
         self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.activate_section(section_id, Some(project_path), None, cx);
+            workspace.activate_section(section_id.clone(), Some(project_path.clone()), None, cx);
         });
+        self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
         self.mark_git_refresh_stale();
         true
     }
@@ -4719,12 +4884,13 @@ impl AnotherOneApp {
             let launch_config = launch_config.clone();
             self.workspace_pane.update(cx, |workspace, cx| {
                 workspace.activate_section(
-                    section_id,
-                    Some(project_path),
+                    section_id.clone(),
+                    Some(project_path.clone()),
                     Some(launch_config.clone()),
                     cx,
                 );
             });
+            self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
             let key = self.active_terminal_key(cx);
             let warm_launch_id = self
                 .active_new_task_warm_launch_id
@@ -5242,6 +5408,8 @@ impl AnotherOneApp {
                 if refresh_pull_request_lookup {
                     self.invalidate_active_project_pull_request_lookup(cx);
                     self.refresh_active_project_pull_request_lookup(cx);
+                    self.invalidate_active_project_check_runs_lookup(cx);
+                    self.refresh_active_project_check_runs_lookup(cx);
                 }
                 true
             }
@@ -5385,12 +5553,13 @@ impl AnotherOneApp {
                         let launch_config = success.launch_config;
                         self.workspace_pane.update(cx, |workspace, cx| {
                             workspace.activate_section(
-                                section_id,
-                                Some(project_path),
+                                section_id.clone(),
+                                Some(project_path.clone()),
                                 Some(launch_config.clone()),
                                 cx,
                             );
                         });
+                        self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
                         if let Some(key) = self.active_terminal_key(cx) {
                             self.attach_or_start_prewarmed_terminal(
                                 None,
@@ -5584,7 +5753,7 @@ impl AnotherOneApp {
         });
     }
 
-    fn drain_project_pull_request_lookup(&mut self) -> bool {
+    fn drain_project_pull_request_lookup(&mut self, cx: &mut Context<Self>) -> bool {
         let mut should_notify = false;
 
         while let Ok(reply) = self.project_pull_request_receiver.try_recv() {
@@ -5597,14 +5766,86 @@ impl AnotherOneApp {
             if let Some(pull_request) = reply.pull_request {
                 if self.project_pull_requests.get(&reply.lookup_key) != Some(&pull_request) {
                     self.project_pull_requests
-                        .insert(reply.lookup_key, pull_request);
+                        .insert(reply.lookup_key.clone(), pull_request.clone());
                     should_notify = true;
+                }
+
+                if let Some((project_id, branch_name, project_path, _)) =
+                    self.active_project_check_runs_context(cx)
+                {
+                    let active_lookup_key =
+                        Self::project_check_runs_lookup_key(&project_id, &branch_name);
+                    if active_lookup_key == reply.lookup_key {
+                        self.request_project_check_runs_lookup(
+                            &active_lookup_key,
+                            &project_path,
+                            Some(pull_request.number),
+                        );
+                    }
                 }
             } else if self
                 .project_pull_requests
                 .remove(&reply.lookup_key)
                 .is_some()
             {
+                should_notify = true;
+            }
+        }
+
+        should_notify
+    }
+
+    fn request_project_check_runs_lookup(
+        &mut self,
+        lookup_key: &str,
+        project_path: &std::path::Path,
+        pull_request_number: Option<u64>,
+    ) {
+        if self.project_check_runs_lookup_is_fresh(lookup_key)
+            || self.project_check_runs_requests.contains(lookup_key)
+        {
+            return;
+        }
+
+        self.project_check_runs_requests
+            .insert(lookup_key.to_string());
+        if !self.project_check_runs_states.contains_key(lookup_key) {
+            self.project_check_runs_states
+                .insert(lookup_key.to_string(), ProjectCheckRunsState::Loading);
+        }
+
+        let tx = self.project_check_runs_sender.clone();
+        let lookup_key = lookup_key.to_string();
+        let project_path = project_path.to_path_buf();
+        std::thread::spawn(move || {
+            let result =
+                crate::git_actions::find_pull_request_checks(&project_path, pull_request_number);
+            let _ = tx.send(ProjectCheckRunsReply { lookup_key, result });
+        });
+    }
+
+    fn drain_project_check_runs_lookup(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut should_notify = false;
+
+        while let Ok(reply) = self.project_check_runs_receiver.try_recv() {
+            self.project_check_runs_requests.remove(&reply.lookup_key);
+            self.project_check_runs_checked_at
+                .insert(reply.lookup_key.clone(), Instant::now());
+
+            let state = match reply.result {
+                Ok(Some(checks)) => ProjectCheckRunsState::Loaded(Arc::from(checks)),
+                Ok(None) => ProjectCheckRunsState::NoPullRequest,
+                Err(error) => {
+                    if self.active_right_sidebar_mode(cx) == RightSidebarMode::Checks {
+                        self.show_warning_toast(error.clone(), cx);
+                    }
+                    ProjectCheckRunsState::Failed(error)
+                }
+            };
+
+            if self.project_check_runs_states.get(&reply.lookup_key) != Some(&state) {
+                self.project_check_runs_states
+                    .insert(reply.lookup_key, state);
                 should_notify = true;
             }
         }
@@ -8339,7 +8580,8 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_project_add(cx);
                             should_notify |= this.drain_commit_file_changes(cx);
                             should_notify |= this.drain_project_github_link_lookup();
-                            should_notify |= this.drain_project_pull_request_lookup();
+                            should_notify |= this.drain_project_pull_request_lookup(cx);
+                            should_notify |= this.drain_project_check_runs_lookup(cx);
                             should_notify |= this.drain_terminal_launch_replies(cx);
                             should_notify |= this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= this.tick_toasts();
