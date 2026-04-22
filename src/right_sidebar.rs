@@ -1646,7 +1646,7 @@ impl AnotherOneApp {
                         );
                     }
                     Some(ProjectCheckRunsState::Loaded(checks)) => {
-                        let mut checks = checks;
+                        let mut checks: Vec<_> = checks.iter().cloned().collect();
                         checks.sort_by(|a, b| {
                             Self::check_run_sort_priority(a.bucket)
                                 .cmp(&Self::check_run_sort_priority(b.bucket))
