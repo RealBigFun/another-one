@@ -162,6 +162,31 @@ pub fn find_github_repo_url(repo_path: &Path) -> Option<String> {
         .and_then(|remote| normalize_github_remote(&remote))
 }
 
+pub fn find_existing_pull_request_url(repo_path: &Path, head_branch: &str) -> Option<String> {
+    if head_branch.trim().is_empty() {
+        return None;
+    }
+
+    let gh = find_gh_cli()?;
+    let output = Command::new(gh)
+        .args(find_existing_pull_request_args(head_branch))
+        .current_dir(repo_path)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let url = stdout.trim();
+    if url.is_empty() {
+        None
+    } else {
+        Some(url.to_string())
+    }
+}
+
 fn github_https_url(path: &str) -> String {
     format!("https://github.com/{}", path.trim_end_matches(".git"))
 }
@@ -181,6 +206,13 @@ fn normalize_github_remote(remote: &str) -> Option<String> {
     .into_iter()
     .find_map(|prefix| remote.strip_prefix(prefix))
     .map(github_https_url)
+}
+
+fn find_existing_pull_request_args(head_branch: &str) -> Vec<String> {
+    ["pr", "view", head_branch, "--json", "url", "--jq", ".url"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
 }
 
 fn commit_with_ai(
@@ -780,8 +812,9 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_pull_request_args, git_stdout, normalize_github_remote, parse_commit_message,
-        push_branch, simple_toolbar_git_command, ToolbarGitAction,
+        create_pull_request_args, find_existing_pull_request_args, git_stdout,
+        normalize_github_remote, parse_commit_message, push_branch, simple_toolbar_git_command,
+        ToolbarGitAction,
     };
     use std::path::Path;
     use std::process::Command;
@@ -883,6 +916,27 @@ mod tests {
                 "--head",
                 "feature/test",
                 "--draft"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn find_existing_pull_request_args_target_branch_lookup() {
+        let args = find_existing_pull_request_args("feature/test");
+
+        assert_eq!(
+            args,
+            [
+                "pr",
+                "view",
+                "feature/test",
+                "--json",
+                "url",
+                "--jq",
+                ".url"
             ]
             .into_iter()
             .map(str::to_string)

@@ -142,7 +142,15 @@ impl AnotherOneApp {
             .size_full()
             .bg(rgb(0x1e1f22))
             .child(self.settings_sidebar(window, cx))
-            .child(self.settings_content(cx))
+            .child(
+                div()
+                    .id("settings-page-scroll")
+                    .flex_1()
+                    .min_w(px(0.))
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(self.settings_content(cx)),
+            )
     }
 
     fn settings_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
@@ -262,7 +270,7 @@ impl AnotherOneApp {
         div()
             .flex()
             .flex_col()
-            .flex_1()
+            .w_full()
             .min_w(px(0.))
             .p(px(32.))
             .child(
@@ -417,9 +425,8 @@ impl AnotherOneApp {
         div()
             .flex()
             .flex_col()
-            .flex_1()
+            .w_full()
             .min_w(px(0.))
-            .min_h(px(0.))
             .p(px(32.))
             .child(
                 div()
@@ -705,9 +712,8 @@ impl AnotherOneApp {
         div()
             .flex()
             .flex_col()
-            .flex_1()
+            .w_full()
             .min_w(px(0.))
-            .min_h(px(0.))
             .p(px(32.))
             .child(
                 div()
