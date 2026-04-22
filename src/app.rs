@@ -20,6 +20,7 @@ use crate::agents::{
     AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
 use crate::layout::*;
+use crate::panels::terminal_cell_width;
 use crate::project_store::{
     ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore, Task,
     TaskKind,
@@ -29,6 +30,7 @@ use crate::terminal_launch::{
 };
 use crate::terminal_runtime::{
     LiveTerminalRuntime, TerminalGridSize, TerminalRuntimeKey, TerminalSurfaceSnapshot,
+    TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
 
@@ -121,6 +123,40 @@ pub struct TerminalTab {
     pub title: String,
     pub launch_config: TerminalLaunchConfig,
     pub restore_status: TerminalRestoreStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalSelectionRange {
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TerminalCellPosition {
+    line: usize,
+    column: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TerminalSelectionState {
+    key: TerminalRuntimeKey,
+    anchor: TerminalCellPosition,
+    head: TerminalCellPosition,
+    dragging: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct TerminalPanelMetrics {
+    key: TerminalRuntimeKey,
+    left: f32,
+    top: f32,
+    padding: f32,
+    cell_width: f32,
+    cell_height: f32,
+    columns: usize,
+    rows: usize,
 }
 
 struct PrewarmedTerminalLaunch {
@@ -968,6 +1004,8 @@ pub struct AnotherOneApp {
     terminal_recent_output: HashMap<TerminalRuntimeKey, String>,
     /// Last launch/exit error for a terminal tab.
     terminal_runtime_errors: HashMap<TerminalRuntimeKey, String>,
+    /// Mouse selection state for the currently selected terminal text.
+    terminal_selection: Option<TerminalSelectionState>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Prewarmed launch ids that were canceled before the process fully exited.
@@ -1354,6 +1392,171 @@ fn byte_to_utf16_offset(text: &str, byte_offset: usize) -> usize {
     text[..clamped].encode_utf16().count()
 }
 
+fn terminal_selection_range(
+    anchor: TerminalCellPosition,
+    head: TerminalCellPosition,
+) -> Option<TerminalSelectionRange> {
+    if anchor == head {
+        return None;
+    }
+
+    let (start, end) = if (anchor.line, anchor.column) <= (head.line, head.column) {
+        (anchor, head)
+    } else {
+        (head, anchor)
+    };
+
+    Some(TerminalSelectionRange {
+        start_line: start.line,
+        start_column: start.column,
+        end_line: end.line,
+        end_column: end.column,
+    })
+}
+
+fn terminal_cell_position_from_mouse(
+    point: Point<Pixels>,
+    metrics: &TerminalPanelMetrics,
+) -> Option<TerminalCellPosition> {
+    if metrics.columns == 0 || metrics.rows == 0 {
+        return None;
+    }
+
+    let x = (f32::from(point.x) - metrics.left - metrics.padding).max(0.0);
+    let y = (f32::from(point.y) - metrics.top - metrics.padding).max(0.0);
+    let column = (x / metrics.cell_width)
+        .floor()
+        .clamp(0.0, (metrics.columns.saturating_sub(1)) as f32) as usize;
+    let line = (y / metrics.cell_height)
+        .floor()
+        .clamp(0.0, (metrics.rows.saturating_sub(1)) as f32) as usize;
+
+    Some(TerminalCellPosition { line, column })
+}
+
+fn terminal_selected_text(
+    snapshot: &TerminalSurfaceSnapshot,
+    selection: TerminalSelectionRange,
+) -> Option<String> {
+    if snapshot.lines.is_empty() || snapshot.columns == 0 {
+        return None;
+    }
+
+    let last_line = snapshot.lines.len().saturating_sub(1);
+    let start_line = selection.start_line.min(last_line);
+    let end_line = selection.end_line.min(last_line);
+    let mut lines = Vec::new();
+
+    for line_index in start_line..=end_line {
+        let line = snapshot.lines.get(line_index)?;
+        let mut line_text = String::new();
+        let start_column = if line_index == start_line {
+            selection
+                .start_column
+                .min(snapshot.columns.saturating_sub(1))
+        } else {
+            0
+        };
+        let end_column = if line_index == end_line {
+            selection.end_column.min(snapshot.columns.saturating_sub(1))
+        } else {
+            snapshot.columns.saturating_sub(1)
+        };
+
+        for cell in &line.cells {
+            if cell.column > end_column {
+                break;
+            }
+            if cell.column + cell.width <= start_column {
+                continue;
+            }
+            line_text.push_str(&cell.copy_text);
+        }
+
+        lines.push(line_text.trim_end_matches(' ').to_string());
+    }
+
+    Some(lines.join("\n"))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalCellCategory {
+    Whitespace,
+    Word,
+    Punctuation,
+}
+
+fn terminal_word_selection_range(
+    snapshot: &TerminalSurfaceSnapshot,
+    position: TerminalCellPosition,
+) -> Option<TerminalSelectionRange> {
+    let line = snapshot.lines.get(position.line)?;
+    let clicked_index = line.cells.iter().position(|cell| {
+        cell.column <= position.column && position.column < cell.column + cell.width
+    })?;
+    let clicked_cell = line.cells.get(clicked_index)?;
+
+    let mut start_column = clicked_cell.column;
+    let mut end_column = clicked_cell.column + clicked_cell.width - 1;
+    let category = terminal_cell_category(clicked_cell);
+
+    let mut left_index = clicked_index;
+    while left_index > 0 {
+        let candidate = &line.cells[left_index - 1];
+        if terminal_cell_category(candidate) != category {
+            break;
+        }
+        start_column = candidate.column;
+        left_index -= 1;
+    }
+
+    let mut right_index = clicked_index;
+    while right_index + 1 < line.cells.len() {
+        let candidate = &line.cells[right_index + 1];
+        if terminal_cell_category(candidate) != category {
+            break;
+        }
+        end_column = candidate.column + candidate.width - 1;
+        right_index += 1;
+    }
+
+    Some(TerminalSelectionRange {
+        start_line: position.line,
+        start_column,
+        end_line: position.line,
+        end_column,
+    })
+}
+
+fn terminal_line_selection_range(
+    snapshot: &TerminalSurfaceSnapshot,
+    position: TerminalCellPosition,
+) -> Option<TerminalSelectionRange> {
+    if snapshot.columns == 0 || snapshot.lines.get(position.line).is_none() {
+        return None;
+    }
+
+    Some(TerminalSelectionRange {
+        start_line: position.line,
+        start_column: 0,
+        end_line: position.line,
+        end_column: snapshot.columns.saturating_sub(1),
+    })
+}
+
+fn terminal_cell_category(
+    cell: &crate::terminal_runtime::TerminalCellSnapshot,
+) -> TerminalCellCategory {
+    let ch = cell.copy_text.chars().next().unwrap_or(' ');
+    if ch.is_whitespace() {
+        TerminalCellCategory::Whitespace
+    } else if ch.is_alphanumeric() || ch == '_' {
+        TerminalCellCategory::Word
+    } else {
+        TerminalCellCategory::Punctuation
+    }
+}
+
 impl AnotherOneApp {
     fn text_input_target(&self, cx: &App) -> TextInputTarget {
         if self
@@ -1700,6 +1903,7 @@ impl AnotherOneApp {
             pending_terminal_launches: HashSet::new(),
             terminal_recent_output: HashMap::new(),
             terminal_runtime_errors: HashMap::new(),
+            terminal_selection: None,
             prewarmed_terminal_launches: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
             active_add_agent_warm_launch_id: None,
@@ -2430,6 +2634,159 @@ impl AnotherOneApp {
         runtime.paste_text(text).is_ok()
     }
 
+    pub(crate) fn terminal_selection_for(
+        &self,
+        key: &TerminalRuntimeKey,
+    ) -> Option<TerminalSelectionRange> {
+        let selection = self.terminal_selection.as_ref()?;
+        if selection.key != *key {
+            return None;
+        }
+
+        terminal_selection_range(selection.anchor, selection.head)
+    }
+
+    fn terminal_panel_metrics_for_key(
+        &self,
+        key: &TerminalRuntimeKey,
+        window: &mut Window,
+    ) -> Option<TerminalPanelMetrics> {
+        let snapshot = self.terminal_surface_snapshots.get(key)?;
+        let titlebar_height = if cfg!(target_os = "macos") {
+            TITLEBAR_CHROME_H
+        } else {
+            0.0
+        };
+
+        Some(TerminalPanelMetrics {
+            key: key.clone(),
+            left: self.sidebar_w + GUTTER,
+            top: titlebar_height + 36.0,
+            padding: 12.0,
+            cell_width: f32::from(terminal_cell_width(window, self.font_size)),
+            cell_height: (self.font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0),
+            columns: snapshot.columns,
+            rows: snapshot.lines.len(),
+        })
+    }
+
+    pub(crate) fn start_terminal_selection(
+        &mut self,
+        key: TerminalRuntimeKey,
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(metrics) = self.terminal_panel_metrics_for_key(&key, window) else {
+            self.terminal_selection = None;
+            return false;
+        };
+        let Some(position) = terminal_cell_position_from_mouse(ev.position, &metrics) else {
+            self.terminal_selection = None;
+            return false;
+        };
+        let selection_range = match ev.click_count {
+            0 | 1 => None,
+            2 => self
+                .terminal_surface_snapshots
+                .get(&key)
+                .and_then(|snapshot| terminal_word_selection_range(snapshot, position)),
+            _ => self
+                .terminal_surface_snapshots
+                .get(&key)
+                .and_then(|snapshot| terminal_line_selection_range(snapshot, position)),
+        };
+
+        self.terminal_selection = if let Some(selection) = selection_range {
+            Some(TerminalSelectionState {
+                key: metrics.key,
+                anchor: TerminalCellPosition {
+                    line: selection.start_line,
+                    column: selection.start_column,
+                },
+                head: TerminalCellPosition {
+                    line: selection.end_line,
+                    column: selection.end_column,
+                },
+                dragging: false,
+            })
+        } else {
+            Some(TerminalSelectionState {
+                key: metrics.key,
+                anchor: position,
+                head: position,
+                dragging: true,
+            })
+        };
+        cx.notify();
+        true
+    }
+
+    fn update_terminal_selection_drag(
+        &mut self,
+        ev: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(selection) = self.terminal_selection.as_ref() else {
+            return false;
+        };
+        if !selection.dragging || !ev.dragging() {
+            return false;
+        }
+
+        let selection_key = selection.key.clone();
+
+        let Some(metrics) = self.terminal_panel_metrics_for_key(&selection_key, window) else {
+            self.terminal_selection = None;
+            cx.notify();
+            return true;
+        };
+        if selection.key != metrics.key {
+            if let Some(selection) = self.terminal_selection.as_mut() {
+                selection.dragging = false;
+            }
+            return false;
+        }
+
+        let Some(position) = terminal_cell_position_from_mouse(ev.position, &metrics) else {
+            return false;
+        };
+        let Some(selection) = self.terminal_selection.as_mut() else {
+            return false;
+        };
+        if selection.head == position {
+            return true;
+        }
+
+        selection.head = position;
+        cx.notify();
+        true
+    }
+
+    fn finish_terminal_selection_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(selection) = self.terminal_selection.as_mut() else {
+            return false;
+        };
+        if !selection.dragging {
+            return false;
+        }
+
+        selection.dragging = false;
+        if selection.anchor == selection.head {
+            self.terminal_selection = None;
+        }
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn selected_terminal_text(&self, cx: &App) -> Option<String> {
+        let key = self.active_terminal_key(cx)?;
+        let selection = self.terminal_selection_for(&key)?;
+        let snapshot = self.terminal_surface_snapshots.get(&key)?;
+        terminal_selected_text(snapshot, selection)
+    }
+
     fn remove_persisted_sections(&mut self, section_ids: &HashSet<SectionId>) {
         let bare_section_keys = section_ids
             .iter()
@@ -2447,6 +2804,13 @@ impl AnotherOneApp {
             section_id: section_id.clone(),
             tab_id,
         };
+        if self
+            .terminal_selection
+            .as_ref()
+            .is_some_and(|selection| selection.key == key)
+        {
+            self.terminal_selection = None;
+        }
         self.cancel_prewarmed_launch_for_tab(&key);
         if let Some(mut runtime) = remove_terminal_runtime_state(
             &mut self.live_terminal_runtimes,
@@ -3776,6 +4140,9 @@ impl AnotherOneApp {
         if self.update_toast_drag(ev, cx) {
             return;
         }
+        if self.update_terminal_selection_drag(ev, window, cx) {
+            return;
+        }
 
         let Some((kind, last_x)) = self.drag else {
             return;
@@ -3811,6 +4178,7 @@ impl AnotherOneApp {
 
     pub fn on_mouse_up(&mut self, _ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let had_toast_drag = self.finish_toast_drag(cx);
+        let had_terminal_selection = self.finish_terminal_selection_drag(cx);
         let had_layout_drag = self.drag.take().is_some();
 
         if had_layout_drag {
@@ -3820,7 +4188,7 @@ impl AnotherOneApp {
                 .set_left_sidebar_open(self.sidebar_is_open());
         }
 
-        if had_toast_drag || had_layout_drag {
+        if had_toast_drag || had_terminal_selection || had_layout_drag {
             cx.notify();
         }
     }
@@ -4470,7 +4838,9 @@ mod tests {
     use super::{
         apply_terminal_session_backfill, choose_initial_section,
         output_mentions_missing_claude_conversation, remove_terminal_runtime_state,
-        trim_to_recent_output_limit, SectionId, SectionState, TERMINAL_RECENT_OUTPUT_LIMIT,
+        terminal_line_selection_range, terminal_selected_text, terminal_selection_range,
+        terminal_word_selection_range, trim_to_recent_output_limit, SectionId, SectionState,
+        TerminalCellPosition, TerminalSelectionRange, TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
@@ -4479,7 +4849,9 @@ mod tests {
     use crate::project_store::{
         PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
     };
-    use crate::terminal_runtime::{TerminalRuntimeKey, TerminalSurfaceSnapshot};
+    use crate::terminal_runtime::{
+        TerminalCellSnapshot, TerminalLineSnapshot, TerminalRuntimeKey, TerminalSurfaceSnapshot,
+    };
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -4764,6 +5136,7 @@ mod tests {
             key.clone(),
             TerminalSurfaceSnapshot {
                 text: "hello".to_string(),
+                columns: 5,
                 lines: Vec::new(),
                 positioned_runs: Vec::new(),
                 cursor: None,
@@ -4809,6 +5182,210 @@ mod tests {
         assert_eq!(buffer.len(), TERMINAL_RECENT_OUTPUT_LIMIT - 1);
         assert!(buffer.is_char_boundary(0));
         assert_eq!(buffer.chars().next(), Some('a'));
+    }
+
+    #[test]
+    fn terminal_selection_range_normalizes_reverse_drag() {
+        let selection = terminal_selection_range(
+            TerminalCellPosition { line: 3, column: 8 },
+            TerminalCellPosition { line: 1, column: 2 },
+        );
+
+        assert_eq!(
+            selection,
+            Some(TerminalSelectionRange {
+                start_line: 1,
+                start_column: 2,
+                end_line: 3,
+                end_column: 8,
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_selected_text_spans_multiple_lines() {
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: 6,
+            lines: vec![
+                TerminalLineSnapshot {
+                    text: "hello ".to_string(),
+                    cells: vec![
+                        TerminalCellSnapshot {
+                            column: 0,
+                            width: 1,
+                            text: "h".to_string(),
+                            copy_text: "h".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 1,
+                            width: 1,
+                            text: "e".to_string(),
+                            copy_text: "e".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 2,
+                            width: 1,
+                            text: "l".to_string(),
+                            copy_text: "l".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 3,
+                            width: 1,
+                            text: "l".to_string(),
+                            copy_text: "l".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 4,
+                            width: 1,
+                            text: "o".to_string(),
+                            copy_text: "o".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 5,
+                            width: 1,
+                            text: " ".to_string(),
+                            copy_text: " ".to_string(),
+                        },
+                    ],
+                    runs: Vec::new(),
+                    background_spans: Vec::new(),
+                },
+                TerminalLineSnapshot {
+                    text: "world ".to_string(),
+                    cells: vec![
+                        TerminalCellSnapshot {
+                            column: 0,
+                            width: 1,
+                            text: "w".to_string(),
+                            copy_text: "w".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 1,
+                            width: 1,
+                            text: "o".to_string(),
+                            copy_text: "o".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 2,
+                            width: 1,
+                            text: "r".to_string(),
+                            copy_text: "r".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 3,
+                            width: 1,
+                            text: "l".to_string(),
+                            copy_text: "l".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 4,
+                            width: 1,
+                            text: "d".to_string(),
+                            copy_text: "d".to_string(),
+                        },
+                        TerminalCellSnapshot {
+                            column: 5,
+                            width: 1,
+                            text: " ".to_string(),
+                            copy_text: " ".to_string(),
+                        },
+                    ],
+                    runs: Vec::new(),
+                    background_spans: Vec::new(),
+                },
+            ],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let copied = terminal_selected_text(
+            &snapshot,
+            TerminalSelectionRange {
+                start_line: 0,
+                start_column: 2,
+                end_line: 1,
+                end_column: 3,
+            },
+        );
+
+        assert_eq!(copied.as_deref(), Some("llo\nworl"));
+    }
+
+    #[test]
+    fn terminal_word_selection_range_selects_clicked_word() {
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: 11,
+            lines: vec![TerminalLineSnapshot {
+                text: "foo.bar baz".to_string(),
+                cells: "foo.bar baz"
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| TerminalCellSnapshot {
+                        column,
+                        width: 1,
+                        text: ch.to_string(),
+                        copy_text: ch.to_string(),
+                    })
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let selection =
+            terminal_word_selection_range(&snapshot, TerminalCellPosition { line: 0, column: 5 });
+
+        assert_eq!(
+            selection,
+            Some(TerminalSelectionRange {
+                start_line: 0,
+                start_column: 4,
+                end_line: 0,
+                end_column: 6,
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_line_selection_range_selects_full_visual_line() {
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: 8,
+            lines: vec![TerminalLineSnapshot {
+                text: "content ".to_string(),
+                cells: "content "
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| TerminalCellSnapshot {
+                        column,
+                        width: 1,
+                        text: ch.to_string(),
+                        copy_text: ch.to_string(),
+                    })
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let selection =
+            terminal_line_selection_range(&snapshot, TerminalCellPosition { line: 0, column: 3 });
+
+        assert_eq!(
+            selection,
+            Some(TerminalSelectionRange {
+                start_line: 0,
+                start_column: 0,
+                end_line: 0,
+                end_column: 7,
+            })
+        );
     }
 }
 

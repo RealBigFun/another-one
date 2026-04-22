@@ -5,7 +5,7 @@ use gpui::{
     Bounds, Context, MouseButton, MouseDownEvent, Pixels, Render, SharedString, Window,
 };
 
-use crate::app::{AnotherOneApp, WorkspacePane};
+use crate::app::{AnotherOneApp, TerminalSelectionRange, WorkspacePane};
 use crate::terminal_runtime::{
     TerminalCursorKind, TerminalRuntimeKey, TerminalSurfaceSnapshot, TERMINAL_CELL_WIDTH_RATIO,
     TERMINAL_LINE_HEIGHT_RATIO,
@@ -296,6 +296,11 @@ impl WorkspacePane {
             let cell_width = terminal_cell_width(window, self.font_size);
             let padding = px(12.);
             let canvas_snapshot = snapshot.clone();
+            let selection_key = key.clone();
+            let selection = self
+                .app
+                .upgrade()
+                .and_then(|app_entity| app_entity.read(cx).terminal_selection_for(&key));
             let font_size = px(self.font_size);
             return div()
                 .relative()
@@ -303,10 +308,14 @@ impl WorkspacePane {
                 .min_h_0()
                 .overflow_hidden()
                 .bg(terminal_bg)
+                .cursor_text()
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|this, _ev: &MouseDownEvent, window, _cx| {
+                    cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                         this.focus_handle.focus(window);
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            app.start_terminal_selection(selection_key.clone(), ev, window, app_cx);
+                        });
                     }),
                 )
                 .child(
@@ -322,6 +331,7 @@ impl WorkspacePane {
                                 cell_width,
                                 line_height,
                                 font_size,
+                                selection,
                             );
                         },
                     )
@@ -456,6 +466,7 @@ fn paint_terminal_snapshot(
     cell_width: Pixels,
     cell_height: Pixels,
     font_size: Pixels,
+    selection: Option<TerminalSelectionRange>,
 ) {
     for (line_index, line) in snapshot.lines.iter().enumerate() {
         let top = bounds.origin.y + padding + cell_height * line_index as f32;
@@ -470,6 +481,18 @@ fn paint_terminal_snapshot(
                 span.color,
             ));
         }
+    }
+
+    if let Some(selection) = selection {
+        paint_terminal_selection(
+            bounds,
+            snapshot,
+            window,
+            padding,
+            cell_width,
+            cell_height,
+            selection,
+        );
     }
 
     for run in &snapshot.positioned_runs {
@@ -520,7 +543,51 @@ fn paint_terminal_snapshot(
     }
 }
 
-fn terminal_cell_width(window: &mut Window, font_size: f32) -> Pixels {
+fn paint_terminal_selection(
+    bounds: Bounds<Pixels>,
+    snapshot: &TerminalSurfaceSnapshot,
+    window: &mut Window,
+    padding: Pixels,
+    cell_width: Pixels,
+    cell_height: Pixels,
+    selection: TerminalSelectionRange,
+) {
+    let highlight = hsla(0.58, 0.62, 0.68, 0.35);
+    let last_line = snapshot.lines.len().saturating_sub(1);
+    if snapshot.columns == 0 || snapshot.lines.is_empty() {
+        return;
+    }
+
+    let start_line = selection.start_line.min(last_line);
+    let end_line = selection.end_line.min(last_line);
+    for line in start_line..=end_line {
+        let start_column = if line == start_line {
+            selection
+                .start_column
+                .min(snapshot.columns.saturating_sub(1))
+        } else {
+            0
+        };
+        let end_column = if line == end_line {
+            selection.end_column.min(snapshot.columns.saturating_sub(1))
+        } else {
+            snapshot.columns.saturating_sub(1)
+        };
+        if end_column < start_column {
+            continue;
+        }
+
+        let left = bounds.origin.x + padding + cell_width * start_column as f32;
+        let top = bounds.origin.y + padding + cell_height * line as f32;
+        let width = cell_width * (end_column + 1 - start_column) as f32;
+        window.paint_quad(fill(
+            Bounds::new(point(left, top), size(width.max(px(1.)), cell_height)),
+            highlight,
+        ));
+    }
+}
+
+pub(crate) fn terminal_cell_width(window: &mut Window, font_size: f32) -> Pixels {
     let font_pixels = px(font_size);
     let text_system = window.text_system();
     let font_id = text_system.resolve_font(&gpui::font("Lilex Nerd Font Mono"));

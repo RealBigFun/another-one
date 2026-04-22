@@ -89,6 +89,7 @@ impl Dimensions for TerminalGridSize {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TerminalSurfaceSnapshot {
     pub text: String,
+    pub columns: usize,
     pub lines: Vec<TerminalLineSnapshot>,
     pub positioned_runs: Vec<TerminalPositionedRunSnapshot>,
     pub cursor: Option<TerminalCursorSnapshot>,
@@ -97,8 +98,17 @@ pub(crate) struct TerminalSurfaceSnapshot {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TerminalLineSnapshot {
     pub text: String,
+    pub cells: Vec<TerminalCellSnapshot>,
     pub runs: Vec<TextRun>,
     pub background_spans: Vec<TerminalBackgroundSpanSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalCellSnapshot {
+    pub column: usize,
+    pub width: usize,
+    pub text: String,
+    pub copy_text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -322,6 +332,7 @@ fn build_surface_snapshot<T: EventListener>(
         let point = viewport_to_point(display_offset, Point::new(viewport_line, Column(0)));
         let grid_line = &term.grid()[point.line];
         let mut text = String::new();
+        let mut cells = Vec::new();
         let mut runs = Vec::new();
         let mut background_spans = Vec::new();
         let mut pending_blank_run = PendingTextRun::default();
@@ -347,6 +358,8 @@ fn build_surface_snapshot<T: EventListener>(
                 .is_some_and(|cursor| cursor.line == viewport_line && cursor.column.0 == column);
             let mut cell_style = resolve_cell_style(cell, renderable.colors);
             let chunk = cell_display_text(cell);
+            let copy_text = cell_copy_text(cell);
+            let cell_width = terminal_cell_width(cell);
             if chunk.is_empty() {
                 continue;
             }
@@ -354,15 +367,21 @@ fn build_surface_snapshot<T: EventListener>(
             maybe_push_background_span(
                 &mut background_spans,
                 column,
-                terminal_cell_width(cell),
+                cell_width,
                 cell_style.background,
             );
+            cells.push(TerminalCellSnapshot {
+                column,
+                width: cell_width,
+                text: chunk.clone(),
+                copy_text,
+            });
 
             if is_cursor {
                 if let Some(snapshot) = cursor_snapshot_from_cell(
                     viewport_line,
                     column,
-                    terminal_cell_width(cell),
+                    cell_width,
                     renderable.cursor.shape,
                     &cell_style,
                 ) {
@@ -385,7 +404,7 @@ fn build_surface_snapshot<T: EventListener>(
                     &mut positioned_runs,
                     viewport_line,
                     column,
-                    terminal_cell_width(cell),
+                    cell_width,
                     char_text,
                     positioned_style,
                 );
@@ -460,6 +479,7 @@ fn build_surface_snapshot<T: EventListener>(
 
         lines.push(TerminalLineSnapshot {
             text,
+            cells,
             runs,
             background_spans,
         });
@@ -473,6 +493,7 @@ fn build_surface_snapshot<T: EventListener>(
 
     TerminalSurfaceSnapshot {
         text,
+        columns: size.cols as usize,
         lines,
         positioned_runs,
         cursor: cursor_snapshot,
@@ -560,6 +581,21 @@ fn cell_display_text(cell: &alacritty_terminal::term::cell::Cell) -> String {
 
 fn cell_is_trimmable_blank(cell: &alacritty_terminal::term::cell::Cell) -> bool {
     (cell.flags.contains(Flags::HIDDEN) || cell.c == ' ') && cell.zerowidth().is_none()
+}
+
+fn cell_copy_text(cell: &alacritty_terminal::term::cell::Cell) -> String {
+    if cell.flags.contains(Flags::HIDDEN) {
+        return " ".to_string();
+    }
+
+    let mut text = String::new();
+    text.push(if cell.c == ' ' { ' ' } else { cell.c });
+
+    for zero_width in cell.zerowidth().into_iter().flatten() {
+        text.push(*zero_width);
+    }
+
+    text
 }
 
 fn cell_is_render_blank(cell: &alacritty_terminal::term::cell::Cell) -> bool {

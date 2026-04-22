@@ -645,6 +645,15 @@ impl AnotherOneApp {
 
     fn handle_terminal_key_down(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
         let modifiers = ev.keystroke.modifiers;
+        if modifiers.platform && ev.keystroke.key.as_str() == "c" {
+            if let Some(text) = self.selected_terminal_text(cx) {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                cx.stop_propagation();
+                return true;
+            }
+            return false;
+        }
+
         if modifiers.platform && ev.keystroke.key.as_str() == "v" {
             if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
                 if self.paste_into_active_terminal(cx, &text) {
