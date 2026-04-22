@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 
 use gpui::{
     div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, ClipboardItem, Context, KeyDownEvent,
@@ -2893,29 +2892,6 @@ mod tests {
 }
 
 pub(crate) fn open_external_url(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    };
-
-    #[cfg(target_os = "linux")]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", url]);
-        command
-    };
-
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("Could not open the GitHub link: {err}"))
+    use crate::platform::{CurrentPlatform, PlatformServices};
+    CurrentPlatform::open_external_url(url)
 }

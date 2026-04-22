@@ -5,6 +5,8 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::platform::{CurrentPlatform, PlatformServices};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpenInAppKind {
@@ -85,117 +87,20 @@ pub fn open_path_in_app(path: &Path, app: OpenInAppKind) -> Result<(), String> {
 }
 
 fn is_app_available(app: OpenInAppKind) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        match app {
-            OpenInAppKind::Cursor => {
-                macos_app_exists("Cursor") || command_exists(&["cursor", "cursor-cli"])
-            }
-            OpenInAppKind::Zed => macos_app_exists("Zed") || command_exists(&["zed"]),
-            OpenInAppKind::VsCode => {
-                macos_app_exists("Visual Studio Code") || command_exists(&["code"])
-            }
-            OpenInAppKind::FileManager => macos_app_exists("Finder"),
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        match app {
-            OpenInAppKind::Cursor => command_exists(&["cursor"]),
-            OpenInAppKind::Zed => command_exists(&["zed"]),
-            OpenInAppKind::VsCode => command_exists(&["code"]),
-            OpenInAppKind::FileManager => command_exists(&["xdg-open"]),
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        match app {
-            OpenInAppKind::Cursor => command_exists(&["cursor"]),
-            OpenInAppKind::Zed => command_exists(&["zed"]),
-            OpenInAppKind::VsCode => command_exists(&["code"]),
-            OpenInAppKind::FileManager => true,
-        }
-    }
+    CurrentPlatform::is_open_in_app_available(app)
 }
 
 fn command_for_app(app: OpenInAppKind, path: &Path) -> Command {
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = Command::new("open");
-        match app {
-            OpenInAppKind::Cursor => {
-                command.args(["-a", "Cursor"]).arg(path);
-            }
-            OpenInAppKind::Zed => {
-                command.args(["-a", "Zed"]).arg(path);
-            }
-            OpenInAppKind::VsCode => {
-                command.args(["-a", "Visual Studio Code"]).arg(path);
-            }
-            OpenInAppKind::FileManager => {
-                command.arg(path);
-            }
-        }
-        return command;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let mut command = match app {
-            OpenInAppKind::Cursor => Command::new("cursor"),
-            OpenInAppKind::Zed => Command::new("zed"),
-            OpenInAppKind::VsCode => Command::new("code"),
-            OpenInAppKind::FileManager => Command::new("xdg-open"),
-        };
-        command.arg(path);
-        return command;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut command = match app {
-            OpenInAppKind::Cursor => Command::new("cursor"),
-            OpenInAppKind::Zed => Command::new("zed"),
-            OpenInAppKind::VsCode => Command::new("code"),
-            OpenInAppKind::FileManager => Command::new("explorer"),
-        };
-        command.arg(path);
-        command
-    }
+    CurrentPlatform::command_for_open_in(app, path)
 }
 
-#[cfg(target_os = "macos")]
-fn macos_app_exists(app_name: &str) -> bool {
-    macos_app_candidates(app_name)
-        .into_iter()
-        .any(|path| path.exists())
-}
-
-#[cfg(target_os = "macos")]
-fn macos_app_candidates(app_name: &str) -> Vec<PathBuf> {
-    let bundle_name = format!("{app_name}.app");
-    let mut candidates = vec![
-        PathBuf::from("/Applications").join(&bundle_name),
-        PathBuf::from("/System/Applications").join(&bundle_name),
-        PathBuf::from("/System/Library/CoreServices").join(&bundle_name),
-    ];
-
-    if let Some(home_dir) = dirs::home_dir() {
-        candidates.push(home_dir.join("Applications").join(bundle_name));
-    }
-
-    candidates
-}
-
-fn command_exists(commands: &[&str]) -> bool {
+pub(crate) fn command_exists(commands: &[&str]) -> bool {
     commands
         .iter()
         .any(|command| command_in_path(command).is_some())
 }
 
-fn command_in_path(command: &str) -> Option<PathBuf> {
+pub(crate) fn command_in_path(command: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
 
     env::split_paths(&path).find_map(|dir| {

@@ -34,6 +34,7 @@ use crate::agents::{
 use crate::layout::*;
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::panels::terminal_cell_width;
+use crate::platform::PlatformServices;
 use crate::project_store::{
     ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore,
     RepoBranchRecord, RepoDefaultCommitAction, Task, TaskKind,
@@ -2460,7 +2461,7 @@ impl AnotherOneApp {
 
     fn terminal_panel_size(&self, window: &Window) -> TerminalGridSize {
         let viewport = window.viewport_size();
-        let titlebar_height = if cfg!(target_os = "macos") {
+        let titlebar_height = if crate::platform::CurrentPlatform::supports_custom_chrome(window) {
             TITLEBAR_CHROME_H
         } else {
             0.0
@@ -3142,7 +3143,7 @@ impl AnotherOneApp {
         window: &mut Window,
     ) -> Option<TerminalPanelMetrics> {
         let snapshot = self.terminal_surface_snapshots.get(key)?;
-        let titlebar_height = if cfg!(target_os = "macos") {
+        let titlebar_height = if crate::platform::CurrentPlatform::supports_custom_chrome(window) {
             TITLEBAR_CHROME_H
         } else {
             0.0
@@ -7553,61 +7554,32 @@ impl Render for AnotherOneApp {
         // ── Settings page (replaces normal layout) ─────────────
         if self.settings_open {
             let settings = self.render_settings_page(window, cx);
-
-            #[cfg(target_os = "macos")]
-            {
-                return AppInputHost::new(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .relative()
-                        .size_full()
-                        .track_focus(&self.focus_handle)
-                        .bg(theme::chrome_bg(window))
-                        .on_key_down(cx.listener(Self::handle_global_key_down))
-                        .on_action(cx.listener(Self::zoom_in))
-                        .on_action(cx.listener(Self::zoom_out))
-                        .on_action(cx.listener(Self::zoom_reset))
-                        .on_action(cx.listener(Self::next_tab))
-                        .on_action(cx.listener(Self::previous_tab))
-                        .on_action(cx.listener(Self::next_task))
-                        .on_action(cx.listener(Self::previous_task))
-                        .on_action(cx.listener(Self::next_project))
-                        .on_action(cx.listener(Self::new_tab))
-                        .on_action(cx.listener(Self::new_task))
-                        .child(settings)
-                        .child(self.toast_layer(cx)),
-                    self.focus_handle.clone(),
-                    view.clone(),
-                );
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            {
-                return AppInputHost::new(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .relative()
-                        .size_full()
-                        .track_focus(&self.focus_handle)
-                        .on_key_down(cx.listener(Self::handle_global_key_down))
-                        .on_action(cx.listener(Self::zoom_in))
-                        .on_action(cx.listener(Self::zoom_out))
-                        .on_action(cx.listener(Self::zoom_reset))
-                        .on_action(cx.listener(Self::next_tab))
-                        .on_action(cx.listener(Self::previous_tab))
-                        .on_action(cx.listener(Self::next_task))
-                        .on_action(cx.listener(Self::previous_task))
-                        .on_action(cx.listener(Self::next_project))
-                        .on_action(cx.listener(Self::new_tab))
-                        .on_action(cx.listener(Self::new_task))
-                        .child(settings)
-                        .child(self.toast_layer(cx)),
-                    self.focus_handle.clone(),
-                    view.clone(),
-                );
-            }
+            let supports_custom_chrome =
+                crate::platform::CurrentPlatform::supports_custom_chrome(window);
+            return AppInputHost::new(
+                div()
+                    .flex()
+                    .flex_col()
+                    .relative()
+                    .size_full()
+                    .track_focus(&self.focus_handle)
+                    .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
+                    .on_key_down(cx.listener(Self::handle_global_key_down))
+                    .on_action(cx.listener(Self::zoom_in))
+                    .on_action(cx.listener(Self::zoom_out))
+                    .on_action(cx.listener(Self::zoom_reset))
+                    .on_action(cx.listener(Self::next_tab))
+                    .on_action(cx.listener(Self::previous_tab))
+                    .on_action(cx.listener(Self::next_task))
+                    .on_action(cx.listener(Self::previous_task))
+                    .on_action(cx.listener(Self::next_project))
+                    .on_action(cx.listener(Self::new_tab))
+                    .on_action(cx.listener(Self::new_task))
+                    .child(settings)
+                    .child(self.toast_layer(cx)),
+                self.focus_handle.clone(),
+                view.clone(),
+            );
         }
 
         // ── Normal main layout ──────────────────────────────────
@@ -7655,87 +7627,55 @@ impl Render for AnotherOneApp {
                     .child(self.footer_worktree_indicator(window, cx)),
             );
 
-        #[cfg(not(target_os = "macos"))]
-        let footer = footer.child(self.resource_indicator_button(window, cx));
+        let supports_custom_chrome =
+            crate::platform::CurrentPlatform::supports_custom_chrome(window);
+        let footer = if supports_custom_chrome {
+            footer
+        } else {
+            footer.child(self.resource_indicator_button(window, cx))
+        };
 
-        #[cfg(target_os = "macos")]
-        {
-            AppInputHost::new(
-                div()
-                    .flex()
-                    .flex_col()
-                    .relative()
-                    .size_full()
-                    .track_focus(&self.focus_handle)
-                    .bg(theme::chrome_bg(window))
-                    .on_mouse_move(cx.listener(Self::on_mouse_move))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-                    .on_key_down(cx.listener(Self::handle_global_key_down))
-                    .on_action(cx.listener(Self::zoom_in))
-                    .on_action(cx.listener(Self::zoom_out))
-                    .on_action(cx.listener(Self::zoom_reset))
-                    .on_action(cx.listener(Self::next_tab))
-                    .on_action(cx.listener(Self::previous_tab))
-                    .on_action(cx.listener(Self::next_task))
-                    .on_action(cx.listener(Self::previous_task))
-                    .on_action(cx.listener(Self::next_project))
-                    .on_action(cx.listener(Self::new_tab))
-                    .on_action(cx.listener(Self::new_task))
-                    .child(self.mac_title_strip(window, cx, busy))
-                    .child(main)
-                    .child(footer)
-                    .child(self.titlebar_open_in_overlay(cx))
-                    .child(self.titlebar_git_actions_overlay(cx))
-                    .child(self.resource_indicator_overlay(window, cx))
-                    .child(self.project_menu_overlay(sw, cx))
-                    .child(self.sidebar_task_menu_overlay(window, cx))
-                    .child(self.new_task_modal_overlay(cx))
-                    .child(self.add_agent_modal_overlay(cx))
-                    .child(self.project_remove_confirm_modal(cx))
-                    .child(self.sidebar_task_delete_confirm_modal(cx))
-                    .child(self.toast_layer(cx)),
-                self.focus_handle.clone(),
-                view,
-            )
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            AppInputHost::new(
-                div()
-                    .flex()
-                    .flex_col()
-                    .relative()
-                    .size_full()
-                    .track_focus(&self.focus_handle)
-                    .on_mouse_move(cx.listener(Self::on_mouse_move))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-                    .on_key_down(cx.listener(Self::handle_global_key_down))
-                    .on_action(cx.listener(Self::zoom_in))
-                    .on_action(cx.listener(Self::zoom_out))
-                    .on_action(cx.listener(Self::zoom_reset))
-                    .on_action(cx.listener(Self::next_tab))
-                    .on_action(cx.listener(Self::previous_tab))
-                    .on_action(cx.listener(Self::next_task))
-                    .on_action(cx.listener(Self::previous_task))
-                    .on_action(cx.listener(Self::next_project))
-                    .on_action(cx.listener(Self::new_tab))
-                    .on_action(cx.listener(Self::new_task))
-                    .child(main)
-                    .child(footer)
-                    .child(self.resource_indicator_overlay(window, cx))
-                    .child(self.project_menu_overlay(sw, cx))
-                    .child(self.sidebar_task_menu_overlay(window, cx))
-                    .child(self.new_task_modal_overlay(cx))
-                    .child(self.add_agent_modal_overlay(cx))
-                    .child(self.project_remove_confirm_modal(cx))
-                    .child(self.sidebar_task_delete_confirm_modal(cx))
-                    .child(self.toast_layer(cx)),
-                self.focus_handle.clone(),
-                view,
-            )
-        }
+        AppInputHost::new(
+            div()
+                .flex()
+                .flex_col()
+                .relative()
+                .size_full()
+                .track_focus(&self.focus_handle)
+                .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
+                .on_mouse_move(cx.listener(Self::on_mouse_move))
+                .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+                .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
+                .on_key_down(cx.listener(Self::handle_global_key_down))
+                .on_action(cx.listener(Self::zoom_in))
+                .on_action(cx.listener(Self::zoom_out))
+                .on_action(cx.listener(Self::zoom_reset))
+                .on_action(cx.listener(Self::next_tab))
+                .on_action(cx.listener(Self::previous_tab))
+                .on_action(cx.listener(Self::next_task))
+                .on_action(cx.listener(Self::previous_task))
+                .on_action(cx.listener(Self::next_project))
+                .on_action(cx.listener(Self::new_tab))
+                .on_action(cx.listener(Self::new_task))
+                .when(supports_custom_chrome, |d| {
+                    d.child(self.custom_title_strip(window, cx, busy))
+                })
+                .child(main)
+                .child(footer)
+                .when(supports_custom_chrome, |d| {
+                    d.child(self.titlebar_open_in_overlay(cx))
+                        .child(self.titlebar_git_actions_overlay(cx))
+                })
+                .child(self.resource_indicator_overlay(window, cx))
+                .child(self.project_menu_overlay(sw, cx))
+                .child(self.sidebar_task_menu_overlay(window, cx))
+                .child(self.new_task_modal_overlay(cx))
+                .child(self.add_agent_modal_overlay(cx))
+                .child(self.project_remove_confirm_modal(cx))
+                .child(self.sidebar_task_delete_confirm_modal(cx))
+                .child(self.toast_layer(cx)),
+            self.focus_handle.clone(),
+            view,
+        )
     }
 }
