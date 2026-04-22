@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
-use std::process::Command;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+const MAX_CPU_SAMPLE_WINDOW: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ResourceUsageSnapshot {
@@ -58,6 +61,25 @@ pub(crate) struct TrackedProcess {
     pub icon_path: &'static str,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct ResourceUsageSampler {
+    previous_cpu_samples: HashMap<u32, CpuUsageSample>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CpuUsageSample {
+    total_cpu_time_ns: u64,
+    sampled_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RawProcessSample {
+    pid: u32,
+    ppid: u32,
+    total_cpu_time_ns: u64,
+    memory_bytes: u64,
+}
+
 #[derive(Clone, Debug)]
 struct ProcessSample {
     pid: u32,
@@ -66,11 +88,79 @@ struct ProcessSample {
     memory_bytes: u64,
 }
 
-pub(crate) fn sample_resource_usage(
+impl ResourceUsageSampler {
+    pub(crate) fn sample(
+        &mut self,
+        app_pid: u32,
+        tracked_processes: &[TrackedProcess],
+    ) -> ResourceUsageSnapshot {
+        self.sample_at(
+            Instant::now(),
+            app_pid,
+            tracked_processes,
+            read_process_samples(app_pid, tracked_processes),
+        )
+    }
+
+    fn sample_at(
+        &mut self,
+        now: Instant,
+        app_pid: u32,
+        tracked_processes: &[TrackedProcess],
+        processes: Vec<RawProcessSample>,
+    ) -> ResourceUsageSnapshot {
+        let mut current_cpu_samples = HashMap::with_capacity(processes.len());
+        let mut resolved_processes = Vec::with_capacity(processes.len());
+
+        for process in processes {
+            let cpu_percent = self
+                .previous_cpu_samples
+                .get(&process.pid)
+                .and_then(|previous| cpu_percent_between(previous, process.total_cpu_time_ns, now))
+                .unwrap_or(0.0);
+            current_cpu_samples.insert(
+                process.pid,
+                CpuUsageSample {
+                    total_cpu_time_ns: process.total_cpu_time_ns,
+                    sampled_at: now,
+                },
+            );
+            resolved_processes.push(ProcessSample {
+                pid: process.pid,
+                ppid: process.ppid,
+                cpu_percent,
+                memory_bytes: process.memory_bytes,
+            });
+        }
+
+        self.previous_cpu_samples = current_cpu_samples;
+        build_resource_usage_snapshot(app_pid, tracked_processes, resolved_processes)
+    }
+}
+
+fn cpu_percent_between(
+    previous: &CpuUsageSample,
+    total_cpu_time_ns: u64,
+    now: Instant,
+) -> Option<f32> {
+    let elapsed = now.checked_duration_since(previous.sampled_at)?;
+    if elapsed.is_zero() {
+        return Some(0.0);
+    }
+    if elapsed > MAX_CPU_SAMPLE_WINDOW {
+        return None;
+    }
+
+    let cpu_delta_ns = total_cpu_time_ns.saturating_sub(previous.total_cpu_time_ns) as f64;
+    let elapsed_ns = elapsed.as_secs_f64() * 1_000_000_000.0;
+    Some((cpu_delta_ns / elapsed_ns * 100.0) as f32)
+}
+
+fn build_resource_usage_snapshot(
     app_pid: u32,
     tracked_processes: &[TrackedProcess],
+    processes: Vec<ProcessSample>,
 ) -> ResourceUsageSnapshot {
-    let processes = read_process_samples();
     let mut process_by_pid = HashMap::new();
     let mut children_by_pid: HashMap<u32, Vec<u32>> = HashMap::new();
 
@@ -82,9 +172,7 @@ pub(crate) fn sample_resource_usage(
         process_by_pid.insert(process.pid, process);
     }
 
-    let app_tree = collect_process_tree(app_pid, &children_by_pid, &process_by_pid);
     let mut project_builders = HashMap::<String, ProjectBuilder>::new();
-    let mut session_pids = HashSet::new();
     let mut session_count = 0;
 
     for tracked in tracked_processes {
@@ -93,7 +181,6 @@ pub(crate) fn sample_resource_usage(
             continue;
         }
 
-        session_pids.extend(tree.iter().copied());
         let (cpu_percent, memory_bytes) = aggregate_usage(&tree, &process_by_pid);
         session_count += 1;
 
@@ -136,12 +223,7 @@ pub(crate) fn sample_resource_usage(
         .collect::<Vec<_>>();
     sort_projects(&mut projects);
 
-    let app_only_pids = app_tree
-        .into_iter()
-        .filter(|pid| !session_pids.contains(pid))
-        .collect::<HashSet<_>>();
-    let (app_cpu_percent, app_memory_bytes) = aggregate_usage(&app_only_pids, &process_by_pid);
-
+    let (app_cpu_percent, app_memory_bytes) = usage_for_process(app_pid, &process_by_pid);
     let total_cpu_percent =
         app_cpu_percent + projects.iter().map(|row| row.cpu_percent).sum::<f32>();
     let total_memory_bytes =
@@ -163,7 +245,7 @@ pub(crate) fn sample_resource_usage(
         session_count,
         app: ResourceUsageRow {
             label: "AnotherOne App".to_string(),
-            detail: Some("internal threads".to_string()),
+            detail: Some("app shell".to_string()),
             cpu_percent: app_cpu_percent,
             memory_bytes: app_memory_bytes,
         },
@@ -203,6 +285,13 @@ fn aggregate_usage(
     }
 
     (cpu_percent, memory_bytes)
+}
+
+fn usage_for_process(pid: u32, process_by_pid: &HashMap<u32, ProcessSample>) -> (f32, u64) {
+    process_by_pid
+        .get(&pid)
+        .map(|process| (process.cpu_percent, process.memory_bytes))
+        .unwrap_or((0.0, 0))
 }
 
 fn collect_process_tree(
@@ -333,54 +422,231 @@ fn compare_usage_rows(
         .then_with(|| right_label.cmp(left_label))
 }
 
-fn read_process_samples() -> Vec<ProcessSample> {
-    let output = Command::new("ps")
-        .args(["-ax", "-o", "pid=,ppid=,%cpu=,rss=,comm="])
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
+fn read_process_samples(
+    app_pid: u32,
+    tracked_processes: &[TrackedProcess],
+) -> Vec<RawProcessSample> {
+    #[cfg(target_os = "macos")]
+    {
+        return read_process_samples_macos(app_pid, tracked_processes);
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(parse_process_sample)
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app_pid;
+        let _ = tracked_processes;
+        return read_process_samples_linux();
+    }
+
+    #[allow(unreachable_code)]
+    Vec::new()
+}
+
+#[cfg(target_os = "macos")]
+fn read_process_samples_macos(
+    app_pid: u32,
+    tracked_processes: &[TrackedProcess],
+) -> Vec<RawProcessSample> {
+    let mut roots = Vec::with_capacity(1 + tracked_processes.len());
+    roots.push(app_pid);
+    roots.extend(
+        tracked_processes
+            .iter()
+            .map(|process| process.pid)
+            .filter(|pid| *pid != app_pid),
+    );
+
+    let mut visited = HashSet::new();
+    let mut stack = roots;
+    let mut samples = Vec::new();
+
+    while let Some(pid) = stack.pop() {
+        if !visited.insert(pid) {
+            continue;
+        }
+
+        if let Some(sample) = read_process_sample_macos(pid) {
+            stack.extend(list_child_pids_macos(pid));
+            samples.push(sample);
+        }
+    }
+
+    samples
+}
+
+#[cfg(target_os = "macos")]
+fn read_process_sample_macos(pid: u32) -> Option<RawProcessSample> {
+    let bsdinfo = proc_pid_bsdinfo(pid)?;
+    let usage = proc_pid_rusage_info(pid)?;
+    Some(RawProcessSample {
+        pid,
+        ppid: bsdinfo.pbi_ppid,
+        total_cpu_time_ns: mach_time_units_to_nanos(
+            usage.ri_user_time.saturating_add(usage.ri_system_time),
+        ),
+        memory_bytes: usage.ri_phys_footprint,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn list_child_pids_macos(ppid: u32) -> Vec<u32> {
+    let mut child_pids = vec![0_i32; 32];
+
+    loop {
+        let count = unsafe {
+            proc_listchildpids(
+                ppid as libc::pid_t,
+                child_pids.as_mut_ptr().cast(),
+                child_pids.len() as i32,
+            )
+        };
+        if count <= 0 {
+            return Vec::new();
+        }
+
+        if (count as usize) < child_pids.len() {
+            return child_pids
+                .into_iter()
+                .take(count as usize)
+                .filter_map(|pid| u32::try_from(pid).ok())
+                .collect();
+        }
+
+        child_pids.resize(child_pids.len() * 2, 0);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn proc_pid_bsdinfo(pid: u32) -> Option<ProcBsdInfo> {
+    let mut info = ProcBsdInfo::default();
+    let result = unsafe {
+        proc_pidinfo(
+            pid as i32,
+            PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut ProcBsdInfo).cast(),
+            std::mem::size_of::<ProcBsdInfo>() as i32,
+        )
+    };
+    (result == std::mem::size_of::<ProcBsdInfo>() as i32).then_some(info)
+}
+
+#[cfg(target_os = "macos")]
+fn proc_pid_rusage_info(pid: u32) -> Option<RusageInfoV6> {
+    let mut info = RusageInfoV6::default();
+    let result = unsafe {
+        proc_pid_rusage(
+            pid as i32,
+            RUSAGE_INFO_CURRENT,
+            (&mut info as *mut RusageInfoV6).cast(),
+        )
+    };
+    (result == 0).then_some(info)
+}
+
+#[cfg(target_os = "macos")]
+fn mach_time_units_to_nanos(value: u64) -> u64 {
+    let timebase = mach_timebase();
+    value.saturating_mul(timebase.numer as u64) / timebase.denom as u64
+}
+
+#[cfg(target_os = "macos")]
+fn mach_timebase() -> &'static MachTimebaseInfo {
+    static TIMEBASE: OnceLock<MachTimebaseInfo> = OnceLock::new();
+    TIMEBASE.get_or_init(|| {
+        let mut info = MachTimebaseInfo::default();
+        let result = unsafe { mach_timebase_info(&mut info) };
+        if result != 0 || info.numer == 0 || info.denom == 0 {
+            MachTimebaseInfo { numer: 1, denom: 1 }
+        } else {
+            info
+        }
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn read_process_samples_linux() -> Vec<RawProcessSample> {
+    let clock_ticks_per_second = match sysconf_u64(libc::_SC_CLK_TCK) {
+        Some(value) if value > 0 => value,
+        _ => return Vec::new(),
+    };
+    let page_size = match sysconf_u64(libc::_SC_PAGESIZE) {
+        Some(value) if value > 0 => value,
+        _ => return Vec::new(),
+    };
+
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+
+    entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let file_name = entry.file_name();
+            let file_name = file_name.to_str()?;
+            let pid = file_name.parse::<u32>().ok()?;
+            let stat_path = entry.path().join("stat");
+            let stat = std::fs::read_to_string(stat_path).ok()?;
+            parse_linux_process_sample(&stat, pid, clock_ticks_per_second, page_size)
+        })
         .collect()
 }
 
-fn parse_process_sample(line: &str) -> Option<ProcessSample> {
-    let mut parts = line.split_whitespace();
-    let pid = parts.next()?.parse().ok()?;
-    let ppid = parts.next()?.parse().ok()?;
-    let cpu_percent = parts.next()?.parse().ok()?;
-    let rss_kib = parts.next()?.parse::<u64>().ok()?;
+#[cfg(target_os = "linux")]
+fn parse_linux_process_sample(
+    stat_line: &str,
+    pid: u32,
+    clock_ticks_per_second: u64,
+    page_size: u64,
+) -> Option<RawProcessSample> {
+    let comm_end = stat_line.rfind(") ")?;
+    let fields = stat_line
+        .get(comm_end + 2..)?
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    let ppid = fields.get(1)?.parse::<u32>().ok()?;
+    let utime_ticks = fields.get(11)?.parse::<u64>().ok()?;
+    let stime_ticks = fields.get(12)?.parse::<u64>().ok()?;
+    let rss_pages = fields.get(21)?.parse::<i64>().ok()?.max(0) as u64;
 
-    Some(ProcessSample {
+    Some(RawProcessSample {
         pid,
         ppid,
-        cpu_percent,
-        memory_bytes: rss_kib.saturating_mul(1024),
+        total_cpu_time_ns: ticks_to_nanos(
+            utime_ticks.saturating_add(stime_ticks),
+            clock_ticks_per_second,
+        ),
+        memory_bytes: rss_pages.saturating_mul(page_size),
     })
+}
+
+#[cfg(target_os = "linux")]
+fn ticks_to_nanos(ticks: u64, clock_ticks_per_second: u64) -> u64 {
+    ticks.saturating_mul(1_000_000_000) / clock_ticks_per_second
+}
+
+#[cfg(target_os = "linux")]
+fn sysconf_u64(name: libc::c_int) -> Option<u64> {
+    let value = unsafe { libc::sysconf(name) };
+    (value > 0).then_some(value as u64)
 }
 
 fn total_system_memory_bytes() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("sysctl")
-            .args(["-n", "hw.memsize"])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-
-        let bytes = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse::<u64>()
-            .ok()?;
-        return Some(bytes);
+        let mut bytes = 0_u64;
+        let mut size = std::mem::size_of::<u64>();
+        let name = std::ffi::CString::new("hw.memsize").ok()?;
+        let result = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                (&mut bytes as *mut u64).cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        return (result == 0).then_some(bytes);
     }
 
     #[cfg(target_os = "linux")]
@@ -398,20 +664,128 @@ fn total_system_memory_bytes() -> Option<u64> {
     None
 }
 
+#[cfg(target_os = "macos")]
+const PROC_PIDTBSDINFO: i32 = 3;
+#[cfg(target_os = "macos")]
+const RUSAGE_INFO_CURRENT: i32 = 6;
+
+#[cfg(target_os = "macos")]
+#[link(name = "proc")]
+unsafe extern "C" {
+    fn mach_timebase_info(info: *mut MachTimebaseInfo) -> libc::c_int;
+    fn proc_listchildpids(ppid: libc::pid_t, buffer: *mut libc::c_void, buffersize: i32) -> i32;
+    fn proc_pidinfo(
+        pid: i32,
+        flavor: i32,
+        arg: u64,
+        buffer: *mut libc::c_void,
+        buffersize: i32,
+    ) -> i32;
+    fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut libc::c_void) -> i32;
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MachTimebaseInfo {
+    numer: u32,
+    denom: u32,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct ProcBsdInfo {
+    pbi_flags: u32,
+    pbi_status: u32,
+    pbi_xstatus: u32,
+    pbi_pid: u32,
+    pbi_ppid: u32,
+    pbi_uid: libc::uid_t,
+    pbi_gid: libc::gid_t,
+    pbi_ruid: libc::uid_t,
+    pbi_rgid: libc::gid_t,
+    pbi_svuid: libc::uid_t,
+    pbi_svgid: libc::gid_t,
+    rfu_1: u32,
+    pbi_comm: [libc::c_char; 16],
+    pbi_name: [libc::c_char; 32],
+    pbi_nfiles: u32,
+    pbi_pgid: u32,
+    pbi_pjobc: u32,
+    e_tdev: u32,
+    e_tpgid: u32,
+    pbi_nice: i32,
+    pbi_start_tvsec: u64,
+    pbi_start_tvusec: u64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct RusageInfoV6 {
+    ri_uuid: [u8; 16],
+    ri_user_time: u64,
+    ri_system_time: u64,
+    ri_pkg_idle_wkups: u64,
+    ri_interrupt_wkups: u64,
+    ri_pageins: u64,
+    ri_wired_size: u64,
+    ri_resident_size: u64,
+    ri_phys_footprint: u64,
+    ri_proc_start_abstime: u64,
+    ri_proc_exit_abstime: u64,
+    ri_child_user_time: u64,
+    ri_child_system_time: u64,
+    ri_child_pkg_idle_wkups: u64,
+    ri_child_interrupt_wkups: u64,
+    ri_child_pageins: u64,
+    ri_child_elapsed_abstime: u64,
+    ri_diskio_bytesread: u64,
+    ri_diskio_byteswritten: u64,
+    ri_cpu_time_qos_default: u64,
+    ri_cpu_time_qos_maintenance: u64,
+    ri_cpu_time_qos_background: u64,
+    ri_cpu_time_qos_utility: u64,
+    ri_cpu_time_qos_legacy: u64,
+    ri_cpu_time_qos_user_initiated: u64,
+    ri_cpu_time_qos_user_interactive: u64,
+    ri_billed_system_time: u64,
+    ri_serviced_system_time: u64,
+    ri_logical_writes: u64,
+    ri_lifetime_max_phys_footprint: u64,
+    ri_instructions: u64,
+    ri_cycles: u64,
+    ri_billed_energy: u64,
+    ri_serviced_energy: u64,
+    ri_interval_max_phys_footprint: u64,
+    ri_runnable_time: u64,
+    ri_flags: u64,
+    ri_user_ptime: u64,
+    ri_system_ptime: u64,
+    ri_pinstructions: u64,
+    ri_pcycles: u64,
+    ri_energy_nj: u64,
+    ri_penergy_nj: u64,
+    ri_secure_time_in_system: u64,
+    ri_secure_ptime_in_system: u64,
+    ri_neural_footprint: u64,
+    ri_lifetime_max_neural_footprint: u64,
+    ri_interval_max_neural_footprint: u64,
+    ri_reserved: [u64; 9],
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{collect_process_tree, format_memory, parse_process_sample, ProcessSample};
+    use super::{
+        collect_process_tree, cpu_percent_between, format_memory, CpuUsageSample, ProcessSample,
+        RawProcessSample, ResourceUsageSampler, TrackedProcess, MAX_CPU_SAMPLE_WINDOW,
+    };
     use std::collections::HashMap;
+    use std::time::{Duration, Instant};
 
-    #[test]
-    fn parses_ps_output_line() {
-        let sample = parse_process_sample("123 1 4.2 8192 /bin/zsh").unwrap();
-
-        assert_eq!(sample.pid, 123);
-        assert_eq!(sample.ppid, 1);
-        assert_eq!(sample.cpu_percent, 4.2);
-        assert_eq!(sample.memory_bytes, 8_388_608);
-    }
+    #[cfg(target_os = "linux")]
+    use super::ticks_to_nanos;
 
     #[test]
     fn collects_process_descendants() {
@@ -457,5 +831,132 @@ mod tests {
     fn formats_memory_in_human_units() {
         assert_eq!(format_memory(1_572_864), "1.5 MB");
         assert_eq!(format_memory(3_221_225_472), "3.0 GB");
+    }
+
+    #[test]
+    fn samples_shell_metrics_from_the_app_process_only() {
+        let mut sampler = ResourceUsageSampler::default();
+        let tracked = [TrackedProcess {
+            pid: 12,
+            key: "resource-session:1".to_string(),
+            label: "Codex".to_string(),
+            project_key: "resource-project:test".to_string(),
+            project_label: "Test Project".to_string(),
+            task_key: "resource-task:test".to_string(),
+            task_label: "main".to_string(),
+            icon_path: "assets/icons/icons__codex-ai.svg",
+        }];
+        let start = Instant::now();
+
+        let _ = sampler.sample_at(
+            start,
+            10,
+            &tracked,
+            vec![
+                RawProcessSample {
+                    pid: 10,
+                    ppid: 1,
+                    total_cpu_time_ns: 1_000_000_000,
+                    memory_bytes: 100,
+                },
+                RawProcessSample {
+                    pid: 11,
+                    ppid: 10,
+                    total_cpu_time_ns: 2_000_000_000,
+                    memory_bytes: 200,
+                },
+                RawProcessSample {
+                    pid: 12,
+                    ppid: 10,
+                    total_cpu_time_ns: 3_000_000_000,
+                    memory_bytes: 300,
+                },
+                RawProcessSample {
+                    pid: 13,
+                    ppid: 12,
+                    total_cpu_time_ns: 5_000_000_000,
+                    memory_bytes: 400,
+                },
+            ],
+        );
+
+        let snapshot = sampler.sample_at(
+            start + Duration::from_secs(2),
+            10,
+            &tracked,
+            vec![
+                RawProcessSample {
+                    pid: 10,
+                    ppid: 1,
+                    total_cpu_time_ns: 1_600_000_000,
+                    memory_bytes: 100,
+                },
+                RawProcessSample {
+                    pid: 11,
+                    ppid: 10,
+                    total_cpu_time_ns: 3_000_000_000,
+                    memory_bytes: 200,
+                },
+                RawProcessSample {
+                    pid: 12,
+                    ppid: 10,
+                    total_cpu_time_ns: 4_200_000_000,
+                    memory_bytes: 300,
+                },
+                RawProcessSample {
+                    pid: 13,
+                    ppid: 12,
+                    total_cpu_time_ns: 6_600_000_000,
+                    memory_bytes: 400,
+                },
+            ],
+        );
+
+        assert_eq!(snapshot.app.memory_bytes, 100);
+        assert!((snapshot.app.cpu_percent - 30.0).abs() < 0.01);
+        assert!((snapshot.total_cpu_percent - 170.0).abs() < 0.01);
+        assert_eq!(snapshot.total_memory_bytes, 800);
+        assert_eq!(snapshot.session_count, 1);
+        assert_eq!(snapshot.projects.len(), 1);
+        assert!((snapshot.projects[0].cpu_percent - 140.0).abs() < 0.01);
+        assert_eq!(snapshot.projects[0].memory_bytes, 700);
+    }
+
+    #[test]
+    fn cpu_percent_ignores_stale_samples() {
+        let previous = CpuUsageSample {
+            total_cpu_time_ns: 1_000_000_000,
+            sampled_at: Instant::now(),
+        };
+
+        let cpu = cpu_percent_between(
+            &previous,
+            2_000_000_000,
+            previous.sampled_at + MAX_CPU_SAMPLE_WINDOW + Duration::from_secs(1),
+        );
+
+        assert_eq!(cpu, None);
+    }
+
+    #[test]
+    fn cpu_percent_allows_closed_interval_with_jitter() {
+        let previous = CpuUsageSample {
+            total_cpu_time_ns: 1_000_000_000,
+            sampled_at: Instant::now(),
+        };
+
+        let cpu = cpu_percent_between(
+            &previous,
+            2_000_000_000,
+            previous.sampled_at + Duration::from_millis(5_200),
+        );
+
+        assert!(cpu.is_some());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn converts_linux_ticks_to_nanoseconds() {
+        assert_eq!(ticks_to_nanos(250, 100), 2_500_000_000);
     }
 }

@@ -25,7 +25,7 @@ use crate::project_store::{
     ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore, Task,
     TaskKind,
 };
-use crate::resource_usage::{sample_resource_usage, ResourceUsageSnapshot, TrackedProcess};
+use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
 use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
 };
@@ -38,8 +38,8 @@ use crate::theme;
 const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 const ACTIVE_GIT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const IDLE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
-const RESOURCE_REFRESH_INTERVAL_OPEN: Duration = Duration::from_secs(2);
-const RESOURCE_REFRESH_INTERVAL_CLOSED: Duration = Duration::from_secs(60);
+const RESOURCE_REFRESH_INTERVAL_OPEN: Duration = Duration::from_secs(1);
+const RESOURCE_REFRESH_INTERVAL_CLOSED: Duration = Duration::from_secs(5);
 const TOAST_ANIMATION_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 const TOAST_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_ERROR_EXTRA_LIFETIME: Duration = Duration::from_secs(3);
@@ -1066,6 +1066,8 @@ pub struct AnotherOneApp {
     pub(crate) resource_collapsed_nodes: HashSet<String>,
     /// Latest sampled resource usage snapshot.
     pub(crate) resource_usage: ResourceUsageSnapshot,
+    /// Native process sampler state used to calculate CPU deltas across refreshes.
+    pub(crate) resource_usage_sampler: ResourceUsageSampler,
     /// Last time resource usage was sampled.
     pub(crate) last_resource_usage_refresh: Instant,
 }
@@ -1971,6 +1973,7 @@ impl AnotherOneApp {
             resource_indicator_open: false,
             resource_collapsed_nodes: HashSet::new(),
             resource_usage: ResourceUsageSnapshot::default(),
+            resource_usage_sampler: ResourceUsageSampler::default(),
             last_resource_usage_refresh: Instant::now() - RESOURCE_REFRESH_INTERVAL_CLOSED,
         };
 
@@ -2094,7 +2097,9 @@ impl AnotherOneApp {
             .cloned()
             .chain(self.prewarmed_terminal_processes.values().cloned())
             .collect::<Vec<_>>();
-        let snapshot = sample_resource_usage(std::process::id(), &tracked_processes);
+        let snapshot = self
+            .resource_usage_sampler
+            .sample(std::process::id(), &tracked_processes);
         let changed = self.resource_usage != snapshot;
         self.resource_usage = snapshot;
         self.last_resource_usage_refresh = Instant::now();

@@ -21,6 +21,9 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) {
         self.resource_indicator_open = !self.resource_indicator_open;
+        if self.resource_indicator_open {
+            self.refresh_resource_usage();
+        }
         cx.stop_propagation();
         cx.notify();
     }
@@ -57,7 +60,8 @@ impl AnotherOneApp {
             gpui::white().opacity(0.05)
         };
         let border = gpui::white().opacity(0.08);
-        let memory_label = format_memory(self.resource_usage.total_memory_bytes);
+        let cpu_label = format!("{:.1}%", self.resource_usage.app.cpu_percent);
+        let memory_label = format_memory(self.resource_usage.app.memory_bytes);
 
         div()
             .id("resource-indicator-button")
@@ -87,10 +91,14 @@ impl AnotherOneApp {
             )
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
                     .text_size(rems(12. / 16.))
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(text_col)
-                    .child(memory_label),
+                    .child(div().text_color(text_col).child(cpu_label))
+                    .child(div().text_color(gpui::white().opacity(0.36)).child("|"))
+                    .child(div().text_color(text_col).child(memory_label)),
             )
     }
 
@@ -209,18 +217,24 @@ impl AnotherOneApp {
             )
             .child(
                 div()
+                    .px(px(20.))
+                    .pb(px(10.))
+                    .child(Self::resource_section_heading("APP SHELL")),
+            )
+            .child(
+                div()
                     .flex()
                     .gap(px(12.))
                     .px(px(20.))
                     .child(Self::resource_stat_card(
-                        "CPU",
+                        "APP CPU",
                         format!("{:.1}%", self.resource_usage.app.cpu_percent),
                         surface_bg.into(),
                         muted_col,
                         stat_col,
                     ))
                     .child(Self::resource_stat_card(
-                        "MEMORY",
+                        "APP MEM",
                         format_memory(self.resource_usage.app.memory_bytes),
                         surface_bg.into(),
                         muted_col,
@@ -242,7 +256,7 @@ impl AnotherOneApp {
                     .px(px(20.))
                     .pt(px(16.))
                     .pb(px(20.))
-                    .child(Self::resource_app_summary_row())
+                    .child(Self::resource_section_heading("TERMINAL SESSIONS"))
                     .child(tree),
             )
     }
@@ -278,13 +292,13 @@ impl AnotherOneApp {
             )
     }
 
-    fn resource_app_summary_row() -> impl IntoElement {
+    fn resource_section_heading(label: &'static str) -> impl IntoElement {
         div().child(
             div()
                 .text_size(rems(14. / 16.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(gpui::white().opacity(0.90))
-                .child("Internal Threads"),
+                .child(label),
         )
     }
 

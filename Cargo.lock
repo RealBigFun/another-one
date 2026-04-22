@@ -95,6 +95,7 @@ dependencies = [
  "dirs 5.0.1",
  "gpui",
  "hotpath",
+ "libc",
  "log",
  "objc",
  "portable-pty",

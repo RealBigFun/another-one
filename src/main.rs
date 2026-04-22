@@ -109,6 +109,7 @@ fn main() {
                 WindowOptions {
                     titlebar: Some(titlebar),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    app_id: Some("another-one".into()),
                     ..Default::default()
                 },
                 |window, cx| cx.new(|cx| AnotherOneApp::new(window, cx)),
