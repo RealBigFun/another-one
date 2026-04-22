@@ -1715,10 +1715,12 @@ impl AnotherOneApp {
 
     pub(crate) fn active_open_in_project_id(&self, cx: &App) -> Option<String> {
         let workspace = self.workspace_pane.read(cx);
-        workspace
-            .active_project_page
-            .clone()
-            .or_else(|| workspace.active_section.as_ref().map(|section| section.project_id.clone()))
+        workspace.active_project_page.clone().or_else(|| {
+            workspace
+                .active_section
+                .as_ref()
+                .map(|section| section.project_id.clone())
+        })
     }
 
     pub(crate) fn active_toolbar_repo_id(&self, cx: &App) -> Option<String> {
@@ -1742,7 +1744,10 @@ impl AnotherOneApp {
         workspace
             .active_project_page
             .as_deref()
-            .and_then(|project_id| self.project_store.primary_branch_for_project(project_id, false))
+            .and_then(|project_id| {
+                self.project_store
+                    .primary_branch_for_project(project_id, false)
+            })
             .map(|branch| branch.ahead_count)
             .unwrap_or(0)
     }
@@ -3833,12 +3838,15 @@ impl AnotherOneApp {
                     .find(|project| project.id == section.project_id)
             })
             .or_else(|| {
-                workspace.active_project_page.as_ref().and_then(|project_id| {
-                    self.project_store
-                        .projects
-                        .iter()
-                        .find(|project| project.id == *project_id)
-                })
+                workspace
+                    .active_project_page
+                    .as_ref()
+                    .and_then(|project_id| {
+                        self.project_store
+                            .projects
+                            .iter()
+                            .find(|project| project.id == *project_id)
+                    })
             })
             .or_else(|| self.project_store.projects.first())
             .map(|project| (project.id.clone(), project.path.clone()))
@@ -4388,10 +4396,8 @@ impl AnotherOneApp {
         let start_message = match action {
             crate::git_actions::ToolbarGitAction::Commit => {
                 if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
-                    self.project_store.set_repo_default_commit_action(
-                        repo_id,
-                        RepoDefaultCommitAction::Commit,
-                    );
+                    self.project_store
+                        .set_repo_default_commit_action(repo_id, RepoDefaultCommitAction::Commit);
                 }
                 "Generating an AI commit message for staged changes..."
             }
