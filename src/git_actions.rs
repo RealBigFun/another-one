@@ -235,12 +235,48 @@ fn ensure_staged_changes(repo_path: &Path) -> Result<bool, ToolbarActionError> {
 }
 
 fn push_branch(repo_path: &Path, force: bool) -> Result<ToolbarActionOutcome, ToolbarActionError> {
-    let output = Command::new("git")
-        .arg("push")
-        .args(force.then_some("--force-with-lease"))
-        .current_dir(repo_path)
-        .output()
+    let output = git_push_output(repo_path, force, None, None)
         .map_err(|err| ToolbarActionError::from_message(format!("Push failed: {err}")))?;
+
+    if !output.status.success() && is_missing_upstream_push_error(&output) {
+        if let Some(branch_name) = git_current_branch(repo_path) {
+            if let Some(remote_name) = git_push_remote(repo_path, &branch_name) {
+                let retry =
+                    git_push_output(repo_path, force, Some(&remote_name), Some(&branch_name))
+                        .map_err(|err| {
+                            ToolbarActionError::from_message(format!(
+                                "{}: {err}",
+                                if force {
+                                    "Force push failed"
+                                } else {
+                                    "Push failed"
+                                }
+                            ))
+                        })?;
+
+                if retry.status.success() {
+                    return Ok(toolbar_action_outcome(
+                        if force {
+                            format!("Force-pushed {branch_name} to {remote_name} and set upstream.")
+                        } else {
+                            format!("Pushed {branch_name} to {remote_name} and set upstream.")
+                        },
+                        force,
+                        false,
+                    ));
+                }
+
+                return Err(ToolbarActionError::from_message(command_failure(
+                    if force {
+                        "Force push failed"
+                    } else {
+                        "Push failed"
+                    },
+                    &retry,
+                )));
+            }
+        }
+    }
 
     if !output.status.success() {
         return Err(ToolbarActionError::from_message(command_failure(
@@ -262,6 +298,64 @@ fn push_branch(repo_path: &Path, force: bool) -> Result<ToolbarActionOutcome, To
         force,
         false,
     ))
+}
+
+fn git_push_output(
+    repo_path: &Path,
+    force: bool,
+    remote_name: Option<&str>,
+    branch_name: Option<&str>,
+) -> std::io::Result<Output> {
+    let mut command = Command::new("git");
+    command.arg("push");
+    if force {
+        command.arg("--force-with-lease");
+    }
+    if let (Some(remote_name), Some(branch_name)) = (remote_name, branch_name) {
+        command
+            .arg("--set-upstream")
+            .arg(remote_name)
+            .arg(branch_name);
+    }
+    command.current_dir(repo_path).output()
+}
+
+fn is_missing_upstream_push_error(output: &Output) -> bool {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{stderr}\n{stdout}");
+    combined.contains("has no upstream branch")
+        || combined.contains("git push --set-upstream")
+        || combined.contains("push.autoSetupRemote")
+}
+
+fn git_push_remote(repo_path: &Path, branch_name: &str) -> Option<String> {
+    git_stdout(
+        repo_path,
+        &["config", &format!("branch.{branch_name}.pushRemote")],
+    )
+    .or_else(|| git_stdout(repo_path, &["config", "remote.pushDefault"]))
+    .or_else(|| {
+        git_stdout(
+            repo_path,
+            &["config", &format!("branch.{branch_name}.remote")],
+        )
+    })
+    .or_else(|| {
+        let remotes = git_stdout(repo_path, &["remote"])?;
+        let mut remote_names = remotes
+            .lines()
+            .map(str::trim)
+            .filter(|remote| !remote.is_empty())
+            .collect::<Vec<_>>();
+        if remote_names.is_empty() {
+            None
+        } else if let Some(origin) = remote_names.iter().find(|remote| **remote == "origin") {
+            Some((*origin).to_string())
+        } else {
+            Some(remote_names.remove(0).to_string())
+        }
+    })
 }
 
 fn create_pull_request(
@@ -686,9 +780,12 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_pull_request_args, normalize_github_remote, parse_commit_message,
-        simple_toolbar_git_command, ToolbarGitAction,
+        create_pull_request_args, git_stdout, normalize_github_remote, parse_commit_message,
+        push_branch, simple_toolbar_git_command, ToolbarGitAction,
     };
+    use std::path::Path;
+    use std::process::Command;
+    use tempfile::TempDir;
 
     #[test]
     fn normalizes_supported_github_remote_formats() {
@@ -790,6 +887,65 @@ mod tests {
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn push_branch_sets_upstream_when_branch_has_no_tracking_remote() {
+        let temp_dir = TempDir::new().expect("tempdir should exist");
+        let remote_path = temp_dir.path().join("remote.git");
+        let repo_path = temp_dir.path().join("repo");
+
+        run_git(
+            temp_dir.path(),
+            &["init", "--bare", remote_path.to_str().unwrap()],
+        );
+        run_git(
+            temp_dir.path(),
+            &["init", "--initial-branch=main", repo_path.to_str().unwrap()],
+        );
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+        run_git(
+            &repo_path,
+            &["remote", "add", "origin", remote_path.to_str().unwrap()],
+        );
+
+        std::fs::write(repo_path.join("README.md"), "hello\n").expect("seed file should write");
+        run_git(&repo_path, &["add", "README.md"]);
+        run_git(&repo_path, &["commit", "-m", "feat: seed repository"]);
+        run_git(&repo_path, &["push", "--set-upstream", "origin", "main"]);
+        run_git(&repo_path, &["checkout", "-b", "feature/test"]);
+
+        let outcome = push_branch(&repo_path, false).expect("push should succeed");
+
+        assert_eq!(
+            outcome.toast_message,
+            "Pushed feature/test to origin and set upstream."
+        );
+        assert_eq!(
+            git_stdout(
+                &repo_path,
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+            )
+            .as_deref(),
+            Some("origin/feature/test")
+        );
+    }
+
+    fn run_git(repo_path: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .output()
+            .expect("git command should start");
+
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout: {}\nstderr: {}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 }
