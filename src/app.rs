@@ -9,8 +9,8 @@ use gpui::{
     actions, div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, AnyView, App, Bounds,
     ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
     FocusHandle, Focusable, GlobalElementId, InspectorElementId, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString, Timer,
-    UTF16Selection, WeakEntity, Window,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollDelta, SharedString,
+    Size, Timer, UTF16Selection, WeakEntity, Window,
 };
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
@@ -1004,6 +1004,8 @@ pub struct AnotherOneApp {
     terminal_recent_output: HashMap<TerminalRuntimeKey, String>,
     /// Last launch/exit error for a terminal tab.
     terminal_runtime_errors: HashMap<TerminalRuntimeKey, String>,
+    /// Fractional wheel delta carried across scroll events for terminal scrollback.
+    terminal_scroll_remainder_lines: HashMap<TerminalRuntimeKey, f32>,
     /// Mouse selection state for the currently selected terminal text.
     terminal_selection: Option<TerminalSelectionState>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
@@ -1036,6 +1038,8 @@ pub struct AnotherOneApp {
     pub(crate) settings_section: crate::settings_page::SettingsSection,
     /// UI font size (adjusted by Cmd+/Cmd- zoom).
     pub(crate) font_size: f32,
+    /// Last observed viewport size used to detect real resize events.
+    pub(crate) last_viewport_size: Size<Pixels>,
     /// Last time changed-file state was refreshed from git.
     pub(crate) last_git_status_refresh: Instant,
     /// Last time branch/worktree metadata was refreshed from git.
@@ -1479,6 +1483,22 @@ fn terminal_selected_text(
     Some(lines.join("\n"))
 }
 
+fn terminal_scroll_lines(
+    delta: ScrollDelta,
+    line_height: Pixels,
+    remainder_lines: f32,
+) -> (i32, f32) {
+    let delta_lines = f32::from(delta.pixel_delta(line_height).y) / f32::from(line_height);
+    let total_lines = remainder_lines + delta_lines;
+    let whole_lines = if total_lines >= 0.0 {
+        total_lines.floor()
+    } else {
+        total_lines.ceil()
+    };
+
+    (whole_lines as i32, total_lines - whole_lines)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TerminalCellCategory {
     Whitespace,
@@ -1781,7 +1801,7 @@ impl AnotherOneApp {
     }
 
     #[hotpath::measure]
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = ProjectStore::load();
         let left_sidebar_open = store.ui.left_sidebar_open;
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
@@ -1903,6 +1923,7 @@ impl AnotherOneApp {
             pending_terminal_launches: HashSet::new(),
             terminal_recent_output: HashMap::new(),
             terminal_runtime_errors: HashMap::new(),
+            terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
             prewarmed_terminal_launches: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -1917,9 +1938,24 @@ impl AnotherOneApp {
             add_agent_modal: None,
             sidebar_task_last_click: None,
             font_size: initial_font_size,
+            last_viewport_size: window.viewport_size(),
             last_git_status_refresh: Instant::now() - ACTIVE_GIT_STATUS_REFRESH_INTERVAL,
             last_git_metadata_refresh: Instant::now() - ACTIVE_GIT_METADATA_REFRESH_INTERVAL,
         };
+
+        cx.observe_window_bounds(window, |this, window, cx| {
+            let viewport_size = window.viewport_size();
+            if this.last_viewport_size == viewport_size {
+                return;
+            }
+
+            this.last_viewport_size = viewport_size;
+            this.clamp_layout(window);
+            this.sync_workspace_layout(cx);
+            this.ensure_active_terminal_runtime(window, cx);
+            cx.notify();
+        })
+        .detach();
 
         app
     }
@@ -2787,6 +2823,49 @@ impl AnotherOneApp {
         terminal_selected_text(snapshot, selection)
     }
 
+    pub(crate) fn scroll_terminal(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        delta: ScrollDelta,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let line_height = px((self.font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0));
+        let remainder_lines = self
+            .terminal_scroll_remainder_lines
+            .get(key)
+            .copied()
+            .unwrap_or(0.0);
+        let (lines, remainder_lines) = terminal_scroll_lines(delta, line_height, remainder_lines);
+
+        if lines == 0 {
+            self.terminal_scroll_remainder_lines
+                .insert(key.clone(), remainder_lines);
+            return false;
+        }
+
+        self.terminal_scroll_remainder_lines
+            .insert(key.clone(), remainder_lines);
+
+        let Some(runtime) = self.live_terminal_runtimes.get_mut(key) else {
+            return false;
+        };
+        if !runtime.scroll_display(lines) {
+            return false;
+        }
+
+        self.terminal_surface_snapshots
+            .insert(key.clone(), runtime.snapshot());
+        if self
+            .terminal_selection
+            .as_ref()
+            .is_some_and(|selection| selection.key == *key)
+        {
+            self.terminal_selection = None;
+        }
+        cx.notify();
+        true
+    }
+
     fn remove_persisted_sections(&mut self, section_ids: &HashSet<SectionId>) {
         let bare_section_keys = section_ids
             .iter()
@@ -2811,6 +2890,7 @@ impl AnotherOneApp {
         {
             self.terminal_selection = None;
         }
+        self.terminal_scroll_remainder_lines.remove(&key);
         self.cancel_prewarmed_launch_for_tab(&key);
         if let Some(mut runtime) = remove_terminal_runtime_state(
             &mut self.live_terminal_runtimes,
@@ -4838,9 +4918,10 @@ mod tests {
     use super::{
         apply_terminal_session_backfill, choose_initial_section,
         output_mentions_missing_claude_conversation, remove_terminal_runtime_state,
-        terminal_line_selection_range, terminal_selected_text, terminal_selection_range,
-        terminal_word_selection_range, trim_to_recent_output_limit, SectionId, SectionState,
-        TerminalCellPosition, TerminalSelectionRange, TERMINAL_RECENT_OUTPUT_LIMIT,
+        terminal_line_selection_range, terminal_scroll_lines, terminal_selected_text,
+        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
+        SectionId, SectionState, TerminalCellPosition, TerminalSelectionRange,
+        TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
@@ -4852,6 +4933,7 @@ mod tests {
     use crate::terminal_runtime::{
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalRuntimeKey, TerminalSurfaceSnapshot,
     };
+    use gpui::{point, px, ScrollDelta};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -5386,6 +5468,21 @@ mod tests {
                 end_column: 7,
             })
         );
+    }
+
+    #[test]
+    fn terminal_scroll_lines_accumulates_fractional_wheel_input() {
+        let (first_lines, first_remainder) =
+            terminal_scroll_lines(ScrollDelta::Pixels(point(px(0.), px(7.))), px(14.), 0.0);
+        let (second_lines, second_remainder) = terminal_scroll_lines(
+            ScrollDelta::Pixels(point(px(0.), px(7.))),
+            px(14.),
+            first_remainder,
+        );
+
+        assert_eq!(first_lines, 0);
+        assert_eq!(second_lines, 1);
+        assert_eq!(second_remainder, 0.0);
     }
 }
 

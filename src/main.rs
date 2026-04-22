@@ -85,7 +85,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_, cx| cx.new(AnotherOneApp::new),
+                |window, cx| cx.new(|cx| AnotherOneApp::new(window, cx)),
             )
             .unwrap();
             cx.on_window_closed(|cx| {

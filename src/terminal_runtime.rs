@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
@@ -308,6 +309,20 @@ impl LiveTerminalRuntime {
         self.cached_snapshot = snapshot;
         self.dirty = false;
         self.cached_snapshot.clone()
+    }
+
+    pub fn scroll_display(&mut self, lines: i32) -> bool {
+        if lines == 0 {
+            return false;
+        }
+
+        let old_display_offset = self.term.grid().display_offset();
+        self.term.scroll_display(Scroll::Delta(lines));
+        let changed = self.term.grid().display_offset() != old_display_offset;
+        if changed {
+            self.dirty = true;
+        }
+        changed
     }
 
     pub fn kill(&mut self) {

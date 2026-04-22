@@ -2,7 +2,8 @@
 
 use gpui::{
     canvas, div, fill, hsla, outline, point, prelude::*, px, rgb, size, svg, App, BorderStyle,
-    Bounds, Context, MouseButton, MouseDownEvent, Pixels, Render, SharedString, Window,
+    Bounds, Context, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent, SharedString,
+    Window,
 };
 
 use crate::app::{AnotherOneApp, TerminalSelectionRange, WorkspacePane};
@@ -297,6 +298,7 @@ impl WorkspacePane {
             let padding = px(12.);
             let canvas_snapshot = snapshot.clone();
             let selection_key = key.clone();
+            let scroll_key = key.clone();
             let selection = self
                 .app
                 .upgrade()
@@ -315,6 +317,15 @@ impl WorkspacePane {
                         this.focus_handle.focus(window);
                         let _ = this.app.update(cx, |app, app_cx| {
                             app.start_terminal_selection(selection_key.clone(), ev, window, app_cx);
+                        });
+                    }),
+                )
+                .on_scroll_wheel(
+                    cx.listener(move |this, ev: &ScrollWheelEvent, _window, cx| {
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            if app.scroll_terminal(&scroll_key, ev.delta, app_cx) {
+                                app_cx.stop_propagation();
+                            }
                         });
                     }),
                 )
