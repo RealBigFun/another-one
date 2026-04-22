@@ -25,6 +25,7 @@ use crate::project_store::{
     ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore, Task,
     TaskKind,
 };
+use crate::resource_usage::{sample_resource_usage, ResourceUsageSnapshot, TrackedProcess};
 use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
 };
@@ -37,6 +38,8 @@ use crate::theme;
 const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 const ACTIVE_GIT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const IDLE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const RESOURCE_REFRESH_INTERVAL_OPEN: Duration = Duration::from_secs(2);
+const RESOURCE_REFRESH_INTERVAL_CLOSED: Duration = Duration::from_secs(60);
 const TOAST_ANIMATION_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 const TOAST_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_ERROR_EXTRA_LIFETIME: Duration = Duration::from_secs(3);
@@ -996,6 +999,8 @@ pub struct AnotherOneApp {
     warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
     /// Live PTY-backed terminal runtimes keyed by section and tab id.
     live_terminal_runtimes: HashMap<TerminalRuntimeKey, LiveTerminalRuntime>,
+    /// Child process ids for attached terminal tabs shown in the resource indicator.
+    terminal_processes: HashMap<TerminalRuntimeKey, TrackedProcess>,
     /// Cached render snapshots for live terminal tabs.
     terminal_surface_snapshots: HashMap<TerminalRuntimeKey, TerminalSurfaceSnapshot>,
     /// Launches currently in flight.
@@ -1010,6 +1015,8 @@ pub struct AnotherOneApp {
     terminal_selection: Option<TerminalSelectionState>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
+    /// Child process ids for hidden prewarmed launches.
+    prewarmed_terminal_processes: HashMap<u64, TrackedProcess>,
     /// Prewarmed launch ids that were canceled before the process fully exited.
     canceled_prewarmed_launch_ids: HashSet<u64>,
     /// Current warm launch reserved for the open Add Agent modal.
@@ -1044,6 +1051,14 @@ pub struct AnotherOneApp {
     pub(crate) last_git_status_refresh: Instant,
     /// Last time branch/worktree metadata was refreshed from git.
     pub(crate) last_git_metadata_refresh: Instant,
+    /// Whether the resource usage panel is visible.
+    pub(crate) resource_indicator_open: bool,
+    /// Collapsed resource tree node ids in the resource usage panel.
+    pub(crate) resource_collapsed_nodes: HashSet<String>,
+    /// Latest sampled resource usage snapshot.
+    pub(crate) resource_usage: ResourceUsageSnapshot,
+    /// Last time resource usage was sampled.
+    pub(crate) last_resource_usage_refresh: Instant,
 }
 
 impl Focusable for AnotherOneApp {
@@ -1919,6 +1934,7 @@ impl AnotherOneApp {
             warm_terminal_launch_sender,
             warm_terminal_launch_receiver,
             live_terminal_runtimes: HashMap::new(),
+            terminal_processes: HashMap::new(),
             terminal_surface_snapshots: HashMap::new(),
             pending_terminal_launches: HashSet::new(),
             terminal_recent_output: HashMap::new(),
@@ -1926,6 +1942,7 @@ impl AnotherOneApp {
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
             prewarmed_terminal_launches: HashMap::new(),
+            prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
             active_add_agent_warm_launch_id: None,
             active_new_task_warm_launch_id: None,
@@ -1941,7 +1958,14 @@ impl AnotherOneApp {
             last_viewport_size: window.viewport_size(),
             last_git_status_refresh: Instant::now() - ACTIVE_GIT_STATUS_REFRESH_INTERVAL,
             last_git_metadata_refresh: Instant::now() - ACTIVE_GIT_METADATA_REFRESH_INTERVAL,
+            resource_indicator_open: false,
+            resource_collapsed_nodes: HashSet::new(),
+            resource_usage: ResourceUsageSnapshot::default(),
+            last_resource_usage_refresh: Instant::now() - RESOURCE_REFRESH_INTERVAL_CLOSED,
         };
+
+        let mut app = app;
+        app.refresh_resource_usage();
 
         cx.observe_window_bounds(window, |this, window, cx| {
             let viewport_size = window.viewport_size();
@@ -1958,6 +1982,127 @@ impl AnotherOneApp {
         .detach();
 
         app
+    }
+
+    fn resource_session_key(key: &TerminalRuntimeKey) -> String {
+        format!("session:{}:{}", key.section_id.store_key(), key.tab_id)
+    }
+
+    fn resource_session_icon_path(launch_config: &TerminalLaunchConfig) -> &'static str {
+        launch_config
+            .provider
+            .and_then(|provider| {
+                AGENTS
+                    .iter()
+                    .find(|agent| agent.provider == Some(provider))
+                    .map(|agent| agent.icon)
+            })
+            .unwrap_or("assets/icons/icons__terminal.svg")
+    }
+
+    fn resource_group_for_key(&self, key: &TerminalRuntimeKey) -> (String, String, String, String) {
+        if let Some(task_id) = key.section_id.task_id.as_deref() {
+            if let Some(task) = self.project_store.task(task_id) {
+                let project_id = task.root_project_id.clone();
+                let project_label = self
+                    .project_store
+                    .project(&project_id)
+                    .map(|project| project.name.clone())
+                    .unwrap_or_else(|| project_id.clone());
+                let task_label = if task.name.trim().is_empty() {
+                    task.branch_name.clone()
+                } else {
+                    task.name.clone()
+                };
+                return (
+                    format!("resource-project:{project_id}"),
+                    project_label,
+                    format!("resource-task:{}", task.id),
+                    task_label,
+                );
+            }
+        }
+
+        let project_id = key.section_id.project_id.clone();
+        let project = self.project_store.project(&project_id);
+        let project_label = project
+            .map(|project| project.name.clone())
+            .unwrap_or_else(|| project_id.clone());
+        let task_label = project
+            .and_then(|project| project.worktree_name.clone())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| key.section_id.branch_name.clone());
+
+        (
+            format!("resource-project:{project_id}"),
+            project_label,
+            format!("resource-task:{}", key.section_id.store_key()),
+            task_label,
+        )
+    }
+
+    fn tracked_process_for_tab(
+        &self,
+        key: &TerminalRuntimeKey,
+        launch_config: &TerminalLaunchConfig,
+        process_id: u32,
+    ) -> TrackedProcess {
+        let (project_key, project_label, task_key, task_label) = self.resource_group_for_key(key);
+        TrackedProcess {
+            pid: process_id,
+            key: Self::resource_session_key(key),
+            label: launch_config.default_title(),
+            project_key,
+            project_label,
+            task_key,
+            task_label,
+            icon_path: Self::resource_session_icon_path(launch_config),
+        }
+    }
+
+    fn tracked_process_for_prewarmed(
+        &self,
+        launch_config: &TerminalLaunchConfig,
+        process_id: u32,
+    ) -> TrackedProcess {
+        TrackedProcess {
+            pid: process_id,
+            key: format!("resource-session:prewarmed:{process_id}"),
+            label: launch_config.default_title(),
+            project_key: "resource-project:prewarmed".to_string(),
+            project_label: "Prewarmed Launches".to_string(),
+            task_key: "resource-task:prewarmed".to_string(),
+            task_label: "Pending".to_string(),
+            icon_path: Self::resource_session_icon_path(launch_config),
+        }
+    }
+
+    pub(crate) fn refresh_resource_usage(&mut self) -> bool {
+        let tracked_processes = self
+            .terminal_processes
+            .values()
+            .cloned()
+            .chain(self.prewarmed_terminal_processes.values().cloned())
+            .collect::<Vec<_>>();
+        let snapshot = sample_resource_usage(std::process::id(), &tracked_processes);
+        let changed = self.resource_usage != snapshot;
+        self.resource_usage = snapshot;
+        self.last_resource_usage_refresh = Instant::now();
+        changed
+    }
+
+    fn tick_resource_usage(&mut self) -> bool {
+        let refresh_interval = if self.resource_indicator_open {
+            RESOURCE_REFRESH_INTERVAL_OPEN
+        } else {
+            RESOURCE_REFRESH_INTERVAL_CLOSED
+        };
+
+        if self.last_resource_usage_refresh.elapsed() < refresh_interval {
+            return false;
+        }
+
+        self.refresh_resource_usage()
     }
 
     fn set_last_active_section_key(&mut self, section_key: Option<String>) {
@@ -2263,8 +2408,10 @@ impl AnotherOneApp {
             return;
         };
 
+        self.prewarmed_terminal_processes.remove(&launch_id);
         if let Some(key) = launch.attached_tab {
             self.pending_terminal_launches.remove(&key);
+            self.terminal_processes.remove(&key);
         }
         if let Some(mut runtime) = launch.runtime {
             runtime.kill();
@@ -2293,11 +2440,27 @@ impl AnotherOneApp {
         key: TerminalRuntimeKey,
         cx: &mut Context<Self>,
     ) -> bool {
+        let (project_key, project_label, task_key, task_label) = self.resource_group_for_key(&key);
         let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) else {
             return false;
         };
 
         launch.attached_tab = Some(key.clone());
+        if let Some(process) = self.prewarmed_terminal_processes.remove(&launch_id) {
+            self.terminal_processes.insert(
+                key.clone(),
+                TrackedProcess {
+                    pid: process.pid,
+                    key: Self::resource_session_key(&key),
+                    label: launch.launch_config.default_title(),
+                    project_key,
+                    project_label,
+                    task_key,
+                    task_label,
+                    icon_path: Self::resource_session_icon_path(&launch.launch_config),
+                },
+            );
+        }
 
         if let Some(mut runtime) = launch.runtime.take() {
             self.pending_terminal_launches.remove(&key);
@@ -2377,10 +2540,17 @@ impl AnotherOneApp {
                     key,
                     runtime,
                     launch_config,
+                    process_id,
                 }) => {
                     self.pending_terminal_launches.remove(&key);
                     self.clear_terminal_recent_output(&key);
                     self.terminal_runtime_errors.remove(&key);
+                    if let Some(process_id) = process_id {
+                        self.terminal_processes.insert(
+                            key.clone(),
+                            self.tracked_process_for_tab(&key, &launch_config, process_id),
+                        );
+                    }
 
                     let mut runtime = LiveTerminalRuntime::from_prepared(runtime);
                     self.terminal_surface_snapshots
@@ -2430,12 +2600,14 @@ impl AnotherOneApp {
                 }
                 Ok(TerminalLaunchReply::Exited { key, status }) => {
                     if self.maybe_retry_claude_restore(&key, cx) {
+                        self.terminal_processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
                         self.terminal_surface_snapshots.remove(&key);
                         updated = true;
                         continue;
                     }
                     self.pending_terminal_launches.remove(&key);
+                    self.terminal_processes.remove(&key);
                     self.terminal_surface_snapshots.remove(&key);
                     self.terminal_runtime_errors.insert(key.clone(), status);
                     self.clear_terminal_recent_output(&key);
@@ -2447,6 +2619,7 @@ impl AnotherOneApp {
                 }
                 Ok(TerminalLaunchReply::Failed { key, message }) => {
                     self.pending_terminal_launches.remove(&key);
+                    self.terminal_processes.remove(&key);
                     self.live_terminal_runtimes.remove(&key);
                     self.terminal_surface_snapshots.remove(&key);
                     self.terminal_runtime_errors
@@ -2475,6 +2648,7 @@ impl AnotherOneApp {
                     launch_id,
                     runtime,
                     launch_config,
+                    process_id,
                 }) => {
                     if self.canceled_prewarmed_launch_ids.contains(&launch_id) {
                         let mut runtime = LiveTerminalRuntime::from_prepared(runtime);
@@ -2483,14 +2657,23 @@ impl AnotherOneApp {
                     }
 
                     let mut runtime = LiveTerminalRuntime::from_prepared(runtime);
-                    let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) else {
-                        runtime.kill();
-                        continue;
+                    let attached_key = {
+                        let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id)
+                        else {
+                            runtime.kill();
+                            continue;
+                        };
+                        launch.launch_config = launch_config.clone();
+                        launch.attached_tab.clone()
                     };
 
-                    launch.launch_config = launch_config.clone();
-
-                    if let Some(key) = launch.attached_tab.clone() {
+                    if let Some(key) = attached_key {
+                        if let Some(process_id) = process_id {
+                            self.terminal_processes.insert(
+                                key.clone(),
+                                self.tracked_process_for_tab(&key, &launch_config, process_id),
+                            );
+                        }
                         self.pending_terminal_launches.remove(&key);
                         self.clear_terminal_recent_output(&key);
                         self.terminal_runtime_errors.remove(&key);
@@ -2503,7 +2686,17 @@ impl AnotherOneApp {
                         });
                         updated = true;
                     } else {
-                        launch.runtime = Some(runtime);
+                        if let Some(process_id) = process_id {
+                            self.prewarmed_terminal_processes.insert(
+                                launch_id,
+                                self.tracked_process_for_prewarmed(&launch_config, process_id),
+                            );
+                        }
+                        if let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) {
+                            launch.runtime = Some(runtime);
+                        } else {
+                            runtime.kill();
+                        }
                     }
                 }
                 Ok(WarmTerminalLaunchReply::Output { launch_id, bytes }) => {
@@ -2577,16 +2770,19 @@ impl AnotherOneApp {
                         .and_then(|launch| launch.attached_tab.clone());
 
                     self.prewarmed_terminal_launches.remove(&launch_id);
+                    self.prewarmed_terminal_processes.remove(&launch_id);
                     self.canceled_prewarmed_launch_ids.remove(&launch_id);
 
                     if let Some(key) = attached_key {
                         if self.maybe_retry_claude_restore(&key, cx) {
+                            self.terminal_processes.remove(&key);
                             self.live_terminal_runtimes.remove(&key);
                             self.terminal_surface_snapshots.remove(&key);
                             updated = true;
                             continue;
                         }
                         self.pending_terminal_launches.remove(&key);
+                        self.terminal_processes.remove(&key);
                         self.terminal_surface_snapshots.remove(&key);
                         self.terminal_runtime_errors.insert(key.clone(), status);
                         self.clear_terminal_recent_output(&key);
@@ -2604,6 +2800,7 @@ impl AnotherOneApp {
                         .and_then(|launch| launch.attached_tab.clone());
 
                     self.prewarmed_terminal_launches.remove(&launch_id);
+                    self.prewarmed_terminal_processes.remove(&launch_id);
                     self.canceled_prewarmed_launch_ids.remove(&launch_id);
                     if self.active_add_agent_warm_launch_id == Some(launch_id) {
                         self.active_add_agent_warm_launch_id = None;
@@ -2611,6 +2808,7 @@ impl AnotherOneApp {
 
                     if let Some(key) = attached_key {
                         self.pending_terminal_launches.remove(&key);
+                        self.terminal_processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
                         self.terminal_surface_snapshots.remove(&key);
                         self.terminal_runtime_errors
@@ -2898,6 +3096,7 @@ impl AnotherOneApp {
             self.terminal_selection = None;
         }
         self.terminal_scroll_remainder_lines.remove(&key);
+        self.terminal_processes.remove(&key);
         self.cancel_prewarmed_launch_for_tab(&key);
         if let Some(mut runtime) = remove_terminal_runtime_state(
             &mut self.live_terminal_runtimes,
@@ -4518,6 +4717,7 @@ impl AnotherOneApp {
         if !self.pending_terminal_launches.is_empty()
             || !self.live_terminal_runtimes.is_empty()
             || !self.prewarmed_terminal_launches.is_empty()
+            || self.resource_indicator_open
         {
             TOAST_ANIMATION_REFRESH_INTERVAL
         } else if self.toasts.is_empty() && self.copied_toast.is_none() {
@@ -5520,6 +5720,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_terminal_launch_replies(cx);
                             should_notify |= this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= this.tick_toasts();
+                            should_notify |= this.tick_resource_usage();
                             this.maybe_schedule_active_git_refresh(cx);
                             if should_notify {
                                 cx.notify();
@@ -5629,6 +5830,9 @@ impl Render for AnotherOneApp {
                     .child(self.footer_worktree_indicator(window, cx)),
             );
 
+        #[cfg(not(target_os = "macos"))]
+        let footer = footer.child(self.resource_indicator_button(window, cx));
+
         #[cfg(target_os = "macos")]
         {
             AppInputHost::new(
@@ -5646,9 +5850,10 @@ impl Render for AnotherOneApp {
                     .on_action(cx.listener(Self::zoom_in))
                     .on_action(cx.listener(Self::zoom_out))
                     .on_action(cx.listener(Self::zoom_reset))
-                    .child(Self::mac_title_strip(window, cx, busy))
+                    .child(self.mac_title_strip(window, cx, busy))
                     .child(main)
                     .child(footer)
+                    .child(self.resource_indicator_overlay(window, cx))
                     .child(self.project_menu_overlay(sw, cx))
                     .child(self.sidebar_task_menu_overlay(window, cx))
                     .child(self.new_task_modal_overlay(cx))
@@ -5679,6 +5884,7 @@ impl Render for AnotherOneApp {
                     .on_action(cx.listener(Self::zoom_reset))
                     .child(main)
                     .child(footer)
+                    .child(self.resource_indicator_overlay(window, cx))
                     .child(self.project_menu_overlay(sw, cx))
                     .child(self.sidebar_task_menu_overlay(window, cx))
                     .child(self.new_task_modal_overlay(cx))

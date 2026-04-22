@@ -45,6 +45,7 @@ impl AnotherOneApp {
 
     #[cfg(target_os = "macos")]
     pub fn mac_title_strip(
+        &self,
         window: &mut Window,
         cx: &mut Context<Self>,
         busy: bool,
@@ -95,10 +96,11 @@ impl AnotherOneApp {
                         }
                     }),
             )
+            .child(self.resource_indicator_button(window, cx))
             .child(
                 div()
                     .id("right-sidebar-toggle-titlebar")
-                    .mr(px(12.))
+                    .mr(px(8.))
                     .flex()
                     .items_center()
                     .justify_center()

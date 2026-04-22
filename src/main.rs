@@ -12,6 +12,8 @@ mod new_task_modal;
 mod panels;
 mod project_page;
 mod project_store;
+mod resource_indicator;
+mod resource_usage;
 mod right_sidebar;
 mod settings_page;
 mod terminal_launch;

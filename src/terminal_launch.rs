@@ -27,6 +27,7 @@ pub(crate) enum TerminalLaunchReply {
         key: TerminalRuntimeKey,
         runtime: PreparedTerminalRuntime,
         launch_config: TerminalLaunchConfig,
+        process_id: Option<u32>,
     },
     Output {
         key: TerminalRuntimeKey,
@@ -51,6 +52,7 @@ pub(crate) enum WarmTerminalLaunchReply {
         launch_id: u64,
         runtime: PreparedTerminalRuntime,
         launch_config: TerminalLaunchConfig,
+        process_id: Option<u32>,
     },
     Output {
         launch_id: u64,
@@ -128,6 +130,7 @@ fn launch_terminal(
         .slave
         .spawn_command(builder)
         .with_context(|| format!("failed to launch terminal in {}", cwd.display()))?;
+    let process_id = child.process_id();
     let child_killer = child.clone_killer();
 
     sender
@@ -140,6 +143,7 @@ fn launch_terminal(
                 child_killer,
             },
             launch_config,
+            process_id,
         })
         .map_err(|_| anyhow!("terminal launch receiver dropped"))?;
 
@@ -217,6 +221,7 @@ fn launch_warm_terminal(
         .slave
         .spawn_command(builder)
         .with_context(|| format!("failed to launch terminal in {}", cwd.display()))?;
+    let process_id = child.process_id();
     let child_killer = child.clone_killer();
 
     sender
@@ -229,6 +234,7 @@ fn launch_warm_terminal(
                 child_killer,
             },
             launch_config,
+            process_id,
         })
         .map_err(|_| anyhow!("warm terminal launch receiver dropped"))?;
 
