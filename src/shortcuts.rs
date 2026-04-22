@@ -176,14 +176,9 @@ fn default_previous_task_shortcut() -> String {
     ShortcutAction::PreviousTask.default_binding().to_string()
 }
 
-#[cfg(target_os = "macos")]
 fn close_current_tab_default_binding() -> &'static str {
-    "cmd-w"
-}
-
-#[cfg(not(target_os = "macos"))]
-fn close_current_tab_default_binding() -> &'static str {
-    "control-w"
+    use crate::platform::{CurrentPlatform, PlatformServices};
+    CurrentPlatform::default_close_current_tab_binding()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -331,14 +326,9 @@ pub(crate) fn keybinding_token_label(token: &str) -> String {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn platform_modifier_label() -> &'static str {
-    "Cmd"
-}
-
-#[cfg(not(target_os = "macos"))]
-fn platform_modifier_label() -> &'static str {
-    "Super"
+    use crate::platform::{CurrentPlatform, PlatformServices};
+    CurrentPlatform::platform_modifier_label()
 }
 
 fn consume_modifier_prefix(value: &str) -> Option<(&'static str, &str)> {

@@ -8,6 +8,7 @@ use gpui::{
 use crate::app::AnotherOneApp;
 use crate::git_actions::ToolbarGitAction;
 use crate::layout::*;
+use crate::platform::PlatformServices;
 use crate::project_store::RepoDefaultCommitAction;
 use crate::resource_indicator::RESOURCE_INDICATOR_BUTTON_W;
 use crate::theme;
@@ -952,8 +953,7 @@ impl AnotherOneApp {
             .into_any_element()
     }
 
-    #[cfg(target_os = "macos")]
-    pub fn mac_title_strip(
+    pub fn custom_title_strip(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -969,11 +969,15 @@ impl AnotherOneApp {
             .bg(chrome)
             .border_b_1()
             .border_color(rgb(0x27292e))
-            .child(div().w(px(TRAFFIC_LIGHT_PAD)).flex_shrink_0())
+            .child(
+                div()
+                    .w(px(crate::platform::CurrentPlatform::traffic_light_pad_px()))
+                    .flex_shrink_0(),
+            )
             .child(
                 div()
                     .id("sidebar-toggle-titlebar")
-                    .ml(px(TOGGLE_LEFT_MARGIN))
+                    .ml(px(crate::platform::CurrentPlatform::toggle_left_margin_px()))
                     .flex()
                     .items_center()
                     .justify_center()

@@ -4,16 +4,6 @@ use gpui::Window;
 
 use crate::app::AnotherOneApp;
 
-/// Horizontal space before the sidebar toggle (clears macOS traffic lights).
-#[cfg(target_os = "macos")]
-pub const TRAFFIC_LIGHT_PAD: f32 = 76.;
-#[cfg(not(target_os = "macos"))]
-pub const TRAFFIC_LIGHT_PAD: f32 = 12.;
-
-/// Extra gap after the reserved traffic-light region so the icon sits further right.
-#[cfg(target_os = "macos")]
-pub const TOGGLE_LEFT_MARGIN: f32 = 0.;
-
 pub const GUTTER: f32 = 4.;
 pub const SIDEBAR_COLLAPSED: f32 = 4.;
 pub const SIDEBAR_MIN_OPEN: f32 = 160.;

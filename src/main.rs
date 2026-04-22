@@ -12,6 +12,7 @@ mod left_sidebar;
 mod new_task_modal;
 mod open_in;
 mod panels;
+mod platform;
 mod project_page;
 mod project_store;
 mod resource_indicator;
@@ -26,41 +27,11 @@ mod titlebar;
 
 use std::path::PathBuf;
 
-use gpui::{
-    point, px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions,
-};
+use gpui::{px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions};
 
 use app::{AnotherOneApp, ZoomIn, ZoomOut, ZoomReset};
 use assets::ProjectAssets;
-
-#[cfg(target_os = "macos")]
-fn set_dock_icon() {
-    use cocoa::appkit::{NSApp, NSApplication, NSImage};
-    use cocoa::base::nil;
-    use cocoa::foundation::NSString;
-    use objc::runtime::Object;
-
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let icon_path = [
-        root.join("assets/app-icon/source/another-one.png"),
-        root.join("assets/app-icon/macos/AnotherOne.icns"),
-    ]
-    .into_iter()
-    .find(|path| path.exists());
-
-    let Some(icon_path) = icon_path else {
-        return;
-    };
-
-    unsafe {
-        let path_str = NSString::alloc(nil).init_str(icon_path.to_str().unwrap());
-        let image: *mut Object = NSImage::alloc(nil).initWithContentsOfFile_(path_str);
-        if image != nil {
-            let app = NSApp();
-            app.setApplicationIconImage_(image);
-        }
-    }
-}
+use platform::{CurrentPlatform, PlatformServices};
 
 #[hotpath::main]
 fn main() {
@@ -69,8 +40,7 @@ fn main() {
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         })
         .run(|cx: &mut App| {
-            #[cfg(target_os = "macos")]
-            set_dock_icon();
+            CurrentPlatform::set_app_dock_icon(cx);
             // Register bundled Lilex Nerd Font Mono so it's available without
             // the user having to install it system-wide.
             let font_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts");
@@ -89,24 +59,7 @@ fn main() {
                 cx.text_system().add_fonts(font_files).ok();
             }
             let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);
-            let titlebar = {
-                #[cfg(target_os = "macos")]
-                {
-                    gpui::TitlebarOptions {
-                        title: None,
-                        appears_transparent: true,
-                        traffic_light_position: Some(point(px(13.), px(10.))),
-                    }
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    gpui::TitlebarOptions {
-                        title: Some("AnotherOne".into()),
-                        appears_transparent: false,
-                        traffic_light_position: None,
-                    }
-                }
-            };
+            let titlebar = CurrentPlatform::titlebar_options("AnotherOne");
             // Global zoom key bindings (work regardless of focus).
             cx.bind_keys([
                 KeyBinding::new("cmd-=", ZoomIn, None),
@@ -120,6 +73,7 @@ fn main() {
                     titlebar: Some(titlebar),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     app_id: Some("another-one".into()),
+                    window_decorations: CurrentPlatform::window_decorations(),
                     ..Default::default()
                 },
                 |window, cx| cx.new(|cx| AnotherOneApp::new(window, cx)),

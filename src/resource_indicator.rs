@@ -4,6 +4,7 @@ use gpui::{
 
 use crate::agent_icons::branded_icon;
 use crate::app::AnotherOneApp;
+use crate::platform::PlatformServices;
 use crate::resource_usage::{
     format_memory, ResourceUsageProject, ResourceUsageSession, ResourceUsageTask,
 };
@@ -14,7 +15,6 @@ const PANEL_TOP_MARGIN: f32 = 46.;
 pub(crate) const RESOURCE_INDICATOR_BUTTON_W: f32 = 176.;
 const RESOURCE_CPU_LABEL_W: f32 = 46.;
 const RESOURCE_MEMORY_LABEL_W: f32 = 74.;
-#[cfg(not(target_os = "macos"))]
 const PANEL_BOTTOM_MARGIN: f32 = crate::layout::FOOTER_H + 10.;
 
 impl AnotherOneApp {
@@ -124,7 +124,7 @@ impl AnotherOneApp {
 
     pub(crate) fn resource_indicator_overlay(
         &self,
-        _window: &Window,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         if !self.resource_indicator_open {
@@ -132,19 +132,16 @@ impl AnotherOneApp {
         }
 
         let panel = self.resource_indicator_panel(cx);
-
-        #[cfg(target_os = "macos")]
-        {
-            return div()
+        if crate::platform::CurrentPlatform::supports_custom_chrome(window) {
+            // Chrome present → anchor below the in-app titlebar.
+            div()
                 .id("resource-indicator-overlay")
                 .absolute()
                 .right(px(12.))
                 .top(px(PANEL_TOP_MARGIN))
-                .child(panel);
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
+                .child(panel)
+        } else {
+            // No in-app chrome → anchor above the footer.
             div()
                 .id("resource-indicator-overlay")
                 .absolute()
