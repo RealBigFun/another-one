@@ -60,7 +60,7 @@ const TOAST_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_ERROR_EXTRA_LIFETIME: Duration = Duration::from_secs(3);
 const TOAST_FADE_IN: Duration = Duration::from_millis(220);
 const TOAST_FADE_OUT: Duration = Duration::from_millis(220);
-const PASTED_IMAGE_PREVIEW_LIFETIME: Duration = Duration::from_millis(2200);
+const PASTED_IMAGE_PREVIEW_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_STACK_LIMIT: usize = 4;
 const TOAST_SWIPE_DISMISS_THRESHOLD: f32 = 120.;
 const TOAST_COPY_FEEDBACK: Duration = Duration::from_millis(1200);
@@ -3604,12 +3604,11 @@ impl AnotherOneApp {
         };
 
         if let Some(image) = Self::clipboard_image(&item) {
-            let pasted_path = Self::write_clipboard_image_to_tempfile(&image)
-                .and_then(|path| {
-                    let path_str = path.to_string_lossy().into_owned();
-                    self.paste_into_active_terminal(cx, &path_str)
-                        .then_some(path_str)
-                });
+            let pasted_path = Self::write_clipboard_image_to_tempfile(&image).and_then(|path| {
+                let path_str = path.to_string_lossy().into_owned();
+                self.paste_into_active_terminal(cx, &path_str)
+                    .then_some(path_str)
+            });
 
             if pasted_path.is_some() {
                 self.show_pasted_image_preview(image, cx);
@@ -6322,7 +6321,7 @@ impl AnotherOneApp {
         let format_color = hsla(0., 0., 0.70, 1.);
 
         div()
-            .w(px(220.))
+            .w(px(320.))
             .rounded(px(12.))
             .border_1()
             .border_color(hsla(208. / 360., 0.36, 0.32, 0.55))
@@ -6332,7 +6331,7 @@ impl AnotherOneApp {
             .occlude()
             .opacity(opacity)
             .child(
-                div().h(px(150.)).w_full().bg(rgb(0x17191d)).child(
+                div().h(px(240.)).w_full().bg(rgb(0x17191d)).child(
                     img(preview.image.clone())
                         .size_full()
                         .object_fit(ObjectFit::Contain),
@@ -6540,7 +6539,7 @@ impl AnotherOneApp {
                 div()
                     .relative()
                     .top(px(slide_offset))
-                    .w(px(220.))
+                    .w(px(320.))
                     .flex()
                     .justify_end()
                     .child(self.pasted_image_preview_card(preview, opacity)),
