@@ -635,8 +635,7 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_github_remote, parse_commit_message, simple_toolbar_git_command,
-        ToolbarGitAction,
+        normalize_github_remote, parse_commit_message, simple_toolbar_git_command, ToolbarGitAction,
     };
 
     #[test]
