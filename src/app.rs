@@ -3603,6 +3603,22 @@ impl AnotherOneApp {
             return false;
         };
 
+        if let Some(image) = Self::clipboard_image(&item) {
+            let pasted_path = Self::write_clipboard_image_to_tempfile(&image)
+                .and_then(|path| {
+                    let path_str = path.to_string_lossy().into_owned();
+                    self.paste_into_active_terminal(cx, &path_str)
+                        .then_some(path_str)
+                });
+
+            if pasted_path.is_some() {
+                self.show_pasted_image_preview(image, cx);
+                cx.stop_propagation();
+                cx.notify();
+                return true;
+            }
+        }
+
         if let Some(text) = item.text() {
             if self.paste_into_active_terminal(cx, &text) {
                 cx.stop_propagation();
@@ -3625,6 +3641,30 @@ impl AnotherOneApp {
             ClipboardEntry::Image(image) => Some(image.clone()),
             ClipboardEntry::String(_) => None,
         })
+    }
+
+    fn write_clipboard_image_to_tempfile(image: &Image) -> Option<std::path::PathBuf> {
+        let extension = Self::image_file_extension(image.format);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos();
+        let filename = format!("another-one-paste-{}-{}.{}", nanos, image.id(), extension);
+        let path = std::env::temp_dir().join(filename);
+        std::fs::write(&path, &image.bytes).ok()?;
+        Some(path)
+    }
+
+    fn image_file_extension(format: gpui::ImageFormat) -> &'static str {
+        match format {
+            gpui::ImageFormat::Png => "png",
+            gpui::ImageFormat::Jpeg => "jpg",
+            gpui::ImageFormat::Webp => "webp",
+            gpui::ImageFormat::Gif => "gif",
+            gpui::ImageFormat::Svg => "svg",
+            gpui::ImageFormat::Bmp => "bmp",
+            gpui::ImageFormat::Tiff => "tiff",
+        }
     }
 
     fn show_pasted_image_preview(&mut self, image: Image, cx: &mut App) {
