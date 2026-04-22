@@ -1710,6 +1710,11 @@ impl AnotherOneApp {
             .enabled_open_in_apps(&self.available_open_in_apps)
     }
 
+    pub(crate) fn preferred_open_in_app(&self) -> Option<OpenInAppKind> {
+        self.project_store
+            .preferred_open_in_app(&self.available_open_in_apps)
+    }
+
     pub(crate) fn active_open_in_project_id(&self, cx: &App) -> Option<String> {
         let workspace = self.workspace_pane.read(cx);
         workspace
@@ -1784,6 +1789,8 @@ impl AnotherOneApp {
         if let Err(err) = open_path_in_app(&project_path, app) {
             self.show_error_toast(err, cx);
         } else {
+            self.project_store
+                .set_preferred_open_in_app(app, &self.available_open_in_apps);
             cx.notify();
         }
     }
@@ -1793,7 +1800,7 @@ impl AnotherOneApp {
             return;
         };
 
-        let Some(app) = self.enabled_open_in_apps().into_iter().next() else {
+        let Some(app) = self.preferred_open_in_app() else {
             self.open_settings_section(crate::settings_page::SettingsSection::OpenIn, cx);
             return;
         };

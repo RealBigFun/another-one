@@ -209,6 +209,8 @@ pub struct UiState {
     #[serde(default)]
     pub enabled_open_in_apps: Option<HashSet<OpenInAppKind>>,
     #[serde(default)]
+    pub preferred_open_in_app: Option<OpenInAppKind>,
+    #[serde(default)]
     pub shortcuts: ShortcutSettings,
 }
 
@@ -220,6 +222,7 @@ impl Default for UiState {
             pinned_task_ids: HashSet::new(),
             last_active_section_id: None,
             enabled_open_in_apps: None,
+            preferred_open_in_app: None,
             shortcuts: ShortcutSettings::default(),
         }
     }
@@ -601,6 +604,14 @@ impl ProjectStore {
         effective_enabled_open_in_apps(available, self.ui.enabled_open_in_apps.as_ref())
     }
 
+    pub fn preferred_open_in_app(&self, available: &[OpenInAppKind]) -> Option<OpenInAppKind> {
+        let enabled = self.enabled_open_in_apps(available);
+        self.ui
+            .preferred_open_in_app
+            .filter(|app| enabled.contains(app))
+            .or_else(|| enabled.first().copied())
+    }
+
     pub fn open_in_app_enabled(
         &self,
         app: OpenInAppKind,
@@ -628,6 +639,20 @@ impl ProjectStore {
         }
 
         self.ui.enabled_open_in_apps = Some(configured);
+        if self.preferred_open_in_app(available).is_none() {
+            self.ui.preferred_open_in_app = None;
+        } else if !enabled && self.ui.preferred_open_in_app == Some(app) {
+            self.ui.preferred_open_in_app = self.enabled_open_in_apps(available).first().copied();
+        }
+        self.save();
+    }
+
+    pub fn set_preferred_open_in_app(&mut self, app: OpenInAppKind, available: &[OpenInAppKind]) {
+        if !self.open_in_app_enabled(app, available) {
+            return;
+        }
+
+        self.ui.preferred_open_in_app = Some(app);
         self.save();
     }
 
@@ -1782,6 +1807,7 @@ mod tests {
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
         TerminalSessionRef,
     };
+    use crate::open_in::OpenInAppKind;
     use crate::shortcuts::ShortcutSettings;
 
     use super::{
@@ -2011,6 +2037,7 @@ mod tests {
                 pinned_task_ids: HashSet::from(["task-1".to_string(), "task-2".to_string()]),
                 last_active_section_id: None,
                 enabled_open_in_apps: None,
+                preferred_open_in_app: None,
                 shortcuts: ShortcutSettings::default(),
             },
         };
@@ -2052,6 +2079,41 @@ mod tests {
         assert_eq!(
             round_trip.ui.pinned_task_ids,
             HashSet::from(["task-1".to_string(), "task-2".to_string()])
+        );
+    }
+
+    #[test]
+    fn preferred_open_in_app_falls_back_and_updates() {
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: super::UiState {
+                preferred_open_in_app: Some(OpenInAppKind::Zed),
+                enabled_open_in_apps: Some(HashSet::from([
+                    OpenInAppKind::Cursor,
+                    OpenInAppKind::VsCode,
+                ])),
+                ..super::UiState::default()
+            },
+            file_path: PathBuf::from("/tmp/test-projects.json"),
+        };
+
+        let available = vec![OpenInAppKind::Cursor, OpenInAppKind::VsCode];
+        assert_eq!(
+            store.preferred_open_in_app(&available),
+            Some(OpenInAppKind::Cursor)
+        );
+
+        store.set_preferred_open_in_app(OpenInAppKind::VsCode, &available);
+        assert_eq!(
+            store.preferred_open_in_app(&available),
+            Some(OpenInAppKind::VsCode)
         );
     }
 }

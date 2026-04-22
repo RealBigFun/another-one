@@ -39,10 +39,10 @@ impl OpenInAppKind {
 
     pub const fn icon_path(self) -> &'static str {
         match self {
-            Self::Cursor => "assets/icons/icons__cursor-ai.svg",
-            Self::Zed => "assets/icons/icons__layout-stacked.svg",
-            Self::VsCode => "assets/icons/icons__file_icons__code.svg",
-            Self::FileManager => "assets/icons/icons__folder-open.svg",
+            Self::Cursor => "assets/icons/open_in__cursor.svg",
+            Self::Zed => "assets/icons/open_in__zed.svg",
+            Self::VsCode => "assets/icons/open_in__vscode.svg",
+            Self::FileManager => "assets/icons/open_in__folder_closed.svg",
         }
     }
 

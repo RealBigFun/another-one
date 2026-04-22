@@ -60,7 +60,12 @@ impl AnotherOneApp {
 
         let menu_open =
             self.project_page_open_in_menu_project_id.as_deref() == Some(project_id.as_str());
-        let has_apps = !self.enabled_open_in_apps().is_empty();
+        let enabled_open_in_apps = self.enabled_open_in_apps();
+        let has_apps = !enabled_open_in_apps.is_empty();
+        let primary_icon = self
+            .preferred_open_in_app()
+            .map(|app| app.icon_path())
+            .unwrap_or("assets/icons/open_in__folder_closed.svg");
         let label = "Open In";
         let button_bg = if menu_open {
             gpui::white().opacity(0.10)
@@ -107,8 +112,8 @@ impl AnotherOneApp {
                     )
                     .child(
                         svg()
-                            .path("assets/icons/icons__folder-open.svg")
-                            .size(px(12.))
+                            .path(primary_icon)
+                            .size(px(14.))
                             .text_color(gpui::white().opacity(0.92)),
                     )
                     .child(
