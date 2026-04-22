@@ -64,6 +64,7 @@ const PASTED_IMAGE_PREVIEW_LIFETIME: Duration = Duration::from_millis(2200);
 const TOAST_STACK_LIMIT: usize = 4;
 const TOAST_SWIPE_DISMISS_THRESHOLD: f32 = 120.;
 const TOAST_COPY_FEEDBACK: Duration = Duration::from_millis(1200);
+const PULL_REQUEST_LOOKUP_TTL: Duration = Duration::from_secs(30);
 pub(crate) const SIDEBAR_TASK_DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 const PROJECT_EXPAND_ANIMATION_DURATION: Duration = Duration::from_millis(160);
 const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
@@ -1083,8 +1084,10 @@ pub struct AnotherOneApp {
     pub(crate) project_github_link_checked: HashSet<String>,
     /// In-flight pull-request lookups keyed by `project_id:branch_name`.
     pub(crate) project_pull_request_requests: HashSet<String>,
-    /// Branches whose pull-request lookup has already been resolved.
+    /// Branches whose pull-request lookup has been resolved at least once.
     pub(crate) project_pull_request_checked: HashSet<String>,
+    /// Last successful lookup completion time keyed by `project_id:branch_name`.
+    pub(crate) project_pull_request_checked_at: HashMap<String, Instant>,
     /// New Task modal state. Some when open, None when closed.
     pub(crate) new_task_modal: Option<crate::new_task_modal::NewTaskModalState>,
     /// Add Agent modal state. Some when open, None when closed.
@@ -1872,6 +1875,12 @@ impl AnotherOneApp {
         format!("{project_id}:{branch_name}")
     }
 
+    fn project_pull_request_lookup_is_fresh(&self, lookup_key: &str) -> bool {
+        self.project_pull_request_checked_at
+            .get(lookup_key)
+            .is_some_and(|checked_at| checked_at.elapsed() < PULL_REQUEST_LOOKUP_TTL)
+    }
+
     fn active_project_pull_request_context(
         &self,
         cx: &App,
@@ -1889,6 +1898,7 @@ impl AnotherOneApp {
         };
         let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
         self.project_pull_request_checked.contains(&lookup_key)
+            && self.project_pull_request_lookup_is_fresh(&lookup_key)
     }
 
     pub(crate) fn active_project_pull_request_url(&self, cx: &App) -> Option<String> {
@@ -1904,10 +1914,19 @@ impl AnotherOneApp {
             return;
         };
         let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
+        self.request_project_pull_request_lookup(&lookup_key, &branch_name, &project_path);
+    }
+
+    fn invalidate_active_project_pull_request_lookup(&mut self, cx: &App) {
+        let Some((project_id, branch_name, _)) = self.active_project_pull_request_context(cx)
+        else {
+            return;
+        };
+        let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
         self.project_pull_request_requests.remove(&lookup_key);
         self.project_pull_request_checked.remove(&lookup_key);
+        self.project_pull_request_checked_at.remove(&lookup_key);
         self.project_pull_request_links.remove(&lookup_key);
-        self.request_project_pull_request_lookup(&lookup_key, &branch_name, &project_path);
     }
 
     pub(crate) fn active_project_ahead_count(&self, cx: &App) -> usize {
@@ -2610,6 +2629,7 @@ impl AnotherOneApp {
             project_github_link_checked: HashSet::new(),
             project_pull_request_requests: HashSet::new(),
             project_pull_request_checked: HashSet::new(),
+            project_pull_request_checked_at: HashMap::new(),
             settings_open: false,
             settings_section: crate::settings_page::SettingsSection::Agents,
             available_open_in_apps,
@@ -5131,6 +5151,11 @@ impl AnotherOneApp {
 
         match receiver.try_recv() {
             Ok(reply) => {
+                let refresh_pull_request_lookup =
+                    matches!(
+                        self.active_git_action,
+                        Some(crate::git_actions::ToolbarGitAction::CreatePr { .. })
+                    ) && matches!(reply.toast_kind, ToastKind::Success);
                 self.active_git_action = None;
                 self.git_action_receiver = None;
                 if reply.refresh_git_state {
@@ -5146,6 +5171,10 @@ impl AnotherOneApp {
                     ToastKind::Error => self.show_error_toast(reply.toast_message, cx),
                     ToastKind::Warning => self.show_warning_toast(reply.toast_message, cx),
                     ToastKind::Info => self.show_info_toast(reply.toast_message, cx),
+                }
+                if refresh_pull_request_lookup {
+                    self.invalidate_active_project_pull_request_lookup(cx);
+                    self.refresh_active_project_pull_request_lookup(cx);
                 }
                 true
             }
@@ -5465,7 +5494,7 @@ impl AnotherOneApp {
         branch_name: &str,
         project_path: &std::path::Path,
     ) {
-        if self.project_pull_request_checked.contains(lookup_key)
+        if self.project_pull_request_lookup_is_fresh(lookup_key)
             || self.project_pull_request_requests.contains(lookup_key)
         {
             return;
@@ -5495,6 +5524,8 @@ impl AnotherOneApp {
             self.project_pull_request_requests.remove(&reply.lookup_key);
             self.project_pull_request_checked
                 .insert(reply.lookup_key.clone());
+            self.project_pull_request_checked_at
+                .insert(reply.lookup_key.clone(), Instant::now());
 
             if let Some(pull_request_url) = reply.pull_request_url {
                 if self
