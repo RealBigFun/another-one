@@ -4,7 +4,7 @@ use gpui::{
 
 use crate::app::AnotherOneApp;
 use crate::resource_usage::{
-    format_memory, ResourceUsageProject, ResourceUsageRow, ResourceUsageSession, ResourceUsageTask,
+    format_memory, ResourceUsageProject, ResourceUsageSession, ResourceUsageTask,
 };
 use crate::theme;
 
@@ -134,7 +134,6 @@ impl AnotherOneApp {
         let muted_col = gpui::white().opacity(0.48);
         let stat_col = gpui::white().opacity(0.86);
         let empty_col = gpui::white().opacity(0.58);
-        let ram_share = format!("{:.0}%", self.resource_usage.ram_share_percent.round());
         let session_count = self.resource_usage.session_count.to_string();
 
         let mut tree = div().flex().flex_col().gap(px(4.));
@@ -215,14 +214,14 @@ impl AnotherOneApp {
                     .px(px(20.))
                     .child(Self::resource_stat_card(
                         "CPU",
-                        format!("{:.1}%", self.resource_usage.total_cpu_percent),
+                        format!("{:.1}%", self.resource_usage.app.cpu_percent),
                         surface_bg.into(),
                         muted_col,
                         stat_col,
                     ))
                     .child(Self::resource_stat_card(
                         "MEMORY",
-                        format_memory(self.resource_usage.total_memory_bytes),
+                        format_memory(self.resource_usage.app.memory_bytes),
                         surface_bg.into(),
                         muted_col,
                         stat_col,
@@ -236,15 +235,6 @@ impl AnotherOneApp {
                     )),
             )
             .child(
-                div().px(px(20.)).pt(px(14.)).child(
-                    div()
-                        .text_size(rems(12. / 16.))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(muted_col)
-                        .child(format!("RAM SHARE {ram_share}")),
-                ),
-            )
-            .child(
                 div()
                     .flex()
                     .flex_col()
@@ -252,9 +242,7 @@ impl AnotherOneApp {
                     .px(px(20.))
                     .pt(px(16.))
                     .pb(px(20.))
-                    .border_t_1()
-                    .border_color(border)
-                    .child(Self::resource_usage_row(&self.resource_usage.app, true))
+                    .child(Self::resource_app_summary_row())
                     .child(tree),
             )
     }
@@ -290,60 +278,14 @@ impl AnotherOneApp {
             )
     }
 
-    fn resource_usage_row(row: &ResourceUsageRow, prominent: bool) -> impl IntoElement {
-        let title_col = if prominent {
-            gpui::white().opacity(0.90)
-        } else {
-            gpui::white().opacity(0.82)
-        };
-        let detail_col = gpui::white().opacity(0.46);
-        let metric_col = gpui::white().opacity(0.72);
-
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(12.))
-            .child(
-                div()
-                    .min_w(px(0.))
-                    .flex_1()
-                    .child(
-                        div()
-                            .text_size(rems(14. / 16.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(title_col)
-                            .child(row.label.clone()),
-                    )
-                    .when_some(row.detail.clone(), |container, detail| {
-                        container.child(
-                            div()
-                                .pt(px(2.))
-                                .text_size(rems(12. / 16.))
-                                .text_color(detail_col)
-                                .child(detail),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(18.))
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .text_size(rems(14. / 16.))
-                            .text_color(metric_col)
-                            .child(format!("{:.1}%", row.cpu_percent)),
-                    )
-                    .child(
-                        div()
-                            .text_size(rems(14. / 16.))
-                            .text_color(metric_col)
-                            .child(format_memory(row.memory_bytes)),
-                    ),
-            )
+    fn resource_app_summary_row() -> impl IntoElement {
+        div().child(
+            div()
+                .text_size(rems(14. / 16.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(gpui::white().opacity(0.90))
+                .child("Internal Threads"),
+        )
     }
 
     fn resource_project_group(

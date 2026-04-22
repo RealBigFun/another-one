@@ -163,7 +163,7 @@ pub(crate) fn sample_resource_usage(
         session_count,
         app: ResourceUsageRow {
             label: "AnotherOne App".to_string(),
-            detail: Some("Main process and internal threads".to_string()),
+            detail: Some("internal threads".to_string()),
             cpu_percent: app_cpu_percent,
             memory_bytes: app_memory_bytes,
         },
