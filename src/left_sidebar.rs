@@ -1272,13 +1272,20 @@ impl AnotherOneApp {
         let task_name = entry.task_name.clone();
         let is_worktree = entry.kind == TaskKind::Worktree || entry.kind == TaskKind::MultiWorktree;
         let row_id = task_id.clone();
+        let pull_request = self
+            .project_pull_request(&project_id, &branch_name)
+            .cloned();
         let pull_request_color =
-            self.project_pull_request(&project_id, &branch_name)
+            pull_request
+                .as_ref()
                 .map(|pull_request| match pull_request.state {
                     crate::git_actions::PullRequestState::Open => pull_request_open,
                     crate::git_actions::PullRequestState::Closed => pull_request_closed,
                     crate::git_actions::PullRequestState::Merged => pull_request_merged,
                 });
+        let pull_request_url = pull_request
+            .as_ref()
+            .map(|pull_request| pull_request.url.clone());
         let root_project_id = self
             .sidebar_root_project_for_project(&project_id)
             .map(|project| project.id)
@@ -1447,12 +1454,34 @@ impl AnotherOneApp {
                     .min_w(px(0.))
                     .overflow_hidden()
                     .when_some(pull_request_color, |row, color| {
+                        let pull_request_url = pull_request_url.clone();
                         row.child(
-                            svg()
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
                                 .flex_shrink_0()
-                                .path("assets/icons/icons__pull-request.svg")
-                                .size(px(13.))
-                                .text_color(color),
+                                .w(px(14.))
+                                .h(px(14.))
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                        cx.stop_propagation();
+                                        this.sidebar_task_menu = None;
+                                        if let Some(pull_request_url) = pull_request_url.clone() {
+                                            if let Err(err) = open_external_url(&pull_request_url) {
+                                                this.show_error_toast(err, cx);
+                                            }
+                                        }
+                                    }),
+                                )
+                                .child(
+                                    svg()
+                                        .path("assets/icons/icons__pull-request.svg")
+                                        .size(px(13.))
+                                        .text_color(color),
+                                ),
                         )
                     })
                     .child(task_label)
