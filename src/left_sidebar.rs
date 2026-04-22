@@ -2351,8 +2351,6 @@ impl AnotherOneApp {
                     .justify_between()
                     .h(px(36.))
                     .px(px(10.))
-                    .border_b_1()
-                    .border_color(gpui::black().opacity(0.08))
                     .child(
                         div()
                             .text_xs()
