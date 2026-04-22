@@ -10,6 +10,9 @@ use crate::theme;
 
 const PANEL_W: f32 = 420.;
 const PANEL_TOP_MARGIN: f32 = 46.;
+pub(crate) const RESOURCE_INDICATOR_BUTTON_W: f32 = 176.;
+const RESOURCE_CPU_LABEL_W: f32 = 46.;
+const RESOURCE_MEMORY_LABEL_W: f32 = 74.;
 #[cfg(not(target_os = "macos"))]
 const PANEL_BOTTOM_MARGIN: f32 = crate::layout::FOOTER_H + 10.;
 
@@ -69,6 +72,7 @@ impl AnotherOneApp {
             .flex_shrink_0()
             .items_center()
             .gap(px(6.))
+            .w(px(RESOURCE_INDICATOR_BUTTON_W))
             .h(px(28.))
             .px(px(8.))
             .mr(px(6.))
@@ -93,12 +97,26 @@ impl AnotherOneApp {
                 div()
                     .flex()
                     .items_center()
+                    .justify_end()
+                    .flex_1()
                     .gap(px(4.))
                     .text_size(rems(12. / 16.))
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(div().text_color(text_col).child(cpu_label))
+                    .child(
+                        div()
+                            .w(px(RESOURCE_CPU_LABEL_W))
+                            .text_right()
+                            .text_color(text_col)
+                            .child(cpu_label),
+                    )
                     .child(div().text_color(gpui::white().opacity(0.36)).child("|"))
-                    .child(div().text_color(text_col).child(memory_label)),
+                    .child(
+                        div()
+                            .w(px(RESOURCE_MEMORY_LABEL_W))
+                            .text_right()
+                            .text_color(text_col)
+                            .child(memory_label),
+                    ),
             )
     }
 

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crate::agents::{AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus};
+use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 
 const STORE_VERSION: u8 = 3;
@@ -206,6 +207,8 @@ pub struct UiState {
     #[serde(default)]
     pub last_active_section_id: Option<String>,
     #[serde(default)]
+    pub enabled_open_in_apps: Option<HashSet<OpenInAppKind>>,
+    #[serde(default)]
     pub shortcuts: ShortcutSettings,
 }
 
@@ -216,6 +219,7 @@ impl Default for UiState {
             expanded_repo_ids: HashSet::new(),
             pinned_task_ids: HashSet::new(),
             last_active_section_id: None,
+            enabled_open_in_apps: None,
             shortcuts: ShortcutSettings::default(),
         }
     }
@@ -590,6 +594,40 @@ impl ProjectStore {
 
     pub fn set_shortcut_binding(&mut self, action: ShortcutAction, binding: impl Into<String>) {
         self.ui.shortcuts.set_binding(action, binding);
+        self.save();
+    }
+
+    pub fn enabled_open_in_apps(&self, available: &[OpenInAppKind]) -> Vec<OpenInAppKind> {
+        effective_enabled_open_in_apps(available, self.ui.enabled_open_in_apps.as_ref())
+    }
+
+    pub fn open_in_app_enabled(
+        &self,
+        app: OpenInAppKind,
+        available: &[OpenInAppKind],
+    ) -> bool {
+        self.enabled_open_in_apps(available).contains(&app)
+    }
+
+    pub fn set_open_in_app_enabled(
+        &mut self,
+        app: OpenInAppKind,
+        enabled: bool,
+        available: &[OpenInAppKind],
+    ) {
+        let mut configured = self
+            .ui
+            .enabled_open_in_apps
+            .clone()
+            .unwrap_or_else(|| available.iter().copied().collect());
+
+        if enabled {
+            configured.insert(app);
+        } else {
+            configured.remove(&app);
+        }
+
+        self.ui.enabled_open_in_apps = Some(configured);
         self.save();
     }
 
@@ -1972,6 +2010,7 @@ mod tests {
                 expanded_repo_ids: HashSet::from(["repo".to_string()]),
                 pinned_task_ids: HashSet::from(["task-1".to_string(), "task-2".to_string()]),
                 last_active_section_id: None,
+                enabled_open_in_apps: None,
                 shortcuts: ShortcutSettings::default(),
             },
         };

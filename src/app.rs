@@ -32,6 +32,7 @@ use crate::agents::{
     AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
 use crate::layout::*;
+use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::panels::terminal_cell_width;
 use crate::project_store::{
     ChangedFile, PersistedSectionState, PersistedTerminalTab, ProjectGitState, ProjectStore, Task,
@@ -1074,6 +1075,10 @@ pub struct AnotherOneApp {
     pub(crate) settings_open: bool,
     /// Which settings section is currently active.
     pub(crate) settings_section: crate::settings_page::SettingsSection,
+    /// Apps detected on this machine that support opening a project directory.
+    pub(crate) available_open_in_apps: Vec<OpenInAppKind>,
+    /// Project id whose header "Open In" menu is currently expanded.
+    pub(crate) project_page_open_in_menu_project_id: Option<String>,
     /// Shortcut row currently waiting for key capture in settings.
     pub(crate) shortcut_capture_action: Option<crate::shortcuts::ShortcutAction>,
     /// UI font size (adjusted by Cmd+/Cmd- zoom).
@@ -1700,6 +1705,102 @@ impl AnotherOneApp {
         self.show_toast(ToastKind::Warning, message, cx);
     }
 
+    pub(crate) fn enabled_open_in_apps(&self) -> Vec<OpenInAppKind> {
+        self.project_store
+            .enabled_open_in_apps(&self.available_open_in_apps)
+    }
+
+    pub(crate) fn active_open_in_project_id(&self, cx: &App) -> Option<String> {
+        let workspace = self.workspace_pane.read(cx);
+        workspace
+            .active_project_page
+            .clone()
+            .or_else(|| workspace.active_section.as_ref().map(|section| section.project_id.clone()))
+    }
+
+    pub(crate) fn open_in_app_enabled(&self, app: OpenInAppKind) -> bool {
+        self.project_store
+            .open_in_app_enabled(app, &self.available_open_in_apps)
+    }
+
+    pub(crate) fn open_settings_section(
+        &mut self,
+        section: crate::settings_page::SettingsSection,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_open = true;
+        self.settings_section = section;
+        self.shortcut_capture_action = None;
+        self.project_page_open_in_menu_project_id = None;
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_project_page_open_in_menu(
+        &mut self,
+        project_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.enabled_open_in_apps().is_empty() {
+            self.open_settings_section(crate::settings_page::SettingsSection::OpenIn, cx);
+            return;
+        }
+
+        if self.project_page_open_in_menu_project_id.as_deref() == Some(project_id) {
+            self.project_page_open_in_menu_project_id = None;
+        } else {
+            self.project_page_open_in_menu_project_id = Some(project_id.to_string());
+        }
+
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    pub(crate) fn set_open_in_app_enabled(
+        &mut self,
+        app: OpenInAppKind,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.project_store
+            .set_open_in_app_enabled(app, enabled, &self.available_open_in_apps);
+        self.project_page_open_in_menu_project_id = None;
+        cx.notify();
+    }
+
+    pub(crate) fn open_project_directory_in_app(
+        &mut self,
+        project_id: &str,
+        app: OpenInAppKind,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project_store.project(project_id) else {
+            self.show_error_toast("Could not find the selected project.", cx);
+            return;
+        };
+
+        self.project_page_open_in_menu_project_id = None;
+        let project_path = project.path.clone();
+        if let Err(err) = open_path_in_app(&project_path, app) {
+            self.show_error_toast(err, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn open_active_directory_in_default_app(&mut self, cx: &mut Context<Self>) {
+        let Some(project_id) = self.active_open_in_project_id(cx) else {
+            return;
+        };
+
+        let Some(app) = self.enabled_open_in_apps().into_iter().next() else {
+            self.open_settings_section(crate::settings_page::SettingsSection::OpenIn, cx);
+            return;
+        };
+
+        self.open_project_directory_in_app(&project_id, app, cx);
+    }
+
     pub(crate) fn show_info_toast(
         &mut self,
         message: impl Into<SharedString>,
@@ -1910,6 +2011,7 @@ impl AnotherOneApp {
         let initial_right_w = 460.;
         let initial_font_size = 13.0;
         let app_entity = cx.weak_entity();
+        let available_open_in_apps = detect_available_open_in_apps();
         let workspace_pane = cx.new(|_| {
             WorkspacePane::new(
                 app_entity.clone(),
@@ -1987,6 +2089,8 @@ impl AnotherOneApp {
             project_github_link_checked: HashSet::new(),
             settings_open: false,
             settings_section: crate::settings_page::SettingsSection::Agents,
+            available_open_in_apps,
+            project_page_open_in_menu_project_id: None,
             shortcut_capture_action: None,
             marked_text: None,
             add_agent_modal: None,
@@ -5027,6 +5131,7 @@ impl AnotherOneApp {
     ) {
         self.settings_open = true;
         self.shortcut_capture_action = None;
+        self.project_page_open_in_menu_project_id = None;
         cx.stop_propagation();
         cx.notify();
     }
@@ -7446,6 +7551,7 @@ impl Render for AnotherOneApp {
                     .child(self.mac_title_strip(window, cx, busy))
                     .child(main)
                     .child(footer)
+                    .child(self.titlebar_open_in_overlay(cx))
                     .child(self.resource_indicator_overlay(window, cx))
                     .child(self.project_menu_overlay(sw, cx))
                     .child(self.sidebar_task_menu_overlay(window, cx))

@@ -9,6 +9,7 @@ use gpui::{
 
 use crate::app::{AnotherOneApp, SectionId, SidebarTaskDeleteRequest, WorkspacePane};
 use crate::left_sidebar::open_external_url;
+use crate::settings_page::SettingsSection;
 
 #[derive(Clone)]
 struct ProjectPageTaskEntry {
@@ -248,6 +249,20 @@ impl WorkspacePane {
                     .border_color(gpui::white().opacity(0.08))
                     .hover(|s| s.bg(gpui::white().opacity(0.06)))
                     .cursor_pointer()
+                    .tooltip(move |_window, cx| {
+                        AnotherOneApp::action_tooltip_view(
+                            "Open project-specific settings",
+                            cx,
+                        )
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                            let _ = this.app.update(cx, |app, app_cx| {
+                                app.open_settings_section(SettingsSection::OpenIn, app_cx);
+                            });
+                        }),
+                    )
                     .child(
                         svg()
                             .path("assets/icons/icons__settings.svg")

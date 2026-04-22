@@ -21,6 +21,7 @@ const SETTINGS_SIDEBAR_W: f32 = 180.;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
     Agents,
+    OpenIn,
     Keybindings,
 }
 
@@ -28,6 +29,7 @@ impl SettingsSection {
     fn label(self) -> &'static str {
         match self {
             Self::Agents => "Agents",
+            Self::OpenIn => "Open In",
             Self::Keybindings => "Keybindings",
         }
     }
@@ -196,6 +198,12 @@ impl AnotherOneApp {
             )
             .child(self.settings_nav_item(SettingsSection::Agents, active, section_active_bg, cx))
             .child(self.settings_nav_item(
+                SettingsSection::OpenIn,
+                active,
+                section_active_bg,
+                cx,
+            ))
+            .child(self.settings_nav_item(
                 SettingsSection::Keybindings,
                 active,
                 section_active_bg,
@@ -250,6 +258,7 @@ impl AnotherOneApp {
     fn settings_content(&self, cx: &mut Context<Self>) -> gpui::Div {
         match self.settings_section {
             SettingsSection::Agents => self.settings_agents_content(),
+            SettingsSection::OpenIn => self.settings_open_in_content(cx),
             SettingsSection::Keybindings => self.settings_keybindings_content(cx),
         }
     }
@@ -277,6 +286,240 @@ impl AnotherOneApp {
                         "Provider routing, prompt templates, and execution rules per agent action.",
                     ),
             )
+    }
+
+    fn settings_open_in_content(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let panel_bg = rgb(0x23252a);
+        let row_bg = rgb(0x1f2125);
+        let button_bg = gpui::white().opacity(0.04);
+        let button_hover = gpui::white().opacity(0.08);
+        let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
+        let enabled_apps = self.enabled_open_in_apps();
+
+        let mut rows = div().flex().flex_col();
+        for (index, app) in self.available_open_in_apps.iter().copied().enumerate() {
+            let is_enabled = self.open_in_app_enabled(app);
+
+            let mut row = div()
+                .id(("settings-open-in-row", index))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(20.))
+                .px(px(18.))
+                .py(px(14.))
+                .bg(row_bg)
+                .cursor_pointer()
+                .hover(move |style| style.bg(gpui::white().opacity(0.06)))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                        this.set_open_in_app_enabled(app, !is_enabled, cx);
+                        cx.stop_propagation();
+                    }),
+                );
+
+            if index > 0 {
+                row = row.border_t_1().border_color(BORDER_SUBTLE());
+            }
+
+            rows = rows.child(
+                row.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(
+                            svg()
+                                .path(app.icon_path())
+                                .size(px(16.))
+                                .text_color(TEXT_PRIMARY()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(4.))
+                                .child(
+                                    div()
+                                        .text_size(rems(13. / 16.))
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(TEXT_PRIMARY())
+                                        .child(app.label()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(rems(11. / 16.))
+                                        .text_color(TEXT_SECONDARY())
+                                        .child(app.description()),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(if is_enabled {
+                                    gpui::white()
+                                } else {
+                                    TEXT_SECONDARY()
+                                })
+                                .child(if is_enabled { "Enabled" } else { "Disabled" }),
+                        )
+                        .child(
+                            div()
+                                .w(px(18.))
+                                .h(px(18.))
+                                .rounded(px(5.))
+                                .border_1()
+                                .border_color(if is_enabled {
+                                    active_button_bg.opacity(0.85)
+                                } else {
+                                    BORDER_SUBTLE()
+                                })
+                                .bg(if is_enabled {
+                                    active_button_bg
+                                } else {
+                                    button_bg
+                                })
+                                .hover(move |style| {
+                                    style.bg(if is_enabled {
+                                        active_button_bg
+                                    } else {
+                                        button_hover
+                                    })
+                                })
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when(is_enabled, |container| {
+                                    container.child(
+                                        svg()
+                                            .path("assets/icons/icons__check.svg")
+                                            .size(px(11.))
+                                            .text_color(gpui::white()),
+                                    )
+                                }),
+                        ),
+                ),
+            );
+        }
+
+        let availability_note = if self.available_open_in_apps.is_empty() {
+            "No supported apps were detected on this machine."
+        } else {
+            "Only apps detected on this machine appear here. Changes save immediately."
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .p(px(32.))
+            .child(
+                div()
+                    .text_size(rems(18. / 16.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(TEXT_PRIMARY())
+                    .child("Open In"),
+            )
+            .child(
+                div()
+                    .mt(px(4.))
+                    .max_w(px(760.))
+                    .text_size(rems(12. / 16.))
+                    .line_height(rems(18. / 16.))
+                    .text_color(TEXT_SECONDARY())
+                    .child(
+                        "Choose which detected apps appear in the project header's Open In menu.",
+                    ),
+            )
+            .child(
+                div()
+                    .mt(px(24.))
+                    .mb(px(16.))
+                    .max_w(px(860.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(16.))
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(BORDER_SUBTLE())
+                    .bg(panel_bg)
+                    .px(px(16.))
+                    .py(px(14.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(TEXT_PRIMARY())
+                                    .child("Detected apps"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(11. / 16.))
+                                    .text_color(TEXT_SECONDARY())
+                                    .child(availability_note),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(11. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(TEXT_PRIMARY())
+                            .child(format!("{} enabled", enabled_apps.len())),
+                    ),
+            )
+            .when(self.available_open_in_apps.is_empty(), |section| {
+                section.child(
+                    div()
+                        .max_w(px(860.))
+                        .rounded(px(12.))
+                        .border_1()
+                        .border_color(BORDER_SUBTLE())
+                        .bg(panel_bg)
+                        .px(px(20.))
+                        .py(px(18.))
+                        .child(
+                            div()
+                                .text_size(rems(12. / 16.))
+                                .line_height(rems(18. / 16.))
+                                .text_color(TEXT_SECONDARY())
+                                .child(
+                                    "Install Cursor, Zed, VS Code, or use your system file manager, then restart the app to refresh the menu.",
+                                ),
+                        ),
+                )
+            })
+            .when(!self.available_open_in_apps.is_empty(), |section| {
+                section.child(
+                    div()
+                        .max_w(px(860.))
+                        .rounded(px(12.))
+                        .border_1()
+                        .border_color(BORDER_SUBTLE())
+                        .bg(panel_bg)
+                        .overflow_hidden()
+                        .child(rows),
+                )
+            })
     }
 
     fn settings_keybindings_content(&self, cx: &mut Context<Self>) -> gpui::Div {

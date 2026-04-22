@@ -9,6 +9,7 @@ mod git_actions;
 mod layout;
 mod left_sidebar;
 mod new_task_modal;
+mod open_in;
 mod panels;
 mod project_page;
 mod project_store;
@@ -38,11 +39,18 @@ fn set_dock_icon() {
     use cocoa::foundation::NSString;
     use objc::runtime::Object;
 
-    let icon_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/app-icon/macos/AnotherOne.icns");
-    if !icon_path.exists() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let icon_path = [
+        root.join("assets/app-icon/source/another-one.png"),
+        root.join("assets/app-icon/macos/AnotherOne.icns"),
+    ]
+    .into_iter()
+    .find(|path| path.exists());
+
+    let Some(icon_path) = icon_path else {
         return;
-    }
+    };
+
     unsafe {
         let path_str = NSString::alloc(nil).init_str(icon_path.to_str().unwrap());
         let image: *mut Object = NSImage::alloc(nil).initWithContentsOfFile_(path_str);

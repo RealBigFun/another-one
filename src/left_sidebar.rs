@@ -634,6 +634,14 @@ impl AnotherOneApp {
             return;
         }
 
+        if self.project_page_open_in_menu_project_id.is_some() && ev.keystroke.key.as_str() == "escape"
+        {
+            self.project_page_open_in_menu_project_id = None;
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+
         if shortcut_matches_event(
             self.project_store
                 .ui
