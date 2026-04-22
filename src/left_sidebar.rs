@@ -1453,36 +1453,41 @@ impl AnotherOneApp {
                     .flex_1()
                     .min_w(px(0.))
                     .overflow_hidden()
-                    .when_some(pull_request_color, |row, color| {
+                    .child(if let Some(color) = pull_request_color {
                         let pull_request_url = pull_request_url.clone();
-                        row.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .flex_shrink_0()
-                                .w(px(14.))
-                                .h(px(14.))
-                                .cursor_pointer()
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                                        cx.stop_propagation();
-                                        this.sidebar_task_menu = None;
-                                        if let Some(pull_request_url) = pull_request_url.clone() {
-                                            if let Err(err) = open_external_url(&pull_request_url) {
-                                                this.show_error_toast(err, cx);
-                                            }
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .flex_shrink_0()
+                            .w(px(14.))
+                            .h(px(14.))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                    cx.stop_propagation();
+                                    this.sidebar_task_menu = None;
+                                    if let Some(pull_request_url) = pull_request_url.clone() {
+                                        if let Err(err) = open_external_url(&pull_request_url) {
+                                            this.show_error_toast(err, cx);
                                         }
-                                    }),
-                                )
-                                .child(
-                                    svg()
-                                        .path("assets/icons/icons__pull-request.svg")
-                                        .size(px(13.))
-                                        .text_color(color),
-                                ),
-                        )
+                                    }
+                                }),
+                            )
+                            .child(
+                                svg()
+                                    .path("assets/icons/icons__pull-request.svg")
+                                    .size(px(13.))
+                                    .text_color(color),
+                            )
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex_shrink_0()
+                            .w(px(14.))
+                            .h(px(14.))
+                            .into_any_element()
                     })
                     .child(task_label)
                     .when(is_worktree && entry.branch.is_default, |row| {
