@@ -1071,6 +1071,8 @@ pub struct AnotherOneApp {
     pub(crate) settings_open: bool,
     /// Which settings section is currently active.
     pub(crate) settings_section: crate::settings_page::SettingsSection,
+    /// Shortcut row currently waiting for key capture in settings.
+    pub(crate) shortcut_capture_action: Option<crate::shortcuts::ShortcutAction>,
     /// UI font size (adjusted by Cmd+/Cmd- zoom).
     pub(crate) font_size: f32,
     /// Last observed viewport size used to detect real resize events.
@@ -1982,6 +1984,7 @@ impl AnotherOneApp {
             project_github_link_checked: HashSet::new(),
             settings_open: false,
             settings_section: crate::settings_page::SettingsSection::Agents,
+            shortcut_capture_action: None,
             marked_text: None,
             add_agent_modal: None,
             sidebar_task_last_click: None,
@@ -3472,6 +3475,35 @@ impl AnotherOneApp {
             self.open_new_task_modal(&target.project_id, cx);
         }
         cx.notify();
+        true
+    }
+
+    pub(crate) fn close_active_tab_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.navigation_shortcuts_blocked() {
+            return false;
+        }
+
+        let active_target = {
+            let workspace = self.workspace_pane.read(cx);
+            workspace.active_section.clone().and_then(|section_id| {
+                workspace
+                    .section_states
+                    .get(&section_id)
+                    .map(|state| (section_id, state.active_tab, state.tabs.len()))
+            })
+        };
+
+        let Some((section_id, active_tab, tab_count)) = active_target else {
+            return false;
+        };
+
+        if tab_count <= 1 {
+            return false;
+        }
+
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.close_tab(&section_id, active_tab, cx)
+        });
         true
     }
 
@@ -4994,6 +5026,7 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) {
         self.settings_open = true;
+        self.shortcut_capture_action = None;
         cx.stop_propagation();
         cx.notify();
     }

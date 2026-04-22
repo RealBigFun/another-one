@@ -14,6 +14,7 @@ use crate::app::{
     SidebarTaskMenuState, SidebarTaskRenameState,
 };
 use crate::project_store::{Branch, Project, TaskKind};
+use crate::shortcuts::{shortcut_matches_event, ShortcutAction};
 use crate::theme;
 
 const PROJECT_ROW_H: f32 = 34.;
@@ -629,49 +630,108 @@ impl AnotherOneApp {
             return;
         }
 
-        if matches_next_project_shortcut(ev) {
+        if self.settings_open && self.handle_settings_key_down(ev, cx) {
+            return;
+        }
+
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::CycleProjects),
+            ev,
+        ) {
             if self.navigate_project_shortcut(cx) {
                 cx.stop_propagation();
             }
             return;
         }
 
-        if matches_new_tab_shortcut(ev) {
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::NewTabInCurrentTask),
+            ev,
+        ) {
             if self.open_new_tab_shortcut(cx) {
                 cx.stop_propagation();
             }
             return;
         }
 
-        if matches_new_task_shortcut(ev) {
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::NewTask),
+            ev,
+        ) {
             if self.open_new_task_shortcut(cx) {
                 cx.stop_propagation();
             }
             return;
         }
 
-        if matches_tab_navigation_shortcut(ev) {
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::CloseCurrentTab),
+            ev,
+        ) {
+            if self.close_active_tab_shortcut(cx) {
+                cx.stop_propagation();
+            }
+            return;
+        }
+
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::NextTab),
+            ev,
+        ) {
             if self.navigate_tab_shortcut(crate::app::NavigationDirection::Next, cx) {
                 cx.stop_propagation();
             }
             return;
         }
 
-        if matches_previous_tab_navigation_shortcut(ev) {
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::PreviousTab),
+            ev,
+        ) {
             if self.navigate_tab_shortcut(crate::app::NavigationDirection::Previous, cx) {
                 cx.stop_propagation();
             }
             return;
         }
 
-        if matches_next_task_navigation_shortcut(ev) {
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::NextTask),
+            ev,
+        ) {
             if self.navigate_task_shortcut(crate::app::NavigationDirection::Next, cx) {
                 cx.stop_propagation();
             }
             return;
         }
 
-        if matches_previous_task_navigation_shortcut(ev) {
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::PreviousTask),
+            ev,
+        ) {
             if self.navigate_task_shortcut(crate::app::NavigationDirection::Previous, cx) {
                 cx.stop_propagation();
             }
@@ -2494,82 +2554,6 @@ fn sanitize_sidebar_task_name_input(text: String) -> String {
     text.replace(['\n', '\r', '\t'], " ")
 }
 
-fn matches_tab_navigation_shortcut(ev: &KeyDownEvent) -> bool {
-    keystroke_matches_shifted_shortcut(ev, "]", "}")
-}
-
-fn matches_next_project_shortcut(ev: &KeyDownEvent) -> bool {
-    let modifiers = ev.keystroke.modifiers;
-    modifiers.platform
-        && !modifiers.shift
-        && !modifiers.alt
-        && !modifiers.control
-        && !modifiers.function
-        && ev.keystroke.key.as_str() == "o"
-}
-
-fn matches_new_tab_shortcut(ev: &KeyDownEvent) -> bool {
-    let modifiers = ev.keystroke.modifiers;
-    modifiers.platform
-        && !modifiers.shift
-        && !modifiers.alt
-        && !modifiers.control
-        && !modifiers.function
-        && ev.keystroke.key.as_str() == "n"
-}
-
-fn matches_new_task_shortcut(ev: &KeyDownEvent) -> bool {
-    let modifiers = ev.keystroke.modifiers;
-    modifiers.platform
-        && !modifiers.shift
-        && !modifiers.alt
-        && !modifiers.control
-        && !modifiers.function
-        && ev.keystroke.key.as_str() == "t"
-}
-
-fn matches_previous_tab_navigation_shortcut(ev: &KeyDownEvent) -> bool {
-    keystroke_matches_shifted_shortcut(ev, "[", "{")
-}
-
-fn keystroke_matches_shifted_shortcut(
-    ev: &KeyDownEvent,
-    base_key: &'static str,
-    shifted_key: &'static str,
-) -> bool {
-    let modifiers = ev.keystroke.modifiers;
-    modifiers.platform
-        && !modifiers.alt
-        && !modifiers.control
-        && !modifiers.function
-        && if modifiers.shift {
-            ev.keystroke.key.as_str() == base_key
-                || ev.keystroke.key_char.as_deref() == Some(shifted_key)
-        } else {
-            ev.keystroke.key.as_str() == shifted_key
-        }
-}
-
-fn matches_next_task_navigation_shortcut(ev: &KeyDownEvent) -> bool {
-    let modifiers = ev.keystroke.modifiers;
-    modifiers.platform
-        && modifiers.alt
-        && !modifiers.shift
-        && !modifiers.control
-        && !modifiers.function
-        && ev.keystroke.key.as_str() == "down"
-}
-
-fn matches_previous_task_navigation_shortcut(ev: &KeyDownEvent) -> bool {
-    let modifiers = ev.keystroke.modifiers;
-    modifiers.platform
-        && modifiers.alt
-        && !modifiers.shift
-        && !modifiers.control
-        && !modifiers.function
-        && ev.keystroke.key.as_str() == "up"
-}
-
 fn selected_sidebar_task_name_range(
     state: &SidebarTaskRenameState,
 ) -> Option<std::ops::Range<usize>> {
@@ -2895,91 +2879,6 @@ mod tests {
             macos_terminal_command_bytes(&key_event("delete", None, Modifiers::command())),
             Some(vec![0x0b])
         );
-    }
-
-    #[test]
-    fn tab_navigation_shortcuts_match_shifted_bracket_variants() {
-        let shifted_modifiers = Modifiers {
-            platform: true,
-            shift: true,
-            ..Modifiers::default()
-        };
-        let unshifted_modifiers = Modifiers {
-            platform: true,
-            ..Modifiers::default()
-        };
-
-        assert!(matches_tab_navigation_shortcut(&key_event(
-            "]",
-            None,
-            shifted_modifiers
-        )));
-        assert!(matches_tab_navigation_shortcut(&key_event(
-            "]",
-            Some("}"),
-            shifted_modifiers
-        )));
-        assert!(matches_tab_navigation_shortcut(&key_event(
-            "}",
-            None,
-            unshifted_modifiers
-        )));
-
-        assert!(matches_previous_tab_navigation_shortcut(&key_event(
-            "[",
-            None,
-            shifted_modifiers
-        )));
-        assert!(matches_previous_tab_navigation_shortcut(&key_event(
-            "[",
-            Some("{"),
-            shifted_modifiers,
-        )));
-        assert!(matches_previous_tab_navigation_shortcut(&key_event(
-            "{",
-            None,
-            unshifted_modifiers,
-        )));
-    }
-
-    #[test]
-    fn tab_navigation_shortcuts_do_not_match_literal_shifted_chars_with_shift_still_set() {
-        let modifiers = Modifiers {
-            platform: true,
-            shift: true,
-            ..Modifiers::default()
-        };
-
-        assert!(!matches_tab_navigation_shortcut(&key_event(
-            "}", None, modifiers
-        )));
-        assert!(!matches_previous_tab_navigation_shortcut(&key_event(
-            "{", None, modifiers,
-        )));
-    }
-
-    #[test]
-    fn new_task_and_tab_shortcuts_match_platform_letter_keys() {
-        let modifiers = Modifiers {
-            platform: true,
-            ..Modifiers::default()
-        };
-
-        assert!(matches_next_project_shortcut(&key_event(
-            "o",
-            Some("o"),
-            modifiers
-        )));
-        assert!(matches_new_tab_shortcut(&key_event(
-            "n",
-            Some("n"),
-            modifiers
-        )));
-        assert!(matches_new_task_shortcut(&key_event(
-            "t",
-            Some("t"),
-            modifiers
-        )));
     }
 }
 

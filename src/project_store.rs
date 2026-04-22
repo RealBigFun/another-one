@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crate::agents::{AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus};
+use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 
 const STORE_VERSION: u8 = 3;
 
@@ -204,6 +205,8 @@ pub struct UiState {
     pub pinned_task_ids: HashSet<String>,
     #[serde(default)]
     pub last_active_section_id: Option<String>,
+    #[serde(default)]
+    pub shortcuts: ShortcutSettings,
 }
 
 impl Default for UiState {
@@ -213,6 +216,7 @@ impl Default for UiState {
             expanded_repo_ids: HashSet::new(),
             pinned_task_ids: HashSet::new(),
             last_active_section_id: None,
+            shortcuts: ShortcutSettings::default(),
         }
     }
 }
@@ -581,6 +585,26 @@ impl ProjectStore {
     ) {
         self.terminal_sections.insert(section_id.into(), state);
         self.rebuild_runtime_views();
+        self.save();
+    }
+
+    pub fn set_shortcut_binding(&mut self, action: ShortcutAction, binding: impl Into<String>) {
+        self.ui.shortcuts.set_binding(action, binding);
+        self.save();
+    }
+
+    pub fn clear_shortcut_binding(&mut self, action: ShortcutAction) {
+        self.ui.shortcuts.clear_binding(action);
+        self.save();
+    }
+
+    pub fn reset_shortcut_binding(&mut self, action: ShortcutAction) {
+        self.ui.shortcuts.reset_binding(action);
+        self.save();
+    }
+
+    pub fn reset_shortcuts(&mut self) {
+        self.ui.shortcuts.reset_all();
         self.save();
     }
 
@@ -1720,6 +1744,7 @@ mod tests {
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
         TerminalSessionRef,
     };
+    use crate::shortcuts::ShortcutSettings;
 
     use super::{
         app_worktrees_root, format_git_command_error, worktree_parent_dir_with_root,
@@ -1947,6 +1972,7 @@ mod tests {
                 expanded_repo_ids: HashSet::from(["repo".to_string()]),
                 pinned_task_ids: HashSet::from(["task-1".to_string(), "task-2".to_string()]),
                 last_active_section_id: None,
+                shortcuts: ShortcutSettings::default(),
             },
         };
 

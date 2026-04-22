@@ -16,6 +16,7 @@ mod resource_indicator;
 mod resource_usage;
 mod right_sidebar;
 mod settings_page;
+mod shortcuts;
 mod terminal_launch;
 mod terminal_runtime;
 mod theme;
@@ -27,10 +28,7 @@ use gpui::{
     point, px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions,
 };
 
-use app::{
-    AnotherOneApp, NewTab, NewTask, NextProject, NextTab, NextTask, PreviousTab, PreviousTask,
-    ZoomIn, ZoomOut, ZoomReset,
-};
+use app::{AnotherOneApp, ZoomIn, ZoomOut, ZoomReset};
 use assets::ProjectAssets;
 
 #[cfg(target_os = "macos")]
@@ -106,15 +104,6 @@ fn main() {
                 KeyBinding::new("cmd-+", ZoomIn, None),
                 KeyBinding::new("cmd--", ZoomOut, None),
                 KeyBinding::new("cmd-0", ZoomReset, None),
-                KeyBinding::new("cmd-o", NextProject, None),
-                KeyBinding::new("cmd-n", NewTab, None),
-                KeyBinding::new("cmd-t", NewTask, None),
-                KeyBinding::new("cmd-shift-]", NextTab, None),
-                KeyBinding::new("cmd-}", NextTab, None),
-                KeyBinding::new("cmd-shift-[", PreviousTab, None),
-                KeyBinding::new("cmd-{", PreviousTab, None),
-                KeyBinding::new("cmd-alt-down", NextTask, None),
-                KeyBinding::new("cmd-alt-up", PreviousTask, None),
             ]);
 
             cx.open_window(
