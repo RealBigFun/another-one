@@ -127,7 +127,6 @@ impl WorkspacePane {
                 let tab_index = i;
                 let sid_close = section_id.clone();
                 let close_index = i;
-                let can_close = state.tabs.len() > 1;
                 let tab_id_val = tab.id.clone();
 
                 tab_bar = tab_bar.child(
@@ -176,41 +175,37 @@ impl WorkspacePane {
                                 })
                                 .child(tab_title),
                         )
-                        .when(can_close, |d| {
-                            d.child(
-                                div()
-                                    .id(SharedString::from(format!("tab-close-{}", tab_id_val)))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .w(px(18.))
-                                    .h(px(18.))
-                                    .rounded(px(4.))
-                                    .cursor_pointer()
-                                    .text_color(close_col)
-                                    .hover(move |s| {
-                                        s.bg(gpui::white().opacity(0.08)).text_color(close_hover)
-                                    })
-                                    .tooltip(move |_window, cx| {
-                                        AnotherOneApp::action_tooltip_view("Close this tab", cx)
-                                    })
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |this, _ev: &MouseDownEvent, _window, cx| {
-                                                cx.stop_propagation();
-                                                this.close_tab(&sid_close, close_index, cx);
-                                            },
-                                        ),
-                                    )
-                                    .child(
-                                        svg()
-                                            .path("assets/icons/icons__close.svg")
-                                            .size(px(12.))
-                                            .text_color(close_col),
-                                    ),
-                            )
-                        }),
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("tab-close-{}", tab_id_val)))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .w(px(18.))
+                                .h(px(18.))
+                                .rounded(px(4.))
+                                .cursor_pointer()
+                                .text_color(close_col)
+                                .hover(move |s| {
+                                    s.bg(gpui::white().opacity(0.08)).text_color(close_hover)
+                                })
+                                .tooltip(move |_window, cx| {
+                                    AnotherOneApp::action_tooltip_view("Close this tab", cx)
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                        cx.stop_propagation();
+                                        this.close_tab(&sid_close, close_index, cx);
+                                    }),
+                                )
+                                .child(
+                                    svg()
+                                        .path("assets/icons/icons__close.svg")
+                                        .size(px(12.))
+                                        .text_color(close_col),
+                                ),
+                        ),
                 );
             }
         }
@@ -272,7 +267,73 @@ impl WorkspacePane {
             return div().flex_1().bg(terminal_bg);
         };
         let Some(tab) = state.tabs.get(state.active_tab) else {
-            return div().flex_1().bg(terminal_bg);
+            let task_label = section_id.task_id.as_deref().unwrap_or("Not available");
+            let cwd_label = state
+                .cwd
+                .as_ref()
+                .map(|cwd| cwd.display().to_string())
+                .unwrap_or_else(|| "Not available".to_string());
+            return div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_6()
+                .bg(terminal_bg)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(12.))
+                        .w_full()
+                        .max_w(px(460.))
+                        .p_6()
+                        .rounded(px(14.))
+                        .bg(panel_bg)
+                        .border_1()
+                        .border_color(border)
+                        .child(
+                            svg()
+                                .path("assets/icons/icons__terminal.svg")
+                                .size(px(20.))
+                                .text_color(accent_col),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(title_col)
+                                .child("No active tabs"),
+                        )
+                        .child(div().text_sm().text_color(body_col).child(
+                            "This task has no open tabs. Add an agent tab to start working.",
+                        ))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(body_col)
+                                .child(format!("Project: {}", section_id.project_id)),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(body_col)
+                                .child(format!("Branch: {}", section_id.branch_name)),
+                        )
+                        .child(
+                            gpui::div()
+                                .text_sm()
+                                .text_color(body_col)
+                                .child(format!("Task: {}", task_label)),
+                        )
+                        .child(
+                            gpui::div()
+                                .text_sm()
+                                .text_color(body_col)
+                                .child(format!("CWD: {}", cwd_label)),
+                        ),
+                );
         };
 
         let key = TerminalRuntimeKey {

@@ -150,7 +150,7 @@ impl AnotherOneApp {
             selected_agent_id: selected_agent_id
                 .filter(|selected| AGENTS.iter().any(|agent| agent.id == selected)),
             agent_dropdown_open: false,
-            keyboard_focus: None,
+            keyboard_focus: Some(AddAgentModalFocus::Trigger),
         });
         self.sync_add_agent_modal_prewarm(cx);
     }

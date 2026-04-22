@@ -218,16 +218,20 @@ impl SectionState {
     }
 
     pub fn close_tab(&mut self, index: usize) -> Option<String> {
-        if self.tabs.len() <= 1 || index >= self.tabs.len() {
-            return None; // keep at least one tab
+        if index >= self.tabs.len() {
+            return None;
         }
 
         let removed = self.tabs.remove(index);
-        if index < self.active_tab {
-            self.active_tab = self.active_tab.saturating_sub(1);
-        }
-        if self.active_tab >= self.tabs.len() {
-            self.active_tab = self.tabs.len() - 1;
+        if self.tabs.is_empty() {
+            self.active_tab = 0;
+        } else {
+            if index < self.active_tab {
+                self.active_tab = self.active_tab.saturating_sub(1);
+            }
+            if self.active_tab >= self.tabs.len() {
+                self.active_tab = self.tabs.len() - 1;
+            }
         }
         Some(removed.id)
     }
@@ -269,20 +273,19 @@ impl SectionState {
         persisted: PersistedSectionState,
         fallback_cwd: Option<std::path::PathBuf>,
     ) -> Self {
-        let mut tabs = persisted
+        let tabs = persisted
             .tabs
             .into_iter()
             .map(TerminalTab::from_persisted)
             .collect::<Vec<_>>();
 
-        if tabs.is_empty() {
-            tabs.push(TerminalTab::new(TerminalLaunchConfig::default()));
-        }
-
-        let active_tab = tabs
-            .iter()
-            .position(|tab| tab.id == persisted.active_tab_id)
-            .unwrap_or_else(|| tabs.len().saturating_sub(1));
+        let active_tab = if tabs.is_empty() {
+            0
+        } else {
+            tabs.iter()
+                .position(|tab| tab.id == persisted.active_tab_id)
+                .unwrap_or_else(|| tabs.len().saturating_sub(1))
+        };
 
         Self {
             tabs,
@@ -3415,24 +3418,21 @@ impl AnotherOneApp {
 
         let shortcut_target = {
             let workspace = self.workspace_pane.read(cx);
-            workspace.active_section.clone().and_then(|section_id| {
-                workspace
+            workspace.active_section.clone().map(|section_id| {
+                let selected_agent_id = workspace
                     .section_states
                     .get(&section_id)
                     .and_then(|state| state.tabs.get(state.active_tab))
-                    .map(|tab| {
-                        let selected_agent_id = tab
-                            .launch_config
-                            .provider
-                            .and_then(|provider| {
-                                AGENTS
-                                    .iter()
-                                    .find(|agent| agent.provider == Some(provider))
-                                    .map(|agent| agent.id)
-                            })
-                            .map(str::to_string);
-                        (section_id, selected_agent_id)
+                    .and_then(|tab| {
+                        tab.launch_config.provider.and_then(|provider| {
+                            AGENTS
+                                .iter()
+                                .find(|agent| agent.provider == Some(provider))
+                                .map(|agent| agent.id)
+                        })
                     })
+                    .map(str::to_string);
+                (section_id, selected_agent_id)
             })
         };
 
@@ -3497,7 +3497,7 @@ impl AnotherOneApp {
             return false;
         };
 
-        if tab_count <= 1 {
+        if tab_count == 0 {
             return false;
         }
 
@@ -6099,6 +6099,39 @@ mod tests {
         assert_eq!(state.active_tab, 1);
         assert_eq!(state.next_tab_id, 1);
         assert_eq!(state.cwd, Some(PathBuf::from("/tmp/project")));
+    }
+
+    #[test]
+    fn section_state_from_persisted_preserves_empty_tabs() {
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: String::new(),
+                next_tab_id: 0,
+                cwd: Some(PathBuf::from("/tmp/project")),
+                tabs: Vec::new(),
+            },
+            None,
+        );
+
+        assert!(state.tabs.is_empty());
+        assert_eq!(state.active_tab, 0);
+        assert_eq!(state.next_tab_id, 1);
+        assert_eq!(state.cwd, Some(PathBuf::from("/tmp/project")));
+    }
+
+    #[test]
+    fn section_state_can_close_last_tab() {
+        let mut state = SectionState::with_initial_tab(
+            Some(PathBuf::from("/tmp/project")),
+            TerminalLaunchConfig::default(),
+        );
+        let only_tab_id = state.tabs[0].id.clone();
+
+        let removed = state.close_tab(0);
+
+        assert_eq!(removed, Some(only_tab_id));
+        assert!(state.tabs.is_empty());
+        assert_eq!(state.active_tab, 0);
     }
 
     #[test]
