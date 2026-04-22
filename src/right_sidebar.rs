@@ -985,10 +985,8 @@ impl AnotherOneApp {
         let undo_enabled = show_undo_button && self.active_git_action.is_none();
 
         let mut expanded_details = div()
-            .w_full()
             .min_w(px(0.))
-            .ml(px(28.))
-            .mr(px(28.))
+            .mx(px(12.))
             .mb(px(8.))
             .flex()
             .flex_col()
