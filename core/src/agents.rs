@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-pub(crate) struct AgentDef {
+pub struct AgentDef {
     pub id: &'static str,
     pub label: &'static str,
     pub icon: &'static str,
@@ -10,7 +10,7 @@ pub(crate) struct AgentDef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub(crate) enum AgentProviderKind {
+pub enum AgentProviderKind {
     #[serde(rename = "claude-code")]
     ClaudeCode,
     #[serde(rename = "cursor-agent")]
@@ -49,7 +49,7 @@ impl AgentProviderKind {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum TerminalLaunchMode {
+pub enum TerminalLaunchMode {
     #[default]
     RawShell,
     Agent,
@@ -57,7 +57,7 @@ pub(crate) enum TerminalLaunchMode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum TerminalSessionKind {
+pub enum TerminalSessionKind {
     ClaudeSession,
     CursorChat,
     CodexSession,
@@ -66,7 +66,7 @@ pub(crate) enum TerminalSessionKind {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum TerminalRestoreStatus {
+pub enum TerminalRestoreStatus {
     #[default]
     NotStarted,
     Launching,
@@ -75,12 +75,12 @@ pub(crate) enum TerminalRestoreStatus {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub(crate) struct TerminalSessionRef {
+pub struct TerminalSessionRef {
     pub kind: TerminalSessionKind,
     pub id: String,
 }
 
-pub(crate) const AGENTS: &[AgentDef] = &[
+pub const AGENTS: &[AgentDef] = &[
     AgentDef {
         id: "claude-code",
         label: "Claude Code",
@@ -137,10 +137,10 @@ pub(crate) const AGENTS: &[AgentDef] = &[
     },
 ];
 
-pub(crate) const DEFAULT_AGENT_ID: &str = "pi";
+pub const DEFAULT_AGENT_ID: &str = "pi";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct TerminalLaunchConfig {
+pub struct TerminalLaunchConfig {
     pub mode: TerminalLaunchMode,
     pub provider: Option<AgentProviderKind>,
     pub session: Option<TerminalSessionRef>,
@@ -176,7 +176,7 @@ impl TerminalLaunchConfig {
     }
 }
 
-pub(crate) fn terminal_launch_config_for_selected_agents(
+pub fn terminal_launch_config_for_selected_agents(
     selected_agents: &HashSet<String>,
 ) -> TerminalLaunchConfig {
     AGENTS
@@ -187,7 +187,7 @@ pub(crate) fn terminal_launch_config_for_selected_agents(
         .unwrap_or_default()
 }
 
-pub(crate) fn terminal_launch_config_for_selected_agent(
+pub fn terminal_launch_config_for_selected_agent(
     selected_agent_id: Option<&str>,
 ) -> Option<TerminalLaunchConfig> {
     match selected_agent_id {
@@ -200,7 +200,7 @@ pub(crate) fn terminal_launch_config_for_selected_agent(
     }
 }
 
-pub(crate) fn agent_id_for_provider(provider: AgentProviderKind) -> Option<&'static str> {
+pub fn agent_id_for_provider(provider: AgentProviderKind) -> Option<&'static str> {
     AGENTS
         .iter()
         .find(|agent| agent.provider == Some(provider))

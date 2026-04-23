@@ -1,0 +1,18 @@
+[package]
+name = "another-one-core"
+version = "0.1.0"
+edition = "2021"
+description = "Headless domain logic for the AnotherOne desktop app — shared by both the GPUI UI and the (future) sandbox/mobile daemon."
+publish = false
+
+[lib]
+name = "another_one_core"
+
+[dependencies]
+dirs = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
