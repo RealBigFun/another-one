@@ -23,7 +23,7 @@ fn tab_icon_element(
             AGENTS
                 .iter()
                 .find(|agent| agent.provider == Some(provider))
-                .map(|agent| branded_icon(agent.icon, 14., None))
+                .map(|agent| branded_icon(agent.icon, 14., Some(fallback_color)))
         })
         .unwrap_or_else(|| {
             svg()
