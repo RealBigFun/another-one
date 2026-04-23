@@ -3,8 +3,8 @@
 //! Two workers share this module because they both produce
 //! `PreparedProject`s: `spawn_project_add` on "add an existing
 //! directory", `spawn_task_creation` on "start a new worktree task".
-//! Each returns a `mpsc::Receiver<…>` that yields exactly one reply
-//! when the background thread finishes, mirroring the shape of
+//! Each returns a `broadcast::Receiver<…>` that yields exactly one
+//! reply when the background thread finishes, mirroring the shape of
 //! `git_service::spawn_refresh` / `spawn_toolbar_action`.
 //!
 //! Pure plumbing: the interesting work lives in `project_store`
@@ -15,8 +15,9 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::thread;
+
+use tokio::sync::broadcast;
 
 use crate::agents::TerminalLaunchConfig;
 use crate::project_store::{
@@ -26,6 +27,7 @@ use crate::project_store::{
 
 // ---- project add ----------------------------------------------------
 
+#[derive(Clone)]
 pub struct ProjectAddReply {
     pub result: Result<PreparedProject, String>,
 }
@@ -33,8 +35,8 @@ pub struct ProjectAddReply {
 /// Read an on-disk project directory (`git` metadata + working-tree
 /// state) into a [`PreparedProject`]. One-shot: the returned receiver
 /// yields exactly one reply.
-pub fn spawn_project_add(path: PathBuf) -> mpsc::Receiver<ProjectAddReply> {
-    let (tx, rx) = mpsc::channel();
+pub fn spawn_project_add(path: PathBuf) -> broadcast::Receiver<ProjectAddReply> {
+    let (tx, rx) = broadcast::channel(1);
     thread::spawn(move || {
         let result = prepare_project(&path);
         let _ = tx.send(ProjectAddReply { result });
@@ -44,6 +46,7 @@ pub fn spawn_project_add(path: PathBuf) -> mpsc::Receiver<ProjectAddReply> {
 
 // ---- task creation --------------------------------------------------
 
+#[derive(Clone)]
 pub struct TaskCreationSuccess {
     pub original_project_id: String,
     pub project: PreparedProject,
@@ -52,10 +55,12 @@ pub struct TaskCreationSuccess {
     pub launch_config: TerminalLaunchConfig,
 }
 
+#[derive(Clone)]
 pub struct TaskCreationFailure {
     pub message: String,
 }
 
+#[derive(Clone)]
 pub struct TaskCreationReply {
     pub result: Result<TaskCreationSuccess, TaskCreationFailure>,
 }
@@ -77,8 +82,8 @@ pub fn spawn_task_creation(
     generated_task_name: String,
     source_branch: String,
     launch_config: TerminalLaunchConfig,
-) -> mpsc::Receiver<TaskCreationReply> {
-    let (tx, rx) = mpsc::channel();
+) -> broadcast::Receiver<TaskCreationReply> {
+    let (tx, rx) = broadcast::channel(1);
     thread::spawn(move || {
         let result = create_task_worktree(
             &project_path,

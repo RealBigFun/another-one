@@ -27,6 +27,10 @@ hotpath = "0.15"
 portable-pty = "0.9.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `sync` only — brings in `tokio::sync::broadcast`, which we use
+# with its synchronous `send` / `try_recv` surface. No runtime is
+# constructed in core; broadcast's send + try_recv do not require one.
+tokio = { version = "1", features = ["sync"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]

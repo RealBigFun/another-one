@@ -5,6 +5,8 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use tokio::sync::broadcast;
+
 use gpui::{
     actions, div, hsla, img, prelude::*, px, rems, rgb, svg, AnyElement, AnyView, App, Bounds,
     ClipboardEntry, ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity,
@@ -953,41 +955,41 @@ pub struct AnotherOneApp {
     /// The toolbar git action currently running in the background, if any.
     pub(crate) active_git_action: Option<crate::git_actions::ToolbarGitAction>,
     /// Receiver for the in-flight toolbar git action result.
-    git_action_receiver: Option<mpsc::Receiver<GitActionReply>>,
+    git_action_receiver: Option<broadcast::Receiver<GitActionReply>>,
     /// Pending right-sidebar git mutations keyed by project id.
     pending_changed_files_git_mutations: HashMap<String, PendingChangedFilesGitMutations>,
     /// Sender for background right-sidebar git mutation replies.
-    changed_files_git_mutation_sender: mpsc::Sender<ChangedFilesGitMutationReply>,
+    changed_files_git_mutation_sender: broadcast::Sender<ChangedFilesGitMutationReply>,
     /// Receiver for background right-sidebar git mutation replies.
-    changed_files_git_mutation_receiver: mpsc::Receiver<ChangedFilesGitMutationReply>,
+    changed_files_git_mutation_receiver: broadcast::Receiver<ChangedFilesGitMutationReply>,
     /// Whether an automatic git refresh is already running.
     pub(crate) git_refresh_in_flight: bool,
     /// Receiver for the in-flight automatic git refresh result.
-    git_refresh_receiver: Option<mpsc::Receiver<GitRefreshReply>>,
+    git_refresh_receiver: Option<broadcast::Receiver<GitRefreshReply>>,
     /// Receiver for the in-flight new task worktree creation result.
-    task_creation_receiver: Option<mpsc::Receiver<TaskCreationReply>>,
+    task_creation_receiver: Option<broadcast::Receiver<TaskCreationReply>>,
     /// Receiver for the in-flight add-project background preparation result.
-    project_add_receiver: Option<mpsc::Receiver<ProjectAddReply>>,
+    project_add_receiver: Option<broadcast::Receiver<ProjectAddReply>>,
     /// Sender used by background commit file-change lookups.
     commit_file_changes_sender: mpsc::Sender<CommitFileChangesReply>,
     /// Receiver for background commit file-change lookups.
     commit_file_changes_receiver: mpsc::Receiver<CommitFileChangesReply>,
     /// Sender used by background project GitHub-link lookups.
-    project_github_link_sender: mpsc::Sender<ProjectGitHubLinkReply>,
+    project_github_link_sender: broadcast::Sender<ProjectGitHubLinkReply>,
     /// Receiver for background project GitHub-link lookups.
-    project_github_link_receiver: mpsc::Receiver<ProjectGitHubLinkReply>,
+    project_github_link_receiver: broadcast::Receiver<ProjectGitHubLinkReply>,
     /// Cached pull request metadata keyed by `project_id:branch_name`.
     pub(crate) project_pull_requests: HashMap<String, crate::git_actions::PullRequestStatus>,
     /// Sender used by background pull-request lookups.
-    project_pull_request_sender: mpsc::Sender<ProjectPullRequestReply>,
+    project_pull_request_sender: broadcast::Sender<ProjectPullRequestReply>,
     /// Receiver for background pull-request lookups.
-    project_pull_request_receiver: mpsc::Receiver<ProjectPullRequestReply>,
-    project_page_pull_requests_sender: mpsc::Sender<ProjectPagePullRequestsReply>,
-    project_page_pull_requests_receiver: mpsc::Receiver<ProjectPagePullRequestsReply>,
+    project_pull_request_receiver: broadcast::Receiver<ProjectPullRequestReply>,
+    project_page_pull_requests_sender: broadcast::Sender<ProjectPagePullRequestsReply>,
+    project_page_pull_requests_receiver: broadcast::Receiver<ProjectPagePullRequestsReply>,
     /// Sender used by background PR check lookups.
-    project_check_runs_sender: mpsc::Sender<ProjectCheckRunsReply>,
+    project_check_runs_sender: broadcast::Sender<ProjectCheckRunsReply>,
     /// Receiver for background PR check lookups.
-    project_check_runs_receiver: mpsc::Receiver<ProjectCheckRunsReply>,
+    project_check_runs_receiver: broadcast::Receiver<ProjectCheckRunsReply>,
     /// Sender used by background terminal launch/resume work.
     terminal_launch_sender: mpsc::Sender<TerminalLaunchReply>,
     /// Receiver for background terminal launch/resume work.
@@ -2696,14 +2698,19 @@ impl AnotherOneApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = ProjectStore::load();
         let left_sidebar_open = store.ui.left_sidebar_open;
-        let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
-        let (project_pull_request_sender, project_pull_request_receiver) = mpsc::channel();
+        // Broadcast capacity is a per-channel ring buffer size. 64 is
+        // well above the realistic backlog for these low-rate worker
+        // replies (render tick drains every 16 ms) but leaves enough
+        // headroom that a future daemon/mobile subscriber can briefly
+        // pause without triggering `Lagged`.
+        let (project_github_link_sender, project_github_link_receiver) = broadcast::channel(64);
+        let (project_pull_request_sender, project_pull_request_receiver) = broadcast::channel(64);
         let (project_page_pull_requests_sender, project_page_pull_requests_receiver) =
-            mpsc::channel();
-        let (project_check_runs_sender, project_check_runs_receiver) = mpsc::channel();
+            broadcast::channel(64);
+        let (project_check_runs_sender, project_check_runs_receiver) = broadcast::channel(64);
         let (commit_file_changes_sender, commit_file_changes_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
-            mpsc::channel();
+            broadcast::channel(64);
         let (terminal_launch_sender, terminal_launch_receiver) = mpsc::channel();
         let (warm_terminal_launch_sender, warm_terminal_launch_receiver) = mpsc::channel();
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
@@ -4646,7 +4653,7 @@ impl AnotherOneApp {
     }
 
     fn drain_git_refresh(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.git_refresh_receiver.as_ref() else {
+        let Some(receiver) = self.git_refresh_receiver.as_mut() else {
             return false;
         };
 
@@ -4708,8 +4715,12 @@ impl AnotherOneApp {
                 changed |= self.sync_right_sidebar_mode(cx);
                 changed
             }
-            Err(mpsc::TryRecvError::Empty) => false,
-            Err(mpsc::TryRecvError::Disconnected) => {
+            Err(broadcast::error::TryRecvError::Empty) => false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                log::warn!("git_refresh drain lagged {n} messages");
+                false
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
                 self.git_refresh_in_flight = false;
                 self.git_refresh_receiver = None;
                 false
@@ -5352,7 +5363,7 @@ impl AnotherOneApp {
     }
 
     fn drain_git_action(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.git_action_receiver.as_ref() else {
+        let Some(receiver) = self.git_action_receiver.as_mut() else {
             return false;
         };
 
@@ -5402,8 +5413,12 @@ impl AnotherOneApp {
                 }
                 true
             }
-            Err(mpsc::TryRecvError::Empty) => false,
-            Err(mpsc::TryRecvError::Disconnected) => {
+            Err(broadcast::error::TryRecvError::Empty) => false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                log::warn!("git_action drain lagged {n} messages");
+                false
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
                 self.active_git_action = None;
                 self.git_action_receiver = None;
                 self.show_error_toast("The background git action did not complete.", cx);
@@ -5415,7 +5430,16 @@ impl AnotherOneApp {
     fn drain_changed_files_git_mutations(&mut self, cx: &mut Context<Self>) -> bool {
         let mut should_notify = false;
 
-        while let Ok(reply) = self.changed_files_git_mutation_receiver.try_recv() {
+        loop {
+            let reply = match self.changed_files_git_mutation_receiver.try_recv() {
+                Ok(reply) => reply,
+                Err(broadcast::error::TryRecvError::Empty)
+                | Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    log::warn!("changed_files_git_mutation drain lagged {n} messages");
+                    continue;
+                }
+            };
             let pending = self
                 .pending_changed_files_git_mutations
                 .remove(&reply.project_id);
@@ -5476,7 +5500,7 @@ impl AnotherOneApp {
     }
 
     fn drain_task_creation(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.task_creation_receiver.as_ref() else {
+        let Some(receiver) = self.task_creation_receiver.as_mut() else {
             return false;
         };
 
@@ -5579,8 +5603,12 @@ impl AnotherOneApp {
                 }
                 true
             }
-            Err(mpsc::TryRecvError::Empty) => false,
-            Err(mpsc::TryRecvError::Disconnected) => {
+            Err(broadcast::error::TryRecvError::Empty) => false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                log::warn!("task_creation drain lagged {n} messages");
+                false
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
                 self.task_creation_receiver = None;
                 if let Some(state) = self.new_task_modal.as_mut() {
                     state.submitting = false;
@@ -5592,7 +5620,7 @@ impl AnotherOneApp {
     }
 
     fn drain_project_add(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.project_add_receiver.as_ref() else {
+        let Some(receiver) = self.project_add_receiver.as_mut() else {
             return false;
         };
 
@@ -5625,8 +5653,12 @@ impl AnotherOneApp {
                 }
                 true
             }
-            Err(mpsc::TryRecvError::Empty) => false,
-            Err(mpsc::TryRecvError::Disconnected) => {
+            Err(broadcast::error::TryRecvError::Empty) => false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                log::warn!("project_add drain lagged {n} messages");
+                false
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
                 self.project_add_receiver = None;
                 self.show_error_toast("The add project process did not complete.", cx);
                 true
@@ -5679,7 +5711,16 @@ impl AnotherOneApp {
     fn drain_project_github_link_lookup(&mut self) -> bool {
         let mut should_notify = false;
 
-        while let Ok(reply) = self.project_github_link_receiver.try_recv() {
+        loop {
+            let reply = match self.project_github_link_receiver.try_recv() {
+                Ok(reply) => reply,
+                Err(broadcast::error::TryRecvError::Empty)
+                | Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    log::warn!("project_github_link drain lagged {n} messages");
+                    continue;
+                }
+            };
             self.project_github_link_requests.remove(&reply.project_id);
             self.project_github_link_checked
                 .insert(reply.project_id.clone());
@@ -5767,7 +5808,16 @@ impl AnotherOneApp {
 
     fn drain_project_page_pull_requests(&mut self, cx: &mut Context<Self>) -> bool {
         let mut should_notify = false;
-        while let Ok(reply) = self.project_page_pull_requests_receiver.try_recv() {
+        loop {
+            let reply = match self.project_page_pull_requests_receiver.try_recv() {
+                Ok(reply) => reply,
+                Err(broadcast::error::TryRecvError::Empty)
+                | Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    log::warn!("project_page_pull_requests drain lagged {n} messages");
+                    continue;
+                }
+            };
             let key = Self::project_page_pr_query_key(
                 &reply.project_id,
                 reply.filter_index,
@@ -5795,7 +5845,16 @@ impl AnotherOneApp {
     fn drain_project_pull_request_lookup(&mut self, cx: &mut Context<Self>) -> bool {
         let mut should_notify = false;
 
-        while let Ok(reply) = self.project_pull_request_receiver.try_recv() {
+        loop {
+            let reply = match self.project_pull_request_receiver.try_recv() {
+                Ok(reply) => reply,
+                Err(broadcast::error::TryRecvError::Empty)
+                | Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    log::warn!("project_pull_request drain lagged {n} messages");
+                    continue;
+                }
+            };
             self.project_pull_request_requests.remove(&reply.lookup_key);
             self.project_pull_request_checked
                 .insert(reply.lookup_key.clone());
@@ -5863,7 +5922,16 @@ impl AnotherOneApp {
     fn drain_project_check_runs_lookup(&mut self, cx: &mut Context<Self>) -> bool {
         let mut should_notify = false;
 
-        while let Ok(reply) = self.project_check_runs_receiver.try_recv() {
+        loop {
+            let reply = match self.project_check_runs_receiver.try_recv() {
+                Ok(reply) => reply,
+                Err(broadcast::error::TryRecvError::Empty)
+                | Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    log::warn!("project_check_runs drain lagged {n} messages");
+                    continue;
+                }
+            };
             self.project_check_runs_requests.remove(&reply.lookup_key);
             self.project_check_runs_checked_at
                 .insert(reply.lookup_key.clone(), Instant::now());
