@@ -1,16 +1,20 @@
-// Sandbox mobile client for the AnotherOne companion daemon (milestone 3).
-// Uses xterm.dart's Terminal engine + TerminalView for real VT100/xterm-256
-// interpretation and cell-grid rendering. Milestone 2 shipped raw-text pass-
-// through; this upgrade makes the display actually readable.
+// Sandbox mobile client for the AnotherOne companion daemon.
+//
+// The widget here is deliberately transport-agnostic: it talks to a
+// `TerminalTransport` interface and wires byte streams into xterm.dart's
+// Terminal engine. Swapping WebSocket for an Iroh-backed transport later is
+// a one-line change at `_buildTransport` below; nothing else in this file
+// should need to move.
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/status.dart' as ws_status;
 import 'package:xterm/xterm.dart';
+
+import 'src/transport.dart';
+import 'src/transport_websocket.dart';
 
 void main() => runApp(const SandboxApp());
 
@@ -34,111 +38,81 @@ class TerminalPage extends StatefulWidget {
 
 class _TerminalPageState extends State<TerminalPage> {
   // Android emulator's host-loopback alias; swap for your LAN IP on a device.
-  static const String _defaultUrl = 'ws://10.0.2.2:5617/pty';
+  static const String _defaultEndpoint = 'ws://10.0.2.2:5617/pty';
 
-  final TextEditingController _urlCtrl =
-      TextEditingController(text: _defaultUrl);
+  final TextEditingController _endpointCtrl =
+      TextEditingController(text: _defaultEndpoint);
 
   late final Terminal _terminal;
   late final TerminalController _terminalController;
   final FocusNode _terminalFocus = FocusNode();
 
-  WebSocketChannel? _channel;
-  StreamSubscription<dynamic>? _sub;
-  String _status = 'disconnected';
+  TerminalTransport? _transport;
+  StreamSubscription<Uint8List>? _bytesSub;
+  StreamSubscription<TransportStatus>? _statusSub;
+  TransportStatus _status = const TransportStatus.disconnected();
 
   @override
   void initState() {
     super.initState();
     _terminal = Terminal(maxLines: 10000);
     _terminalController = TerminalController();
-
-    // User input from the terminal (keyboard, paste, chord taps via terminal
-    // APIs) is emitted here as a String; forward the bytes to the daemon.
     _terminal.onOutput = (data) {
-      _sendBytes(utf8.encode(data));
+      _transport?.sendBytes(utf8.encode(data));
     };
+    _terminal.onResize = (width, height, _, _) {
+      _transport?.sendResize(cols: width, rows: height);
+    };
+  }
 
-    // When the terminal widget decides on a grid size, tell the PTY.
-    _terminal.onResize = (w, h, pw, ph) {
-      _sendResize(cols: w, rows: h);
-    };
+  /// Factory for the active transport. Kept as a single choice point so
+  /// introducing Iroh (or any other) transport later is a local change.
+  TerminalTransport _buildTransport(String endpoint) {
+    return WebSocketTransport(endpoint);
   }
 
   void _connect() {
-    _disconnect();
-    final url = _urlCtrl.text.trim();
-    try {
-      final channel = WebSocketChannel.connect(Uri.parse(url));
-      setState(() {
-        _channel = channel;
-        _status = 'connecting…';
-      });
-      // Tell the daemon about our grid size as soon as we connect.
-      // onResize has already fired at least once by now (first layout pass).
-      _sendResize(cols: _terminal.viewWidth, rows: _terminal.viewHeight);
+    _tearDownTransport();
+    final transport = _buildTransport(_endpointCtrl.text.trim());
+    _transport = transport;
 
-      _sub = channel.stream.listen(
-        (data) {
-          Uint8List bytes;
-          if (data is Uint8List) {
-            bytes = data;
-          } else if (data is List<int>) {
-            bytes = Uint8List.fromList(data);
-          } else if (data is String) {
-            bytes = Uint8List.fromList(utf8.encode(data));
-          } else {
-            return;
-          }
-          // xterm.dart's Terminal.write accepts a String; decode as best we can.
-          _terminal.write(utf8.decode(bytes, allowMalformed: true));
-          if (_status.startsWith('connecting')) {
-            setState(() => _status = 'connected');
-          }
-        },
-        onError: (err) => setState(() => _status = 'error: $err'),
-        onDone: () => setState(() => _status = 'disconnected'),
-        cancelOnError: true,
-      );
-    } catch (e) {
-      setState(() => _status = 'connect failed: $e');
-    }
+    _bytesSub = transport.incoming.listen((bytes) {
+      _terminal.write(utf8.decode(bytes, allowMalformed: true));
+    });
+    _statusSub = transport.status.listen((s) {
+      setState(() => _status = s);
+    });
+
+    transport.connect();
+    // Fire an initial resize so the daemon's PTY matches the Flutter grid.
+    transport.sendResize(cols: _terminal.viewWidth, rows: _terminal.viewHeight);
   }
 
-  void _disconnect() {
-    _sub?.cancel();
-    _sub = null;
-    _channel?.sink.close(ws_status.goingAway);
-    _channel = null;
+  Future<void> _disconnect() async {
+    await _tearDownTransport();
+    setState(() => _status = const TransportStatus.disconnected());
   }
 
-  void _sendBytes(List<int> bytes) {
-    final ch = _channel;
-    if (ch == null) return;
-    ch.sink.add(Uint8List.fromList(bytes));
-  }
-
-  void _sendResize({required int cols, required int rows}) {
-    final ch = _channel;
-    if (ch == null) return;
-    ch.sink.add(jsonEncode({
-      'type': 'resize',
-      'cols': cols,
-      'rows': rows,
-    }));
+  Future<void> _tearDownTransport() async {
+    await _bytesSub?.cancel();
+    _bytesSub = null;
+    await _statusSub?.cancel();
+    _statusSub = null;
+    final t = _transport;
+    _transport = null;
+    await t?.close();
   }
 
   @override
   void dispose() {
-    _disconnect();
-    _urlCtrl.dispose();
+    _tearDownTransport();
+    _endpointCtrl.dispose();
     _terminalFocus.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final connected = _channel != null && _status == 'connected';
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sandbox Terminal'),
@@ -147,7 +121,7 @@ class _TerminalPageState extends State<TerminalPage> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Text(
-                _status,
+                _status.label,
                 style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
               ),
             ),
@@ -157,35 +131,15 @@ class _TerminalPageState extends State<TerminalPage> {
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _urlCtrl,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    smartDashesType: SmartDashesType.disabled,
-                    smartQuotesType: SmartQuotesType.disabled,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                    decoration: const InputDecoration(
-                      labelText: 'WebSocket URL',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: connected ? _disconnect : _connect,
-                  icon: Icon(connected ? Icons.link_off : Icons.link),
-                  label: Text(connected ? 'Disconnect' : 'Connect'),
-                ),
-              ]),
+            _EndpointRow(
+              controller: _endpointCtrl,
+              connected: _status.isConnected,
+              onConnect: _connect,
+              onDisconnect: _disconnect,
             ),
             Expanded(
               child: GestureDetector(
-                onTap: () => _terminalFocus.requestFocus(),
+                onTap: _terminalFocus.requestFocus,
                 child: TerminalView(
                   _terminal,
                   controller: _terminalController,
@@ -200,48 +154,111 @@ class _TerminalPageState extends State<TerminalPage> {
                 ),
               ),
             ),
-            // Mobile chord bar — the soft keyboard has no Esc/Ctrl/arrows.
-            Container(
-              decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: Colors.grey.shade800)),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(children: [
-                  _chord('Esc', const [0x1B]),
-                  _chord('Tab', const [0x09]),
-                  _chord('Ctrl-C', const [0x03]),
-                  _chord('Ctrl-D', const [0x04]),
-                  _chord('Ctrl-L', const [0x0C]),
-                  _chord('Ctrl-R', const [0x12]),
-                  _chord('↑', const [0x1B, 0x5B, 0x41]),
-                  _chord('↓', const [0x1B, 0x5B, 0x42]),
-                  _chord('←', const [0x1B, 0x5B, 0x44]),
-                  _chord('→', const [0x1B, 0x5B, 0x43]),
-                ]),
-              ),
+            _ChordBar(
+              onSend: (bytes) {
+                _transport?.sendBytes(bytes);
+                _terminalFocus.requestFocus();
+              },
             ),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _chord(String label, List<int> bytes) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: OutlinedButton(
-          onPressed: () {
-            _sendBytes(bytes);
-            _terminalFocus.requestFocus();
-          },
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+class _EndpointRow extends StatelessWidget {
+  const _EndpointRow({
+    required this.controller,
+    required this.connected,
+    required this.onConnect,
+    required this.onDisconnect,
+  });
+
+  final TextEditingController controller;
+  final bool connected;
+  final VoidCallback onConnect;
+  final VoidCallback onDisconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Row(children: [
+        Expanded(
+          child: TextField(
+            controller: controller,
+            autocorrect: false,
+            enableSuggestions: false,
+            smartDashesType: SmartDashesType.disabled,
+            smartQuotesType: SmartQuotesType.disabled,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            decoration: const InputDecoration(
+              labelText: 'Endpoint',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
           ),
-          child: Text(label,
-              style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
         ),
-      );
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed: connected ? onDisconnect : onConnect,
+          icon: Icon(connected ? Icons.link_off : Icons.link),
+          label: Text(connected ? 'Disconnect' : 'Connect'),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ChordBar extends StatelessWidget {
+  const _ChordBar({required this.onSend});
+
+  final void Function(List<int> bytes) onSend;
+
+  static const List<(String, List<int>)> _chords = [
+    ('Esc', [0x1B]),
+    ('Tab', [0x09]),
+    ('Ctrl-C', [0x03]),
+    ('Ctrl-D', [0x04]),
+    ('Ctrl-L', [0x0C]),
+    ('Ctrl-R', [0x12]),
+    ('↑', [0x1B, 0x5B, 0x41]),
+    ('↓', [0x1B, 0x5B, 0x42]),
+    ('←', [0x1B, 0x5B, 0x44]),
+    ('→', [0x1B, 0x5B, 0x43]),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: Colors.grey.shade800)),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final (label, bytes) in _chords)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: OutlinedButton(
+                  onPressed: () => onSend(bytes),
+                  style: OutlinedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(label,
+                      style: const TextStyle(
+                          fontSize: 12, fontFamily: 'monospace')),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
