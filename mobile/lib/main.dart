@@ -44,8 +44,11 @@ class TerminalPage extends StatefulWidget {
 
 class _TerminalPageState extends State<TerminalPage> {
   // Android emulator's host-loopback alias; swap for your LAN IP on a device.
-  // For Iroh, paste an `iroh://<endpoint_id>` URL (the daemon prints one at
-  // startup and also writes it to /tmp/daemon-sandbox.nodeid).
+  //
+  // For Iroh, paste an `iroh://<endpoint_id>?direct=host:port[,host:port…]`
+  // URL. The daemon prints its EndpointAddr on startup; on the emulator the
+  // host is reachable at `10.0.2.2` and the daemon's UDP port is the number
+  // in the Ip(192.168.x.y:PORT) line of the online log.
   static const String _defaultEndpoint = 'ws://10.0.2.2:5617/pty';
 
   final TextEditingController _endpointCtrl =
@@ -74,19 +77,27 @@ class _TerminalPageState extends State<TerminalPage> {
   }
 
   /// Factory for the active transport. Dispatches by URL scheme:
-  ///   - `ws://…` / `wss://…`       → WebSocket (local sandbox daemon)
-  ///   - `iroh://<endpoint_id>`     → Iroh QUIC via mobile_core
+  ///   - `ws://…` / `wss://…` → WebSocket (local sandbox daemon)
+  ///   - `iroh://<endpoint_id>?direct=host:port[,host:port...]` → Iroh QUIC
+  ///     via mobile_core. At least one direct addr is required because the
+  ///     sandbox doesn't ship an address-lookup service.
   TerminalTransport _buildTransport(String endpoint) {
     final uri = Uri.parse(endpoint);
     if (uri.scheme == 'iroh') {
       final id = uri.host.isNotEmpty ? uri.host : uri.path.replaceAll('/', '');
-      return IrohTransport(id);
+      final direct = uri.queryParameters['direct'];
+      final addrs = (direct ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+      return IrohTransport(id, directAddrs: addrs);
     }
     return WebSocketTransport(endpoint);
   }
 
-  void _connect() {
-    _tearDownTransport();
+  Future<void> _connect() async {
+    await _tearDownTransport();
     final transport = _buildTransport(_endpointCtrl.text.trim());
     _transport = transport;
 
@@ -108,12 +119,19 @@ class _TerminalPageState extends State<TerminalPage> {
   }
 
   Future<void> _tearDownTransport() async {
-    await _bytesSub?.cancel();
-    _bytesSub = null;
-    await _statusSub?.cancel();
-    _statusSub = null;
+    // Snapshot all owned state synchronously before any await, so a second
+    // call (or a reassignment of _transport) can't accidentally close the
+    // wrong thing. Previously `_connect()` fired a non-awaited teardown then
+    // swapped _transport; the teardown's continuation then read the new
+    // transport and closed it — race fixed.
+    final bytesSub = _bytesSub;
+    final statusSub = _statusSub;
     final t = _transport;
+    _bytesSub = null;
+    _statusSub = null;
     _transport = null;
+    await bytesSub?.cancel();
+    await statusSub?.cancel();
     await t?.close();
   }
 

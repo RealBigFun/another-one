@@ -22,8 +22,9 @@ use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, Mutex};
 
 use crate::frb_generated::StreamSink;
+use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
-use iroh::{Endpoint, EndpointAddr, EndpointId};
+use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode};
 
 /// Must match the daemon's ALPN byte string.
 const ALPN: &[u8] = b"anotherone/pty/0";
@@ -34,7 +35,6 @@ const ALPN: &[u8] = b"anotherone/pty/0";
 fn tokio_rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
     RT.get_or_init(|| {
-        tracing::info!("mobile_core: building dedicated tokio runtime");
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
@@ -47,9 +47,29 @@ fn tokio_rt() -> &'static Runtime {
 #[frb(init)]
 pub fn init_app() {
     flutter_rust_bridge::setup_default_user_utils();
+    setup_tracing();
     // Force the runtime to initialize eagerly so first-call latency doesn't
     // include runtime construction.
     let _ = tokio_rt();
+}
+
+/// Install a tracing subscriber that routes events to Android's logcat on
+/// Android, and to stderr elsewhere. Default filter is modest; override with
+/// `RUST_LOG` when debugging (e.g. `RUST_LOG=iroh=debug`).
+fn setup_tracing() {
+    use tracing_subscriber::{prelude::*, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("warn,mobile_core=info,iroh=warn"));
+
+    #[cfg(target_os = "android")]
+    let layer = tracing_android::layer("mobile_core")
+        .expect("tracing-android layer");
+
+    #[cfg(not(target_os = "android"))]
+    let layer = tracing_subscriber::fmt::layer();
+
+    let _ = tracing_subscriber::registry().with(filter).with(layer).try_init();
 }
 
 /// Opaque handle to a live Iroh QUIC session. Dart holds this object and
@@ -68,38 +88,87 @@ pub struct IrohSession {
     closer: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
-/// Dial a daemon's Iroh endpoint by its public `EndpointId` (the hex string
-/// formerly known as NodeId).
-pub async fn iroh_connect(endpoint_id: String) -> anyhow::Result<IrohSession> {
-    // Delegate to the tokio runtime so iroh's actors actually get polled.
-    // We `await` the JoinHandle, which is runtime-agnostic as a Future.
+
+/// Dial a daemon's Iroh endpoint by its public `EndpointId`, with one or more
+/// explicit direct `host:port` socket addresses.
+///
+/// The sandbox does not ship an address-lookup service or relay, so the
+/// client needs the daemon's IP:port to dial. The daemon prints its
+/// EndpointAddr on startup; pass those addresses through here.
+pub async fn iroh_connect(
+    endpoint_id: String,
+    direct_addrs: Vec<String>,
+) -> anyhow::Result<IrohSession> {
     tokio_rt()
-        .spawn(async move { iroh_connect_inner(endpoint_id).await })
+        .spawn(async move { iroh_connect_inner(endpoint_id, direct_addrs).await })
         .await
         .map_err(|e| anyhow::anyhow!("connect task panicked: {e}"))?
 }
 
-async fn iroh_connect_inner(endpoint_id: String) -> anyhow::Result<IrohSession> {
-    tracing::info!("iroh_connect: id={}", endpoint_id);
+async fn iroh_connect_inner(
+    endpoint_id: String,
+    direct_addrs: Vec<String>,
+) -> anyhow::Result<IrohSession> {
+    tracing::info!(
+        "iroh_connect: id={} direct={:?}",
+        endpoint_id,
+        direct_addrs
+    );
 
     let id: EndpointId = endpoint_id
         .trim()
         .parse()
         .context("invalid EndpointId")?;
 
-    tracing::info!("iroh_connect: binding local endpoint");
-    let endpoint = Endpoint::bind(presets::N0)
-        .await
-        .context("bind client endpoint")?;
-    tracing::info!("iroh_connect: endpoint bound, waiting for online");
+    // Parse direct addresses eagerly so bad input surfaces before bind.
+    let parsed_addrs: Vec<std::net::SocketAddr> = direct_addrs
+        .iter()
+        .map(|s| {
+            s.parse::<std::net::SocketAddr>()
+                .map_err(|e| anyhow::anyhow!("bad direct addr {s:?}: {e}"))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    if parsed_addrs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "at least one direct address is required (sandbox has no address lookup)"
+        ));
+    }
 
-    endpoint.online().await;
-    tracing::info!("iroh_connect: online, dialing");
+    tracing::info!("iroh_connect: binding (Minimal preset + explicit DNS)");
+    // Android gotcha: `DnsResolver::default()` calls `with_system_defaults()`
+    // which tries to read `/etc/resolv.conf`. iroh's own doc notes this "does
+    // not work at least on some Androids" and says it falls back to Google
+    // DNS — but in practice on the emulator the read hangs long enough to
+    // stall bind(). We explicitly hand iroh a resolver pinned to 8.8.8.8 to
+    // skip system detection entirely.
+    let dns = DnsResolver::with_nameserver(
+        "8.8.8.8:53".parse().expect("static ipv4 socket addr"),
+    );
+    let endpoint = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Disabled)
+            .alpns(vec![])
+            .dns_resolver(dns)
+            .bind(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("bind timed out after 15s (Minimal+DNS)"))?
+    .context("bind client endpoint")?;
+    tracing::info!("iroh_connect: endpoint bound, dialing {}", id);
 
-    let conn = endpoint
-        .connect(EndpointAddr::new(id), ALPN)
-        .await
-        .context("connect to daemon")?;
+    let mut addr = EndpointAddr::new(id);
+    for sa in &parsed_addrs {
+        addr = addr.with_ip_addr(*sa);
+    }
+
+    let conn = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        endpoint.connect(addr, ALPN),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("connect timed out after 10s"))?
+    .context("connect to daemon")?;
     tracing::info!("iroh_connect: connected");
 
     let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
@@ -132,7 +201,10 @@ async fn iroh_connect_inner(endpoint_id: String) -> anyhow::Result<IrohSession> 
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "iroh recv error");
+                        break;
+                    }
                 },
             }
         }

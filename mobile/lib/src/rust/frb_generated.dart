@@ -93,6 +93,7 @@ abstract class RustLibApi extends BaseApi {
 
   Future<IrohSession> crateApiIrohClientIrohConnect({
     required String endpointId,
+    required List<String> directAddrs,
   });
 
   RustArcIncrementStrongCountFnType
@@ -252,12 +253,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<IrohSession> crateApiIrohClientIrohConnect({
     required String endpointId,
+    required List<String> directAddrs,
   }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(endpointId, serializer);
+          sse_encode_list_String(directAddrs, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -271,14 +274,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiIrohClientIrohConnectConstMeta,
-        argValues: [endpointId],
+        argValues: [endpointId, directAddrs],
         apiImpl: this,
       ),
     );
   }
 
   TaskConstMeta get kCrateApiIrohClientIrohConnectConstMeta =>
-      const TaskConstMeta(debugName: "iroh_connect", argNames: ["endpointId"]);
+      const TaskConstMeta(
+        debugName: "iroh_connect",
+        argNames: ["endpointId", "directAddrs"],
+      );
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_IrohSession => wire
@@ -333,6 +339,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as String;
+  }
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_String).toList();
   }
 
   @protected
@@ -421,6 +433,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
     return utf8.decoder.convert(inner);
+  }
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <String>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -535,6 +559,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
+  }
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_String(item, serializer);
+    }
   }
 
   @protected

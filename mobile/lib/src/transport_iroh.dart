@@ -16,6 +16,11 @@ class IrohTransport implements TerminalTransport {
   /// Hex-encoded EndpointId of the daemon to dial.
   final String endpointId;
 
+  /// Direct `host:port` socket addresses of the daemon. The sandbox doesn't
+  /// ship an address-lookup service, so the client must know at least one
+  /// direct address to dial.
+  final List<String> directAddrs;
+
   final StreamController<Uint8List> _incoming =
       StreamController<Uint8List>.broadcast();
   final StreamController<TransportStatus> _status =
@@ -26,7 +31,7 @@ class IrohTransport implements TerminalTransport {
   TransportStatus _current = const TransportStatus.disconnected();
   bool _closed = false;
 
-  IrohTransport(this.endpointId);
+  IrohTransport(this.endpointId, {this.directAddrs = const []});
 
   @override
   Stream<Uint8List> get incoming => _incoming.stream;
@@ -46,7 +51,10 @@ class IrohTransport implements TerminalTransport {
 
   Future<void> _connectAsync() async {
     try {
-      final session = await irohConnect(endpointId: endpointId);
+      final session = await irohConnect(
+        endpointId: endpointId,
+        directAddrs: directAddrs,
+      );
       if (_closed) {
         await session.close();
         return;

@@ -6,10 +6,21 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-/// Dial a daemon's Iroh endpoint by its public `EndpointId` (the hex string
-/// formerly known as NodeId).
-Future<IrohSession> irohConnect({required String endpointId}) =>
-    RustLib.instance.api.crateApiIrohClientIrohConnect(endpointId: endpointId);
+// These functions are ignored because they are not marked as `pub`: `iroh_connect_inner`, `setup_tracing`, `tokio_rt`
+
+/// Dial a daemon's Iroh endpoint by its public `EndpointId`, with one or more
+/// explicit direct `host:port` socket addresses.
+///
+/// The sandbox does not ship an address-lookup service or relay, so the
+/// client needs the daemon's IP:port to dial. The daemon prints its
+/// EndpointAddr on startup; pass those addresses through here.
+Future<IrohSession> irohConnect({
+  required String endpointId,
+  required List<String> directAddrs,
+}) => RustLib.instance.api.crateApiIrohClientIrohConnect(
+  endpointId: endpointId,
+  directAddrs: directAddrs,
+);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
 abstract class IrohSession implements RustOpaqueInterface {
