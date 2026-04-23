@@ -13,10 +13,16 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
+import 'src/rust/frb_generated.dart';
 import 'src/transport.dart';
+import 'src/transport_iroh.dart';
 import 'src/transport_websocket.dart';
 
-void main() => runApp(const SandboxApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await RustLib.init();
+  runApp(const SandboxApp());
+}
 
 class SandboxApp extends StatelessWidget {
   const SandboxApp({super.key});
@@ -38,6 +44,8 @@ class TerminalPage extends StatefulWidget {
 
 class _TerminalPageState extends State<TerminalPage> {
   // Android emulator's host-loopback alias; swap for your LAN IP on a device.
+  // For Iroh, paste an `iroh://<endpoint_id>` URL (the daemon prints one at
+  // startup and also writes it to /tmp/daemon-sandbox.nodeid).
   static const String _defaultEndpoint = 'ws://10.0.2.2:5617/pty';
 
   final TextEditingController _endpointCtrl =
@@ -65,9 +73,15 @@ class _TerminalPageState extends State<TerminalPage> {
     };
   }
 
-  /// Factory for the active transport. Kept as a single choice point so
-  /// introducing Iroh (or any other) transport later is a local change.
+  /// Factory for the active transport. Dispatches by URL scheme:
+  ///   - `ws://…` / `wss://…`       → WebSocket (local sandbox daemon)
+  ///   - `iroh://<endpoint_id>`     → Iroh QUIC via mobile_core
   TerminalTransport _buildTransport(String endpoint) {
+    final uri = Uri.parse(endpoint);
+    if (uri.scheme == 'iroh') {
+      final id = uri.host.isNotEmpty ? uri.host : uri.path.replaceAll('/', '');
+      return IrohTransport(id);
+    }
     return WebSocketTransport(endpoint);
   }
 

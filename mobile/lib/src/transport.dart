@@ -23,14 +23,14 @@ class TransportStatus {
   const TransportStatus.connecting() : this(TransportState.connecting);
   const TransportStatus.connected() : this(TransportState.connected);
   const TransportStatus.error(String message)
-      : this(TransportState.error, detail: message);
+    : this(TransportState.error, detail: message);
 
   String get label => switch (state) {
-        TransportState.disconnected => 'disconnected',
-        TransportState.connecting => 'connecting…',
-        TransportState.connected => 'connected',
-        TransportState.error => detail == null ? 'error' : 'error: $detail',
-      };
+    TransportState.disconnected => 'disconnected',
+    TransportState.connecting => 'connecting…',
+    TransportState.connected => 'connected',
+    TransportState.error => detail == null ? 'error' : 'error: $detail',
+  };
 
   bool get isConnected => state == TransportState.connected;
 }

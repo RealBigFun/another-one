@@ -49,8 +49,7 @@ class WebSocketTransport implements TerminalTransport {
       _channel = channel;
       _sub = channel.stream.listen(
         _onFrame,
-        onError: (err) =>
-            _publish(TransportStatus.error(err.toString())),
+        onError: (err) => _publish(TransportStatus.error(err.toString())),
         onDone: () => _publish(const TransportStatus.disconnected()),
         cancelOnError: true,
       );
@@ -66,11 +65,9 @@ class WebSocketTransport implements TerminalTransport {
 
   @override
   void sendResize({required int cols, required int rows}) {
-    _channel?.sink.add(jsonEncode({
-      'type': 'resize',
-      'cols': cols,
-      'rows': rows,
-    }));
+    _channel?.sink.add(
+      jsonEncode({'type': 'resize', 'cols': cols, 'rows': rows}),
+    );
   }
 
   @override
