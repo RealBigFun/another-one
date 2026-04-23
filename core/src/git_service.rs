@@ -17,6 +17,9 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
+use crate::git_actions::{
+    execute_toolbar_git_action, ToolbarActionError, ToolbarActionOutcome, ToolbarGitAction,
+};
 use crate::project_store::{
     read_project_branch_commit_state, read_project_branch_compare_state, read_project_git_state,
     ProjectBranchCommitState, ProjectBranchCompareState, ProjectGitState,
@@ -70,6 +73,32 @@ pub fn spawn_refresh(
             commit_state,
             compare_state,
         });
+    });
+    rx
+}
+
+/// Result payload from `spawn_toolbar_action`. Carries the project id
+/// plus the raw outcome/error so the UI layer can decide how to
+/// surface it (toast kind, refresh scheduling, modal dismissal, etc.)
+/// without needing to know anything about `ToastKind` on the core
+/// side.
+pub struct GitActionReply {
+    pub project_id: String,
+    pub result: Result<ToolbarActionOutcome, ToolbarActionError>,
+}
+
+/// Spawn a background toolbar git action (commit, push, fetch, pull,
+/// create PR, undo) and return a receiver that will yield exactly one
+/// [`GitActionReply`] when the operation completes.
+pub fn spawn_toolbar_action(
+    project_id: String,
+    project_path: PathBuf,
+    action: ToolbarGitAction,
+) -> mpsc::Receiver<GitActionReply> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = execute_toolbar_git_action(&project_path, action);
+        let _ = tx.send(GitActionReply { project_id, result });
     });
     rx
 }

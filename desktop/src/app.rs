@@ -305,12 +305,11 @@ impl TerminalTab {
 // keep compiling, but the body + the spawn worker now live in core.
 use another_one_core::git_service::GitRefreshReply;
 
-struct GitActionReply {
-    project_id: String,
-    refresh_git_state: bool,
-    toast_kind: ToastKind,
-    toast_message: String,
-}
+// The core-side reply carries `result: Result<Outcome, Error>`; the
+// drain loop flattens it into ToastKind + message below. Re-exported
+// at this path so the existing `git_action_receiver` field type still
+// reads naturally.
+use another_one_core::git_service::GitActionReply;
 
 struct CommitFileChangesReply {
     project_id: String,
@@ -5461,32 +5460,13 @@ impl AnotherOneApp {
             self.show_info_toast(start_message, cx);
         }
 
-        let (tx, rx) = mpsc::channel();
         self.git_actions_menu_open = false;
         self.active_git_action = Some(action.clone());
-        self.git_action_receiver = Some(rx);
-        std::thread::spawn(move || {
-            let reply = match crate::git_actions::execute_toolbar_git_action(&project_path, action)
-            {
-                Ok(outcome) => GitActionReply {
-                    project_id: project_id.clone(),
-                    refresh_git_state: outcome.refresh_git_state,
-                    toast_kind: if outcome.warning {
-                        ToastKind::Warning
-                    } else {
-                        ToastKind::Success
-                    },
-                    toast_message: outcome.toast_message,
-                },
-                Err(error) => GitActionReply {
-                    project_id: project_id.clone(),
-                    refresh_git_state: error.refresh_git_state,
-                    toast_kind: ToastKind::Error,
-                    toast_message: error.message,
-                },
-            };
-            let _ = tx.send(reply);
-        });
+        self.git_action_receiver = Some(another_one_core::git_service::spawn_toolbar_action(
+            project_id,
+            project_path,
+            action,
+        ));
         cx.notify();
     }
 
@@ -5497,14 +5477,29 @@ impl AnotherOneApp {
 
         match receiver.try_recv() {
             Ok(reply) => {
+                // Flatten the core-side `Result<Outcome, Error>` into the
+                // UI-level (ToastKind, message, refresh_git_state)
+                // triple that the rest of this method expects.
+                let (toast_kind, toast_message, refresh_git_state) = match reply.result {
+                    Ok(outcome) => (
+                        if outcome.warning {
+                            ToastKind::Warning
+                        } else {
+                            ToastKind::Success
+                        },
+                        outcome.toast_message,
+                        outcome.refresh_git_state,
+                    ),
+                    Err(err) => (ToastKind::Error, err.message, err.refresh_git_state),
+                };
                 let refresh_pull_request_lookup =
                     matches!(
                         self.active_git_action,
                         Some(crate::git_actions::ToolbarGitAction::CreatePr { .. })
-                    ) && matches!(reply.toast_kind, ToastKind::Success);
+                    ) && matches!(toast_kind, ToastKind::Success);
                 self.active_git_action = None;
                 self.git_action_receiver = None;
-                if reply.refresh_git_state {
+                if refresh_git_state {
                     let invalid_settings = self.refresh_project_git_state(&reply.project_id);
                     let _ = self.handle_invalid_project_branch_settings(
                         &reply.project_id,
@@ -5512,11 +5507,11 @@ impl AnotherOneApp {
                         cx,
                     );
                 }
-                match reply.toast_kind {
-                    ToastKind::Success => self.show_success_toast(reply.toast_message, cx),
-                    ToastKind::Error => self.show_error_toast(reply.toast_message, cx),
-                    ToastKind::Warning => self.show_warning_toast(reply.toast_message, cx),
-                    ToastKind::Info => self.show_info_toast(reply.toast_message, cx),
+                match toast_kind {
+                    ToastKind::Success => self.show_success_toast(toast_message, cx),
+                    ToastKind::Error => self.show_error_toast(toast_message, cx),
+                    ToastKind::Warning => self.show_warning_toast(toast_message, cx),
+                    ToastKind::Info => self.show_info_toast(toast_message, cx),
                 }
                 if refresh_pull_request_lookup {
                     self.invalidate_active_project_pull_request_lookup(cx);
