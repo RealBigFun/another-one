@@ -347,9 +347,7 @@ impl AnotherOneApp {
             workspace.remove_project_sections(&project_id_set, cx);
             if workspace.active_section.is_none() && workspace.active_project_page.is_none() {
                 if let Some((section_id, cwd)) = fallback_section.clone() {
-                    workspace.ensure_section(section_id.clone(), Some(cwd), None, cx);
-                    workspace.active_section = Some(section_id);
-                    cx.notify();
+                    workspace.activate_section(section_id, Some(cwd), None, cx);
                 }
             }
         });

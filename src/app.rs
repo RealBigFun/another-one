@@ -723,10 +723,11 @@ impl WorkspacePane {
         cx: &mut Context<Self>,
     ) {
         self.ensure_section(section_id.clone(), cwd, launch_config, cx);
-        let changed =
-            self.active_section.as_ref() != Some(&section_id) || self.active_project_page.is_some();
-        self.active_section = Some(section_id);
-        self.active_project_page = None;
+        let changed = select_active_section(
+            &mut self.active_section,
+            &mut self.active_project_page,
+            section_id,
+        );
         self.persist_active_section(cx);
         if changed {
             cx.notify();
@@ -827,7 +828,11 @@ impl WorkspacePane {
 
         if let Some((section_id, cwd)) = fallback {
             self.ensure_section(section_id.clone(), Some(cwd), None, cx);
-            self.active_section = Some(section_id);
+            select_active_section(
+                &mut self.active_section,
+                &mut self.active_project_page,
+                section_id,
+            );
             self.persist_active_section(cx);
             cx.notify();
         }
@@ -839,19 +844,18 @@ impl WorkspacePane {
         tab_index: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        let section_changed =
-            self.active_section.as_ref() != Some(section_id) || self.active_project_page.is_some();
         let activated = self
             .section_states
             .get_mut(section_id)
             .is_some_and(|state| state.activate_tab(tab_index));
         if activated {
-            self.active_section = Some(section_id.clone());
-            self.active_project_page = None;
+            let _ = select_active_section(
+                &mut self.active_section,
+                &mut self.active_project_page,
+                section_id.clone(),
+            );
             self.persist_section_state(section_id, cx);
-            if section_changed {
-                self.persist_active_section(cx);
-            }
+            self.persist_active_section(cx);
             cx.notify();
         }
         activated
@@ -944,7 +948,7 @@ impl WorkspacePane {
 
     fn persist_active_section(&self, cx: &mut Context<Self>) {
         let app = self.app.clone();
-        let section_key = self.active_section.as_ref().map(SectionId::store_key);
+        let section_key = persisted_active_section_key(self.active_section.as_ref());
         cx.defer(move |cx| {
             let _ = app.update(cx, |app, _| {
                 app.set_last_active_section_key(section_key.clone());
@@ -6880,6 +6884,21 @@ impl AnotherOneApp {
     }
 }
 
+fn select_active_section(
+    active_section: &mut Option<SectionId>,
+    active_project_page: &mut Option<String>,
+    section_id: SectionId,
+) -> bool {
+    let changed = active_section.as_ref() != Some(&section_id) || active_project_page.is_some();
+    *active_section = Some(section_id);
+    *active_project_page = None;
+    changed
+}
+
+fn persisted_active_section_key(active_section: Option<&SectionId>) -> Option<String> {
+    active_section.map(SectionId::store_key)
+}
+
 fn choose_initial_section(
     projects: &[crate::project_store::Project],
     section_states: &HashMap<SectionId, SectionState>,
@@ -6887,7 +6906,9 @@ fn choose_initial_section(
 ) -> Option<SectionId> {
     if let Some(section_id) = last_active_section_key
         .and_then(SectionId::from_store_key)
-        .filter(|section_id| section_states.contains_key(section_id))
+        .filter(|section_id| {
+            section_id.task_id.is_some() && section_states.contains_key(section_id)
+        })
     {
         return Some(section_id);
     }
@@ -6917,6 +6938,7 @@ fn choose_initial_section(
     if let Some(section_id) = restored_sections
         .into_iter()
         .find_map(|(section_id, state)| {
+            section_id.task_id.as_ref()?;
             state
                 .tabs
                 .get(state.active_tab)
@@ -7335,12 +7357,13 @@ mod tests {
         apply_terminal_session_backfill, choose_initial_section, global_tab_navigation_targets,
         next_global_tab_navigation_target, next_project_navigation_target,
         next_task_navigation_target, output_mentions_missing_claude_conversation,
-        remove_terminal_runtime_state, resolve_new_task_shortcut_target,
-        root_project_navigation_targets, sidebar_task_navigation_targets,
-        terminal_line_selection_range, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
-        AnotherOneApp, NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState,
-        TerminalCellPosition, TerminalSelectionRange, TERMINAL_RECENT_OUTPUT_LIMIT,
+        persisted_active_section_key, remove_terminal_runtime_state,
+        resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
+        sidebar_task_navigation_targets, terminal_line_selection_range, terminal_scroll_lines,
+        terminal_selected_text, terminal_selection_range, terminal_word_selection_range,
+        trim_to_recent_output_limit, AnotherOneApp, NavigationDirection, NewTaskShortcutTarget,
+        SectionId, SectionState, TerminalCellPosition, TerminalSelectionRange,
+        TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
@@ -7363,6 +7386,16 @@ mod tests {
             title: title.to_string(),
             provider: None,
             launch_config: Some(TerminalLaunchConfig::default()),
+            restore_status: TerminalRestoreStatus::NotStarted,
+        }
+    }
+
+    fn agent_tab(id: &str, title: &str, provider: AgentProviderKind) -> PersistedTerminalTab {
+        PersistedTerminalTab {
+            id: id.to_string(),
+            title: title.to_string(),
+            provider: Some(provider),
+            launch_config: Some(TerminalLaunchConfig::for_provider(provider)),
             restore_status: TerminalRestoreStatus::NotStarted,
         }
     }
@@ -8182,7 +8215,48 @@ mod tests {
     }
 
     #[test]
-    fn choose_initial_section_prefers_last_active_section_key() {
+    fn choose_initial_section_prefers_saved_task_section_key() {
+        let project = sample_project("project-1", "main");
+        let task_section = SectionId::for_task(&project.id, "main", "task-1");
+        let section_states = HashMap::from([
+            (
+                SectionId::new(&project.id, "main"),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(project.path.clone()),
+                        tabs: vec![shell_tab(0, "Terminal")],
+                    },
+                    None,
+                ),
+            ),
+            (
+                task_section.clone(),
+                SectionState::from_persisted(
+                    PersistedSectionState {
+                        active_tab_id: "task-tab-2".to_string(),
+                        next_tab_id: 3,
+                        cwd: Some(project.path.clone()),
+                        tabs: vec![
+                            agent_tab("task-tab-1", "Codex", AgentProviderKind::Codex),
+                            agent_tab("task-tab-2", "Claude Code", AgentProviderKind::ClaudeCode),
+                        ],
+                    },
+                    None,
+                ),
+            ),
+        ]);
+
+        let chosen =
+            choose_initial_section(&[project], &section_states, Some(&task_section.store_key()));
+
+        assert_eq!(chosen, Some(task_section.clone()));
+        assert_eq!(section_states[&task_section].active_tab, 1);
+    }
+
+    #[test]
+    fn choose_initial_section_ignores_saved_non_task_section_key() {
         let project = sample_project("project-1", "main");
         let main_section = SectionId::new(&project.id, "main");
         let task_section = SectionId::for_task(&project.id, "main", "task-1");
@@ -8200,21 +8274,17 @@ mod tests {
                 ),
             ),
             (
-                task_section,
+                task_section.clone(),
                 SectionState::from_persisted(
                     PersistedSectionState {
-                        active_tab_id: "0".to_string(),
+                        active_tab_id: "task-tab-1".to_string(),
                         next_tab_id: 1,
                         cwd: Some(project.path.clone()),
-                        tabs: vec![PersistedTerminalTab {
-                            id: "0".to_string(),
-                            title: "Codex".to_string(),
-                            provider: Some(AgentProviderKind::Codex),
-                            launch_config: Some(TerminalLaunchConfig::for_provider(
-                                AgentProviderKind::Codex,
-                            )),
-                            restore_status: TerminalRestoreStatus::NotStarted,
-                        }],
+                        tabs: vec![agent_tab(
+                            "task-tab-1",
+                            "Claude Code",
+                            AgentProviderKind::ClaudeCode,
+                        )],
                     },
                     None,
                 ),
@@ -8224,52 +8294,77 @@ mod tests {
         let chosen =
             choose_initial_section(&[project], &section_states, Some(&main_section.store_key()));
 
-        assert_eq!(chosen, Some(main_section));
+        assert_eq!(chosen, Some(task_section));
     }
 
     #[test]
-    fn choose_initial_section_prefers_restored_agent_section_without_saved_selection() {
+    fn choose_initial_section_falls_back_when_saved_task_section_is_missing() {
         let project = sample_project("project-1", "main");
-        let main_section = SectionId::new(&project.id, "main");
         let task_section = SectionId::for_task(&project.id, "main", "task-1");
-        let section_states = HashMap::from([
-            (
-                main_section,
-                SectionState::from_persisted(
-                    PersistedSectionState {
-                        active_tab_id: "0".to_string(),
-                        next_tab_id: 1,
-                        cwd: Some(project.path.clone()),
-                        tabs: vec![shell_tab(0, "Terminal")],
-                    },
-                    None,
-                ),
+        let missing_section = SectionId::for_task(&project.id, "main", "task-missing");
+        let section_states = HashMap::from([(
+            task_section.clone(),
+            SectionState::from_persisted(
+                PersistedSectionState {
+                    active_tab_id: "task-tab-1".to_string(),
+                    next_tab_id: 2,
+                    cwd: Some(project.path.clone()),
+                    tabs: vec![agent_tab("task-tab-1", "Codex", AgentProviderKind::Codex)],
+                },
+                None,
             ),
-            (
-                task_section.clone(),
-                SectionState::from_persisted(
-                    PersistedSectionState {
-                        active_tab_id: "0".to_string(),
-                        next_tab_id: 1,
-                        cwd: Some(project.path.clone()),
-                        tabs: vec![PersistedTerminalTab {
-                            id: "0".to_string(),
-                            title: "Claude Code".to_string(),
-                            provider: Some(AgentProviderKind::ClaudeCode),
-                            launch_config: Some(TerminalLaunchConfig::for_provider(
-                                AgentProviderKind::ClaudeCode,
-                            )),
-                            restore_status: TerminalRestoreStatus::NotStarted,
-                        }],
-                    },
-                    None,
-                ),
-            ),
-        ]);
+        )]);
 
-        let chosen = choose_initial_section(&[project], &section_states, None);
+        let chosen = choose_initial_section(
+            &[project],
+            &section_states,
+            Some(&missing_section.store_key()),
+        );
 
         assert_eq!(chosen, Some(task_section));
+    }
+
+    #[test]
+    fn choose_initial_section_falls_back_when_saved_section_key_is_invalid() {
+        let project = sample_project("project-1", "main");
+        let task_section = SectionId::for_task(&project.id, "main", "task-1");
+        let section_states = HashMap::from([(
+            task_section,
+            SectionState::from_persisted(
+                PersistedSectionState {
+                    active_tab_id: "0".to_string(),
+                    next_tab_id: 1,
+                    cwd: Some(project.path.clone()),
+                    tabs: vec![shell_tab(0, "Terminal")],
+                },
+                None,
+            ),
+        )]);
+
+        let chosen = choose_initial_section(&[project.clone()], &section_states, Some("invalid"));
+
+        assert_eq!(chosen, Some(SectionId::new(&project.id, "main")));
+    }
+
+    #[test]
+    fn select_active_section_updates_persisted_section_key() {
+        let section = SectionId::for_task("project-1", "main", "task-1");
+        let mut active_section = None;
+        let mut active_project_page = Some("project-1".to_string());
+
+        let changed = select_active_section(
+            &mut active_section,
+            &mut active_project_page,
+            section.clone(),
+        );
+
+        assert!(changed);
+        assert_eq!(active_section, Some(section.clone()));
+        assert_eq!(active_project_page, None);
+        assert_eq!(
+            persisted_active_section_key(active_section.as_ref()),
+            Some(section.store_key())
+        );
     }
 
     #[test]
