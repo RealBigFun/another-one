@@ -13,7 +13,7 @@ use iroh::{Endpoint, SecretKey};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, WorkerReply};
+use crate::frame::{self, Control, PullRequestInfo, PullRequestState, WorkerReply};
 use crate::pty::PtySession;
 
 /// ALPN advertised by the sandbox. Version-suffixed so future protocol breaks
@@ -376,8 +376,8 @@ async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
                         } else {
                             let worker_tx = outbound_tx.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = forward_git_refresh(worker_tx, path).await {
-                                    warn!(error = %e, "git refresh forward failed");
+                                if let Err(e) = forward_project_state(worker_tx, path).await {
+                                    warn!(error = %e, "project state forward failed");
                                 }
                             });
                         }
@@ -418,42 +418,102 @@ async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Subscribe to one `spawn_refresh` call for `project_path` and push
-/// the projected reply onto the outbound queue. One-shot: the worker
-/// sends exactly one reply, we forward it, done.
+/// Run the full watched-project pipeline once: subscribe to
+/// `spawn_refresh`, forward the `GitRefreshReply` as a wire frame,
+/// and — if the refresh returned a current branch — chain a
+/// `spawn_pull_request_lookup` for that branch and forward the
+/// resulting status as a second frame.
 ///
 /// Errors here are never fatal to the session — they drop this task
-/// silently; PTY bridging keeps working.
-async fn forward_git_refresh(
+/// silently; PTY bridging keeps working. Each stage fails
+/// independently: a failed PR lookup doesn't retroactively invalidate
+/// the refresh that already shipped.
+async fn forward_project_state(
     outbound_tx: mpsc::Sender<(u8, Vec<u8>)>,
     project_path: PathBuf,
 ) -> anyhow::Result<()> {
     let project_id = project_path.display().to_string();
-    let mut rx = another_one_core::git_service::spawn_refresh(
-        project_id,
-        project_path,
+
+    // Stage 1: git refresh.
+    let mut refresh_rx = another_one_core::git_service::spawn_refresh(
+        project_id.clone(),
+        project_path.clone(),
         /* include_metadata */ true,
         /* commit_limit      */ None,
         /* compare_target    */ None,
     );
-    let reply = rx
+    let refresh = refresh_rx
         .recv()
         .await
         .context("git_refresh sender dropped before sending a reply")?;
 
-    let wire = WorkerReply::GitRefresh {
-        project_id: reply.project_id,
-        current_branch: reply.state.current_branch,
-        changed_file_count: reply.state.changed_files.len(),
-        ahead: reply.state.ahead_count,
-        behind: reply.state.behind_count,
+    let current_branch = refresh.state.current_branch.clone();
+    let refresh_wire = WorkerReply::GitRefresh {
+        project_id: refresh.project_id.clone(),
+        current_branch: refresh.state.current_branch,
+        changed_file_count: refresh.state.changed_files.len(),
+        ahead: refresh.state.ahead_count,
+        behind: refresh.state.behind_count,
     };
-    let payload = serde_json::to_vec(&wire).context("serialize worker reply")?;
+    send_worker_reply(&outbound_tx, &refresh_wire)
+        .await
+        .context("forward git_refresh reply")?;
+
+    // Stage 2: PR lookup (only if we know the branch name).
+    let Some(branch_name) = current_branch else {
+        return Ok(());
+    };
+
+    // `spawn_pull_request_lookup` is queue-shaped — it takes a
+    // broadcast::Sender (so desktop can share one receiver across
+    // many lookups). For the daemon's one-shot use we allocate a
+    // throwaway channel per call, capacity 1.
+    let (pr_tx, mut pr_rx) = tokio::sync::broadcast::channel(1);
+    another_one_core::git_service::spawn_pull_request_lookup(
+        pr_tx,
+        /* lookup_key */ format!("{project_id}:{branch_name}"),
+        project_path,
+        branch_name.clone(),
+    );
+    let pr_reply = pr_rx
+        .recv()
+        .await
+        .context("pull_request_lookup sender dropped before sending a reply")?;
+
+    let pr_wire = WorkerReply::PullRequestStatus {
+        project_id,
+        branch_name,
+        pr: pr_reply.pull_request.map(|status| PullRequestInfo {
+            number: status.number,
+            url: status.url,
+            state: map_pr_state(status.state),
+        }),
+    };
+    send_worker_reply(&outbound_tx, &pr_wire)
+        .await
+        .context("forward pull_request reply")?;
+
+    Ok(())
+}
+
+async fn send_worker_reply(
+    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    reply: &WorkerReply,
+) -> anyhow::Result<()> {
+    let payload = serde_json::to_vec(reply).context("serialize worker reply")?;
     outbound_tx
         .send((frame::TY_WORKER_REPLY, payload))
         .await
-        .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))?;
-    Ok(())
+        .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))
+}
+
+fn map_pr_state(state: another_one_core::git_actions::PullRequestState) -> PullRequestState {
+    use another_one_core::git_actions::PullRequestState as Core;
+    match state {
+        Core::Open => PullRequestState::Open,
+        Core::Closed => PullRequestState::Closed,
+        Core::Merged => PullRequestState::Merged,
+    }
 }
 
 fn iroh_pty_size(cols: u16, rows: u16) -> portable_pty::PtySize {

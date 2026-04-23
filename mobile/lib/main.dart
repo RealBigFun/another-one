@@ -73,10 +73,13 @@ class _TerminalPageState extends State<TerminalPage> {
   StreamSubscription<TransportStatus>? _statusSub;
   StreamSubscription<WorkerReply>? _workerRepliesSub;
   TransportStatus _status = const TransportStatus.disconnected();
-  // Latest GitRefresh reply received on the current session, if any.
-  // Cleared on disconnect so the banner doesn't lie about a stale
+  // Latest per-kind worker replies. We keep a separate slot for each
+  // so a newer GitRefresh doesn't clobber a still-fresh
+  // PullRequestStatus (or vice versa) — the banner composes from both.
+  // Cleared on reconnect so the banner doesn't lie about a stale
   // project after the user connects to a different one.
-  WorkerReply? _latestWorkerReply;
+  WorkerReply_GitRefresh? _latestGitRefresh;
+  WorkerReply_PullRequestStatus? _latestPullRequestStatus;
 
   @override
   void initState() {
@@ -164,7 +167,10 @@ class _TerminalPageState extends State<TerminalPage> {
     final url = _endpointCtrl.text.trim();
     final transport = _buildTransport(url);
     _transport = transport;
-    setState(() => _latestWorkerReply = null);
+    setState(() {
+      _latestGitRefresh = null;
+      _latestPullRequestStatus = null;
+    });
 
     _bytesSub = transport.incoming.listen((bytes) {
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
@@ -189,7 +195,17 @@ class _TerminalPageState extends State<TerminalPage> {
     if (transport is IrohTransport) {
       _workerRepliesSub = transport.workerReplies.listen((reply) {
         if (!mounted) return;
-        setState(() => _latestWorkerReply = reply);
+        // Exhaustive switch on the freezed sealed class — adding a
+        // new WorkerReply variant will force this site to grow an
+        // arm at compile time, no silent fallthrough.
+        setState(() {
+          switch (reply) {
+            case WorkerReply_GitRefresh():
+              _latestGitRefresh = reply;
+            case WorkerReply_PullRequestStatus():
+              _latestPullRequestStatus = reply;
+          }
+        });
       });
     }
 
@@ -285,7 +301,11 @@ class _TerminalPageState extends State<TerminalPage> {
                 }
               },
             ),
-            if (_latestWorkerReply != null) _GitBanner(reply: _latestWorkerReply!),
+            if (_latestGitRefresh != null)
+              _GitBanner(
+                gitRefresh: _latestGitRefresh!,
+                pullRequest: _latestPullRequestStatus,
+              ),
             Expanded(
               child: GestureDetector(
                 onTap: _terminalFocus.requestFocus,
@@ -406,56 +426,66 @@ class _ProjectPathRow extends StatelessWidget {
   }
 }
 
-/// One-line git-state banner. Shown above the terminal whenever the
-/// current session has received at least one `WorkerReply::GitRefresh`
-/// from the daemon. Kept intentionally plain — a future PR can add
-/// icons, truncation, refresh-triggered animation.
+/// One-line banner above the terminal showing the latest git state +
+/// PR status for the watched project. Only renders the PR clause once
+/// a `PullRequestStatus` reply has arrived; until then, the git clause
+/// is shown alone (avoids flashing "no PR" before the daemon has
+/// actually checked).
 class _GitBanner extends StatelessWidget {
-  const _GitBanner({required this.reply});
+  const _GitBanner({required this.gitRefresh, required this.pullRequest});
 
-  final WorkerReply reply;
+  final WorkerReply_GitRefresh gitRefresh;
+  final WorkerReply_PullRequestStatus? pullRequest;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return switch (reply) {
-      WorkerReply_GitRefresh(
-        :final currentBranch,
-        :final changedFileCount,
-        :final ahead,
-        :final behind,
-      ) =>
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHigh,
-            border: Border(
-              top: BorderSide(color: Colors.grey.shade800),
-              bottom: BorderSide(color: Colors.grey.shade800),
-            ),
-          ),
-          child: Text(
-            _formatGit(currentBranch, changedFileCount, ahead, behind),
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          ),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHigh,
+        border: Border(
+          top: BorderSide(color: Colors.grey.shade800),
+          bottom: BorderSide(color: Colors.grey.shade800),
         ),
-    };
+      ),
+      child: Text(
+        _format(gitRefresh, pullRequest),
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      ),
+    );
   }
 
-  static String _formatGit(
-    String? branch,
-    BigInt changed,
-    BigInt ahead,
-    BigInt behind,
+  static String _format(
+    WorkerReply_GitRefresh git,
+    WorkerReply_PullRequestStatus? pr,
   ) {
     final parts = <String>[];
-    parts.add('⎇ ${branch ?? "(detached)"}');
-    if (changed > BigInt.zero) parts.add('$changed changed');
-    if (ahead > BigInt.zero) parts.add('↑$ahead');
-    if (behind > BigInt.zero) parts.add('↓$behind');
+    parts.add('⎇ ${git.currentBranch ?? "(detached)"}');
+    if (git.changedFileCount > BigInt.zero) {
+      parts.add('${git.changedFileCount} changed');
+    }
+    if (git.ahead > BigInt.zero) parts.add('↑${git.ahead}');
+    if (git.behind > BigInt.zero) parts.add('↓${git.behind}');
+
+    if (pr != null) {
+      final info = pr.pr;
+      if (info == null) {
+        parts.add('no PR');
+      } else {
+        parts.add('PR #${info.number} ${_prState(info.state)}');
+      }
+    }
+
     return parts.join(' · ');
   }
+
+  static String _prState(PullRequestState state) => switch (state) {
+        PullRequestState.open => 'open',
+        PullRequestState.closed => 'closed',
+        PullRequestState.merged => 'merged',
+      };
 }
 
 class _ChordBar extends StatelessWidget {
