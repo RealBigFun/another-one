@@ -1372,6 +1372,15 @@ impl AnotherOneApp {
                         .truncate()
                         .child(SharedString::from(task_name.clone())),
                 )
+                .when(is_worktree, |row| {
+                    row.child(
+                        svg()
+                            .flex_shrink_0()
+                            .path("assets/icons/icons__git-split.svg")
+                            .size(px(11.))
+                            .text_color(muted_col),
+                    )
+                })
                 .when(is_pinned, |row| {
                     row.child(
                         svg()
