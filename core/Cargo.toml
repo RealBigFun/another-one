@@ -8,8 +8,17 @@ publish = false
 [lib]
 name = "another_one_core"
 
+[features]
+default = []
+# Forwarded from the desktop crate's `hotpath` / `hotpath-alloc` features;
+# controls whether `#[hotpath::measure]` in moved code actually records
+# anything. Off by default so the crate stays cheap to compile.
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+
 [dependencies]
 dirs = "5"
+hotpath = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }

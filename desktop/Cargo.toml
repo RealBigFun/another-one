@@ -6,8 +6,8 @@ description = "AnotherOne desktop app using Zed GPUI"
 
 [features]
 default = []
-hotpath = ["hotpath/hotpath"]
-hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+hotpath = ["hotpath/hotpath", "another-one-core/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "another-one-core/hotpath-alloc"]
 
 # GPUI: https://github.com/zed-industries/zed/tree/main/crates/gpui
 # Using the crates.io release (published from that tree). Pin `rev = "…"` if you need git main.

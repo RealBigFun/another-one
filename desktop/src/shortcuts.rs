@@ -17,7 +17,7 @@
 
 use gpui::KeyDownEvent;
 
-pub use another_one_core::shortcuts::{ShortcutAction, ShortcutSettings, ALL_SHORTCUT_ACTIONS};
+pub use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ShortcutBinding {

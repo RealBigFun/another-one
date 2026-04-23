@@ -17,7 +17,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub use another_one_core::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
+pub use another_one_core::open_in::OpenInAppKind;
 
 use crate::platform::{CurrentPlatform, PlatformServices};
 

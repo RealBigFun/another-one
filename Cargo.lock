@@ -193,6 +193,7 @@ name = "another-one-core"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "hotpath",
  "serde",
  "serde_json",
  "tempfile",
