@@ -13,6 +13,7 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 # Using the crates.io release (published from that tree). Pin `rev = "…"` if you need git main.
 [dependencies]
 alacritty_terminal = "0.26.0"
+another-one-core = { path = "../core" }
 anyhow = "1"
 gpui = "0.2.2"
 hotpath = "0.15"

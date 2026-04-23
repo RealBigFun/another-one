@@ -172,6 +172,7 @@ name = "another-one"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "another-one-core",
  "anyhow",
  "cocoa 0.26.0",
  "dirs 5.0.1",
@@ -181,6 +182,17 @@ dependencies = [
  "log",
  "objc",
  "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "another-one-core"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
  "serde",
  "serde_json",
  "tempfile",
