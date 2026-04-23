@@ -6491,6 +6491,7 @@ impl AnotherOneApp {
                     .flex_1()
                     .min_w(px(MIN_MAIN))
                     .min_h_0()
+                    .pb(px(8.))
                     .overflow_hidden()
                     .child(self.workspace_pane.clone()),
             )
