@@ -16,6 +16,9 @@ pub const RIGHT_SIDEBAR_MIN_OPEN: f32 = MIN_RIGHT;
 /// traffic-light cluster has more vertical room.
 pub const TITLEBAR_CHROME_H: f32 = 38.;
 pub const FOOTER_H: f32 = TITLEBAR_CHROME_H;
+pub const TERMINAL_TAB_BAR_H: f32 = 36.;
+pub const TERMINAL_VIEW_PADDING: f32 = 12.;
+pub const MAIN_PANE_BOTTOM_PAD: f32 = 8.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Gutter {

@@ -10,7 +10,7 @@ use gpui::{
     ClipboardEntry, ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Image, InspectorElementId,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Point,
-    Render, ScrollDelta, SharedString, Size, Timer, UTF16Selection, WeakEntity, Window,
+    Render, ScrollDelta, ShapedLine, SharedString, Size, Timer, UTF16Selection, WeakEntity, Window,
 };
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
@@ -479,6 +479,19 @@ impl Default for SettingsGitActionScriptInputState {
             selection_anchor: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsGitActionScriptKind {
+    Commit,
+    PullRequest,
+}
+
+#[derive(Clone)]
+pub(crate) struct SettingsGitActionScriptLineLayout {
+    pub(crate) range: std::ops::Range<usize>,
+    pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) line: ShapedLine,
 }
 
 #[derive(Debug, Clone)]
@@ -1151,7 +1164,17 @@ pub struct AnotherOneApp {
     /// Local draft and selection state for per-agent launch arg editing in settings.
     pub(crate) settings_agent_input: SettingsAgentInputState,
     /// Local draft and selection state for the git commit generation script editor.
-    pub(crate) settings_git_action_script_input: SettingsGitActionScriptInputState,
+    pub(crate) settings_git_commit_script_input: SettingsGitActionScriptInputState,
+    /// Local draft and selection state for the git PR generation script editor.
+    pub(crate) settings_git_pr_script_input: SettingsGitActionScriptInputState,
+    /// Last measured line layouts for the git commit generation script editor.
+    pub(crate) settings_git_commit_script_layout: Vec<SettingsGitActionScriptLineLayout>,
+    /// Last measured line layouts for the git PR generation script editor.
+    pub(crate) settings_git_pr_script_layout: Vec<SettingsGitActionScriptLineLayout>,
+    /// Selection anchor while dragging in the git commit generation script editor.
+    pub(crate) settings_git_commit_script_drag_anchor: Option<usize>,
+    /// Selection anchor while dragging in the git PR generation script editor.
+    pub(crate) settings_git_pr_script_drag_anchor: Option<usize>,
     /// Active right-sidebar mode for task views.
     pub(crate) right_sidebar_mode: RightSidebarMode,
     /// Session-scoped recent-commit page sizes keyed by project id.
@@ -1280,6 +1303,50 @@ enum TextInputTarget {
     Blocked,
 }
 
+impl AnotherOneApp {
+    pub(crate) fn focused_settings_git_action_script_kind(
+        &self,
+    ) -> Option<SettingsGitActionScriptKind> {
+        if self.settings_git_commit_script_input.focused {
+            Some(SettingsGitActionScriptKind::Commit)
+        } else if self.settings_git_pr_script_input.focused {
+            Some(SettingsGitActionScriptKind::PullRequest)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn settings_git_action_script_input(
+        &self,
+        kind: SettingsGitActionScriptKind,
+    ) -> &SettingsGitActionScriptInputState {
+        match kind {
+            SettingsGitActionScriptKind::Commit => &self.settings_git_commit_script_input,
+            SettingsGitActionScriptKind::PullRequest => &self.settings_git_pr_script_input,
+        }
+    }
+
+    pub(crate) fn settings_git_action_script_input_mut(
+        &mut self,
+        kind: SettingsGitActionScriptKind,
+    ) -> &mut SettingsGitActionScriptInputState {
+        match kind {
+            SettingsGitActionScriptKind::Commit => &mut self.settings_git_commit_script_input,
+            SettingsGitActionScriptKind::PullRequest => &mut self.settings_git_pr_script_input,
+        }
+    }
+
+    pub(crate) fn settings_git_action_script_layout(
+        &self,
+        kind: SettingsGitActionScriptKind,
+    ) -> &[SettingsGitActionScriptLineLayout] {
+        match kind {
+            SettingsGitActionScriptKind::Commit => &self.settings_git_commit_script_layout,
+            SettingsGitActionScriptKind::PullRequest => &self.settings_git_pr_script_layout,
+        }
+    }
+}
+
 impl EntityInputHandler for AnotherOneApp {
     fn text_for_range(
         &mut self,
@@ -1303,11 +1370,15 @@ impl EntityInputHandler for AnotherOneApp {
                 .as_ref()
                 .and_then(|agent_id| self.settings_agent_input.drafts.get(agent_id))
                 .map(|draft| text_for_utf16_range(draft, range, adjusted_range)),
-            TextInputTarget::SettingsGitActionScript => Some(text_for_utf16_range(
-                &self.settings_git_action_script_input.draft,
-                range,
-                adjusted_range,
-            )),
+            TextInputTarget::SettingsGitActionScript => {
+                self.focused_settings_git_action_script_kind().map(|kind| {
+                    text_for_utf16_range(
+                        &self.settings_git_action_script_input(kind).draft,
+                        range,
+                        adjusted_range,
+                    )
+                })
+            }
             TextInputTarget::Terminal => None,
             TextInputTarget::Blocked => None,
         }
@@ -1346,11 +1417,12 @@ impl EntityInputHandler for AnotherOneApp {
                         self.settings_agent_input.selection_anchor,
                     )
                 }),
-            TextInputTarget::SettingsGitActionScript => Some(utf16_selection_for_text(
-                &self.settings_git_action_script_input.draft,
-                self.settings_git_action_script_input.cursor,
-                self.settings_git_action_script_input.selection_anchor,
-            )),
+            TextInputTarget::SettingsGitActionScript => {
+                self.focused_settings_git_action_script_kind().map(|kind| {
+                    let input = self.settings_git_action_script_input(kind);
+                    utf16_selection_for_text(&input.draft, input.cursor, input.selection_anchor)
+                })
+            }
             TextInputTarget::Terminal => None,
             TextInputTarget::Blocked => None,
         }
@@ -1421,16 +1493,29 @@ impl EntityInputHandler for AnotherOneApp {
                 }
             }
             TextInputTarget::SettingsGitActionScript => {
-                replace_custom_text(
-                    &mut self.settings_git_action_script_input.draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
-                    range,
-                    text,
-                );
-                let _ = self.project_store.set_git_commit_generation_script(
-                    self.settings_git_action_script_input.draft.clone(),
-                );
+                if let Some(kind) = self.focused_settings_git_action_script_kind() {
+                    let saved_draft = {
+                        let input = self.settings_git_action_script_input_mut(kind);
+                        replace_custom_text(
+                            &mut input.draft,
+                            &mut input.cursor,
+                            &mut input.selection_anchor,
+                            range,
+                            text,
+                        );
+                        input.draft.clone()
+                    };
+                    match kind {
+                        SettingsGitActionScriptKind::Commit => {
+                            let _ = self
+                                .project_store
+                                .set_git_commit_generation_script(saved_draft);
+                        }
+                        SettingsGitActionScriptKind::PullRequest => {
+                            let _ = self.project_store.set_git_pr_generation_script(saved_draft);
+                        }
+                    }
+                }
                 cx.notify();
             }
             TextInputTarget::Terminal => {
@@ -1485,21 +1570,67 @@ impl EntityInputHandler for AnotherOneApp {
 
     fn bounds_for_range(
         &mut self,
-        _range_utf16: std::ops::Range<usize>,
+        range_utf16: std::ops::Range<usize>,
         _element_bounds: Bounds<Pixels>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        None
+        if self.text_input_target(cx) != TextInputTarget::SettingsGitActionScript {
+            return None;
+        }
+        let kind = self.focused_settings_git_action_script_kind()?;
+        let input = self.settings_git_action_script_input(kind);
+
+        let byte_range =
+            utf16_range_to_byte_range(&input.draft, clamp_utf16_range(&input.draft, range_utf16));
+        let mut line_bounds = self
+            .settings_git_action_script_layout(kind)
+            .iter()
+            .filter_map(|line| {
+                let start = byte_range.start.max(line.range.start);
+                let end = byte_range.end.min(line.range.end);
+                (start <= end).then(|| {
+                    let local_start = start - line.range.start;
+                    let local_end = end - line.range.start;
+                    Bounds::from_corners(
+                        gpui::point(
+                            line.bounds.left() + line.line.x_for_index(local_start),
+                            line.bounds.top(),
+                        ),
+                        gpui::point(
+                            line.bounds.left() + line.line.x_for_index(local_end),
+                            line.bounds.bottom(),
+                        ),
+                    )
+                })
+            });
+        let first = line_bounds.next()?;
+        Some(line_bounds.fold(first, |acc, bounds| {
+            Bounds::from_corners(
+                gpui::point(acc.left().min(bounds.left()), acc.top().min(bounds.top())),
+                gpui::point(
+                    acc.right().max(bounds.right()),
+                    acc.bottom().max(bounds.bottom()),
+                ),
+            )
+        }))
     }
 
     fn character_index_for_point(
         &mut self,
-        _point: Point<Pixels>,
+        point: Point<Pixels>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<usize> {
-        None
+        if self.text_input_target(cx) != TextInputTarget::SettingsGitActionScript {
+            return None;
+        }
+        let kind = self.focused_settings_git_action_script_kind()?;
+
+        Some(byte_to_utf16_offset(
+            &self.settings_git_action_script_input(kind).draft,
+            self.settings_git_action_script_index_for_point(kind, point),
+        ))
     }
 }
 
@@ -1813,7 +1944,7 @@ impl AnotherOneApp {
                 return TextInputTarget::SettingsAgentInput;
             }
             if self.settings_section == crate::settings_page::SettingsSection::GitActions
-                && self.settings_git_action_script_input.focused
+                && self.focused_settings_git_action_script_kind().is_some()
             {
                 return TextInputTarget::SettingsGitActionScript;
             }
@@ -2275,10 +2406,15 @@ impl AnotherOneApp {
         self.shortcut_capture_action = None;
         self.settings_agent_input.focused_agent_id = None;
         self.settings_agent_input.selection_anchor = None;
-        self.settings_git_action_script_input.focused = false;
-        self.settings_git_action_script_input.selection_anchor = None;
+        self.settings_git_commit_script_input.focused = false;
+        self.settings_git_commit_script_input.selection_anchor = None;
+        self.settings_git_pr_script_input.focused = false;
+        self.settings_git_pr_script_input.selection_anchor = None;
         if section == crate::settings_page::SettingsSection::GitActions {
-            self.sync_settings_git_action_script_from_store();
+            self.sync_settings_git_action_script_from_store(SettingsGitActionScriptKind::Commit);
+            self.sync_settings_git_action_script_from_store(
+                SettingsGitActionScriptKind::PullRequest,
+            );
         }
         self.dismiss_titlebar_dropdowns();
         cx.stop_propagation();
@@ -2877,6 +3013,7 @@ impl AnotherOneApp {
         let app_entity = cx.weak_entity();
         let available_open_in_apps = detect_available_open_in_apps();
         let git_commit_generation_script = store.git_commit_generation_script().to_string();
+        let git_pr_generation_script = store.git_pr_generation_script().to_string();
         let workspace_pane = cx.new(|_| {
             WorkspacePane::new(
                 app_entity.clone(),
@@ -2977,10 +3114,18 @@ impl AnotherOneApp {
             project_page_config_dropdown: None,
             shortcut_capture_action: None,
             settings_agent_input: SettingsAgentInputState::default(),
-            settings_git_action_script_input: SettingsGitActionScriptInputState {
+            settings_git_commit_script_input: SettingsGitActionScriptInputState {
                 draft: git_commit_generation_script,
                 ..Default::default()
             },
+            settings_git_pr_script_input: SettingsGitActionScriptInputState {
+                draft: git_pr_generation_script,
+                ..Default::default()
+            },
+            settings_git_commit_script_layout: Vec::new(),
+            settings_git_pr_script_layout: Vec::new(),
+            settings_git_commit_script_drag_anchor: None,
+            settings_git_pr_script_drag_anchor: None,
             right_sidebar_mode: RightSidebarMode::WorkingTree,
             commit_page_sizes: HashMap::new(),
             branch_commit_states: HashMap::new(),
@@ -3303,9 +3448,19 @@ impl AnotherOneApp {
         } else {
             0.0
         };
-        let width = (f32::from(viewport.width) - self.sidebar_w - self.right_w - GUTTER * 2.0)
+        let width = (f32::from(viewport.width)
+            - self.sidebar_w
+            - self.right_w
+            - GUTTER * 2.0
+            - TERMINAL_VIEW_PADDING * 2.0)
             .max(MIN_MAIN);
-        let height = (f32::from(viewport.height) - FOOTER_H - titlebar_height - 36.0).max(120.0);
+        let height = (f32::from(viewport.height)
+            - FOOTER_H
+            - titlebar_height
+            - TERMINAL_TAB_BAR_H
+            - MAIN_PANE_BOTTOM_PAD
+            - TERMINAL_VIEW_PADDING * 2.0)
+            .max(120.0);
         TerminalGridSize::from_panel_size(width, height, self.font_size)
     }
 
@@ -4080,8 +4235,8 @@ impl AnotherOneApp {
         Some(TerminalPanelMetrics {
             key: key.clone(),
             left: self.sidebar_w + GUTTER,
-            top: titlebar_height + 36.0,
-            padding: 12.0,
+            top: titlebar_height + TERMINAL_TAB_BAR_H,
+            padding: TERMINAL_VIEW_PADDING,
             cell_width: f32::from(terminal_cell_width(window, self.font_size)),
             cell_height: (self.font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0),
             columns: snapshot.columns,
@@ -5532,7 +5687,10 @@ impl AnotherOneApp {
                 base_branch: Some(base_branch),
             } => {
                 self.show_info_toast(
-                    format!("Creating a pull request into {}...", base_branch),
+                    format!(
+                        "Generating AI PR title/body and creating a pull request into {}...",
+                        base_branch
+                    ),
                     cx,
                 );
                 ""
@@ -5542,7 +5700,10 @@ impl AnotherOneApp {
                 base_branch: Some(base_branch),
             } => {
                 self.show_info_toast(
-                    format!("Creating a draft pull request into {}...", base_branch),
+                    format!(
+                        "Generating AI PR title/body and creating a draft pull request into {}...",
+                        base_branch
+                    ),
                     cx,
                 );
                 ""
@@ -5550,11 +5711,11 @@ impl AnotherOneApp {
             crate::git_actions::ToolbarGitAction::CreatePr {
                 draft: false,
                 base_branch: None,
-            } => "Creating a pull request...",
+            } => "Generating AI PR title/body and creating a pull request...",
             crate::git_actions::ToolbarGitAction::CreatePr {
                 draft: true,
                 base_branch: None,
-            } => "Creating a draft pull request...",
+            } => "Generating AI PR title/body and creating a draft pull request...",
         };
         if !start_message.is_empty() {
             self.show_info_toast(start_message, cx);
@@ -5565,6 +5726,7 @@ impl AnotherOneApp {
                 .project_store
                 .git_commit_generation_script()
                 .to_string(),
+            pr_generation_script: self.project_store.git_pr_generation_script().to_string(),
         };
         let (tx, rx) = mpsc::channel();
         self.git_actions_menu_open = false;
@@ -6395,6 +6557,9 @@ impl AnotherOneApp {
         if self.update_terminal_selection_drag(ev, window, cx) {
             return;
         }
+        if self.update_settings_git_action_script_selection_drag(ev, cx) {
+            return;
+        }
 
         let Some((kind, last_x)) = self.drag else {
             return;
@@ -6431,6 +6596,7 @@ impl AnotherOneApp {
     pub fn on_mouse_up(&mut self, _ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let had_toast_drag = self.finish_toast_drag(cx);
         let had_terminal_selection = self.finish_terminal_selection_drag(cx);
+        let had_settings_selection = self.finish_settings_git_action_script_selection_drag();
         let had_layout_drag = self.drag.take().is_some();
 
         if had_layout_drag {
@@ -6440,7 +6606,7 @@ impl AnotherOneApp {
                 .set_left_sidebar_open(self.sidebar_is_open());
         }
 
-        if had_toast_drag || had_terminal_selection || had_layout_drag {
+        if had_toast_drag || had_terminal_selection || had_settings_selection || had_layout_drag {
             cx.notify();
         }
     }
@@ -6603,7 +6769,7 @@ impl AnotherOneApp {
                     .flex_1()
                     .min_w(px(MIN_MAIN))
                     .min_h_0()
-                    .pb(px(8.))
+                    .pb(px(MAIN_PANE_BOTTOM_PAD))
                     .overflow_hidden()
                     .child(self.workspace_pane.clone()),
             )
@@ -6636,8 +6802,10 @@ impl AnotherOneApp {
     ) {
         self.settings_open = true;
         self.shortcut_capture_action = None;
-        self.settings_git_action_script_input.focused = false;
-        self.settings_git_action_script_input.selection_anchor = None;
+        self.settings_git_commit_script_input.focused = false;
+        self.settings_git_commit_script_input.selection_anchor = None;
+        self.settings_git_pr_script_input.focused = false;
+        self.settings_git_pr_script_input.selection_anchor = None;
         self.project_page_open_in_menu_project_id = None;
         cx.stop_propagation();
         cx.notify();
@@ -9072,6 +9240,9 @@ impl Render for AnotherOneApp {
                     .size_full()
                     .track_focus(&self.focus_handle)
                     .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
+                    .on_mouse_move(cx.listener(Self::on_mouse_move))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_key_down(cx.listener(Self::handle_global_key_down))
                     .on_action(cx.listener(Self::zoom_in))
                     .on_action(cx.listener(Self::zoom_out))

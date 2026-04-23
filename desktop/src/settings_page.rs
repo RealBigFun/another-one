@@ -1,14 +1,15 @@
 //! App-level settings page with a sidebar navigation and content area.
 
 use gpui::{
-    div, hsla, prelude::*, px, rems, rgb, svg, ClipboardItem, Context, KeyDownEvent, MouseButton,
-    MouseDownEvent, Window,
+    div, hsla, point, prelude::*, px, rems, rgb, size, svg, AnyElement, App, Bounds, ClipboardItem,
+    Context, Element, ElementId, Entity, GlobalElementId, InspectorElementId, KeyDownEvent,
+    LayoutId, MouseButton, MouseDownEvent, Pixels, ShapedLine, TextRun, Window,
 };
 
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
 use crate::app::AnotherOneApp;
-use crate::git_actions::default_commit_generation_script;
+use crate::git_actions::{default_commit_generation_script, default_pr_generation_script};
 use crate::layout::TITLEBAR_CHROME_H;
 use crate::shortcuts::{
     capture_shortcut, keybinding_token_label, ShortcutAction, ALL_SHORTCUT_ACTIONS,
@@ -168,55 +169,242 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    pub(crate) fn sync_settings_git_action_script_from_store(&mut self) {
-        self.settings_git_action_script_input.draft = self
-            .project_store
-            .git_commit_generation_script()
-            .to_string();
-        self.settings_git_action_script_input.cursor = self
-            .settings_git_action_script_input
-            .cursor
-            .min(self.settings_git_action_script_input.draft.len());
-        if let Some(anchor) = self
-            .settings_git_action_script_input
-            .selection_anchor
-            .as_mut()
-        {
-            *anchor = (*anchor).min(self.settings_git_action_script_input.draft.len());
+    pub(crate) fn sync_settings_git_action_script_from_store(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+    ) {
+        let draft = match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => self
+                .project_store
+                .git_commit_generation_script()
+                .to_string(),
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                self.project_store.git_pr_generation_script().to_string()
+            }
+        };
+        let input = self.settings_git_action_script_input_mut(kind);
+        input.draft = draft;
+        input.cursor = input.cursor.min(input.draft.len());
+        if let Some(anchor) = input.selection_anchor.as_mut() {
+            *anchor = (*anchor).min(input.draft.len());
         }
     }
 
-    fn focus_settings_git_action_script_input(&mut self, cx: &mut Context<Self>) {
-        self.sync_settings_git_action_script_from_store();
-        if !self.settings_git_action_script_input.focused {
-            self.settings_git_action_script_input.cursor =
-                self.settings_git_action_script_input.draft.len();
-            self.settings_git_action_script_input.selection_anchor = None;
+    fn focus_settings_git_action_script_input(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_settings_git_action_script_from_store(kind);
+        self.settings_git_action_script_input_mut(match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                crate::app::SettingsGitActionScriptKind::PullRequest
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                crate::app::SettingsGitActionScriptKind::Commit
+            }
+        })
+        .focused = false;
+        let input = self.settings_git_action_script_input_mut(kind);
+        if !input.focused {
+            input.cursor = input.draft.len();
+            input.selection_anchor = None;
         }
-        self.settings_git_action_script_input.focused = true;
+        input.focused = true;
         self.shortcut_capture_action = None;
         cx.notify();
     }
 
-    fn blur_settings_git_action_script_input(&mut self, cx: &mut Context<Self>) {
-        if !self.settings_git_action_script_input.focused {
+    fn blur_settings_git_action_script_input(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self.settings_git_action_script_input_mut(kind);
+        if !input.focused {
             return;
         }
 
-        self.settings_git_action_script_input.focused = false;
-        self.settings_git_action_script_input.selection_anchor = None;
+        input.focused = false;
+        input.selection_anchor = None;
+        match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                self.settings_git_commit_script_drag_anchor = None;
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                self.settings_git_pr_script_drag_anchor = None;
+            }
+        }
         cx.notify();
     }
 
-    fn reset_git_action_script_to_default(&mut self, cx: &mut Context<Self>) {
-        let _ = self.project_store.reset_git_commit_generation_script();
-        self.settings_git_action_script_input.draft =
-            default_commit_generation_script().to_string();
-        self.settings_git_action_script_input.cursor =
-            self.settings_git_action_script_input.draft.len();
-        self.settings_git_action_script_input.selection_anchor = None;
-        self.show_success_toast("Reset the git commit script to the default template.", cx);
+    fn reset_git_action_script_to_default(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        cx: &mut Context<Self>,
+    ) {
+        let (draft, message) = match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                let _ = self.project_store.reset_git_commit_generation_script();
+                (
+                    default_commit_generation_script().to_string(),
+                    "Reset the git commit instructions to the default template.",
+                )
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                let _ = self.project_store.reset_git_pr_generation_script();
+                (
+                    default_pr_generation_script().to_string(),
+                    "Reset the PR title/body instructions to the default template.",
+                )
+            }
+        };
+        let input = self.settings_git_action_script_input_mut(kind);
+        input.draft = draft;
+        input.cursor = input.draft.len();
+        input.selection_anchor = None;
+        match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                self.settings_git_commit_script_drag_anchor = None;
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                self.settings_git_pr_script_drag_anchor = None;
+            }
+        }
+        self.show_success_toast(message, cx);
         cx.notify();
+    }
+
+    pub(crate) fn settings_git_action_script_index_for_point(
+        &self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        point: gpui::Point<Pixels>,
+    ) -> usize {
+        let input = self.settings_git_action_script_input(kind);
+        if input.draft.is_empty() {
+            return 0;
+        }
+
+        let layout = self.settings_git_action_script_layout(kind);
+        let Some(first_line) = layout.first() else {
+            return input.cursor;
+        };
+        let Some(last_line) = layout.last() else {
+            return input.cursor;
+        };
+
+        if point.y <= first_line.bounds.top() {
+            return 0;
+        }
+        if point.y >= last_line.bounds.bottom() {
+            return input.draft.len();
+        }
+
+        let closest_line = layout
+            .iter()
+            .min_by(|left, right| {
+                let left_distance = distance_to_vertical_bounds(point.y, left.bounds);
+                let right_distance = distance_to_vertical_bounds(point.y, right.bounds);
+                left_distance
+                    .partial_cmp(&right_distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .unwrap_or(first_line);
+        let x = point.x - closest_line.bounds.left();
+        let offset = closest_line.line.closest_index_for_x(x);
+        closest_line.range.start + offset.min(closest_line.range.len())
+    }
+
+    fn begin_settings_git_action_script_selection(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_handle.focus(window);
+        self.focus_settings_git_action_script_input(kind, cx);
+
+        let input = self.settings_git_action_script_input(kind);
+        let selection_anchor = if ev.modifiers.shift {
+            Some(input.selection_anchor.unwrap_or(input.cursor))
+        } else {
+            None
+        };
+        let cursor = self.settings_git_action_script_index_for_point(kind, ev.position);
+
+        let input = self.settings_git_action_script_input_mut(kind);
+        input.cursor = cursor;
+        input.selection_anchor = selection_anchor.filter(|anchor| *anchor != cursor);
+        match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                self.settings_git_commit_script_drag_anchor =
+                    Some(selection_anchor.unwrap_or(cursor))
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                self.settings_git_pr_script_drag_anchor = Some(selection_anchor.unwrap_or(cursor))
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn update_settings_git_action_script_selection_drag(
+        &mut self,
+        ev: &gpui::MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !ev.dragging() {
+            return false;
+        }
+
+        for kind in [
+            crate::app::SettingsGitActionScriptKind::Commit,
+            crate::app::SettingsGitActionScriptKind::PullRequest,
+        ] {
+            let anchor = match kind {
+                crate::app::SettingsGitActionScriptKind::Commit => {
+                    self.settings_git_commit_script_drag_anchor
+                }
+                crate::app::SettingsGitActionScriptKind::PullRequest => {
+                    self.settings_git_pr_script_drag_anchor
+                }
+            };
+            let Some(anchor) = anchor else {
+                continue;
+            };
+
+            let cursor = self.settings_git_action_script_index_for_point(kind, ev.position);
+            let input = self.settings_git_action_script_input_mut(kind);
+            input.cursor = cursor;
+            input.selection_anchor = (anchor != cursor).then_some(anchor);
+            cx.notify();
+            return true;
+        }
+
+        false
+    }
+
+    pub(crate) fn finish_settings_git_action_script_selection_drag(&mut self) -> bool {
+        let mut had_drag = false;
+        for kind in [
+            crate::app::SettingsGitActionScriptKind::Commit,
+            crate::app::SettingsGitActionScriptKind::PullRequest,
+        ] {
+            let had_kind_drag = match kind {
+                crate::app::SettingsGitActionScriptKind::Commit => {
+                    self.settings_git_commit_script_drag_anchor.take().is_some()
+                }
+                crate::app::SettingsGitActionScriptKind::PullRequest => {
+                    self.settings_git_pr_script_drag_anchor.take().is_some()
+                }
+            };
+            had_drag |= had_kind_drag;
+            let input = self.settings_git_action_script_input_mut(kind);
+            if input.selection_anchor == Some(input.cursor) {
+                input.selection_anchor = None;
+            }
+        }
+        had_drag
     }
 
     fn add_agent_launch_arg(&mut self, agent_id: &str, cx: &mut Context<Self>) {
@@ -470,48 +658,49 @@ impl AnotherOneApp {
         ev: &KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.settings_git_action_script_input.focused {
+        let Some(kind) = self.focused_settings_git_action_script_kind() else {
             return false;
-        }
+        };
 
         cx.stop_propagation();
 
         let modifiers = ev.keystroke.modifiers;
-        let draft = &mut self.settings_git_action_script_input.draft;
+        let input = self.settings_git_action_script_input_mut(kind);
+        let draft = &mut input.draft;
         match ev.keystroke.key.as_str() {
             "backspace" => {
                 if modifiers.platform {
                     delete_settings_input_to_start(
                         draft,
-                        &mut self.settings_git_action_script_input.cursor,
-                        &mut self.settings_git_action_script_input.selection_anchor,
+                        &mut input.cursor,
+                        &mut input.selection_anchor,
                     );
                 } else if modifiers.alt {
                     delete_settings_input_word_backward(
                         draft,
-                        &mut self.settings_git_action_script_input.cursor,
-                        &mut self.settings_git_action_script_input.selection_anchor,
+                        &mut input.cursor,
+                        &mut input.selection_anchor,
                     );
                 } else {
                     delete_settings_input_backward(
                         draft,
-                        &mut self.settings_git_action_script_input.cursor,
-                        &mut self.settings_git_action_script_input.selection_anchor,
+                        &mut input.cursor,
+                        &mut input.selection_anchor,
                     );
                 }
             }
             "delete" => {
                 delete_settings_input_forward(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                 );
             }
             "left" => {
                 move_settings_input_cursor(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                     CursorDirection::Left,
                     modifiers.shift,
                 );
@@ -519,8 +708,8 @@ impl AnotherOneApp {
             "right" => {
                 move_settings_input_cursor(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                     CursorDirection::Right,
                     modifiers.shift,
                 );
@@ -528,8 +717,8 @@ impl AnotherOneApp {
             "up" => {
                 move_settings_multiline_cursor_vertical(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                     false,
                     modifiers.shift,
                 );
@@ -537,8 +726,8 @@ impl AnotherOneApp {
             "down" => {
                 move_settings_multiline_cursor_vertical(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                     true,
                     modifiers.shift,
                 );
@@ -546,8 +735,8 @@ impl AnotherOneApp {
             "home" => {
                 move_settings_multiline_cursor_to_line_edge(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                     false,
                     modifiers.shift,
                 );
@@ -555,8 +744,8 @@ impl AnotherOneApp {
             "end" => {
                 move_settings_multiline_cursor_to_line_edge(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                     true,
                     modifiers.shift,
                 );
@@ -564,47 +753,45 @@ impl AnotherOneApp {
             "enter" => {
                 insert_settings_input_text(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                     "\n",
                 );
             }
             "tab" => {
                 insert_settings_input_text(
                     draft,
-                    &mut self.settings_git_action_script_input.cursor,
-                    &mut self.settings_git_action_script_input.selection_anchor,
+                    &mut input.cursor,
+                    &mut input.selection_anchor,
                     "    ",
                 );
             }
             "escape" => {
-                self.blur_settings_git_action_script_input(cx);
+                self.blur_settings_git_action_script_input(kind, cx);
                 return true;
             }
             _ => {
                 if modifiers.platform && ev.keystroke.key.as_str() == "a" {
-                    self.settings_git_action_script_input.cursor = draft.len();
-                    self.settings_git_action_script_input.selection_anchor = Some(0);
+                    input.cursor = draft.len();
+                    input.selection_anchor = Some(0);
                 } else if modifiers.platform && ev.keystroke.key.as_str() == "c" {
-                    if let Some(range) = settings_agent_input_selected_range(
-                        self.settings_git_action_script_input.cursor,
-                        self.settings_git_action_script_input.selection_anchor,
-                    ) {
+                    if let Some(range) =
+                        settings_agent_input_selected_range(input.cursor, input.selection_anchor)
+                    {
                         cx.write_to_clipboard(ClipboardItem::new_string(draft[range].to_string()));
                     }
                     return true;
                 } else if modifiers.platform && ev.keystroke.key.as_str() == "x" {
-                    if let Some(range) = settings_agent_input_selected_range(
-                        self.settings_git_action_script_input.cursor,
-                        self.settings_git_action_script_input.selection_anchor,
-                    ) {
+                    if let Some(range) =
+                        settings_agent_input_selected_range(input.cursor, input.selection_anchor)
+                    {
                         cx.write_to_clipboard(ClipboardItem::new_string(
                             draft[range.clone()].to_string(),
                         ));
                         replace_settings_input_range(
                             draft,
-                            &mut self.settings_git_action_script_input.cursor,
-                            &mut self.settings_git_action_script_input.selection_anchor,
+                            &mut input.cursor,
+                            &mut input.selection_anchor,
                             range,
                             "",
                         );
@@ -613,8 +800,8 @@ impl AnotherOneApp {
                     if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
                         insert_settings_input_text(
                             draft,
-                            &mut self.settings_git_action_script_input.cursor,
-                            &mut self.settings_git_action_script_input.selection_anchor,
+                            &mut input.cursor,
+                            &mut input.selection_anchor,
                             &text,
                         );
                     }
@@ -622,8 +809,8 @@ impl AnotherOneApp {
                     if let Some(key_char) = ev.keystroke.key_char.as_deref() {
                         insert_settings_input_text(
                             draft,
-                            &mut self.settings_git_action_script_input.cursor,
-                            &mut self.settings_git_action_script_input.selection_anchor,
+                            &mut input.cursor,
+                            &mut input.selection_anchor,
                             key_char,
                         );
                     }
@@ -631,9 +818,17 @@ impl AnotherOneApp {
             }
         }
 
-        let _ = self
-            .project_store
-            .set_git_commit_generation_script(self.settings_git_action_script_input.draft.clone());
+        let saved_draft = input.draft.clone();
+        match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                let _ = self
+                    .project_store
+                    .set_git_commit_generation_script(saved_draft);
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                let _ = self.project_store.set_git_pr_generation_script(saved_draft);
+            }
+        }
         cx.notify();
         true
     }
@@ -698,8 +893,12 @@ impl AnotherOneApp {
                             this.shortcut_capture_action = None;
                             this.settings_agent_input.focused_agent_id = None;
                             this.settings_agent_input.selection_anchor = None;
-                            this.settings_git_action_script_input.focused = false;
-                            this.settings_git_action_script_input.selection_anchor = None;
+                            this.settings_git_commit_script_input.focused = false;
+                            this.settings_git_commit_script_input.selection_anchor = None;
+                            this.settings_git_pr_script_input.focused = false;
+                            this.settings_git_pr_script_input.selection_anchor = None;
+                            this.settings_git_commit_script_drag_anchor = None;
+                            this.settings_git_pr_script_drag_anchor = None;
                             cx.notify();
                         }),
                     )
@@ -767,10 +966,19 @@ impl AnotherOneApp {
                     this.shortcut_capture_action = None;
                     this.settings_agent_input.focused_agent_id = None;
                     this.settings_agent_input.selection_anchor = None;
-                    this.settings_git_action_script_input.focused = false;
-                    this.settings_git_action_script_input.selection_anchor = None;
+                    this.settings_git_commit_script_input.focused = false;
+                    this.settings_git_commit_script_input.selection_anchor = None;
+                    this.settings_git_pr_script_input.focused = false;
+                    this.settings_git_pr_script_input.selection_anchor = None;
+                    this.settings_git_commit_script_drag_anchor = None;
+                    this.settings_git_pr_script_drag_anchor = None;
                     if section == SettingsSection::GitActions {
-                        this.sync_settings_git_action_script_from_store();
+                        this.sync_settings_git_action_script_from_store(
+                            crate::app::SettingsGitActionScriptKind::Commit,
+                        );
+                        this.sync_settings_git_action_script_from_store(
+                            crate::app::SettingsGitActionScriptKind::PullRequest,
+                        );
                     }
                     cx.notify();
                 }),
@@ -1562,19 +1770,6 @@ impl AnotherOneApp {
     }
 
     fn settings_git_actions_content(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let panel_bg = rgb(0x23252a);
-        let button_bg = gpui::white().opacity(0.04);
-        let button_hover = gpui::white().opacity(0.08);
-        let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
-        let editor_bg = rgb(0x191b1f);
-        let using_default = self.project_store.ui.git_commit_generation_script.is_none();
-        let draft = &self.settings_git_action_script_input.draft;
-        let is_focused = self.settings_git_action_script_input.focused;
-        let selection = settings_agent_input_selected_range(
-            self.settings_git_action_script_input.cursor,
-            self.settings_git_action_script_input.selection_anchor,
-        );
-
         div()
             .flex()
             .flex_col()
@@ -1596,135 +1791,194 @@ impl AnotherOneApp {
                     .line_height(rems(18. / 16.))
                     .text_color(TEXT_SECONDARY())
                     .child(
-                        "Customize the instructions sent to the LLM when the app generates git commit messages. The app appends the staged patch automatically. Changes save immediately, and you can reset back to the built-in instructions at any time.",
+                        "Customize the instructions sent to the LLM when the app generates commit messages and pull request title/body content. The app appends the relevant git context automatically. Changes save immediately, and you can reset back to the built-in instructions at any time.",
                     ),
             )
+            .child(self.render_git_action_script_panel(
+                crate::app::SettingsGitActionScriptKind::Commit,
+                "Commit message instructions",
+                "Currently using the default built-in template.",
+                "Currently using a custom template from settings.",
+                "Paste commit generation instructions here.",
+                "settings-git-actions-commit",
+                cx,
+            ))
+            .child(self.render_git_action_script_panel(
+                crate::app::SettingsGitActionScriptKind::PullRequest,
+                "PR title/body instructions",
+                "Currently using the default built-in template.",
+                "Currently using a custom template from settings.",
+                "Paste PR title/body instructions here.",
+                "settings-git-actions-pr",
+                cx,
+            ))
+    }
+
+    fn render_git_action_script_panel(
+        &self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        title: &'static str,
+        default_label: &'static str,
+        custom_label: &'static str,
+        placeholder: &'static str,
+        element_id_prefix: &'static str,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let panel_bg = rgb(0x23252a);
+        let button_bg = gpui::white().opacity(0.04);
+        let button_hover = gpui::white().opacity(0.08);
+        let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
+        let editor_bg = rgb(0x191b1f);
+        let using_default = match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                self.project_store.ui.git_commit_generation_script.is_none()
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                self.project_store.ui.git_pr_generation_script.is_none()
+            }
+        };
+        let input = self.settings_git_action_script_input(kind);
+        let draft = &input.draft;
+        let is_focused = input.focused;
+        let selection = settings_agent_input_selected_range(input.cursor, input.selection_anchor);
+
+        div()
+            .mt(px(24.))
+            .max_w(px(960.))
+            .rounded(px(12.))
+            .border_1()
+            .border_color(BORDER_SUBTLE())
+            .bg(panel_bg)
+            .overflow_hidden()
             .child(
                 div()
-                    .mt(px(24.))
-                    .max_w(px(960.))
-                    .rounded(px(12.))
-                    .border_1()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(16.))
+                    .px(px(18.))
+                    .py(px(14.))
+                    .border_b_1()
                     .border_color(BORDER_SUBTLE())
-                    .bg(panel_bg)
-                    .overflow_hidden()
                     .child(
                         div()
                             .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(16.))
-                            .px(px(18.))
-                            .py(px(14.))
-                            .border_b_1()
-                            .border_color(BORDER_SUBTLE())
+                            .flex_col()
+                            .gap(px(4.))
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .child(
-                                        div()
-                                            .text_size(rems(13. / 16.))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(TEXT_PRIMARY())
-                                            .child("Commit message instructions"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(rems(11. / 16.))
-                                            .text_color(TEXT_SECONDARY())
-                                            .child(if using_default {
-                                                "Currently using the default built-in template."
-                                            } else {
-                                                "Currently using a custom template from settings."
-                                            }),
-                                    ),
+                                    .text_size(rems(13. / 16.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(TEXT_PRIMARY())
+                                    .child(title),
                             )
                             .child(
                                 div()
-                                    .id("settings-git-actions-reset")
-                                    .h(px(30.))
-                                    .px(px(12.))
-                                    .rounded(px(8.))
-                                    .border_1()
-                                    .border_color(if using_default {
-                                        BORDER_SUBTLE()
+                                    .text_size(rems(11. / 16.))
+                                    .text_color(TEXT_SECONDARY())
+                                    .child(if using_default {
+                                        default_label
                                     } else {
-                                        active_button_bg.opacity(0.85)
-                                    })
-                                    .bg(if using_default { button_bg } else { active_button_bg })
-                                    .cursor_pointer()
-                                    .hover(move |s| {
-                                        s.bg(if using_default {
-                                            button_hover
-                                        } else {
-                                            active_button_bg
-                                        })
-                                    })
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
-                                            this.reset_git_action_script_to_default(cx);
-                                            cx.stop_propagation();
-                                        }),
-                                    )
-                                    .child(
-                                        div()
-                                            .h_full()
-                                            .flex()
-                                            .items_center()
-                                            .text_size(rems(12. / 16.))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(if using_default {
-                                                TEXT_PRIMARY()
-                                            } else {
-                                                gpui::white()
-                                            })
-                                            .child("Reset to Default"),
-                                    ),
+                                        custom_label
+                                    }),
                             ),
                     )
                     .child(
                         div()
-                            .px(px(18.))
-                            .py(px(18.))
+                            .id((element_id_prefix, 0usize))
+                            .h(px(30.))
+                            .px(px(12.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(if using_default {
+                                BORDER_SUBTLE()
+                            } else {
+                                active_button_bg.opacity(0.85)
+                            })
+                            .bg(if using_default {
+                                button_bg
+                            } else {
+                                active_button_bg
+                            })
+                            .cursor_pointer()
+                            .hover(move |s| {
+                                s.bg(if using_default {
+                                    button_hover
+                                } else {
+                                    active_button_bg
+                                })
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                    this.reset_git_action_script_to_default(kind, cx);
+                                    cx.stop_propagation();
+                                }),
+                            )
                             .child(
                                 div()
-                                    .id("settings-git-actions-script-editor")
-                                    .min_h(px(280.))
-                                    .max_h(px(480.))
-                                    .w_full()
-                                    .overflow_scroll()
-                                    .rounded(px(10.))
-                                    .border_1()
-                                    .border_color(if is_focused {
-                                        active_button_bg.opacity(0.85)
+                                    .h_full()
+                                    .flex()
+                                    .items_center()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(if using_default {
+                                        TEXT_PRIMARY()
                                     } else {
-                                        BORDER_SUBTLE()
+                                        gpui::white()
                                     })
-                                    .bg(editor_bg)
-                                    .px(px(14.))
-                                    .py(px(12.))
-                                    .cursor_text()
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _ev: &MouseDownEvent, window, cx| {
-                                            this.focus_handle.focus(window);
-                                            this.focus_settings_git_action_script_input(cx);
-                                            cx.stop_propagation();
-                                        }),
-                                    )
-                                    .child(render_settings_multiline_input_content(
-                                        draft,
-                                        is_focused,
-                                        self.settings_git_action_script_input.cursor,
-                                        selection,
-                                        "Paste a commit generation script here.",
-                                    )),
+                                    .child("Reset to Default"),
                             ),
                     ),
+            )
+            .child(
+                div().px(px(18.)).py(px(18.)).child(
+                    div()
+                        .id((element_id_prefix, 1usize))
+                        .min_h(px(280.))
+                        .max_h(px(480.))
+                        .w_full()
+                        .overflow_scroll()
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(if is_focused {
+                            active_button_bg.opacity(0.85)
+                        } else {
+                            BORDER_SUBTLE()
+                        })
+                        .bg(editor_bg)
+                        .px(px(14.))
+                        .py(px(12.))
+                        .cursor_text()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                                this.begin_settings_git_action_script_selection(
+                                    kind, ev, window, cx,
+                                );
+                                cx.stop_propagation();
+                            }),
+                        )
+                        .child(
+                            div()
+                                .text_size(rems(12. / 16.))
+                                .line_height(rems(18. / 16.))
+                                .font_family("Lilex Nerd Font Mono")
+                                .child(SettingsMultilineLayoutHost::new(
+                                    cx.entity(),
+                                    kind,
+                                    draft.to_string(),
+                                    render_settings_multiline_input_content(
+                                        draft,
+                                        is_focused,
+                                        input.cursor,
+                                        selection,
+                                        placeholder,
+                                    ),
+                                )),
+                        ),
+                ),
             )
     }
 
@@ -2082,6 +2336,96 @@ enum CursorDirection {
     Right,
 }
 
+struct SettingsMultilineLayoutHost {
+    app: Entity<AnotherOneApp>,
+    kind: crate::app::SettingsGitActionScriptKind,
+    text: String,
+    child: AnyElement,
+}
+
+impl SettingsMultilineLayoutHost {
+    fn new(
+        app: Entity<AnotherOneApp>,
+        kind: crate::app::SettingsGitActionScriptKind,
+        text: String,
+        child: impl IntoElement,
+    ) -> Self {
+        Self {
+            app,
+            kind,
+            text,
+            child: child.into_any_element(),
+        }
+    }
+}
+
+impl IntoElement for SettingsMultilineLayoutHost {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for SettingsMultilineLayoutHost {
+    type RequestLayoutState = ();
+    type PrepaintState = Bounds<Pixels>;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        self.child.prepaint(window, cx);
+        bounds
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        prepaint_bounds: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+        let measured_lines =
+            measure_settings_multiline_input_lines(&self.text, *prepaint_bounds, window);
+        let _ = self.app.update(cx, |app, _cx| match self.kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                app.settings_git_commit_script_layout = measured_lines;
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                app.settings_git_pr_script_layout = measured_lines;
+            }
+        });
+    }
+}
+
 fn validate_agent_launch_arg(value: &str) -> Result<String, &'static str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -2376,6 +2720,69 @@ fn settings_multiline_line_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     }
     ranges.push(start..text.len());
     ranges
+}
+
+fn measure_settings_multiline_input_lines(
+    text: &str,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+) -> Vec<crate::app::SettingsGitActionScriptLineLayout> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    let style = window.text_style();
+    let font_size = style.font_size.to_pixels(window.rem_size());
+    let line_height = window.line_height();
+    let row_step = line_height + px(2.);
+
+    settings_multiline_line_ranges(text)
+        .into_iter()
+        .enumerate()
+        .map(|(index, range)| {
+            let line_text = &text[range.clone()];
+            let line = shape_settings_input_line(line_text, font_size, &style, window);
+            let top = bounds.top() + row_step * index as f32;
+            crate::app::SettingsGitActionScriptLineLayout {
+                range,
+                bounds: Bounds::new(
+                    point(bounds.left(), top),
+                    size(bounds.size.width, line_height),
+                ),
+                line,
+            }
+        })
+        .collect()
+}
+
+fn shape_settings_input_line(
+    text: &str,
+    font_size: Pixels,
+    style: &gpui::TextStyle,
+    window: &mut Window,
+) -> ShapedLine {
+    let run = TextRun {
+        len: text.len(),
+        font: style.font(),
+        color: style.color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+
+    window
+        .text_system()
+        .shape_line(text.to_string().into(), font_size, &[run], None)
+}
+
+fn distance_to_vertical_bounds(y: Pixels, bounds: Bounds<Pixels>) -> f32 {
+    if y < bounds.top() {
+        f32::from(bounds.top() - y)
+    } else if y > bounds.bottom() {
+        f32::from(y - bounds.bottom())
+    } else {
+        0.
+    }
 }
 
 fn settings_line_start(text: &str, cursor: usize) -> usize {

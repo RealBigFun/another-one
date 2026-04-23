@@ -9,6 +9,7 @@ use gpui::{
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
 use crate::app::{AnotherOneApp, TerminalSelectionRange, WorkspacePane};
+use crate::layout::{TERMINAL_TAB_BAR_H, TERMINAL_VIEW_PADDING};
 use crate::terminal_runtime::{
     TerminalCursorKind, TerminalRuntimeKey, TerminalSurfaceSnapshot, TERMINAL_CELL_WIDTH_RATIO,
     TERMINAL_LINE_HEIGHT_RATIO,
@@ -128,7 +129,7 @@ impl WorkspacePane {
             .flex()
             .flex_row()
             .items_center()
-            .h(px(36.))
+            .h(px(TERMINAL_TAB_BAR_H))
             .bg(tab_bar_bg)
             .border_b_1()
             .border_color(border_col)
@@ -390,7 +391,7 @@ impl WorkspacePane {
         if let Some(snapshot) = snapshot {
             let line_height = px((self.font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0));
             let cell_width = terminal_cell_width(window, self.font_size);
-            let padding = px(12.);
+            let padding = px(TERMINAL_VIEW_PADDING);
             let canvas_snapshot = snapshot.clone();
             let selection_key = key.clone();
             let scroll_key = key.clone();
