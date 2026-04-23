@@ -73,6 +73,11 @@ const fn close_current_tab_default_binding() -> &'static str {
     {
         "control-w"
     }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    compile_error!(
+        "another-one-core only supports macos, linux, and windows; \
+         add a default binding for this target."
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

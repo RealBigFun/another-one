@@ -1,10 +1,12 @@
 //! Platform-coupled side of "Open In…": OS detection for which apps are
 //! installed, and `Command` construction to actually launch them.
 //!
-//! The pure data types (`OpenInAppKind` + [`effective_enabled_open_in_apps`])
-//! live in the core crate at `another_one_core::open_in` — this file
-//! re-exports them so pre-existing `crate::open_in::…` paths keep
-//! resolving.
+//! The pure data type `OpenInAppKind` lives in the core crate at
+//! `another_one_core::open_in`; we re-export it so pre-existing
+//! `crate::open_in::OpenInAppKind` paths keep resolving.
+//! `effective_enabled_open_in_apps` also lives in core, but only
+//! `project_store` consumed it — nothing in desktop does today, so
+//! the re-export isn't maintained here.
 //!
 //! Why the split: desktop's `platform/` module is GPUI-coupled
 //! (titlebar, window, appkit dock), which means anything that calls

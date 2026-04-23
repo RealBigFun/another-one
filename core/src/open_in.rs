@@ -97,6 +97,12 @@ const fn file_manager_label() -> &'static str {
     {
         "File Explorer"
     }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    compile_error!(
+        "another-one-core only supports macos, linux, and windows; \
+         add a file-manager label for this target."
+    );
 }
 
 const fn file_manager_description() -> &'static str {
@@ -114,6 +120,12 @@ const fn file_manager_description() -> &'static str {
     {
         "Open the project directory in File Explorer."
     }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    compile_error!(
+        "another-one-core only supports macos, linux, and windows; \
+         add a file-manager description for this target."
+    );
 }
 
 #[cfg(test)]

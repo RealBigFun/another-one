@@ -1,8 +1,10 @@
 //! GPUI-event side of the shortcut system.
 //!
-//! The data types (`ShortcutAction`, `ShortcutSettings`, `ALL_SHORTCUT_ACTIONS`)
-//! live in `another_one_core::shortcuts`; they're re-exported below so
-//! pre-existing `crate::shortcuts::…` paths keep resolving. What stays
+//! The data types live in `another_one_core::shortcuts`. Of those,
+//! `ShortcutAction` and `ALL_SHORTCUT_ACTIONS` are re-exported below
+//! because desktop call sites (sidebar, settings page) reach for them
+//! via `crate::shortcuts::…`. `ShortcutSettings` is not re-exported —
+//! only `ProjectStore` consumed it, and that's in core now. What stays
 //! here is the `KeyDownEvent`-facing glue:
 //!
 //! - `shortcut_matches_event` — "does this event match the stored
