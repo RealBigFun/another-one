@@ -13,6 +13,11 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
   [[architecture/peer-to-peer-nodes]],
   [[architecture/frb-tokio-runtime]],
   [[architecture/git-mv-for-restructures]].
+- `design/` — the cross-platform design system extracted from the
+  desktop app: [[design/README]], [[design/tokens]],
+  [[design/typography]], [[design/spacing]], [[design/components]].
+  Source-of-truth values also live at `desktop/src/tokens.rs` and in
+  `docs/design/tokens.json`.
 - `postmortems/` — real debugging sagas with root cause and fix.
   Currently:
   - [[postmortems/2026-04-23-iroh-android-hang]] — four stacked causes that
