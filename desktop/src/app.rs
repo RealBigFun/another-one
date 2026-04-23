@@ -7321,30 +7321,7 @@ fn sidebar_task_navigation_targets(
             .get(&root_project.id)
             .into_iter()
             .flat_map(|tasks| tasks.iter())
-            .filter_map(|task| match task.kind {
-                TaskKind::Direct => Some(SidebarTaskNavigationTarget {
-                    root_project_id: root_project.id.clone(),
-                    project_id: root_project.id.clone(),
-                    task_id: task.id.clone(),
-                    branch_name: task.branch_name.clone(),
-                    project_path: root_project.path.clone(),
-                }),
-                TaskKind::Worktree | TaskKind::MultiWorktree => task
-                    .worktree_project_id
-                    .as_ref()
-                    .and_then(|worktree_project_id| {
-                        projects
-                            .iter()
-                            .find(|project| project.id == *worktree_project_id)
-                    })
-                    .map(|worktree_project| SidebarTaskNavigationTarget {
-                        root_project_id: root_project.id.clone(),
-                        project_id: worktree_project.id.clone(),
-                        task_id: task.id.clone(),
-                        branch_name: task.branch_name.clone(),
-                        project_path: worktree_project.path.clone(),
-                    }),
-            })
+            .filter_map(|task| sidebar_task_navigation_target(projects, root_project, task))
             .collect::<Vec<_>>();
 
         group_targets.sort_by_key(|target| !pinned_task_ids.contains(&target.task_id));
@@ -7352,6 +7329,41 @@ fn sidebar_task_navigation_targets(
     }
 
     targets
+}
+
+fn sidebar_task_navigation_target(
+    projects: &[crate::project_store::Project],
+    root_project: &crate::project_store::Project,
+    task: &Task,
+) -> Option<SidebarTaskNavigationTarget> {
+    match task.kind {
+        TaskKind::Direct => Some(SidebarTaskNavigationTarget {
+            root_project_id: root_project.id.clone(),
+            project_id: root_project.id.clone(),
+            task_id: task.id.clone(),
+            branch_name: task.branch_name.clone(),
+            project_path: root_project.path.clone(),
+        }),
+        TaskKind::Worktree | TaskKind::MultiWorktree => task
+            .worktree_project_id
+            .as_ref()
+            .and_then(|worktree_project_id| {
+                projects
+                    .iter()
+                    .find(|project| project.id == *worktree_project_id)
+            })
+            .map(|worktree_project| SidebarTaskNavigationTarget {
+                root_project_id: root_project.id.clone(),
+                project_id: worktree_project.id.clone(),
+                task_id: task.id.clone(),
+                branch_name: worktree_project
+                    .checkout
+                    .current_branch
+                    .clone()
+                    .unwrap_or_else(|| task.branch_name.clone()),
+                project_path: worktree_project.path.clone(),
+            }),
+    }
 }
 
 fn next_task_navigation_target<'a>(
@@ -7454,11 +7466,11 @@ mod tests {
         next_task_navigation_target, output_mentions_missing_claude_conversation,
         persisted_active_section_key, remove_terminal_runtime_state,
         resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
-        sidebar_task_navigation_targets, terminal_line_selection_range, terminal_scroll_lines,
-        terminal_selected_text, terminal_selection_range, terminal_word_selection_range,
-        trim_to_recent_output_limit, AnotherOneApp, NavigationDirection, NewTaskShortcutTarget,
-        SectionId, SectionState, TerminalCellPosition, TerminalSelectionRange,
-        TERMINAL_RECENT_OUTPUT_LIMIT,
+        sidebar_task_navigation_target, sidebar_task_navigation_targets,
+        terminal_line_selection_range, terminal_scroll_lines, terminal_selected_text,
+        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
+        AnotherOneApp, NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState,
+        TerminalCellPosition, TerminalSelectionRange, TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
@@ -8232,6 +8244,34 @@ mod tests {
 
         assert_eq!(next, Some("task-a1"));
         assert_eq!(previous, Some("task-a2"));
+    }
+
+    #[test]
+    fn sidebar_task_navigation_target_prefers_current_worktree_branch() {
+        let root_project = sample_project_in_repo("root-a", "repo-a", "main", None);
+        let mut worktree_project =
+            sample_project_in_repo("root-a-wt", "repo-a", "feature/new", Some("wt-a2"));
+        worktree_project.checkout.current_branch = Some("feature/current".to_string());
+        let task = sample_task(
+            "task-a2",
+            "Task A2",
+            TaskKind::Worktree,
+            "root-a",
+            "root-a-wt",
+            "feature/stale",
+            Some("root-a-wt"),
+        );
+
+        let target = sidebar_task_navigation_target(
+            &[root_project.clone(), worktree_project.clone()],
+            &root_project,
+            &task,
+        )
+        .expect("worktree target should resolve");
+
+        assert_eq!(target.project_id, "root-a-wt");
+        assert_eq!(target.branch_name, "feature/current");
+        assert_eq!(target.project_path, worktree_project.path);
     }
 
     #[test]
