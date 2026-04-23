@@ -193,6 +193,7 @@ name = "another-one-core"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "anyhow",
  "dirs 5.0.1",
  "hotpath",
  "portable-pty",

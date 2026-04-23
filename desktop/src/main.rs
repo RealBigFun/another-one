@@ -17,7 +17,6 @@ mod resource_usage;
 mod right_sidebar;
 mod settings_page;
 mod shortcuts;
-mod terminal_launch;
 mod terminal_runtime;
 mod theme;
 mod titlebar;
@@ -34,7 +33,7 @@ mod tokens;
 // desktop (the GPUI/platform-coupled halves) that internally re-export
 // the core-side pure types, so `crate::open_in::OpenInAppKind` still
 // resolves via those local modules.
-pub(crate) use another_one_core::{agents, git_actions, project_store};
+pub(crate) use another_one_core::{agents, git_actions, project_store, terminal_launch};
 
 use std::path::PathBuf;
 

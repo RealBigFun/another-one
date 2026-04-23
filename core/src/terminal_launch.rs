@@ -16,7 +16,7 @@ use crate::agents::{
     AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode, TerminalSessionKind,
     TerminalSessionRef,
 };
-use crate::terminal_runtime::{PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey};
+use crate::terminal_types::{PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey};
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const CODEX_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60 * 60);
@@ -24,7 +24,7 @@ const DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(400);
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const ANOTHER_ONE_PI_SESSION_CAPTURE_ENV: &str = "ANOTHER_ONE_PI_SESSION_CAPTURE";
 
-pub(crate) enum TerminalLaunchReply {
+pub enum TerminalLaunchReply {
     Launched {
         key: TerminalRuntimeKey,
         runtime: PreparedTerminalRuntime,
@@ -49,7 +49,7 @@ pub(crate) enum TerminalLaunchReply {
     },
 }
 
-pub(crate) enum WarmTerminalLaunchReply {
+pub enum WarmTerminalLaunchReply {
     Launched {
         launch_id: u64,
         runtime: PreparedTerminalRuntime,
@@ -74,7 +74,7 @@ pub(crate) enum WarmTerminalLaunchReply {
     },
 }
 
-pub(crate) fn spawn_terminal_launch(
+pub fn spawn_terminal_launch(
     sender: mpsc::Sender<TerminalLaunchReply>,
     key: TerminalRuntimeKey,
     cwd: Option<PathBuf>,
@@ -99,7 +99,7 @@ pub(crate) fn spawn_terminal_launch(
     });
 }
 
-pub(crate) fn spawn_warm_terminal_launch(
+pub fn spawn_warm_terminal_launch(
     sender: mpsc::Sender<WarmTerminalLaunchReply>,
     launch_id: u64,
     cwd: Option<PathBuf>,
