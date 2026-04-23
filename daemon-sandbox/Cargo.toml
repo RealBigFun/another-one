@@ -1,0 +1,20 @@
+[package]
+name = "daemon-sandbox"
+version = "0.1.0"
+edition = "2021"
+description = "Throwaway daemon for mobile-companion sandbox: raw PTY over WebSocket"
+publish = false
+
+[[bin]]
+name = "daemon-sandbox"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "io-util", "signal"] }
+portable-pty = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = "0.3"
