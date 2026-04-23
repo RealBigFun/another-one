@@ -1,7 +1,7 @@
 # AGENTS
 
 This is a greenfield app, and has no users.
-This app is built for mac and linux.
+This app is built for mac and linux - any changes must keep this in mind.
 
 ## UI Rules
 

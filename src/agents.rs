@@ -200,11 +200,19 @@ pub(crate) fn terminal_launch_config_for_selected_agent(
     }
 }
 
+pub(crate) fn agent_id_for_provider(provider: AgentProviderKind) -> Option<&'static str> {
+    AGENTS
+        .iter()
+        .find(|agent| agent.provider == Some(provider))
+        .map(|agent| agent.id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
-        AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode,
+        agent_id_for_provider, terminal_launch_config_for_selected_agent,
+        terminal_launch_config_for_selected_agents, AgentProviderKind, TerminalLaunchConfig,
+        TerminalLaunchMode,
     };
     use std::collections::HashSet;
 
@@ -247,5 +255,39 @@ mod tests {
         let config = terminal_launch_config_for_selected_agent(Some("missing"));
 
         assert_eq!(config, None);
+    }
+
+    #[test]
+    fn provider_lookup_resolves_known_agent_ids() {
+        assert_eq!(
+            agent_id_for_provider(AgentProviderKind::ClaudeCode),
+            Some("claude-code")
+        );
+        assert_eq!(
+            agent_id_for_provider(AgentProviderKind::Codex),
+            Some("codex")
+        );
+        assert_eq!(
+            agent_id_for_provider(AgentProviderKind::CursorAgent),
+            Some("cursor")
+        );
+        assert_eq!(
+            agent_id_for_provider(AgentProviderKind::Gemini),
+            Some("gemini")
+        );
+        assert_eq!(agent_id_for_provider(AgentProviderKind::Pi), Some("pi"));
+        assert_eq!(
+            agent_id_for_provider(AgentProviderKind::OpenCode),
+            Some("opencode")
+        );
+        assert_eq!(agent_id_for_provider(AgentProviderKind::Amp), Some("amp"));
+        assert_eq!(
+            agent_id_for_provider(AgentProviderKind::RovoDev),
+            Some("rovo-dev")
+        );
+        assert_eq!(
+            agent_id_for_provider(AgentProviderKind::Forge),
+            Some("forge")
+        );
     }
 }

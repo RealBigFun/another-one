@@ -5,6 +5,8 @@ use gpui::{
     Window,
 };
 
+use crate::agent_icons::branded_icon;
+use crate::agents::AGENTS;
 use crate::app::AnotherOneApp;
 use crate::layout::TITLEBAR_CHROME_H;
 use crate::shortcuts::{
@@ -41,6 +43,12 @@ impl AnotherOneApp {
         ev: &KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.settings_section == SettingsSection::Agents
+            && self.handle_settings_agent_input_key_down(ev, cx)
+        {
+            return true;
+        }
+
         if self.settings_section != SettingsSection::Keybindings {
             return false;
         }
@@ -130,6 +138,209 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    pub(crate) fn focus_settings_agent_input(&mut self, agent_id: &str, cx: &mut Context<Self>) {
+        let draft = self
+            .settings_agent_input
+            .drafts
+            .entry(agent_id.to_string())
+            .or_default();
+        self.settings_agent_input.focused_agent_id = Some(agent_id.to_string());
+        self.settings_agent_input.cursor = draft.len();
+        self.settings_agent_input.selection_anchor = None;
+        self.shortcut_capture_action = None;
+        cx.notify();
+    }
+
+    fn blur_settings_agent_input(&mut self, cx: &mut Context<Self>) {
+        if self.settings_agent_input.focused_agent_id.take().is_none() {
+            return;
+        }
+        self.settings_agent_input.selection_anchor = None;
+        cx.notify();
+    }
+
+    fn add_agent_launch_arg(&mut self, agent_id: &str, cx: &mut Context<Self>) {
+        let Some(agent) = AGENTS.iter().find(|agent| agent.id == agent_id) else {
+            return;
+        };
+        let draft = self
+            .settings_agent_input
+            .drafts
+            .get(agent_id)
+            .cloned()
+            .unwrap_or_default();
+        let token = match validate_agent_launch_arg(&draft) {
+            Ok(token) => token,
+            Err(message) => {
+                self.show_error_toast(message, cx);
+                return;
+            }
+        };
+
+        let mut args = self.project_store.agent_launch_args(agent_id).to_vec();
+        args.push(token.clone());
+        self.project_store.set_agent_launch_args(agent_id, args);
+        self.settings_agent_input
+            .drafts
+            .insert(agent_id.to_string(), String::new());
+        self.settings_agent_input.focused_agent_id = Some(agent_id.to_string());
+        self.settings_agent_input.cursor = 0;
+        self.settings_agent_input.selection_anchor = None;
+        self.show_success_toast(format!("Added {} arg for {}.", token, agent.label), cx);
+        cx.notify();
+    }
+
+    fn remove_agent_launch_arg(&mut self, agent_id: &str, index: usize, cx: &mut Context<Self>) {
+        let Some(agent) = AGENTS.iter().find(|agent| agent.id == agent_id) else {
+            return;
+        };
+        let mut args = self.project_store.agent_launch_args(agent_id).to_vec();
+        if index >= args.len() {
+            return;
+        }
+        let removed = args.remove(index);
+        self.project_store.set_agent_launch_args(agent_id, args);
+        self.show_success_toast(format!("Removed {} arg from {}.", removed, agent.label), cx);
+        cx.notify();
+    }
+
+    fn handle_settings_agent_input_key_down(
+        &mut self,
+        ev: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(agent_id) = self.settings_agent_input.focused_agent_id.clone() else {
+            return false;
+        };
+
+        let modifiers = ev.keystroke.modifiers;
+        match ev.keystroke.key.as_str() {
+            "backspace" => {
+                cx.stop_propagation();
+                let draft = self
+                    .settings_agent_input
+                    .drafts
+                    .entry(agent_id)
+                    .or_default();
+                if modifiers.platform {
+                    delete_settings_input_to_start(
+                        draft,
+                        &mut self.settings_agent_input.cursor,
+                        &mut self.settings_agent_input.selection_anchor,
+                    );
+                } else if modifiers.alt {
+                    delete_settings_input_word_backward(
+                        draft,
+                        &mut self.settings_agent_input.cursor,
+                        &mut self.settings_agent_input.selection_anchor,
+                    );
+                } else {
+                    delete_settings_input_backward(
+                        draft,
+                        &mut self.settings_agent_input.cursor,
+                        &mut self.settings_agent_input.selection_anchor,
+                    );
+                }
+                cx.notify();
+                true
+            }
+            "delete" => {
+                cx.stop_propagation();
+                let draft = self
+                    .settings_agent_input
+                    .drafts
+                    .entry(agent_id)
+                    .or_default();
+                delete_settings_input_forward(
+                    draft,
+                    &mut self.settings_agent_input.cursor,
+                    &mut self.settings_agent_input.selection_anchor,
+                );
+                cx.notify();
+                true
+            }
+            "left" => {
+                cx.stop_propagation();
+                let draft = self
+                    .settings_agent_input
+                    .drafts
+                    .entry(agent_id)
+                    .or_default();
+                move_settings_input_cursor(
+                    draft,
+                    &mut self.settings_agent_input.cursor,
+                    &mut self.settings_agent_input.selection_anchor,
+                    CursorDirection::Left,
+                    modifiers.shift,
+                );
+                cx.notify();
+                true
+            }
+            "right" => {
+                cx.stop_propagation();
+                let draft = self
+                    .settings_agent_input
+                    .drafts
+                    .entry(agent_id)
+                    .or_default();
+                move_settings_input_cursor(
+                    draft,
+                    &mut self.settings_agent_input.cursor,
+                    &mut self.settings_agent_input.selection_anchor,
+                    CursorDirection::Right,
+                    modifiers.shift,
+                );
+                cx.notify();
+                true
+            }
+            "home" => {
+                cx.stop_propagation();
+                let draft = self
+                    .settings_agent_input
+                    .drafts
+                    .entry(agent_id)
+                    .or_default();
+                move_settings_input_cursor_to_edge(
+                    draft,
+                    &mut self.settings_agent_input.cursor,
+                    &mut self.settings_agent_input.selection_anchor,
+                    false,
+                    modifiers.shift,
+                );
+                cx.notify();
+                true
+            }
+            "end" => {
+                cx.stop_propagation();
+                let draft = self
+                    .settings_agent_input
+                    .drafts
+                    .entry(agent_id)
+                    .or_default();
+                move_settings_input_cursor_to_edge(
+                    draft,
+                    &mut self.settings_agent_input.cursor,
+                    &mut self.settings_agent_input.selection_anchor,
+                    true,
+                    modifiers.shift,
+                );
+                cx.notify();
+                true
+            }
+            "enter" => {
+                cx.stop_propagation();
+                self.add_agent_launch_arg(&agent_id, cx);
+                true
+            }
+            "escape" | "tab" => {
+                cx.stop_propagation();
+                self.blur_settings_agent_input(cx);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Render the full-window settings page (sidebar + content).
     pub(crate) fn render_settings_page(
         &self,
@@ -188,6 +399,8 @@ impl AnotherOneApp {
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.settings_open = false;
                             this.shortcut_capture_action = None;
+                            this.settings_agent_input.focused_agent_id = None;
+                            this.settings_agent_input.selection_anchor = None;
                             cx.notify();
                         }),
                     )
@@ -247,6 +460,8 @@ impl AnotherOneApp {
                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                     this.settings_section = section;
                     this.shortcut_capture_action = None;
+                    this.settings_agent_input.focused_agent_id = None;
+                    this.settings_agent_input.selection_anchor = None;
                     cx.notify();
                 }),
             )
@@ -260,13 +475,233 @@ impl AnotherOneApp {
 
     fn settings_content(&self, cx: &mut Context<Self>) -> gpui::Div {
         match self.settings_section {
-            SettingsSection::Agents => self.settings_agents_content(),
+            SettingsSection::Agents => self.settings_agents_content(cx),
             SettingsSection::OpenIn => self.settings_open_in_content(cx),
             SettingsSection::Keybindings => self.settings_keybindings_content(cx),
         }
     }
 
-    fn settings_agents_content(&self) -> gpui::Div {
+    fn settings_agents_content(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let panel_bg = rgb(0x23252a);
+        let row_bg = rgb(0x1f2125);
+        let pill_bg = rgb(0x2a2d33);
+        let pill_border = gpui::white().opacity(0.10);
+        let button_bg = gpui::white().opacity(0.04);
+        let button_hover = gpui::white().opacity(0.08);
+        let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
+
+        let mut rows = div().flex().flex_col();
+        for (index, agent) in AGENTS.iter().enumerate() {
+            let args = self.project_store.agent_launch_args(agent.id);
+            let draft = self
+                .settings_agent_input
+                .drafts
+                .get(agent.id)
+                .cloned()
+                .unwrap_or_default();
+            let is_focused =
+                self.settings_agent_input.focused_agent_id.as_deref() == Some(agent.id);
+            let selection = settings_agent_input_selected_range(
+                self.settings_agent_input.cursor,
+                self.settings_agent_input.selection_anchor,
+            );
+
+            let mut row = div()
+                .id(("settings-agent-row", index))
+                .flex()
+                .flex_row()
+                .items_start()
+                .justify_between()
+                .gap(px(20.))
+                .px(px(18.))
+                .py(px(16.))
+                .bg(row_bg);
+
+            if index > 0 {
+                row = row.border_t_1().border_color(BORDER_SUBTLE());
+            }
+
+            let mut arg_pills = div().flex().flex_row().flex_wrap().gap(px(8.));
+            if args.is_empty() {
+                arg_pills = arg_pills.child(
+                    div()
+                        .px(px(10.))
+                        .py(px(6.))
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(pill_border)
+                        .bg(pill_bg)
+                        .text_size(rems(12. / 16.))
+                        .font_family("Lilex Nerd Font Mono")
+                        .text_color(TEXT_SECONDARY())
+                        .child("No extra args"),
+                );
+            } else {
+                for (arg_index, arg) in args.iter().enumerate() {
+                    let arg_label = arg.clone();
+                    arg_pills = arg_pills.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.))
+                            .px(px(10.))
+                            .py(px(6.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(pill_border)
+                            .bg(pill_bg)
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .font_family("Lilex Nerd Font Mono")
+                                    .text_color(TEXT_PRIMARY())
+                                    .child(arg_label),
+                            )
+                            .child(
+                                div()
+                                    .w(px(18.))
+                                    .h(px(18.))
+                                    .rounded(px(5.))
+                                    .cursor_pointer()
+                                    .hover(move |style| style.bg(gpui::white().opacity(0.08)))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                this.remove_agent_launch_arg(
+                                                    agent.id, arg_index, cx,
+                                                );
+                                                cx.stop_propagation();
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_size(rems(11. / 16.))
+                                            .text_color(TEXT_SECONDARY())
+                                            .child("x"),
+                                    ),
+                            ),
+                    );
+                }
+            }
+
+            rows = rows.child(
+                row.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        .min_w(px(0.))
+                        .max_w(px(540.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(12.))
+                                .child(branded_icon(agent.icon, 18., Some(TEXT_PRIMARY())))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(4.))
+                                        .child(
+                                            div()
+                                                .text_size(rems(13. / 16.))
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(TEXT_PRIMARY())
+                                                .child(agent.label),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(rems(11. / 16.))
+                                                .text_color(TEXT_SECONDARY())
+                                                .child(format!(
+                                                    "Extra argv tokens passed to {} on every launch and resume.",
+                                                    agent.label
+                                                )),
+                                        ),
+                                ),
+                        )
+                        .child(arg_pills),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .id(("settings-agent-input", index))
+                                .h(px(34.))
+                                .w(px(180.))
+                                .min_w(px(0.))
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(if is_focused {
+                                    active_button_bg.opacity(0.85)
+                                } else {
+                                    BORDER_SUBTLE()
+                                })
+                                .bg(button_bg)
+                                .px(px(10.))
+                                .cursor_pointer()
+                                .hover(move |style| style.bg(button_hover))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                        this.focus_handle.focus(window);
+                                        this.focus_settings_agent_input(agent.id, cx);
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                                .child(render_settings_agent_input_content(
+                                    &draft,
+                                    is_focused,
+                                    self.settings_agent_input.cursor,
+                                    selection,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .id(("settings-agent-add", index))
+                                .h(px(34.))
+                                .px(px(12.))
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(BORDER_SUBTLE())
+                                .bg(button_bg)
+                                .cursor_pointer()
+                                .hover(move |style| style.bg(button_hover))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                        this.add_agent_launch_arg(agent.id, cx);
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .text_size(rems(12. / 16.))
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(TEXT_PRIMARY())
+                                        .child("Add"),
+                                ),
+                        ),
+                ),
+            );
+        }
+
         div()
             .flex()
             .flex_col()
@@ -283,11 +718,56 @@ impl AnotherOneApp {
             .child(
                 div()
                     .mt(px(4.))
+                    .max_w(px(760.))
                     .text_size(rems(12. / 16.))
+                    .line_height(rems(18. / 16.))
                     .text_color(TEXT_SECONDARY())
                     .child(
-                        "Provider routing, prompt templates, and execution rules per agent action.",
+                        "Add per-agent argv tokens here. Each value is one token, order is preserved, and changes save immediately.",
                     ),
+            )
+            .child(
+                div()
+                    .mt(px(24.))
+                    .mb(px(16.))
+                    .max_w(px(860.))
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(BORDER_SUBTLE())
+                    .bg(panel_bg)
+                    .px(px(16.))
+                    .py(px(14.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(TEXT_PRIMARY())
+                                    .child("Token rules"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(11. / 16.))
+                                    .text_color(TEXT_SECONDARY())
+                                    .child(
+                                        "Whitespace is rejected because spaces would create multiple argv tokens. Reorder by removing and re-adding.",
+                                    ),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .max_w(px(860.))
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(BORDER_SUBTLE())
+                    .bg(panel_bg)
+                    .overflow_hidden()
+                    .child(rows),
             )
     }
 
@@ -869,5 +1349,399 @@ impl AnotherOneApp {
             );
         }
         shortcut_pills
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CursorDirection {
+    Left,
+    Right,
+}
+
+fn validate_agent_launch_arg(value: &str) -> Result<String, &'static str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("Enter one argv token before adding it.");
+    }
+
+    if trimmed != value || value.chars().any(char::is_whitespace) {
+        return Err("Launch args must be a single argv token without whitespace.");
+    }
+
+    Ok(value.to_string())
+}
+
+fn settings_agent_input_selected_range(
+    cursor: usize,
+    selection_anchor: Option<usize>,
+) -> Option<std::ops::Range<usize>> {
+    let anchor = selection_anchor?;
+    if anchor == cursor {
+        None
+    } else if anchor < cursor {
+        Some(anchor..cursor)
+    } else {
+        Some(cursor..anchor)
+    }
+}
+
+fn previous_settings_input_boundary(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .rev()
+        .find_map(|(index, _)| (index < cursor).then_some(index))
+        .unwrap_or(0)
+}
+
+fn next_settings_input_boundary(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .find_map(|(index, _)| (index > cursor).then_some(index))
+        .unwrap_or(text.len())
+}
+
+fn replace_settings_input_range(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    range: std::ops::Range<usize>,
+    replacement: &str,
+) {
+    text.replace_range(range.clone(), replacement);
+    *cursor = range.start + replacement.len();
+    *selection_anchor = None;
+}
+
+fn delete_settings_input_backward(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
+        replace_settings_input_range(text, cursor, selection_anchor, range, "");
+        return;
+    }
+
+    if *cursor == 0 {
+        return;
+    }
+
+    let start = previous_settings_input_boundary(text, *cursor);
+    replace_settings_input_range(text, cursor, selection_anchor, start..*cursor, "");
+}
+
+fn previous_settings_input_word_boundary(text: &str, cursor: usize) -> usize {
+    let mut idx = cursor;
+    while idx > 0 {
+        let start = previous_settings_input_boundary(text, idx);
+        let ch = text[start..idx].chars().next().unwrap_or_default();
+        if !ch.is_whitespace() {
+            break;
+        }
+        idx = start;
+    }
+
+    while idx > 0 {
+        let start = previous_settings_input_boundary(text, idx);
+        let ch = text[start..idx].chars().next().unwrap_or_default();
+        if ch.is_alphanumeric() || matches!(ch, '_' | '-') {
+            idx = start;
+        } else {
+            break;
+        }
+    }
+
+    idx
+}
+
+fn delete_settings_input_word_backward(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
+        replace_settings_input_range(text, cursor, selection_anchor, range, "");
+        return;
+    }
+
+    if *cursor == 0 {
+        return;
+    }
+
+    let start = previous_settings_input_word_boundary(text, *cursor);
+    replace_settings_input_range(text, cursor, selection_anchor, start..*cursor, "");
+}
+
+fn delete_settings_input_to_start(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
+        replace_settings_input_range(text, cursor, selection_anchor, range, "");
+        return;
+    }
+
+    if *cursor == 0 {
+        return;
+    }
+
+    replace_settings_input_range(text, cursor, selection_anchor, 0..*cursor, "");
+}
+
+fn delete_settings_input_forward(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
+        replace_settings_input_range(text, cursor, selection_anchor, range, "");
+        return;
+    }
+
+    if *cursor >= text.len() {
+        return;
+    }
+
+    let end = next_settings_input_boundary(text, *cursor);
+    replace_settings_input_range(text, cursor, selection_anchor, *cursor..end, "");
+}
+
+fn move_settings_input_cursor(
+    text: &str,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    direction: CursorDirection,
+    extend_selection: bool,
+) {
+    let next_cursor = match direction {
+        CursorDirection::Left => {
+            if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
+                if extend_selection {
+                    previous_settings_input_boundary(text, *cursor)
+                } else {
+                    range.start
+                }
+            } else {
+                previous_settings_input_boundary(text, *cursor)
+            }
+        }
+        CursorDirection::Right => {
+            if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
+                if extend_selection {
+                    next_settings_input_boundary(text, *cursor)
+                } else {
+                    range.end
+                }
+            } else {
+                next_settings_input_boundary(text, *cursor)
+            }
+        }
+    };
+
+    if extend_selection {
+        if selection_anchor.is_none() {
+            *selection_anchor = Some(*cursor);
+        }
+    } else {
+        *selection_anchor = None;
+    }
+
+    *cursor = next_cursor;
+}
+
+fn move_settings_input_cursor_to_edge(
+    text: &str,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    to_end: bool,
+    extend_selection: bool,
+) {
+    if extend_selection && selection_anchor.is_none() {
+        *selection_anchor = Some(*cursor);
+    }
+    if !extend_selection {
+        *selection_anchor = None;
+    }
+    *cursor = if to_end { text.len() } else { 0 };
+}
+
+fn intersect_byte_ranges(
+    left: std::ops::Range<usize>,
+    right: std::ops::Range<usize>,
+) -> Option<std::ops::Range<usize>> {
+    let start = left.start.max(right.start);
+    let end = left.end.min(right.end);
+    (start < end).then_some(start..end)
+}
+
+fn visible_input_range(
+    text: &str,
+    cursor: usize,
+    selection: Option<&std::ops::Range<usize>>,
+    max_chars: usize,
+) -> std::ops::Range<usize> {
+    let boundaries = text
+        .char_indices()
+        .map(|(idx, _)| idx)
+        .chain(std::iter::once(text.len()))
+        .collect::<Vec<_>>();
+    let total_chars = boundaries.len().saturating_sub(1);
+    if total_chars <= max_chars {
+        return 0..text.len();
+    }
+
+    let cursor_char = text[..cursor.min(text.len())].chars().count();
+    let mut start_char = cursor_char.saturating_sub(max_chars / 2);
+    let mut end_char = (start_char + max_chars).min(total_chars);
+    start_char = end_char.saturating_sub(max_chars);
+
+    if let Some(selection) = selection {
+        let selection_start_char = text[..selection.start.min(text.len())].chars().count();
+        let selection_end_char = text[..selection.end.min(text.len())].chars().count();
+        if selection_start_char < start_char {
+            start_char = selection_start_char;
+            end_char = (start_char + max_chars).min(total_chars);
+        }
+        if selection_end_char > end_char {
+            end_char = selection_end_char.min(total_chars);
+            start_char = end_char.saturating_sub(max_chars);
+        }
+    }
+
+    boundaries[start_char]..boundaries[end_char]
+}
+
+fn render_settings_agent_input_content(
+    text: &str,
+    focused: bool,
+    cursor: usize,
+    selection: Option<std::ops::Range<usize>>,
+) -> gpui::Div {
+    let cursor = cursor.min(text.len());
+    let selection = selection.map(|range| range.start.min(text.len())..range.end.min(text.len()));
+
+    if text.is_empty() {
+        return div()
+            .h_full()
+            .flex()
+            .items_center()
+            .gap(px(0.))
+            .text_size(rems(12. / 16.))
+            .font_family("Lilex Nerd Font Mono")
+            .child(if focused {
+                div().w(px(1.)).h(px(16.)).mr(px(1.)).bg(TEXT_PRIMARY())
+            } else {
+                div().w(px(0.))
+            })
+            .child(div().text_color(TEXT_SECONDARY()).child("argv-token"));
+    }
+
+    let selected = selection.filter(|range| range.start < range.end);
+    let visible_range = visible_input_range(text, cursor, selected.as_ref(), 20);
+    let leading_clipped = visible_range.start > 0;
+    let trailing_clipped = visible_range.end < text.len();
+    let visible_start = visible_range.start;
+    let visible_text = text[visible_range.clone()].to_string();
+    let local_cursor = cursor.saturating_sub(visible_start).min(visible_text.len());
+    let visible_selection = selected
+        .as_ref()
+        .and_then(|range| intersect_byte_ranges(range.clone(), visible_range.clone()))
+        .map(|range| range.start - visible_start..range.end - visible_start);
+
+    let mut row = div()
+        .h_full()
+        .flex()
+        .items_center()
+        .gap(px(0.))
+        .overflow_hidden()
+        .text_size(rems(12. / 16.))
+        .font_family("Lilex Nerd Font Mono");
+
+    if leading_clipped {
+        row = row.child(div().text_color(TEXT_SECONDARY()).child("..."));
+    }
+
+    let (prefix_end, selected_end) = if let Some(range) = visible_selection.as_ref() {
+        (
+            range.start.min(local_cursor),
+            range.end.min(visible_text.len()),
+        )
+    } else {
+        (
+            local_cursor.min(visible_text.len()),
+            local_cursor.min(visible_text.len()),
+        )
+    };
+
+    let prefix = visible_text[..prefix_end].to_string();
+    let middle = visible_selection
+        .as_ref()
+        .map(|range| visible_text[range.clone()].to_string())
+        .unwrap_or_default();
+    let trailing_start = visible_selection
+        .as_ref()
+        .filter(|range| range.end <= local_cursor)
+        .map(|_| selected_end)
+        .unwrap_or(local_cursor.min(visible_text.len()));
+    let trailing = visible_text[trailing_start..].to_string();
+
+    if !prefix.is_empty() {
+        row = row.child(div().text_color(TEXT_PRIMARY()).child(prefix));
+    }
+
+    if focused {
+        row = row.child(div().w(px(1.)).h(px(16.)).bg(TEXT_PRIMARY()));
+    }
+
+    if !middle.is_empty() {
+        row = row.child(
+            div()
+                .px(px(1.))
+                .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                .text_color(TEXT_PRIMARY())
+                .child(middle),
+        );
+    }
+
+    if !trailing.is_empty() {
+        row = row.child(div().text_color(TEXT_PRIMARY()).child(trailing));
+    }
+
+    if trailing_clipped {
+        row = row.child(div().text_color(TEXT_SECONDARY()).child("..."));
+    }
+
+    row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_agent_launch_arg;
+
+    #[test]
+    fn validates_single_token_launch_args() {
+        assert_eq!(
+            validate_agent_launch_arg("--yolo"),
+            Ok("--yolo".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_empty_launch_args() {
+        assert_eq!(
+            validate_agent_launch_arg(""),
+            Err("Enter one argv token before adding it.")
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_launch_args() {
+        assert_eq!(
+            validate_agent_launch_arg(" --yolo"),
+            Err("Launch args must be a single argv token without whitespace.")
+        );
+        assert_eq!(
+            validate_agent_launch_arg("--profile debug"),
+            Err("Launch args must be a single argv token without whitespace.")
+        );
     }
 }

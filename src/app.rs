@@ -28,7 +28,8 @@ actions!(
 );
 
 use crate::agents::{
-    terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
+    agent_id_for_provider, terminal_launch_config_for_selected_agent,
+    terminal_launch_config_for_selected_agents,
     AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
 use crate::layout::*;
@@ -386,6 +387,7 @@ struct TerminalRuntimeRequest {
     key: TerminalRuntimeKey,
     cwd: std::path::PathBuf,
     launch_config: TerminalLaunchConfig,
+    agent_launch_args: Vec<String>,
     size: TerminalGridSize,
 }
 
@@ -484,6 +486,14 @@ pub(crate) struct SidebarTaskRenameState {
     pub(crate) task_name: String,
     pub(crate) task_name_cursor: usize,
     pub(crate) task_name_selection_anchor: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SettingsAgentInputState {
+    pub(crate) drafts: HashMap<String, String>,
+    pub(crate) focused_agent_id: Option<String>,
+    pub(crate) cursor: usize,
+    pub(crate) selection_anchor: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -1140,6 +1150,8 @@ pub struct AnotherOneApp {
     pub(crate) project_page_config_dropdown: Option<ProjectBranchSettingField>,
     /// Shortcut row currently waiting for key capture in settings.
     pub(crate) shortcut_capture_action: Option<crate::shortcuts::ShortcutAction>,
+    /// Local draft and selection state for per-agent launch arg editing in settings.
+    pub(crate) settings_agent_input: SettingsAgentInputState,
     /// Active right-sidebar mode for task views.
     pub(crate) right_sidebar_mode: RightSidebarMode,
     /// Session-scoped recent-commit page sizes keyed by project id.
@@ -1262,6 +1274,7 @@ impl Element for AppInputHost {
 enum TextInputTarget {
     NewTaskModal,
     SidebarTaskRename,
+    SettingsAgentInput,
     Terminal,
     Blocked,
 }
@@ -1283,6 +1296,12 @@ impl EntityInputHandler for AnotherOneApp {
                 .sidebar_task_rename
                 .as_ref()
                 .map(|state| text_for_utf16_range(&state.task_name, range, adjusted_range)),
+            TextInputTarget::SettingsAgentInput => self
+                .settings_agent_input
+                .focused_agent_id
+                .as_ref()
+                .and_then(|agent_id| self.settings_agent_input.drafts.get(agent_id))
+                .map(|draft| text_for_utf16_range(draft, range, adjusted_range)),
             TextInputTarget::Terminal => None,
             TextInputTarget::Blocked => None,
         }
@@ -1309,6 +1328,18 @@ impl EntityInputHandler for AnotherOneApp {
                     state.task_name_selection_anchor,
                 )
             }),
+            TextInputTarget::SettingsAgentInput => self
+                .settings_agent_input
+                .focused_agent_id
+                .as_ref()
+                .and_then(|agent_id| self.settings_agent_input.drafts.get(agent_id))
+                .map(|draft| {
+                    utf16_selection_for_text(
+                        draft,
+                        self.settings_agent_input.cursor,
+                        self.settings_agent_input.selection_anchor,
+                    )
+                }),
             TextInputTarget::Terminal => None,
             TextInputTarget::Blocked => None,
         }
@@ -1361,6 +1392,23 @@ impl EntityInputHandler for AnotherOneApp {
                     cx.notify();
                 }
             }
+            TextInputTarget::SettingsAgentInput => {
+                if let Some(agent_id) = self.settings_agent_input.focused_agent_id.clone() {
+                    let draft = self
+                        .settings_agent_input
+                        .drafts
+                        .entry(agent_id)
+                        .or_default();
+                    replace_custom_text(
+                        draft,
+                        &mut self.settings_agent_input.cursor,
+                        &mut self.settings_agent_input.selection_anchor,
+                        range,
+                        text,
+                    );
+                    cx.notify();
+                }
+            }
             TextInputTarget::Terminal => {
                 if !text.is_empty() {
                     let _ = self.write_active_terminal_input(cx, text.as_bytes());
@@ -1379,7 +1427,9 @@ impl EntityInputHandler for AnotherOneApp {
         cx: &mut Context<Self>,
     ) {
         match self.text_input_target(cx) {
-            TextInputTarget::NewTaskModal | TextInputTarget::SidebarTaskRename => {
+            TextInputTarget::NewTaskModal
+            | TextInputTarget::SidebarTaskRename
+            | TextInputTarget::SettingsAgentInput => {
                 self.replace_text_in_range(range, new_text, _window, cx);
                 self.marked_text = if new_text.is_empty() {
                     None
@@ -1732,6 +1782,11 @@ impl AnotherOneApp {
         }
 
         if self.settings_open {
+            if self.settings_section == crate::settings_page::SettingsSection::Agents
+                && self.settings_agent_input.focused_agent_id.is_some()
+            {
+                return TextInputTarget::SettingsAgentInput;
+            }
             return TextInputTarget::Blocked;
         }
 
@@ -2172,9 +2227,22 @@ impl AnotherOneApp {
         self.settings_open = true;
         self.settings_section = section;
         self.shortcut_capture_action = None;
+        self.settings_agent_input.focused_agent_id = None;
+        self.settings_agent_input.selection_anchor = None;
         self.dismiss_titlebar_dropdowns();
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn agent_launch_args_for_launch_config(
+        &self,
+        launch_config: &TerminalLaunchConfig,
+    ) -> Vec<String> {
+        launch_config
+            .provider
+            .and_then(agent_id_for_provider)
+            .map(|agent_id| self.project_store.agent_launch_args(agent_id).to_vec())
+            .unwrap_or_default()
     }
 
     pub(crate) fn dismiss_titlebar_dropdowns(&mut self) -> bool {
@@ -2830,6 +2898,7 @@ impl AnotherOneApp {
             project_page_config_panel_targeted: false,
             project_page_config_dropdown: None,
             shortcut_capture_action: None,
+            settings_agent_input: SettingsAgentInputState::default(),
             right_sidebar_mode: RightSidebarMode::WorkingTree,
             commit_page_sizes: HashMap::new(),
             branch_commit_states: HashMap::new(),
@@ -3052,6 +3121,7 @@ impl AnotherOneApp {
             key: key.clone(),
             cwd,
             launch_config: tab.launch_config.clone(),
+            agent_launch_args: self.agent_launch_args_for_launch_config(&tab.launch_config),
             size: TerminalGridSize::default(),
         })
     }
@@ -3109,6 +3179,7 @@ impl AnotherOneApp {
             key.clone(),
             Some(request.cwd),
             launch_config,
+            request.agent_launch_args,
             request.size,
         );
         true
@@ -3132,6 +3203,7 @@ impl AnotherOneApp {
             },
             cwd,
             launch_config: tab.launch_config.clone(),
+            agent_launch_args: self.agent_launch_args_for_launch_config(&tab.launch_config),
             size: self.terminal_panel_size(window),
         })
     }
@@ -3182,7 +3254,8 @@ impl AnotherOneApp {
             self.warm_terminal_launch_sender.clone(),
             launch_id,
             Some(cwd),
-            launch_config,
+            launch_config.clone(),
+            self.agent_launch_args_for_launch_config(&launch_config),
             TerminalGridSize::default(),
         );
         launch_id
@@ -3414,6 +3487,7 @@ impl AnotherOneApp {
             request.key,
             Some(request.cwd),
             request.launch_config,
+            request.agent_launch_args,
             request.size,
         );
     }

@@ -1568,152 +1568,150 @@ impl AnotherOneApp {
                     body = body.child(rows);
                 }
             }
-            RightSidebarMode::Checks => {
-                match check_runs_state {
-                    None | Some(ProjectCheckRunsState::Loading) => {
-                        body = body.child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .px(px(18.))
-                                .text_sm()
-                                .text_color(muted_col)
-                                .child("Loading checks..."),
-                        );
-                    }
-                    Some(ProjectCheckRunsState::NoPullRequest) => {
-                        body = body.child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .px(px(18.))
-                                .text_sm()
-                                .text_color(muted_col)
-                                .child("No pull request exists for this branch."),
-                        );
-                    }
-                    Some(ProjectCheckRunsState::Failed(error)) => {
-                        body = body.child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .px(px(18.))
-                                .text_sm()
-                                .text_color(muted_col)
-                                .child(error),
-                        );
-                    }
-                    Some(ProjectCheckRunsState::Loaded(checks)) if checks.is_empty() => {
-                        body = body.child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .px(px(18.))
-                                .text_sm()
-                                .text_color(muted_col)
-                                .child("No CI checks found for this pull request."),
-                        );
-                    }
-                    Some(ProjectCheckRunsState::Loaded(checks)) => {
-                        let mut checks: Vec<_> = checks.iter().cloned().collect();
-                        checks.sort_by(|a, b| {
-                            Self::check_run_sort_priority(a.bucket)
-                                .cmp(&Self::check_run_sort_priority(b.bucket))
-                                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-                        });
-
-                        let passed = checks
-                            .iter()
-                            .filter(|check| {
-                                check.bucket == crate::git_actions::PullRequestCheckBucket::Pass
-                            })
-                            .count();
-                        let failed = checks
-                            .iter()
-                            .filter(|check| {
-                                check.bucket == crate::git_actions::PullRequestCheckBucket::Fail
-                            })
-                            .count();
-                        let pending = checks
-                            .iter()
-                            .filter(|check| {
-                                check.bucket == crate::git_actions::PullRequestCheckBucket::Pending
-                            })
-                            .count();
-                        let skipped = checks
-                            .iter()
-                            .filter(|check| {
-                                matches!(
-                                    check.bucket,
-                                    crate::git_actions::PullRequestCheckBucket::Skipping
-                                        | crate::git_actions::PullRequestCheckBucket::Cancel
-                                )
-                            })
-                            .count();
-
-                        body = body.child(
-                            div()
-                                .px(px(14.))
-                                .py(px(8.))
-                                .border_b_1()
-                                .border_color(gpui::white().opacity(0.06))
-                                .flex()
-                                .flex_row()
-                                .flex_wrap()
-                                .gap(px(6.))
-                                .when(passed > 0, |row| {
-                                    row.child(Self::check_runs_summary_badge(
-                                        format!("{passed} passed"),
-                                        hsla(138. / 360., 0.50, 0.74, 1.),
-                                    ))
-                                })
-                                .when(failed > 0, |row| {
-                                    row.child(Self::check_runs_summary_badge(
-                                        format!("{failed} failed"),
-                                        hsla(352. / 360., 0.52, 0.76, 1.),
-                                    ))
-                                })
-                                .when(pending > 0, |row| {
-                                    row.child(Self::check_runs_summary_badge(
-                                        format!("{pending} pending"),
-                                        hsla(42. / 360., 0.90, 0.66, 1.),
-                                    ))
-                                })
-                                .when(skipped > 0, |row| {
-                                    row.child(Self::check_runs_summary_badge(
-                                        format!("{skipped} skipped"),
-                                        hsla(0., 0., 0.62, 1.),
-                                    ))
-                                }),
-                        );
-
-                        let mut rows = div()
-                            .id("right-sidebar-checks-scroll")
+            RightSidebarMode::Checks => match check_runs_state {
+                None | Some(ProjectCheckRunsState::Loading) => {
+                    body = body.child(
+                        div()
                             .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
                             .flex()
-                            .flex_col()
-                            .px(px(4.))
-                            .py(px(6.))
-                            .gap(px(0.));
-
-                        for (index, check) in checks.iter().enumerate() {
-                            rows = rows.child(self.check_run_row(check, index, cx));
-                        }
-
-                        body = body.child(rows);
-                    }
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child("Loading checks..."),
+                    );
                 }
-            }
+                Some(ProjectCheckRunsState::NoPullRequest) => {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child("No pull request exists for this branch."),
+                    );
+                }
+                Some(ProjectCheckRunsState::Failed(error)) => {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child(error),
+                    );
+                }
+                Some(ProjectCheckRunsState::Loaded(checks)) if checks.is_empty() => {
+                    body = body.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px(px(18.))
+                            .text_sm()
+                            .text_color(muted_col)
+                            .child("No CI checks found for this pull request."),
+                    );
+                }
+                Some(ProjectCheckRunsState::Loaded(checks)) => {
+                    let mut checks: Vec<_> = checks.iter().cloned().collect();
+                    checks.sort_by(|a, b| {
+                        Self::check_run_sort_priority(a.bucket)
+                            .cmp(&Self::check_run_sort_priority(b.bucket))
+                            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    });
+
+                    let passed = checks
+                        .iter()
+                        .filter(|check| {
+                            check.bucket == crate::git_actions::PullRequestCheckBucket::Pass
+                        })
+                        .count();
+                    let failed = checks
+                        .iter()
+                        .filter(|check| {
+                            check.bucket == crate::git_actions::PullRequestCheckBucket::Fail
+                        })
+                        .count();
+                    let pending = checks
+                        .iter()
+                        .filter(|check| {
+                            check.bucket == crate::git_actions::PullRequestCheckBucket::Pending
+                        })
+                        .count();
+                    let skipped = checks
+                        .iter()
+                        .filter(|check| {
+                            matches!(
+                                check.bucket,
+                                crate::git_actions::PullRequestCheckBucket::Skipping
+                                    | crate::git_actions::PullRequestCheckBucket::Cancel
+                            )
+                        })
+                        .count();
+
+                    body = body.child(
+                        div()
+                            .px(px(14.))
+                            .py(px(8.))
+                            .border_b_1()
+                            .border_color(gpui::white().opacity(0.06))
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .gap(px(6.))
+                            .when(passed > 0, |row| {
+                                row.child(Self::check_runs_summary_badge(
+                                    format!("{passed} passed"),
+                                    hsla(138. / 360., 0.50, 0.74, 1.),
+                                ))
+                            })
+                            .when(failed > 0, |row| {
+                                row.child(Self::check_runs_summary_badge(
+                                    format!("{failed} failed"),
+                                    hsla(352. / 360., 0.52, 0.76, 1.),
+                                ))
+                            })
+                            .when(pending > 0, |row| {
+                                row.child(Self::check_runs_summary_badge(
+                                    format!("{pending} pending"),
+                                    hsla(42. / 360., 0.90, 0.66, 1.),
+                                ))
+                            })
+                            .when(skipped > 0, |row| {
+                                row.child(Self::check_runs_summary_badge(
+                                    format!("{skipped} skipped"),
+                                    hsla(0., 0., 0.62, 1.),
+                                ))
+                            }),
+                    );
+
+                    let mut rows = div()
+                        .id("right-sidebar-checks-scroll")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .px(px(4.))
+                        .py(px(6.))
+                        .gap(px(0.));
+
+                    for (index, check) in checks.iter().enumerate() {
+                        rows = rows.child(self.check_run_row(check, index, cx));
+                    }
+
+                    body = body.child(rows);
+                }
+            },
             RightSidebarMode::Compare => {
                 let target_branch = compare_target_branch.clone().unwrap_or_default();
                 let current_branch = compare_state

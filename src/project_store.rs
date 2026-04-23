@@ -296,6 +296,8 @@ pub struct UiState {
     #[serde(default)]
     pub preferred_open_in_app: Option<OpenInAppKind>,
     #[serde(default)]
+    pub agent_launch_args: HashMap<String, Vec<String>>,
+    #[serde(default)]
     pub shortcuts: ShortcutSettings,
 }
 
@@ -309,6 +311,7 @@ impl Default for UiState {
             last_active_section_id: None,
             enabled_open_in_apps: None,
             preferred_open_in_app: None,
+            agent_launch_args: HashMap::new(),
             shortcuts: ShortcutSettings::default(),
         }
     }
@@ -894,6 +897,41 @@ impl ProjectStore {
     pub fn set_shortcut_binding(&mut self, action: ShortcutAction, binding: impl Into<String>) {
         self.ui.shortcuts.set_binding(action, binding);
         self.save();
+    }
+
+    pub fn agent_launch_args(&self, agent_id: &str) -> &[String] {
+        self.ui
+            .agent_launch_args
+            .get(agent_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn set_agent_launch_args(
+        &mut self,
+        agent_id: impl Into<String>,
+        args: Vec<String>,
+    ) -> bool {
+        let agent_id = agent_id.into();
+        if args.is_empty() {
+            return self.remove_agent_launch_args(&agent_id);
+        }
+
+        if self.ui.agent_launch_args.get(&agent_id) == Some(&args) {
+            return false;
+        }
+
+        self.ui.agent_launch_args.insert(agent_id, args);
+        self.save();
+        true
+    }
+
+    pub fn remove_agent_launch_args(&mut self, agent_id: &str) -> bool {
+        let removed = self.ui.agent_launch_args.remove(agent_id).is_some();
+        if removed {
+            self.save();
+        }
+        removed
     }
 
     pub fn enabled_open_in_apps(&self, available: &[OpenInAppKind]) -> Vec<OpenInAppKind> {
@@ -2466,7 +2504,7 @@ mod tests {
         worktree_parent_dir_with_root, BranchCompareNameStatusEntry, BranchCompareNumStatEntry,
         PersistedSectionState, PersistedTerminalTab, Project, ProjectBranchSettingField,
         ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
-        RepoRecord, StoreFile, Task, TaskKind,
+        RepoRecord, StoreFile, Task, TaskKind, UiState,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -2576,6 +2614,7 @@ mod tests {
                 "last_active_section_id": null,
                 "enabled_open_in_apps": null,
                 "preferred_open_in_app": null,
+                "agent_launch_args": {},
                 "shortcuts": ShortcutSettings::default()
             }
         });
@@ -2779,6 +2818,7 @@ mod tests {
                 last_active_section_id: None,
                 enabled_open_in_apps: None,
                 preferred_open_in_app: None,
+                agent_launch_args: HashMap::new(),
                 shortcuts: ShortcutSettings::default(),
             },
         };
@@ -3169,5 +3209,138 @@ mod tests {
             store.preferred_open_in_app(&available),
             Some(OpenInAppKind::VsCode)
         );
+    }
+
+    #[test]
+    fn store_file_round_trip_preserves_agent_launch_args() {
+        let mut store = StoreFile::default();
+        store.ui = UiState {
+            agent_launch_args: HashMap::from([
+                ("codex".to_string(), vec!["--yolo".to_string()]),
+                (
+                    "claude-code".to_string(),
+                    vec!["--dangerously-skip-permissions".to_string()],
+                ),
+            ]),
+            ..UiState::default()
+        };
+
+        let json = serde_json::to_string(&store).expect("store should serialize");
+        let round_trip: StoreFile = serde_json::from_str(&json).expect("store should deserialize");
+
+        assert_eq!(
+            round_trip.ui.agent_launch_args.get("codex"),
+            Some(&vec!["--yolo".to_string()])
+        );
+        assert_eq!(
+            round_trip.ui.agent_launch_args.get("claude-code"),
+            Some(&vec!["--dangerously-skip-permissions".to_string()])
+        );
+    }
+
+    #[test]
+    fn store_file_loads_without_agent_launch_args() {
+        let json = serde_json::json!({
+            "version": super::STORE_VERSION,
+            "repos": {},
+            "projects": {},
+            "project_order": [],
+            "tasks": {},
+            "task_ids_by_root_project": {},
+            "sections": {},
+            "ui": {
+                "left_sidebar_open": true,
+                "expanded_repo_ids": [],
+                "repo_default_commit_actions": {},
+                "pinned_task_ids": [],
+                "last_active_section_id": null,
+                "enabled_open_in_apps": null,
+                "preferred_open_in_app": null,
+                "shortcuts": ShortcutSettings::default()
+            }
+        });
+
+        let store: StoreFile =
+            serde_json::from_value(json).expect("legacy store JSON should deserialize");
+
+        assert!(store.ui.agent_launch_args.is_empty());
+    }
+
+    #[test]
+    fn store_file_preserves_unknown_agent_launch_arg_keys() {
+        let json = serde_json::json!({
+            "version": super::STORE_VERSION,
+            "repos": {},
+            "projects": {},
+            "project_order": [],
+            "tasks": {},
+            "task_ids_by_root_project": {},
+            "sections": {},
+            "ui": {
+                "agent_launch_args": {
+                    "future-agent": ["--future-flag"]
+                }
+            }
+        });
+
+        let store: StoreFile = serde_json::from_value(json).expect("store JSON should deserialize");
+        let json = serde_json::to_value(&store).expect("store JSON should serialize");
+
+        assert_eq!(
+            json.get("ui")
+                .and_then(|ui| ui.get("agent_launch_args"))
+                .and_then(|args| args.get("future-agent"))
+                .and_then(|value| value.as_array())
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec!["--future-flag".to_string()])
+        );
+    }
+
+    #[test]
+    fn store_agent_launch_arg_helpers_persist_add_and_remove() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let file_path = temp_dir.path().join("projects.json");
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            file_path: file_path.clone(),
+        };
+
+        assert!(store
+            .set_agent_launch_args("codex", vec!["--yolo".to_string(), "--profile".to_string()]));
+        assert_eq!(
+            store.agent_launch_args("codex"),
+            ["--yolo".to_string(), "--profile".to_string()]
+        );
+
+        let saved: StoreFile = serde_json::from_str(
+            &fs::read_to_string(&file_path).expect("saved config should exist"),
+        )
+        .expect("saved config should deserialize");
+        assert_eq!(
+            saved.ui.agent_launch_args.get("codex"),
+            Some(&vec!["--yolo".to_string(), "--profile".to_string()])
+        );
+
+        assert!(store.remove_agent_launch_args("codex"));
+        assert!(store.agent_launch_args("codex").is_empty());
+
+        let saved: StoreFile = serde_json::from_str(
+            &fs::read_to_string(&file_path).expect("saved config should exist"),
+        )
+        .expect("saved config should deserialize");
+        assert!(!saved.ui.agent_launch_args.contains_key("codex"));
     }
 }

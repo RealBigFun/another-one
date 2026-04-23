@@ -79,10 +79,18 @@ pub(crate) fn spawn_terminal_launch(
     key: TerminalRuntimeKey,
     cwd: Option<PathBuf>,
     launch_config: TerminalLaunchConfig,
+    agent_launch_args: Vec<String>,
     size: TerminalGridSize,
 ) {
     thread::spawn(move || {
-        if let Err(error) = launch_terminal(sender.clone(), key.clone(), cwd, launch_config, size) {
+        if let Err(error) = launch_terminal(
+            sender.clone(),
+            key.clone(),
+            cwd,
+            launch_config,
+            agent_launch_args,
+            size,
+        ) {
             let _ = sender.send(TerminalLaunchReply::Failed {
                 key,
                 message: error.to_string(),
@@ -96,12 +104,18 @@ pub(crate) fn spawn_warm_terminal_launch(
     launch_id: u64,
     cwd: Option<PathBuf>,
     launch_config: TerminalLaunchConfig,
+    agent_launch_args: Vec<String>,
     size: TerminalGridSize,
 ) {
     thread::spawn(move || {
-        if let Err(error) =
-            launch_warm_terminal(sender.clone(), launch_id, cwd, launch_config, size)
-        {
+        if let Err(error) = launch_warm_terminal(
+            sender.clone(),
+            launch_id,
+            cwd,
+            launch_config,
+            agent_launch_args,
+            size,
+        ) {
             let _ = sender.send(WarmTerminalLaunchReply::Failed {
                 launch_id,
                 message: error.to_string(),
@@ -115,11 +129,13 @@ fn launch_terminal(
     key: TerminalRuntimeKey,
     cwd: Option<PathBuf>,
     launch_config: TerminalLaunchConfig,
+    agent_launch_args: Vec<String>,
     size: TerminalGridSize,
 ) -> anyhow::Result<()> {
     let launch_started_at = SystemTime::now();
     let cwd = cwd.unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let (mut builder, launch_config, discovery_kind) = build_command(&cwd, launch_config)?;
+    let (mut builder, launch_config, discovery_kind) =
+        build_command(&cwd, launch_config, &agent_launch_args)?;
 
     builder.cwd(&cwd);
     apply_terminal_environment(&mut builder);
@@ -206,11 +222,13 @@ fn launch_warm_terminal(
     launch_id: u64,
     cwd: Option<PathBuf>,
     launch_config: TerminalLaunchConfig,
+    agent_launch_args: Vec<String>,
     size: TerminalGridSize,
 ) -> anyhow::Result<()> {
     let launch_started_at = SystemTime::now();
     let cwd = cwd.unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let (mut builder, launch_config, discovery_kind) = build_command(&cwd, launch_config)?;
+    let (mut builder, launch_config, discovery_kind) =
+        build_command(&cwd, launch_config, &agent_launch_args)?;
 
     builder.cwd(&cwd);
     apply_terminal_environment(&mut builder);
@@ -298,6 +316,7 @@ struct PiSessionCapture {
 fn build_command(
     cwd: &Path,
     launch_config: TerminalLaunchConfig,
+    agent_launch_args: &[String],
 ) -> anyhow::Result<(CommandBuilder, TerminalLaunchConfig, Option<DiscoveryKind>)> {
     if launch_config.mode == TerminalLaunchMode::RawShell {
         return Ok((CommandBuilder::new_default_prog(), launch_config, None));
@@ -309,15 +328,7 @@ fn build_command(
 
     match provider {
         AgentProviderKind::ClaudeCode => {
-            let (session, should_resume) =
-                resolve_claude_session(cwd, launch_config.session.as_ref(), None);
-            let mut builder = CommandBuilder::new("claude");
-            if should_resume {
-                builder.args(["--resume", session.id.as_str()]);
-            } else {
-                builder.args(["--session-id", session.id.as_str()]);
-            }
-            Ok((builder, launch_config.with_session(Some(session)), None))
+            build_claude_command(cwd, launch_config, agent_launch_args, None)
         }
         AgentProviderKind::CursorAgent => {
             let session = if let Some(session) = launch_config.session.clone() {
@@ -329,11 +340,13 @@ fn build_command(
                 }
             };
             let mut builder = CommandBuilder::new("agent");
+            builder.args(agent_launch_args);
             builder.args(["--resume", session.id.as_str()]);
             Ok((builder, launch_config.with_session(Some(session)), None))
         }
         AgentProviderKind::Codex => {
             let mut builder = CommandBuilder::new("codex");
+            builder.args(agent_launch_args);
             let (launch_config, codex_home_override) = resolve_codex_home_override(launch_config)?;
             if let Some(codex_home_override) = codex_home_override.as_ref() {
                 builder.env(
@@ -355,6 +368,7 @@ fn build_command(
         }
         AgentProviderKind::Pi => {
             let mut builder = CommandBuilder::new("pi");
+            builder.args(agent_launch_args);
             let discovery = if let Some(session) =
                 resolve_pi_session(cwd, launch_config.session.as_ref(), None)
             {
@@ -372,12 +386,31 @@ fn build_command(
         }
         provider => {
             let mut builder = CommandBuilder::new(provider_command(provider));
+            builder.args(agent_launch_args);
             if let Some(session) = launch_config.session.clone() {
                 builder.arg(session.id);
             }
             Ok((builder, launch_config, None))
         }
     }
+}
+
+fn build_claude_command(
+    cwd: &Path,
+    launch_config: TerminalLaunchConfig,
+    agent_launch_args: &[String],
+    projects_root: Option<&Path>,
+) -> anyhow::Result<(CommandBuilder, TerminalLaunchConfig, Option<DiscoveryKind>)> {
+    let (session, should_resume) =
+        resolve_claude_session(cwd, launch_config.session.as_ref(), projects_root);
+    let mut builder = CommandBuilder::new("claude");
+    builder.args(agent_launch_args);
+    if should_resume {
+        builder.args(["--resume", session.id.as_str()]);
+    } else {
+        builder.args(["--session-id", session.id.as_str()]);
+    }
+    Ok((builder, launch_config.with_session(Some(session)), None))
 }
 
 fn resolve_pi_session(
@@ -983,13 +1016,14 @@ fn newest_matching_jsonl(
 #[cfg(test)]
 mod tests {
     use super::{
-        claude_project_dir_name, claude_session_exists, discover_codex_session,
-        discover_codex_session_from_index, discover_codex_session_from_saved_sessions,
-        discover_pi_session, discovery_timeout_for_kind, pi_session_exists,
-        prepare_codex_home_override_from, read_session_capture, resolve_claude_session,
-        resolve_pi_session, DiscoveryKind, PiSessionCapture, SessionCaptureState,
-        TerminalSessionKind, TerminalSessionRef,
+        build_claude_command, build_command, claude_project_dir_name, claude_session_exists,
+        discover_codex_session, discover_codex_session_from_index,
+        discover_codex_session_from_saved_sessions, discover_pi_session,
+        discovery_timeout_for_kind, pi_session_exists, prepare_codex_home_override_from,
+        read_session_capture, resolve_claude_session, resolve_pi_session, DiscoveryKind,
+        PiSessionCapture, SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
     };
+    use crate::agents::{AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
     use std::fs;
     use std::path::Path;
@@ -1011,6 +1045,14 @@ mod tests {
 
     fn temp_codex_root() -> PathBuf {
         env::temp_dir().join(format!("another-one-codex-root-{}", Uuid::new_v4()))
+    }
+
+    fn argv(builder: &portable_pty::CommandBuilder) -> Vec<String> {
+        builder
+            .get_argv()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
     }
 
     #[test]
@@ -1372,5 +1414,163 @@ mod tests {
         assert_ne!(session.id, requested_session.id);
 
         let _ = fs::remove_dir_all(projects_root);
+    }
+
+    #[test]
+    fn build_command_injects_codex_args_before_fresh_session_setup() {
+        let cwd = Path::new("/tmp/project");
+        let codex_root = temp_codex_root();
+        fs::create_dir_all(&codex_root).expect("codex root should be created");
+        let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::Codex)
+            .with_home_override(Some(codex_root.clone()));
+        let agent_launch_args = vec!["--yolo".to_string(), "--profile".to_string()];
+
+        let (builder, launch_config, discovery) =
+            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+
+        assert_eq!(argv(&builder), vec!["codex", "--yolo", "--profile"]);
+        assert_eq!(launch_config.home_override, Some(codex_root.clone()));
+        assert!(launch_config.session.is_none());
+        assert!(matches!(
+            discovery,
+            Some(DiscoveryKind::Codex { root }) if root == codex_root
+        ));
+
+        let _ = fs::remove_dir_all(codex_root);
+    }
+
+    #[test]
+    fn build_command_injects_codex_args_before_resume_args() {
+        let cwd = Path::new("/tmp/project");
+        let session = TerminalSessionRef {
+            kind: TerminalSessionKind::CodexSession,
+            id: "codex-session".to_string(),
+        };
+        let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::Codex)
+            .with_session(Some(session.clone()));
+        let agent_launch_args = vec!["--yolo".to_string()];
+
+        let (builder, launch_config, discovery) =
+            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+
+        assert_eq!(
+            argv(&builder),
+            vec!["codex", "--yolo", "resume", "codex-session"]
+        );
+        assert_eq!(launch_config.session, Some(session));
+        assert!(discovery.is_none());
+    }
+
+    #[test]
+    fn build_command_injects_claude_args_for_new_session() {
+        let cwd = Path::new("/tmp/project");
+        let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode);
+        let agent_launch_args = vec!["--dangerously-skip-permissions".to_string()];
+
+        let (builder, launch_config, discovery) =
+            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+
+        let argv = argv(&builder);
+        assert_eq!(argv[0], "claude");
+        assert_eq!(argv[1], "--dangerously-skip-permissions");
+        assert_eq!(argv[2], "--session-id");
+        assert_eq!(argv.len(), 4);
+        assert!(launch_config.session.is_some());
+        assert!(discovery.is_none());
+    }
+
+    #[test]
+    fn build_command_injects_claude_args_for_resume() {
+        let projects_root = temp_claude_projects_root();
+        let cwd = Path::new("/tmp/project");
+        let session = TerminalSessionRef {
+            kind: TerminalSessionKind::ClaudeSession,
+            id: "session-123".to_string(),
+        };
+        let project_dir = projects_root.join(claude_project_dir_name(cwd));
+        fs::create_dir_all(&project_dir).expect("project dir should be created");
+        fs::write(project_dir.join("session-123.jsonl"), "{}")
+            .expect("session file should be created");
+
+        let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode)
+            .with_session(Some(session));
+        let agent_launch_args = vec!["--dangerously-skip-permissions".to_string()];
+
+        let (builder, _, discovery) =
+            build_claude_command(cwd, launch_config, &agent_launch_args, Some(&projects_root))
+                .expect("build should succeed");
+
+        assert_eq!(
+            argv(&builder),
+            vec![
+                "claude",
+                "--dangerously-skip-permissions",
+                "--resume",
+                "session-123"
+            ]
+        );
+        assert!(discovery.is_none());
+
+        let _ = fs::remove_dir_all(projects_root);
+    }
+
+    #[test]
+    fn build_command_injects_cursor_args_before_resume() {
+        let cwd = Path::new("/tmp/project");
+        let session = TerminalSessionRef {
+            kind: TerminalSessionKind::CursorChat,
+            id: "cursor-chat".to_string(),
+        };
+        let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::CursorAgent)
+            .with_session(Some(session.clone()));
+        let agent_launch_args = vec!["--model".to_string(), "sonnet".to_string()];
+
+        let (builder, launch_config, discovery) =
+            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+
+        assert_eq!(
+            argv(&builder),
+            vec!["agent", "--model", "sonnet", "--resume", "cursor-chat"]
+        );
+        assert_eq!(launch_config.session, Some(session));
+        assert!(discovery.is_none());
+    }
+
+    #[test]
+    fn build_command_injects_generic_provider_args_before_session() {
+        let cwd = Path::new("/tmp/project");
+        let session = TerminalSessionRef {
+            kind: TerminalSessionKind::PiSession,
+            id: "resume-me".to_string(),
+        };
+        let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::Forge)
+            .with_session(Some(session));
+        let agent_launch_args = vec!["--log-level".to_string(), "debug".to_string()];
+
+        let (builder, _, discovery) =
+            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+
+        assert_eq!(
+            argv(&builder),
+            vec!["forge", "--log-level", "debug", "resume-me"]
+        );
+        assert!(discovery.is_none());
+    }
+
+    #[test]
+    fn build_command_ignores_agent_args_for_raw_shell() {
+        let cwd = Path::new("/tmp/project");
+        let launch_config = TerminalLaunchConfig {
+            mode: TerminalLaunchMode::RawShell,
+            ..TerminalLaunchConfig::default()
+        };
+        let agent_launch_args = vec!["--ignored".to_string()];
+
+        let (builder, _, discovery) =
+            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+
+        assert!(builder.is_default_prog());
+        assert!(builder.get_argv().is_empty());
+        assert!(discovery.is_none());
     }
 }

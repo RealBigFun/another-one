@@ -1689,18 +1689,12 @@ impl AnotherOneApp {
         container
     }
 
-    fn project_menu_panel(&self, target_id: &str, cx: &mut Context<Self>) -> impl IntoElement {
-        let remove_target_id = target_id.to_string();
-        let remove_requires_confirm = self
-            .project_group_remove_confirm(target_id)
-            .map(|confirm| confirm.open_task_count > 0)
-            .unwrap_or(false);
+    fn project_menu_panel(&self, _target_id: &str, _cx: &mut Context<Self>) -> impl IntoElement {
         let bg = rgb(0x2b2d31);
         let border = gpui::black().opacity(0.35);
         let title_col = hsla(0., 0., 0.92, 1.);
         let body_col = hsla(0., 0., 0.78, 1.);
         let muted_col = hsla(0., 0., 0.58, 1.);
-        let danger_col = hsla(0.0, 0.78, 0.68, 1.);
         let hover_bg = gpui::white().opacity(0.06);
 
         div()
@@ -1720,7 +1714,7 @@ impl AnotherOneApp {
                     .text_xs()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(muted_col)
-                    .child("Sort worktrees by"),
+                    .child("Sort tasks by"),
             )
             .child(
                 div()
@@ -1780,49 +1774,6 @@ impl AnotherOneApp {
                             .child(div().text_sm().text_color(body_col).child("Manual")),
                     )
                     .child(div()),
-            )
-            .child(div().h(px(1.)).mx(px(14.)).bg(gpui::white().opacity(0.06)))
-            .child(
-                div()
-                    .id(SharedString::from("project-menu-remove"))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(42.))
-                    .px(px(14.))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(gpui::white().opacity(0.06)))
-                    .tooltip(move |_window, cx| {
-                        Self::action_tooltip_view(
-                            if remove_requires_confirm {
-                                "Remove this project and its open tasks from the sidebar"
-                            } else {
-                                "Remove this project from the sidebar"
-                            },
-                            cx,
-                        )
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                            this.request_remove_project_group(&remove_target_id, cx);
-                            cx.stop_propagation();
-                        }),
-                    )
-                    .child(
-                        svg()
-                            .path("assets/icons/icons__trash.svg")
-                            .size(px(15.))
-                            .text_color(danger_col),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(danger_col)
-                            .child("Remove Project"),
-                    ),
             )
     }
 
