@@ -5,9 +5,11 @@
 //! [`crate::frame`]). `0x00` frames carry PTY bytes in either direction,
 //! `0x01` frames carry JSON control messages (currently `resize`).
 
+use std::path::PathBuf;
+
 use anyhow::Context;
 use iroh::endpoint::{presets, Connection, Incoming};
-use iroh::Endpoint;
+use iroh::{Endpoint, SecretKey};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -18,9 +20,82 @@ use crate::pty::PtySession;
 /// can be versioned cleanly (`/1`, `/2`, …).
 pub const ALPN: &[u8] = b"anotherone/pty/0";
 
+/// Returns the XDG-ish data directory for the sandbox daemon, creating it
+/// if missing. Resolution order matches the XDG Base Directory spec enough
+/// for our purposes: `$XDG_DATA_HOME/another-one-sandbox` if set, otherwise
+/// `$HOME/.local/share/another-one-sandbox`. No external `dirs` dep — keeps
+/// the daemon binary lean.
+fn data_dir() -> anyhow::Result<PathBuf> {
+    let base = if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        PathBuf::from(xdg)
+    } else {
+        let home = std::env::var("HOME").context("HOME is unset — can't locate data dir")?;
+        PathBuf::from(home).join(".local").join("share")
+    };
+    let dir = base.join("another-one-sandbox");
+    std::fs::create_dir_all(&dir).with_context(|| format!("create data dir {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Loads the daemon's persistent Ed25519 secret key from
+/// `<data_dir>/secret_key` (32 hex-encoded bytes). Generates a fresh one
+/// and writes it to disk the first time. Giving the daemon a stable
+/// identity across restarts means paired clients don't have to re-discover
+/// its `EndpointId` every time the process starts.
+fn load_or_create_secret_key() -> anyhow::Result<SecretKey> {
+    let path = data_dir()?.join("secret_key");
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        let trimmed = content.trim();
+        let bytes = hex_decode_32(trimmed)
+            .with_context(|| format!("parse secret key at {}", path.display()))?;
+        Ok(SecretKey::from_bytes(&bytes))
+    } else {
+        let sk = SecretKey::generate();
+        let hex = hex_encode_32(&sk.to_bytes());
+        std::fs::write(&path, format!("{hex}\n"))
+            .with_context(|| format!("write secret key to {}", path.display()))?;
+        // Tighten perms on unix — 0600 so other users on the box can't read.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                &path,
+                std::fs::Permissions::from_mode(0o600),
+            );
+        }
+        info!("generated new persistent secret key at {}", path.display());
+        Ok(sk)
+    }
+}
+
+fn hex_encode_32(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
+    if s.len() != 64 {
+        anyhow::bail!("expected 64 hex chars, got {}", s.len());
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        let hi = u8::from_str_radix(&s[i * 2..i * 2 + 1], 16).context("bad hex")?;
+        let lo = u8::from_str_radix(&s[i * 2 + 1..i * 2 + 2], 16).context("bad hex")?;
+        *byte = (hi << 4) | lo;
+    }
+    Ok(out)
+}
+
 /// Runs the Iroh endpoint loop until its `accept()` stream ends.
 pub async fn serve() -> anyhow::Result<()> {
+    let secret_key = load_or_create_secret_key()?;
     let endpoint = Endpoint::builder(presets::N0)
+        .secret_key(secret_key)
         .alpns(vec![ALPN.to_vec()])
         .bind()
         .await
@@ -70,6 +145,22 @@ pub async fn serve() -> anyhow::Result<()> {
         info!("Ticket written to {}", ticket_path.display());
     }
 
+    // Print a single-line pairing URL and ASCII QR on stdout — the phone
+    // can scan the QR with its default camera app, copy the URL, and paste
+    // it into the endpoint field. Direct addrs are included so on-LAN
+    // devices can use the fast path; relay is included so cellular/off-LAN
+    // falls back cleanly.
+    let pairing_url = build_pairing_url(&addr);
+    println!();
+    println!("Pairing URL:\n  {pairing_url}");
+    match render_qr(&pairing_url) {
+        Ok(qr) => {
+            println!();
+            print!("{qr}");
+        }
+        Err(e) => warn!(error = %e, "failed to render pairing QR"),
+    }
+
     while let Some(incoming) = endpoint.accept().await {
         tokio::spawn(async move {
             if let Err(e) = handle_incoming(incoming).await {
@@ -83,8 +174,60 @@ pub async fn serve() -> anyhow::Result<()> {
 async fn handle_incoming(incoming: Incoming) -> anyhow::Result<()> {
     let conn = incoming.accept().context("accept")?.await.context("handshake")?;
     let remote = conn.remote_id();
-    info!(%remote, "iroh client connected");
+
+    // Authorize via a trust-on-first-use allowlist. The first client to
+    // connect gets saved as the owning device; subsequent unknown
+    // EndpointIds are rejected immediately. Delete the allowlist file to
+    // re-pair. This is the sandbox's stand-in for a real pairing token
+    // flow — quick, zero-UX, good enough to keep random iroh peers who
+    // learn the NodeId out.
+    match authorize_remote(&remote.to_string()) {
+        Ok(Authorization::Paired) => {
+            info!(%remote, "iroh client connected (paired)");
+        }
+        Ok(Authorization::FirstPair) => {
+            info!(%remote, "iroh client connected (first-pair, added to allowlist)");
+        }
+        Err(e) => {
+            warn!(%remote, error = %e, "rejecting unknown peer");
+            conn.close(1u8.into(), b"not paired");
+            return Ok(());
+        }
+    }
     handle_connection(conn).await
+}
+
+enum Authorization {
+    /// The remote's EndpointId was already in the allowlist.
+    Paired,
+    /// Allowlist was empty; we just added this remote.
+    FirstPair,
+}
+
+/// Check the allowlist at `<data_dir>/paired_peers` against `remote_id`.
+/// Adds the remote on the first-ever call (TOFU). Returns `Err` on any
+/// other mismatch.
+fn authorize_remote(remote_id: &str) -> anyhow::Result<Authorization> {
+    let path = data_dir()?.join("paired_peers");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let peers: Vec<&str> = existing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    if peers.is_empty() {
+        let line = format!("{remote_id}\n");
+        std::fs::write(&path, line)
+            .with_context(|| format!("write allowlist {}", path.display()))?;
+        Ok(Authorization::FirstPair)
+    } else if peers.iter().any(|p| *p == remote_id) {
+        Ok(Authorization::Paired)
+    } else {
+        anyhow::bail!(
+            "remote {remote_id} is not in {} (delete the file to re-pair)",
+            path.display()
+        )
+    }
 }
 
 async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
@@ -178,4 +321,47 @@ fn iroh_pty_size(cols: u16, rows: u16) -> portable_pty::PtySize {
         pixel_width: 0,
         pixel_height: 0,
     }
+}
+
+/// Builds the `iroh://…?direct=…&relay=…` pairing URL the mobile app
+/// understands. Direct addrs are comma-separated; relay URLs are
+/// percent-encoded so the `://` inside each relay URL doesn't confuse
+/// Dart's `Uri.parse`.
+fn build_pairing_url(addr: &iroh::EndpointAddr) -> String {
+    let directs = addr
+        .ip_addrs()
+        .map(|ip| ip.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let relays = addr
+        .relay_urls()
+        .map(|u| urlencoding::encode(u.as_str()).into_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut url = format!("iroh://{}", addr.id);
+    let mut params: Vec<String> = Vec::new();
+    if !directs.is_empty() {
+        params.push(format!("direct={directs}"));
+    }
+    if !relays.is_empty() {
+        params.push(format!("relay={relays}"));
+    }
+    if !params.is_empty() {
+        url.push('?');
+        url.push_str(&params.join("&"));
+    }
+    url
+}
+
+/// Renders `input` as an ASCII QR code (two chars per pixel, quiet zone
+/// included) suitable for pasting into a terminal window. Returns a
+/// string that ends with a newline.
+fn render_qr(input: &str) -> anyhow::Result<String> {
+    use qrcode::{render::unicode::Dense1x2, QrCode};
+    let code = QrCode::new(input.as_bytes()).context("encode QR")?;
+    Ok(code
+        .render::<Dense1x2>()
+        .dark_color(Dense1x2::Light)
+        .light_color(Dense1x2::Dark)
+        .build())
 }
