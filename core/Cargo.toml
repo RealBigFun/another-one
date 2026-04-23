@@ -8,8 +8,20 @@ publish = false
 [lib]
 name = "another_one_core"
 
+[features]
+default = []
+# Forwarded from the desktop crate's `hotpath` / `hotpath-alloc` features;
+# controls whether `#[hotpath::measure]` in moved code actually records
+# anything. The `hotpath` crate is always linked (the proc-macro needs to
+# resolve unconditionally), but its features gate whether it does work
+# at runtime — so neither feature on means the attribute is effectively
+# a no-op, matching desktop's pre-extraction setup.
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+
 [dependencies]
 dirs = "5"
+hotpath = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }

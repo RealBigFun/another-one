@@ -23,10 +23,6 @@ impl PlatformServices for LinuxPlatform {
         "Super"
     }
 
-    fn default_close_current_tab_binding() -> &'static str {
-        "control-w"
-    }
-
     fn read_process_samples(
         _app_pid: u32,
         _tracked_processes: &[TrackedProcess],

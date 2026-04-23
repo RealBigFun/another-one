@@ -1,185 +1,25 @@
+//! GPUI-event side of the shortcut system.
+//!
+//! The data types live in `another_one_core::shortcuts`. Of those,
+//! `ShortcutAction` and `ALL_SHORTCUT_ACTIONS` are re-exported below
+//! because desktop call sites (sidebar, settings page) reach for them
+//! via `crate::shortcuts::…`. `ShortcutSettings` is not re-exported —
+//! only `ProjectStore` consumed it, and that's in core now. What stays
+//! here is the `KeyDownEvent`-facing glue:
+//!
+//! - `shortcut_matches_event` — "does this event match the stored
+//!   shortcut string?"
+//! - `capture_shortcut` — "turn this event into a canonical shortcut
+//!   string"
+//! - `keybinding_token_label` — pretty-printing shortcut tokens for the
+//!   settings page, including the platform-specific ⌘/Ctrl label.
+//!
+//! `KeyDownEvent` is a GPUI concept, so this module has to live with
+//! the GPUI-linked crate.
+
 use gpui::KeyDownEvent;
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ShortcutAction {
-    CycleProjects,
-    NewTabInCurrentTask,
-    NewTask,
-    CloseCurrentTab,
-    NextTab,
-    PreviousTab,
-    NextTask,
-    PreviousTask,
-}
-
-pub const ALL_SHORTCUT_ACTIONS: [ShortcutAction; 8] = [
-    ShortcutAction::CycleProjects,
-    ShortcutAction::NewTabInCurrentTask,
-    ShortcutAction::NewTask,
-    ShortcutAction::CloseCurrentTab,
-    ShortcutAction::NextTab,
-    ShortcutAction::PreviousTab,
-    ShortcutAction::NextTask,
-    ShortcutAction::PreviousTask,
-];
-
-impl ShortcutAction {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::CycleProjects => "Cycle Projects",
-            Self::NewTabInCurrentTask => "New Tab in Current Task",
-            Self::NewTask => "New Task",
-            Self::CloseCurrentTab => "Close Current Tab",
-            Self::NextTab => "Next Tab",
-            Self::PreviousTab => "Previous Tab",
-            Self::NextTask => "Next Task",
-            Self::PreviousTask => "Previous Task",
-        }
-    }
-
-    pub(crate) fn default_binding(self) -> &'static str {
-        match self {
-            Self::CycleProjects => "cmd-o",
-            Self::NewTabInCurrentTask => "cmd-n",
-            Self::NewTask => "cmd-t",
-            Self::CloseCurrentTab => close_current_tab_default_binding(),
-            Self::NextTab => "cmd-shift-]",
-            Self::PreviousTab => "cmd-shift-[",
-            Self::NextTask => "cmd-alt-down",
-            Self::PreviousTask => "cmd-alt-up",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShortcutSettings {
-    #[serde(default = "default_cycle_projects_shortcut")]
-    pub cycle_projects: String,
-    #[serde(default = "default_new_tab_in_current_task_shortcut")]
-    pub new_tab_in_current_task: String,
-    #[serde(default = "default_new_task_shortcut")]
-    pub new_task: String,
-    #[serde(default = "default_close_current_tab_shortcut")]
-    pub close_current_tab: String,
-    #[serde(default = "default_next_tab_shortcut")]
-    pub next_tab: String,
-    #[serde(default = "default_previous_tab_shortcut")]
-    pub previous_tab: String,
-    #[serde(default = "default_next_task_shortcut")]
-    pub next_task: String,
-    #[serde(default = "default_previous_task_shortcut")]
-    pub previous_task: String,
-}
-
-impl Default for ShortcutSettings {
-    fn default() -> Self {
-        Self {
-            cycle_projects: default_cycle_projects_shortcut(),
-            new_tab_in_current_task: default_new_tab_in_current_task_shortcut(),
-            new_task: default_new_task_shortcut(),
-            close_current_tab: default_close_current_tab_shortcut(),
-            next_tab: default_next_tab_shortcut(),
-            previous_tab: default_previous_tab_shortcut(),
-            next_task: default_next_task_shortcut(),
-            previous_task: default_previous_task_shortcut(),
-        }
-    }
-}
-
-impl ShortcutSettings {
-    pub(crate) fn binding_for(&self, action: ShortcutAction) -> &str {
-        match action {
-            ShortcutAction::CycleProjects => &self.cycle_projects,
-            ShortcutAction::NewTabInCurrentTask => &self.new_tab_in_current_task,
-            ShortcutAction::NewTask => &self.new_task,
-            ShortcutAction::CloseCurrentTab => &self.close_current_tab,
-            ShortcutAction::NextTab => &self.next_tab,
-            ShortcutAction::PreviousTab => &self.previous_tab,
-            ShortcutAction::NextTask => &self.next_task,
-            ShortcutAction::PreviousTask => &self.previous_task,
-        }
-    }
-
-    pub(crate) fn set_binding(&mut self, action: ShortcutAction, binding: impl Into<String>) {
-        let binding = binding.into();
-        match action {
-            ShortcutAction::CycleProjects => self.cycle_projects = binding,
-            ShortcutAction::NewTabInCurrentTask => self.new_tab_in_current_task = binding,
-            ShortcutAction::NewTask => self.new_task = binding,
-            ShortcutAction::CloseCurrentTab => self.close_current_tab = binding,
-            ShortcutAction::NextTab => self.next_tab = binding,
-            ShortcutAction::PreviousTab => self.previous_tab = binding,
-            ShortcutAction::NextTask => self.next_task = binding,
-            ShortcutAction::PreviousTask => self.previous_task = binding,
-        }
-    }
-
-    pub(crate) fn clear_binding(&mut self, action: ShortcutAction) {
-        self.set_binding(action, String::new());
-    }
-
-    pub(crate) fn reset_binding(&mut self, action: ShortcutAction) {
-        self.set_binding(action, action.default_binding().to_string());
-    }
-
-    pub(crate) fn reset_all(&mut self) {
-        *self = Self::default();
-    }
-
-    pub(crate) fn action_for_binding(
-        &self,
-        ignored_action: ShortcutAction,
-        binding: &str,
-    ) -> Option<ShortcutAction> {
-        ALL_SHORTCUT_ACTIONS.into_iter().find(|action| {
-            *action != ignored_action
-                && !self.binding_for(*action).is_empty()
-                && self.binding_for(*action) == binding
-        })
-    }
-}
-
-fn default_cycle_projects_shortcut() -> String {
-    ShortcutAction::CycleProjects.default_binding().to_string()
-}
-
-fn default_new_tab_in_current_task_shortcut() -> String {
-    ShortcutAction::NewTabInCurrentTask
-        .default_binding()
-        .to_string()
-}
-
-fn default_new_task_shortcut() -> String {
-    ShortcutAction::NewTask.default_binding().to_string()
-}
-
-fn default_close_current_tab_shortcut() -> String {
-    ShortcutAction::CloseCurrentTab
-        .default_binding()
-        .to_string()
-}
-
-fn default_next_tab_shortcut() -> String {
-    ShortcutAction::NextTab.default_binding().to_string()
-}
-
-fn default_previous_tab_shortcut() -> String {
-    ShortcutAction::PreviousTab.default_binding().to_string()
-}
-
-fn default_next_task_shortcut() -> String {
-    ShortcutAction::NextTask.default_binding().to_string()
-}
-
-fn default_previous_task_shortcut() -> String {
-    ShortcutAction::PreviousTask.default_binding().to_string()
-}
-
-fn close_current_tab_default_binding() -> &'static str {
-    use crate::platform::{CurrentPlatform, PlatformServices};
-    CurrentPlatform::default_close_current_tab_binding()
-}
+pub use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ShortcutBinding {
@@ -292,6 +132,7 @@ pub(crate) fn shortcut_matches_event(shortcut: &str, ev: &KeyDownEvent) -> bool 
     let Ok(candidate) = ShortcutBinding::from_event(ev) else {
         return false;
     };
+
     binding == candidate
 }
 

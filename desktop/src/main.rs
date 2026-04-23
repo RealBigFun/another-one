@@ -12,7 +12,6 @@ mod open_in;
 mod panels;
 mod platform;
 mod project_page;
-mod project_store;
 mod resource_indicator;
 mod resource_usage;
 mod right_sidebar;
@@ -24,13 +23,18 @@ mod theme;
 mod titlebar;
 mod tokens;
 
-// `agents` and `git_actions` live in the `another-one-core` crate; we
-// re-export them at the crate root so pre-existing `crate::agents::…`
-// and `crate::git_actions::…` paths throughout the binary keep
-// resolving without a global find-and-replace. Phase 1 of the plan
-// extracts more modules in subsequent PRs; each one goes through this
-// same re-export shim first, then paths can migrate opportunistically.
-pub(crate) use another_one_core::{agents, git_actions};
+// These modules live in the `another-one-core` crate and are re-exported
+// at the crate root so pre-existing `crate::<module>::…` paths throughout
+// the binary keep resolving without a global find-and-replace. Phase 1
+// of the plan extracts more modules in subsequent PRs; each one goes
+// through this same re-export shim first, then paths can migrate
+// opportunistically.
+//
+// `open_in` and `shortcuts` are *not* here — they keep local modules in
+// desktop (the GPUI/platform-coupled halves) that internally re-export
+// the core-side pure types, so `crate::open_in::OpenInAppKind` still
+// resolves via those local modules.
+pub(crate) use another_one_core::{agents, git_actions, project_store};
 
 use std::path::PathBuf;
 

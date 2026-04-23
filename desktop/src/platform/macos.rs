@@ -25,10 +25,6 @@ impl PlatformServices for MacPlatform {
         "Cmd"
     }
 
-    fn default_close_current_tab_binding() -> &'static str {
-        "cmd-w"
-    }
-
     fn read_process_samples(
         app_pid: u32,
         tracked_processes: &[TrackedProcess],

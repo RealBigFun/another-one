@@ -17,3 +17,6 @@
 
 pub mod agents;
 pub mod git_actions;
+pub mod open_in;
+pub mod project_store;
+pub mod shortcuts;
