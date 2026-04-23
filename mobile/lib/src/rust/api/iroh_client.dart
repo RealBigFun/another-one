@@ -50,6 +50,13 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Same one-shot subscription shape as [`subscribe`]; the second call
   /// returns an error. Replies arrive in the order the daemon sent them.
   Stream<WorkerReply> subscribeWorkerReplies();
+
+  /// Ask the daemon to watch `project_path` and start forwarding
+  /// [`WorkerReply::GitRefresh`] frames for it. See
+  /// `daemon-sandbox/src/frame.rs::Control::WatchProject` for the
+  /// daemon-side semantics. Reissuing replaces the previous
+  /// subscription.
+  Future<void> watchProject({required String projectPath});
 }
 
 @freezed

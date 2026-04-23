@@ -15,6 +15,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 
+import 'src/rust/api/iroh_client.dart';
 import 'src/rust/frb_generated.dart';
 import 'src/transport.dart';
 import 'src/transport_iroh.dart';
@@ -53,9 +54,15 @@ class _TerminalPageState extends State<TerminalPage> {
   // at the emulator's loopback WebSocket sandbox.
   static const String _defaultEndpoint = 'ws://10.0.2.2:5617/pty';
   static const String _prefsEndpointKey = 'last_endpoint';
+  // Absolute path on the daemon host that the user wants git state for.
+  // Only applies to Iroh transports — the WebSocket sandbox is
+  // PTY-only and doesn't implement `Control::WatchProject`. Empty ⇒
+  // no worker-reply subscription, no banner; PTY behaviour unchanged.
+  static const String _prefsProjectPathKey = 'last_project_path';
 
   final TextEditingController _endpointCtrl =
       TextEditingController(text: _defaultEndpoint);
+  final TextEditingController _projectPathCtrl = TextEditingController();
 
   late final Terminal _terminal;
   late final TerminalController _terminalController;
@@ -64,7 +71,12 @@ class _TerminalPageState extends State<TerminalPage> {
   TerminalTransport? _transport;
   StreamSubscription<Uint8List>? _bytesSub;
   StreamSubscription<TransportStatus>? _statusSub;
+  StreamSubscription<WorkerReply>? _workerRepliesSub;
   TransportStatus _status = const TransportStatus.disconnected();
+  // Latest GitRefresh reply received on the current session, if any.
+  // Cleared on disconnect so the banner doesn't lie about a stale
+  // project after the user connects to a different one.
+  WorkerReply? _latestWorkerReply;
 
   @override
   void initState() {
@@ -78,6 +90,7 @@ class _TerminalPageState extends State<TerminalPage> {
       _transport?.sendResize(cols: width, rows: height);
     };
     _restoreEndpoint();
+    _restoreProjectPath();
   }
 
   /// Load the last-successful endpoint URL from SharedPreferences and
@@ -93,6 +106,18 @@ class _TerminalPageState extends State<TerminalPage> {
     }
   }
 
+  /// Load the last-used project path so reconnecting doesn't require
+  /// re-typing the absolute path every launch.
+  Future<void> _restoreProjectPath() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(_prefsProjectPathKey);
+    if (saved != null && saved.isNotEmpty && mounted) {
+      setState(() {
+        _projectPathCtrl.text = saved;
+      });
+    }
+  }
+
   /// Store `url` as the endpoint to prefer on next launch. Called the
   /// first time a connection reaches the `connected` state — we only
   /// persist URLs that actually work, so a bad paste doesn't poison the
@@ -100,6 +125,15 @@ class _TerminalPageState extends State<TerminalPage> {
   Future<void> _persistEndpoint(String url) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefsEndpointKey, url);
+  }
+
+  /// Persist the project path on every successful `watchProject` call.
+  /// Unlike the endpoint, this doesn't get a "only after success"
+  /// guard — a typo produces a best-effort daemon-side warning and no
+  /// worker reply, which is recoverable by editing the field.
+  Future<void> _persistProjectPath(String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsProjectPathKey, path);
   }
 
   /// Factory for the active transport. Dispatches by URL scheme:
@@ -130,18 +164,34 @@ class _TerminalPageState extends State<TerminalPage> {
     final url = _endpointCtrl.text.trim();
     final transport = _buildTransport(url);
     _transport = transport;
+    setState(() => _latestWorkerReply = null);
 
     _bytesSub = transport.incoming.listen((bytes) {
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
     });
     bool savedOnce = false;
+    final projectPath = _projectPathCtrl.text.trim();
     _statusSub = transport.status.listen((s) {
       setState(() => _status = s);
       if (!savedOnce && s.state == TransportState.connected) {
         savedOnce = true;
         unawaited(_persistEndpoint(url));
+        // Only Iroh supports worker-reply subscriptions; WebSocket is
+        // PTY-only. Fire `watchProject` once the session is live
+        // rather than at `connect()` so the send channel exists.
+        if (transport is IrohTransport && projectPath.isNotEmpty) {
+          transport.watchProject(projectPath);
+          unawaited(_persistProjectPath(projectPath));
+        }
       }
     });
+
+    if (transport is IrohTransport) {
+      _workerRepliesSub = transport.workerReplies.listen((reply) {
+        if (!mounted) return;
+        setState(() => _latestWorkerReply = reply);
+      });
+    }
 
     transport.connect();
     // Fire an initial resize so the daemon's PTY matches the Flutter grid.
@@ -176,12 +226,15 @@ class _TerminalPageState extends State<TerminalPage> {
     // transport and closed it — race fixed.
     final bytesSub = _bytesSub;
     final statusSub = _statusSub;
+    final workerRepliesSub = _workerRepliesSub;
     final t = _transport;
     _bytesSub = null;
     _statusSub = null;
+    _workerRepliesSub = null;
     _transport = null;
     await bytesSub?.cancel();
     await statusSub?.cancel();
+    await workerRepliesSub?.cancel();
     await t?.close();
   }
 
@@ -189,6 +242,7 @@ class _TerminalPageState extends State<TerminalPage> {
   void dispose() {
     _tearDownTransport();
     _endpointCtrl.dispose();
+    _projectPathCtrl.dispose();
     _terminalFocus.dispose();
     super.dispose();
   }
@@ -220,6 +274,18 @@ class _TerminalPageState extends State<TerminalPage> {
               onDisconnect: _disconnect,
               onScan: _scanQr,
             ),
+            _ProjectPathRow(
+              controller: _projectPathCtrl,
+              onSubmit: () {
+                final t = _transport;
+                final path = _projectPathCtrl.text.trim();
+                if (t is IrohTransport && path.isNotEmpty) {
+                  t.watchProject(path);
+                  unawaited(_persistProjectPath(path));
+                }
+              },
+            ),
+            if (_latestWorkerReply != null) _GitBanner(reply: _latestWorkerReply!),
             Expanded(
               child: GestureDetector(
                 onTap: _terminalFocus.requestFocus,
@@ -298,6 +364,97 @@ class _EndpointRow extends StatelessWidget {
         ),
       ]),
     );
+  }
+}
+
+class _ProjectPathRow extends StatelessWidget {
+  const _ProjectPathRow({required this.controller, required this.onSubmit});
+
+  final TextEditingController controller;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      child: Row(children: [
+        Expanded(
+          child: TextField(
+            controller: controller,
+            autocorrect: false,
+            enableSuggestions: false,
+            smartDashesType: SmartDashesType.disabled,
+            smartQuotesType: SmartQuotesType.disabled,
+            onSubmitted: (_) => onSubmit(),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            decoration: const InputDecoration(
+              labelText: 'Project path (absolute, daemon host)',
+              hintText: '/home/you/repos/project',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        OutlinedButton.icon(
+          onPressed: onSubmit,
+          icon: const Icon(Icons.visibility),
+          label: const Text('Watch'),
+        ),
+      ]),
+    );
+  }
+}
+
+/// One-line git-state banner. Shown above the terminal whenever the
+/// current session has received at least one `WorkerReply::GitRefresh`
+/// from the daemon. Kept intentionally plain — a future PR can add
+/// icons, truncation, refresh-triggered animation.
+class _GitBanner extends StatelessWidget {
+  const _GitBanner({required this.reply});
+
+  final WorkerReply reply;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return switch (reply) {
+      WorkerReply_GitRefresh(
+        :final currentBranch,
+        :final changedFileCount,
+        :final ahead,
+        :final behind,
+      ) =>
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHigh,
+            border: Border(
+              top: BorderSide(color: Colors.grey.shade800),
+              bottom: BorderSide(color: Colors.grey.shade800),
+            ),
+          ),
+          child: Text(
+            _formatGit(currentBranch, changedFileCount, ahead, behind),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+        ),
+    };
+  }
+
+  static String _formatGit(
+    String? branch,
+    BigInt changed,
+    BigInt ahead,
+    BigInt behind,
+  ) {
+    final parts = <String>[];
+    parts.add('⎇ ${branch ?? "(detached)"}');
+    if (changed > BigInt.zero) parts.add('$changed changed');
+    if (ahead > BigInt.zero) parts.add('↑$ahead');
+    if (behind > BigInt.zero) parts.add('↓$behind');
+    return parts.join(' · ');
   }
 }
 

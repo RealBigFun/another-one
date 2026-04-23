@@ -66,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1072950955;
+  int get rustContentHash => 1352254398;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -97,6 +97,11 @@ abstract class RustLibApi extends BaseApi {
 
   Stream<WorkerReply> crateApiIrohClientIrohSessionSubscribeWorkerReplies({
     required IrohSession that,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionWatchProject({
+    required IrohSession that,
+    required String projectPath,
   });
 
   Future<void> crateApiIrohClientInitApp();
@@ -318,6 +323,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiIrohClientIrohSessionWatchProject({
+    required IrohSession that,
+    required String projectPath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectPath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionWatchProjectConstMeta,
+        argValues: [that, projectPath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionWatchProjectConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_watch_project",
+        argNames: ["that", "projectPath"],
+      );
+
+  @override
   Future<void> crateApiIrohClientInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -326,7 +369,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 7,
             port: port_,
           );
         },
@@ -360,7 +403,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 8,
             port: port_,
           );
         },
@@ -901,4 +944,15 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   /// returns an error. Replies arrive in the order the daemon sent them.
   Stream<WorkerReply> subscribeWorkerReplies() => RustLib.instance.api
       .crateApiIrohClientIrohSessionSubscribeWorkerReplies(that: this);
+
+  /// Ask the daemon to watch `project_path` and start forwarding
+  /// [`WorkerReply::GitRefresh`] frames for it. See
+  /// `daemon-sandbox/src/frame.rs::Control::WatchProject` for the
+  /// daemon-side semantics. Reissuing replaces the previous
+  /// subscription.
+  Future<void> watchProject({required String projectPath}) =>
+      RustLib.instance.api.crateApiIrohClientIrohSessionWatchProject(
+        that: this,
+        projectPath: projectPath,
+      );
 }
