@@ -650,6 +650,11 @@ impl AnotherOneApp {
             return;
         }
 
+        if self.custom_action_modal.is_some() {
+            self.handle_custom_action_modal_key_down(ev, cx);
+            return;
+        }
+
         if self.settings_open {
             self.handle_settings_key_down(ev, cx);
             cx.stop_propagation();
@@ -2975,6 +2980,7 @@ mod tests {
             kind,
             checkout: crate::project_store::ProjectCheckoutState::default(),
             branch_settings: crate::project_store::ProjectBranchSettings::default(),
+            actions: Vec::new(),
             worktree_name: worktree_name.map(str::to_string),
             repo_common_dir: None,
         }

@@ -5,6 +5,7 @@ mod add_agent_modal;
 mod agent_icons;
 mod app;
 mod assets;
+mod custom_actions_modal;
 mod layout;
 mod left_sidebar;
 mod new_task_modal;

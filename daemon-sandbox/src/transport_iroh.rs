@@ -332,11 +332,7 @@ async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
     let pty_outbound_tx = outbound_tx.clone();
     let pty_relay_task = tokio::spawn(async move {
         while let Some(bytes) = output_rx.recv().await {
-            if pty_outbound_tx
-                .send((frame::TY_DATA, bytes))
-                .await
-                .is_err()
-            {
+            if pty_outbound_tx.send((frame::TY_DATA, bytes)).await.is_err() {
                 // writer task exited; stop pumping.
                 break;
             }
