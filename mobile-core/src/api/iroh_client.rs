@@ -81,6 +81,32 @@ pub enum WorkerReply {
         ahead: usize,
         behind: usize,
     },
+    /// Projection of `core::git_service::ProjectPullRequestReply`.
+    /// `pr = None` → checked, no PR found (distinct from "not yet
+    /// checked"). Mirror of `daemon-sandbox/src/frame.rs`.
+    PullRequestStatus {
+        project_id: String,
+        branch_name: String,
+        pr: Option<PullRequestInfo>,
+    },
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestInfo`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PullRequestInfo {
+    pub number: u64,
+    pub url: String,
+    pub state: PullRequestState,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestState`.
+/// Wire form is lowercase: `"open"`, `"closed"`, `"merged"`.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestState {
+    Open,
+    Closed,
+    Merged,
 }
 
 /// Writes one frame to the Iroh send stream.

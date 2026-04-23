@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `iroh_connect_inner`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`.
 ///
@@ -59,6 +59,35 @@ abstract class IrohSession implements RustOpaqueInterface {
   Future<void> watchProject({required String projectPath});
 }
 
+/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestInfo`.
+class PullRequestInfo {
+  final BigInt number;
+  final String url;
+  final PullRequestState state;
+
+  const PullRequestInfo({
+    required this.number,
+    required this.url,
+    required this.state,
+  });
+
+  @override
+  int get hashCode => number.hashCode ^ url.hashCode ^ state.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PullRequestInfo &&
+          runtimeType == other.runtimeType &&
+          number == other.number &&
+          url == other.url &&
+          state == other.state;
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestState`.
+/// Wire form is lowercase: `"open"`, `"closed"`, `"merged"`.
+enum PullRequestState { open, closed, merged }
+
 @freezed
 sealed class WorkerReply with _$WorkerReply {
   const WorkerReply._();
@@ -71,4 +100,13 @@ sealed class WorkerReply with _$WorkerReply {
     required BigInt ahead,
     required BigInt behind,
   }) = WorkerReply_GitRefresh;
+
+  /// Projection of `core::git_service::ProjectPullRequestReply`.
+  /// `pr = None` → checked, no PR found (distinct from "not yet
+  /// checked"). Mirror of `daemon-sandbox/src/frame.rs`.
+  const factory WorkerReply.pullRequestStatus({
+    required String projectId,
+    required String branchName,
+    PullRequestInfo? pr,
+  }) = WorkerReply_PullRequestStatus;
 }

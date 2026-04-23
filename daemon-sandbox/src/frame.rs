@@ -86,6 +86,36 @@ pub enum WorkerReply {
         ahead: usize,
         behind: usize,
     },
+    /// Projection of `core::git_service::ProjectPullRequestReply`.
+    /// `pr = None` means "checked and no open/recent PR for
+    /// `branch_name`", distinct from "haven't looked yet". The
+    /// daemon only emits one of these per WatchProject session
+    /// after the GitRefresh reply, and only if the refresh found
+    /// a current branch.
+    PullRequestStatus {
+        project_id: String,
+        branch_name: String,
+        pr: Option<PullRequestInfo>,
+    },
+}
+
+/// Lossy wire projection of `core::git_actions::PullRequestStatus`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullRequestInfo {
+    pub number: u64,
+    pub url: String,
+    pub state: PullRequestState,
+}
+
+/// Mirror of `core::git_actions::PullRequestState`. Serialised as
+/// lowercase strings (`"open"`, `"closed"`, `"merged"`) for a
+/// readable wire shape.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestState {
+    Open,
+    Closed,
+    Merged,
 }
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the

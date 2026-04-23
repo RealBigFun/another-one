@@ -554,6 +554,13 @@ impl SseDecode for String {
     }
 }
 
+impl SseDecode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for Vec<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -589,10 +596,57 @@ impl SseDecode for Option<String> {
     }
 }
 
+impl SseDecode for Option<crate::api::iroh_client::PullRequestInfo> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::iroh_client::PullRequestInfo>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for crate::api::iroh_client::PullRequestInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_number = <u64>::sse_decode(deserializer);
+        let mut var_url = <String>::sse_decode(deserializer);
+        let mut var_state = <crate::api::iroh_client::PullRequestState>::sse_decode(deserializer);
+        return crate::api::iroh_client::PullRequestInfo {
+            number: var_number,
+            url: var_url,
+            state: var_state,
+        };
+    }
+}
+
+impl SseDecode for crate::api::iroh_client::PullRequestState {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::iroh_client::PullRequestState::Open,
+            1 => crate::api::iroh_client::PullRequestState::Closed,
+            2 => crate::api::iroh_client::PullRequestState::Merged,
+            _ => unreachable!("Invalid variant for PullRequestState: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for u16 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u16::<NativeEndian>().unwrap()
+    }
+}
+
+impl SseDecode for u64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u64::<NativeEndian>().unwrap()
     }
 }
 
@@ -634,17 +688,21 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                     behind: var_behind,
                 };
             }
+            1 => {
+                let mut var_projectId = <String>::sse_decode(deserializer);
+                let mut var_branchName = <String>::sse_decode(deserializer);
+                let mut var_pr =
+                    <Option<crate::api::iroh_client::PullRequestInfo>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::PullRequestStatus {
+                    project_id: var_projectId,
+                    branch_name: var_branchName,
+                    pr: var_pr,
+                };
+            }
             _ => {
                 unimplemented!("");
             }
         }
-    }
-}
-
-impl SseDecode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
     }
 }
 
@@ -730,6 +788,50 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<IrohSession>> for IrohSession 
 }
 
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::PullRequestInfo {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.number.into_into_dart().into_dart(),
+            self.url.into_into_dart().into_dart(),
+            self.state.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::iroh_client::PullRequestInfo
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::PullRequestInfo>
+    for crate::api::iroh_client::PullRequestInfo
+{
+    fn into_into_dart(self) -> crate::api::iroh_client::PullRequestInfo {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::PullRequestState {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Open => 0.into_dart(),
+            Self::Closed => 1.into_dart(),
+            Self::Merged => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::iroh_client::PullRequestState
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::PullRequestState>
+    for crate::api::iroh_client::PullRequestState
+{
+    fn into_into_dart(self) -> crate::api::iroh_client::PullRequestState {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::WorkerReply {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
@@ -746,6 +848,17 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::WorkerReply {
                 changed_file_count.into_into_dart().into_dart(),
                 ahead.into_into_dart().into_dart(),
                 behind.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::iroh_client::WorkerReply::PullRequestStatus {
+                project_id,
+                branch_name,
+                pr,
+            } => [
+                1.into_dart(),
+                project_id.into_into_dart().into_dart(),
+                branch_name.into_into_dart().into_dart(),
+                pr.into_into_dart().into_dart(),
             ]
             .into_dart(),
             _ => {
@@ -817,6 +930,13 @@ impl SseEncode for String {
     }
 }
 
+impl SseEncode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
+    }
+}
+
 impl SseEncode for Vec<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -847,10 +967,53 @@ impl SseEncode for Option<String> {
     }
 }
 
+impl SseEncode for Option<crate::api::iroh_client::PullRequestInfo> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::iroh_client::PullRequestInfo>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for crate::api::iroh_client::PullRequestInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.number, serializer);
+        <String>::sse_encode(self.url, serializer);
+        <crate::api::iroh_client::PullRequestState>::sse_encode(self.state, serializer);
+    }
+}
+
+impl SseEncode for crate::api::iroh_client::PullRequestState {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::iroh_client::PullRequestState::Open => 0,
+                crate::api::iroh_client::PullRequestState::Closed => 1,
+                crate::api::iroh_client::PullRequestState::Merged => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for u16 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u16::<NativeEndian>(self).unwrap();
+    }
+}
+
+impl SseEncode for u64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u64::<NativeEndian>(self).unwrap();
     }
 }
 
@@ -894,17 +1057,20 @@ impl SseEncode for crate::api::iroh_client::WorkerReply {
                 <usize>::sse_encode(ahead, serializer);
                 <usize>::sse_encode(behind, serializer);
             }
+            crate::api::iroh_client::WorkerReply::PullRequestStatus {
+                project_id,
+                branch_name,
+                pr,
+            } => {
+                <i32>::sse_encode(1, serializer);
+                <String>::sse_encode(project_id, serializer);
+                <String>::sse_encode(branch_name, serializer);
+                <Option<crate::api::iroh_client::PullRequestInfo>>::sse_encode(pr, serializer);
+            }
             _ => {
                 unimplemented!("");
             }
         }
-    }
-}
-
-impl SseEncode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
     }
 }
 
