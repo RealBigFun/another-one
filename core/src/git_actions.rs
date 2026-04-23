@@ -8,6 +8,32 @@ use std::process::{Command, Output, Stdio};
 
 use serde::Deserialize;
 
+const LEGACY_GIT_COMMIT_DIFF_PATCH_TOKEN: &str = "{{diff_patch}}";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitActionSettings {
+    pub commit_generation_script: String,
+}
+
+impl Default for GitActionSettings {
+    fn default() -> Self {
+        Self {
+            commit_generation_script: default_commit_generation_script().to_string(),
+        }
+    }
+}
+
+impl GitActionSettings {
+    fn commit_generation_script(&self) -> &str {
+        let script = self.commit_generation_script.trim();
+        if script.is_empty() {
+            default_commit_generation_script()
+        } else {
+            script
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectPagePullRequest {
     pub number: u64,
@@ -139,10 +165,11 @@ struct SimpleToolbarGitCommand {
 pub fn execute_toolbar_git_action(
     repo_path: &Path,
     action: ToolbarGitAction,
+    settings: GitActionSettings,
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
     match action {
-        ToolbarGitAction::Commit => commit_with_ai(repo_path, false),
-        ToolbarGitAction::CommitAndPush => commit_with_ai(repo_path, true),
+        ToolbarGitAction::Commit => commit_with_ai(repo_path, false, &settings),
+        ToolbarGitAction::CommitAndPush => commit_with_ai(repo_path, true, &settings),
         ToolbarGitAction::UndoLastCommit => undo_last_commit(repo_path),
         ToolbarGitAction::Fetch => run_simple_git_command(repo_path, ToolbarGitAction::Fetch),
         ToolbarGitAction::Pull => run_simple_git_command(repo_path, ToolbarGitAction::Pull),
@@ -450,11 +477,11 @@ fn find_latest_pull_request_args(head_branch: &str) -> Vec<String> {
 fn commit_with_ai(
     repo_path: &Path,
     push_after: bool,
+    settings: &GitActionSettings,
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
     let _staged_all_changes = ensure_staged_changes(repo_path)?;
-    let diff_summary = staged_diff_summary(repo_path).map_err(ToolbarActionError::from_message)?;
     let diff_patch = staged_diff_patch(repo_path).map_err(ToolbarActionError::from_message)?;
-    let prompt = build_commit_prompt(&diff_summary, &diff_patch);
+    let prompt = render_commit_generation_script(settings.commit_generation_script(), &diff_patch);
     let generated =
         generate_commit_message(repo_path, &prompt).map_err(ToolbarActionError::from_message)?;
     git_commit(repo_path, &generated).map_err(ToolbarActionError::from_message)?;
@@ -715,25 +742,6 @@ impl ToolbarActionError {
     }
 }
 
-fn staged_diff_summary(repo_path: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["diff", "--cached", "--stat", "--no-color"])
-        .current_dir(repo_path)
-        .output()
-        .map_err(|err| format!("Could not inspect staged changes: {err}"))?;
-
-    if !output.status.success() {
-        return Err(command_failure("Could not inspect staged changes", &output));
-    }
-
-    let summary = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if summary.is_empty() {
-        return Err("Commit failed. There are no staged changes to commit.".to_string());
-    }
-
-    Ok(summary)
-}
-
 fn has_staged_changes(repo_path: &Path) -> Result<bool, String> {
     let output = Command::new("git")
         .args(["diff", "--cached", "--quiet"])
@@ -800,25 +808,25 @@ fn staged_diff_patch(repo_path: &Path) -> Result<String, String> {
     Ok(patch)
 }
 
-fn build_commit_prompt(diff_summary: &str, diff_patch: &str) -> String {
-    format!(
-        concat!(
-            "Generate a git commit message for these staged changes.\n",
-            "Return only the commit message text.\n",
-            "Rules:\n",
-            "- Prefer Conventional Commit style when it fits.\n",
-            "- First line must be a concise subject in imperative mood.\n",
-            "- Keep the subject under 72 characters.\n",
-            "- Add a blank line plus a short body only if it materially helps.\n",
-            "- No markdown fences, no commentary, no quotes.\n\n",
-            "Staged summary:\n",
-            "{diff_summary}\n\n",
-            "Staged patch:\n",
-            "{diff_patch}\n"
-        ),
-        diff_summary = diff_summary,
-        diff_patch = diff_patch,
+pub fn default_commit_generation_script() -> &'static str {
+    concat!(
+        "Generate a git commit message for these staged changes.\n",
+        "Return only the commit message text.\n",
+        "Rules:\n",
+        "- Prefer Conventional Commit style when it fits.\n",
+        "- First line must be a concise subject in imperative mood.\n",
+        "- Keep the subject under 72 characters.\n",
+        "- Add a blank line plus a short body only if it materially helps.\n",
+        "- No markdown fences, no commentary, no quotes.\n"
     )
+}
+
+fn render_commit_generation_script(script_template: &str, diff_patch: &str) -> String {
+    if script_template.contains(LEGACY_GIT_COMMIT_DIFF_PATCH_TOKEN) {
+        return script_template.replace(LEGACY_GIT_COMMIT_DIFF_PATCH_TOKEN, diff_patch);
+    }
+
+    format!("{script_template}\n\nStaged patch:\n{diff_patch}\n")
 }
 
 fn generate_commit_message(
@@ -1044,11 +1052,11 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_pull_request_args, find_latest_pull_request_args, git_stdout,
-        indicates_missing_pull_request, indicates_missing_pull_request_checks,
+        create_pull_request_args, default_commit_generation_script, find_latest_pull_request_args,
+        git_stdout, indicates_missing_pull_request, indicates_missing_pull_request_checks,
         normalize_github_remote, normalize_pull_request_check_bucket, parse_commit_message,
-        parse_pull_request_checks_output, push_branch, simple_toolbar_git_command,
-        PullRequestCheckBucket, ToolbarGitAction,
+        parse_pull_request_checks_output, push_branch, render_commit_generation_script,
+        simple_toolbar_git_command, PullRequestCheckBucket, ToolbarGitAction,
     };
     use std::path::Path;
     use std::process::Command;
@@ -1240,6 +1248,32 @@ mod tests {
         assert!(!indicates_missing_pull_request_checks(
             "no pull requests found for branch feature/test"
         ));
+    }
+
+    #[test]
+    fn default_commit_generation_script_contains_only_instructions() {
+        let script = default_commit_generation_script();
+
+        assert!(script.contains("Generate a git commit message"));
+        assert!(!script.contains("{{diff_patch}}"));
+    }
+
+    #[test]
+    fn render_commit_generation_script_replaces_diff_tokens() {
+        let rendered = render_commit_generation_script("Patch:\n{{diff_patch}}", "diff --git a b");
+
+        assert_eq!(rendered, "Patch:\ndiff --git a b");
+    }
+
+    #[test]
+    fn render_commit_generation_script_appends_patch_when_no_placeholder_is_present() {
+        let rendered =
+            render_commit_generation_script("Use conventional commits.", "diff --git a b");
+
+        assert_eq!(
+            rendered,
+            "Use conventional commits.\n\nStaged patch:\ndiff --git a b\n"
+        );
     }
 
     #[test]
