@@ -1569,29 +1569,6 @@ impl AnotherOneApp {
                 }
             }
             RightSidebarMode::Checks => {
-                let current_branch = active_section.branch_name.clone();
-
-                body = body.child(
-                    div()
-                        .px(px(14.))
-                        .py(px(10.))
-                        .border_b_1()
-                        .border_color(gpui::white().opacity(0.06))
-                        .child(
-                            div()
-                                .text_size(rems(11. / 16.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(hsla(0., 0., 0.88, 1.))
-                                .child(format!("CI checks for {}", current_branch)),
-                        )
-                        .child(
-                            div()
-                                .text_size(rems(11. / 16.))
-                                .text_color(muted_col)
-                                .child("Shows GitHub PR checks for the current branch when a pull request exists."),
-                        ),
-                );
-
                 match check_runs_state {
                     None | Some(ProjectCheckRunsState::Loading) => {
                         body = body.child(
