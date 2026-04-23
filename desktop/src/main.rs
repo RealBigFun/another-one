@@ -24,6 +24,7 @@ mod terminal_launch;
 mod terminal_runtime;
 mod theme;
 mod titlebar;
+mod tokens;
 
 use std::path::PathBuf;
 

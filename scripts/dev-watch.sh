@@ -3,14 +3,14 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-WATCH_DIR="$ROOT_DIR/src"
+WATCH_DIR="$ROOT_DIR/desktop/src"
 
 package_name=$(
-  sed -n 's/^name = "\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1
+  sed -n 's/^name = "\(.*\)"/\1/p' "$ROOT_DIR/desktop/Cargo.toml" | head -n 1
 )
 
 if [ -z "$package_name" ]; then
-  echo "Could not determine package name from Cargo.toml." >&2
+  echo "Could not determine package name from desktop/Cargo.toml." >&2
   exit 1
 fi
 
