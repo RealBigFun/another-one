@@ -18,7 +18,9 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::git_actions::{
-    execute_toolbar_git_action, ToolbarActionError, ToolbarActionOutcome, ToolbarGitAction,
+    execute_toolbar_git_action, find_github_repo_url, find_latest_pull_request_status,
+    find_project_pull_requests, find_pull_request_checks, ProjectPagePullRequest,
+    PullRequestCheck, PullRequestStatus, ToolbarActionError, ToolbarActionOutcome, ToolbarGitAction,
 };
 use crate::project_store::{
     read_project_branch_commit_state, read_project_branch_compare_state, read_project_git_state,
@@ -169,5 +171,99 @@ pub fn spawn_changed_files_mutation(
                 .map(|_| read_project_git_state(&project_path, false)),
         };
         let _ = sender.send(ChangedFilesGitMutationReply { project_id, result });
+    });
+}
+
+// ---- GitHub lookups -------------------------------------------------
+//
+// Four workers that all share the same queue-shape as
+// `spawn_changed_files_mutation`: the desktop app owns a persistent
+// `Sender` for each, the drain loop reads a stream of replies over
+// the app's lifetime, and the worker is a thin shim around a
+// `git_actions` helper. Grouped together for easy review; the reply
+// structs mirror the on-disk shape the helpers already return.
+
+pub struct ProjectGitHubLinkReply {
+    pub project_id: String,
+    pub github_url: Option<String>,
+}
+
+/// Resolve a project's GitHub remote URL in the background.
+pub fn spawn_github_link_lookup(
+    sender: mpsc::Sender<ProjectGitHubLinkReply>,
+    project_id: String,
+    project_path: PathBuf,
+) {
+    thread::spawn(move || {
+        let github_url = find_github_repo_url(&project_path);
+        let _ = sender.send(ProjectGitHubLinkReply {
+            project_id,
+            github_url,
+        });
+    });
+}
+
+pub struct ProjectPullRequestReply {
+    pub lookup_key: String,
+    pub pull_request: Option<PullRequestStatus>,
+}
+
+/// Look up the latest pull-request status for a branch.
+pub fn spawn_pull_request_lookup(
+    sender: mpsc::Sender<ProjectPullRequestReply>,
+    lookup_key: String,
+    project_path: PathBuf,
+    branch_name: String,
+) {
+    thread::spawn(move || {
+        let pull_request = find_latest_pull_request_status(&project_path, &branch_name);
+        let _ = sender.send(ProjectPullRequestReply {
+            lookup_key,
+            pull_request,
+        });
+    });
+}
+
+pub struct ProjectPagePullRequestsReply {
+    pub project_id: String,
+    pub filter_index: usize,
+    pub query: String,
+    pub result: Result<Vec<ProjectPagePullRequest>, String>,
+}
+
+/// Query the project-page PR list (filter + text search).
+pub fn spawn_project_page_pull_requests(
+    sender: mpsc::Sender<ProjectPagePullRequestsReply>,
+    project_id: String,
+    project_path: PathBuf,
+    filter_index: usize,
+    query: String,
+) {
+    thread::spawn(move || {
+        let result = find_project_pull_requests(&project_path, filter_index, Some(&query));
+        let _ = sender.send(ProjectPagePullRequestsReply {
+            project_id,
+            filter_index,
+            query,
+            result,
+        });
+    });
+}
+
+pub struct ProjectCheckRunsReply {
+    pub lookup_key: String,
+    pub result: Result<Option<Vec<PullRequestCheck>>, String>,
+}
+
+/// Fetch the GitHub check-runs (CI status) for a PR.
+pub fn spawn_check_runs_lookup(
+    sender: mpsc::Sender<ProjectCheckRunsReply>,
+    lookup_key: String,
+    project_path: PathBuf,
+    pull_request_number: Option<u64>,
+) {
+    thread::spawn(move || {
+        let result = find_pull_request_checks(&project_path, pull_request_number);
+        let _ = sender.send(ProjectCheckRunsReply { lookup_key, result });
     });
 }
