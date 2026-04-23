@@ -652,7 +652,9 @@ impl AnotherOneApp {
             return;
         }
 
-        if self.settings_open && self.handle_settings_key_down(ev, cx) {
+        if self.settings_open {
+            self.handle_settings_key_down(ev, cx);
+            cx.stop_propagation();
             return;
         }
 

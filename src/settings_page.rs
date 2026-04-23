@@ -1,8 +1,8 @@
 //! App-level settings page with a sidebar navigation and content area.
 
 use gpui::{
-    div, hsla, prelude::*, px, rems, rgb, svg, Context, KeyDownEvent, MouseButton, MouseDownEvent,
-    Window,
+    div, hsla, prelude::*, px, rems, rgb, svg, ClipboardItem, Context, KeyDownEvent, MouseButton,
+    MouseDownEvent, Window,
 };
 
 use crate::agent_icons::branded_icon;
@@ -213,10 +213,11 @@ impl AnotherOneApp {
             return false;
         };
 
+        cx.stop_propagation();
+
         let modifiers = ev.keystroke.modifiers;
         match ev.keystroke.key.as_str() {
             "backspace" => {
-                cx.stop_propagation();
                 let draft = self
                     .settings_agent_input
                     .drafts
@@ -242,10 +243,9 @@ impl AnotherOneApp {
                     );
                 }
                 cx.notify();
-                true
+                return true;
             }
             "delete" => {
-                cx.stop_propagation();
                 let draft = self
                     .settings_agent_input
                     .drafts
@@ -257,10 +257,9 @@ impl AnotherOneApp {
                     &mut self.settings_agent_input.selection_anchor,
                 );
                 cx.notify();
-                true
+                return true;
             }
             "left" => {
-                cx.stop_propagation();
                 let draft = self
                     .settings_agent_input
                     .drafts
@@ -274,10 +273,9 @@ impl AnotherOneApp {
                     modifiers.shift,
                 );
                 cx.notify();
-                true
+                return true;
             }
             "right" => {
-                cx.stop_propagation();
                 let draft = self
                     .settings_agent_input
                     .drafts
@@ -291,10 +289,9 @@ impl AnotherOneApp {
                     modifiers.shift,
                 );
                 cx.notify();
-                true
+                return true;
             }
             "home" => {
-                cx.stop_propagation();
                 let draft = self
                     .settings_agent_input
                     .drafts
@@ -308,10 +305,9 @@ impl AnotherOneApp {
                     modifiers.shift,
                 );
                 cx.notify();
-                true
+                return true;
             }
             "end" => {
-                cx.stop_propagation();
                 let draft = self
                     .settings_agent_input
                     .drafts
@@ -325,20 +321,88 @@ impl AnotherOneApp {
                     modifiers.shift,
                 );
                 cx.notify();
-                true
+                return true;
             }
             "enter" => {
-                cx.stop_propagation();
                 self.add_agent_launch_arg(&agent_id, cx);
-                true
+                return true;
             }
             "escape" | "tab" => {
-                cx.stop_propagation();
                 self.blur_settings_agent_input(cx);
-                true
+                return true;
             }
-            _ => false,
+            _ => {}
         }
+
+        let draft = self
+            .settings_agent_input
+            .drafts
+            .entry(agent_id)
+            .or_default();
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "a" {
+            self.settings_agent_input.cursor = draft.len();
+            self.settings_agent_input.selection_anchor = Some(0);
+            cx.notify();
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "c" {
+            if let Some(range) = settings_agent_input_selected_range(
+                self.settings_agent_input.cursor,
+                self.settings_agent_input.selection_anchor,
+            ) {
+                cx.write_to_clipboard(ClipboardItem::new_string(draft[range].to_string()));
+            }
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "x" {
+            if let Some(range) = settings_agent_input_selected_range(
+                self.settings_agent_input.cursor,
+                self.settings_agent_input.selection_anchor,
+            ) {
+                cx.write_to_clipboard(ClipboardItem::new_string(draft[range.clone()].to_string()));
+                replace_settings_input_range(
+                    draft,
+                    &mut self.settings_agent_input.cursor,
+                    &mut self.settings_agent_input.selection_anchor,
+                    range,
+                    "",
+                );
+                cx.notify();
+            }
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "v" {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                insert_settings_input_text(
+                    draft,
+                    &mut self.settings_agent_input.cursor,
+                    &mut self.settings_agent_input.selection_anchor,
+                    &text,
+                );
+                cx.notify();
+            }
+            return true;
+        }
+
+        if modifiers.control || modifiers.platform || modifiers.function {
+            return true;
+        }
+
+        if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+            insert_settings_input_text(
+                draft,
+                &mut self.settings_agent_input.cursor,
+                &mut self.settings_agent_input.selection_anchor,
+                key_char,
+            );
+            cx.notify();
+        }
+
+        true
     }
 
     /// Render the full-window settings page (sidebar + content).
@@ -591,115 +655,143 @@ impl AnotherOneApp {
                 }
             }
 
-            rows = rows.child(
-                row.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .min_w(px(0.))
-                        .max_w(px(540.))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(12.))
-                                .child(branded_icon(agent.icon, 18., Some(TEXT_PRIMARY())))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap(px(4.))
-                                        .child(
-                                            div()
-                                                .text_size(rems(13. / 16.))
-                                                .font_weight(gpui::FontWeight::MEDIUM)
-                                                .text_color(TEXT_PRIMARY())
-                                                .child(agent.label),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(rems(11. / 16.))
-                                                .text_color(TEXT_SECONDARY())
-                                                .child(format!(
-                                                    "Extra argv tokens passed to {} on every launch and resume.",
-                                                    agent.label
-                                                )),
-                                        ),
-                                ),
-                        )
-                        .child(arg_pills),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .id(("settings-agent-input", index))
-                                .h(px(34.))
-                                .w(px(180.))
-                                .min_w(px(0.))
-                                .rounded(px(8.))
-                                .border_1()
-                                .border_color(if is_focused {
-                                    active_button_bg.opacity(0.85)
-                                } else {
-                                    BORDER_SUBTLE()
-                                })
-                                .bg(button_bg)
-                                .px(px(10.))
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(button_hover))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
-                                        this.focus_handle.focus(window);
-                                        this.focus_settings_agent_input(agent.id, cx);
-                                        cx.stop_propagation();
-                                    }),
-                                )
-                                .child(render_settings_agent_input_content(
-                                    &draft,
-                                    is_focused,
-                                    self.settings_agent_input.cursor,
-                                    selection,
-                                )),
-                        )
-                        .child(
-                            div()
-                                .id(("settings-agent-add", index))
-                                .h(px(34.))
-                                .px(px(12.))
-                                .rounded(px(8.))
-                                .border_1()
-                                .border_color(BORDER_SUBTLE())
-                                .bg(button_bg)
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(button_hover))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                                        this.add_agent_launch_arg(agent.id, cx);
-                                        cx.stop_propagation();
-                                    }),
-                                )
-                                .child(
-                                    div()
-                                        .h_full()
-                                        .flex()
-                                        .items_center()
-                                        .text_size(rems(12. / 16.))
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(TEXT_PRIMARY())
-                                        .child("Add"),
-                                ),
-                        ),
-                ),
-            );
+            rows = rows.child(row.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .min_w(px(0.))
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_start()
+                            .justify_between()
+                            .gap(px(20.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(10.))
+                                    .min_w(px(0.))
+                                    .max_w(px(540.))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(px(12.))
+                                            .child(branded_icon(
+                                                agent.icon,
+                                                18.,
+                                                Some(TEXT_PRIMARY()),
+                                            ))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(px(4.))
+                                                    .child(
+                                                        div()
+                                                            .text_size(rems(13. / 16.))
+                                                            .font_weight(
+                                                                gpui::FontWeight::MEDIUM,
+                                                            )
+                                                            .text_color(TEXT_PRIMARY())
+                                                            .child(agent.label),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(rems(11. / 16.))
+                                                            .text_color(TEXT_SECONDARY())
+                                                            .child(format!(
+                                                                "Extra argv tokens passed to {} on every launch and resume.",
+                                                                agent.label
+                                                            )),
+                                                    ),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(
+                                        div()
+                                            .id(("settings-agent-input", index))
+                                            .h(px(34.))
+                                            .w(px(180.))
+                                            .min_w(px(0.))
+                                            .rounded(px(8.))
+                                            .border_1()
+                                            .border_color(if is_focused {
+                                                active_button_bg.opacity(0.85)
+                                            } else {
+                                                BORDER_SUBTLE()
+                                            })
+                                            .bg(button_bg)
+                                            .px(px(10.))
+                                            .cursor_pointer()
+                                            .hover(move |style| style.bg(button_hover))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(
+                                                    move |this, _ev: &MouseDownEvent, window, cx| {
+                                                        this.focus_handle.focus(window);
+                                                        this.focus_settings_agent_input(
+                                                            agent.id, cx,
+                                                        );
+                                                        cx.stop_propagation();
+                                                    },
+                                                ),
+                                            )
+                                            .child(render_settings_agent_input_content(
+                                                &draft,
+                                                is_focused,
+                                                self.settings_agent_input.cursor,
+                                                selection,
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(("settings-agent-add", index))
+                                            .h(px(34.))
+                                            .px(px(12.))
+                                            .rounded(px(8.))
+                                            .border_1()
+                                            .border_color(BORDER_SUBTLE())
+                                            .bg(button_bg)
+                                            .cursor_pointer()
+                                            .hover(move |style| style.bg(button_hover))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(
+                                                    move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                        this.add_agent_launch_arg(agent.id, cx);
+                                                        cx.stop_propagation();
+                                                    },
+                                                ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h_full()
+                                                    .flex()
+                                                    .items_center()
+                                                    .text_size(rems(12. / 16.))
+                                                    .font_weight(
+                                                        gpui::FontWeight::MEDIUM,
+                                                    )
+                                                    .text_color(TEXT_PRIMARY())
+                                                    .child("Add"),
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .child(div().w_full().min_w(px(0.)).child(arg_pills)),
+            ));
         }
 
         div()
@@ -1410,6 +1502,22 @@ fn replace_settings_input_range(
     *selection_anchor = None;
 }
 
+fn insert_settings_input_text(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    inserted: &str,
+) {
+    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
+        replace_settings_input_range(text, cursor, selection_anchor, range, inserted);
+        return;
+    }
+
+    text.insert_str(*cursor, inserted);
+    *cursor += inserted.len();
+    *selection_anchor = None;
+}
+
 fn delete_settings_input_backward(
     text: &mut String,
     cursor: &mut usize,
@@ -1715,7 +1823,9 @@ fn render_settings_agent_input_content(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_agent_launch_arg;
+    use super::{
+        insert_settings_input_text, settings_agent_input_selected_range, validate_agent_launch_arg,
+    };
 
     #[test]
     fn validates_single_token_launch_args() {
@@ -1742,6 +1852,36 @@ mod tests {
         assert_eq!(
             validate_agent_launch_arg("--profile debug"),
             Err("Launch args must be a single argv token without whitespace.")
+        );
+    }
+
+    #[test]
+    fn inserts_text_at_cursor() {
+        let mut text = String::from("--model");
+        let mut cursor = 2;
+        let mut selection_anchor = None;
+
+        insert_settings_input_text(&mut text, &mut cursor, &mut selection_anchor, "agent-");
+
+        assert_eq!(text, "--agent-model");
+        assert_eq!(cursor, "--agent-".len());
+        assert_eq!(selection_anchor, None);
+    }
+
+    #[test]
+    fn replaces_selected_text_when_inserting() {
+        let mut text = String::from("--model");
+        let mut cursor = text.len();
+        let mut selection_anchor = Some(2);
+
+        insert_settings_input_text(&mut text, &mut cursor, &mut selection_anchor, "agent");
+
+        assert_eq!(text, "--agent");
+        assert_eq!(cursor, text.len());
+        assert_eq!(selection_anchor, None);
+        assert_eq!(
+            settings_agent_input_selected_range(cursor, selection_anchor),
+            None
         );
     }
 }

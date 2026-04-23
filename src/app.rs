@@ -29,8 +29,8 @@ actions!(
 
 use crate::agents::{
     agent_id_for_provider, terminal_launch_config_for_selected_agent,
-    terminal_launch_config_for_selected_agents,
-    AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
+    terminal_launch_config_for_selected_agents, AgentProviderKind, TerminalLaunchConfig,
+    TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
 use crate::layout::*;
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
