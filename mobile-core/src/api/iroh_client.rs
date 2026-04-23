@@ -34,6 +34,7 @@ const ALPN: &[u8] = b"anotherone/pty/0";
 //   [1 byte type][4 bytes BE length][N bytes payload]
 const TY_DATA: u8 = 0x00;
 const TY_CONTROL: u8 = 0x01;
+const TY_WORKER_REPLY: u8 = 0x02;
 /// See `daemon-sandbox/src/frame.rs::MAX_FRAME_BYTES` for the rationale;
 /// keep this value in lockstep with the daemon's cap.
 const MAX_FRAME_BYTES: usize = 64 * 1024;
@@ -44,6 +45,30 @@ const MAX_FRAME_BYTES: usize = 64 * 1024;
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Control {
     Resize { cols: u16, rows: u16 },
+}
+
+/// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
+/// of `daemon-sandbox/src/frame.rs::WorkerReply`; keep variants in
+/// lockstep with the daemon's schema.
+///
+/// Each variant is a curated projection of one core worker's reply,
+/// not a mechanical derive on the `core::*_service` reply structs.
+/// That lets the daemon evolve its internal types freely and makes
+/// the public wire schema a deliberate artifact.
+///
+/// FRB-exposed: passed to Dart as a tagged union via the
+/// `subscribe_worker_replies` stream on [`IrohSession`].
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkerReply {
+    /// Projection of `core::git_service::GitRefreshReply`.
+    GitRefresh {
+        project_id: String,
+        current_branch: Option<String>,
+        changed_file_count: usize,
+        ahead: usize,
+        behind: usize,
+    },
 }
 
 /// Writes one frame to the Iroh send stream.
@@ -145,6 +170,10 @@ pub struct IrohSession {
     /// Holds the bytes-from-daemon stream until `subscribe()` wires it to a
     /// Dart `StreamSink`. Taken once and moved into the forwarding task.
     incoming_rx: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
+    /// Holds decoded worker replies (from `TY_WORKER_REPLY` frames) until
+    /// `subscribe_worker_replies()` wires it to a Dart sink. Same
+    /// one-shot-take semantics as `incoming_rx`.
+    worker_replies_rx: Mutex<Option<mpsc::Receiver<WorkerReply>>>,
     /// Closes the underlying connection when invoked.
     closer: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
@@ -282,11 +311,13 @@ async fn iroh_connect_inner(
         let _ = send.finish();
     });
 
-    // Inbound pipe: framed reads from Iroh → channel → Dart (once subscribed).
-    // Only type=0 frames forward to Dart; type=1 (control) are reserved for
-    // server→client messages we haven't defined yet. Unknown types are
-    // logged and dropped.
+    // Inbound pipe: framed reads from Iroh → per-frame-type channel → Dart
+    // (once subscribed). Type=0 frames carry PTY output; type=2 frames carry
+    // JSON-encoded `WorkerReply`s. Type=1 (server→client control) is
+    // reserved for future use. Unknown types are logged and dropped so older
+    // clients stay forwards-compatible as the daemon adds variants.
     let (incoming_tx, incoming_rx) = mpsc::channel::<Vec<u8>>(128);
+    let (worker_replies_tx, worker_replies_rx) = mpsc::channel::<WorkerReply>(64);
     let (close_tx, mut close_rx) = tokio::sync::oneshot::channel::<()>();
     let conn_for_close = conn.clone();
     tokio_rt().spawn(async move {
@@ -297,6 +328,27 @@ async fn iroh_connect_inner(
                     Ok(Some((TY_DATA, payload))) => {
                         if incoming_tx.send(payload).await.is_err() {
                             break;
+                        }
+                    }
+                    Ok(Some((TY_WORKER_REPLY, payload))) => {
+                        match serde_json::from_slice::<WorkerReply>(&payload) {
+                            Ok(reply) => {
+                                // Dropping the reply if no subscriber is
+                                // listening yet is fine: Dart is expected
+                                // to call `subscribe_worker_replies` right
+                                // after connect, and an unsubscribed queue
+                                // would otherwise grow unbounded.
+                                if worker_replies_tx.send(reply).await.is_err() {
+                                    tracing::debug!("worker_replies channel closed; dropping frame");
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    payload_bytes = payload.len(),
+                                    "failed to decode worker_reply frame"
+                                );
+                            }
                         }
                     }
                     Ok(Some((ty, _))) => {
@@ -317,6 +369,7 @@ async fn iroh_connect_inner(
         _endpoint: endpoint,
         send_tx: Mutex::new(Some(send_tx)),
         incoming_rx: Mutex::new(Some(incoming_rx)),
+        worker_replies_rx: Mutex::new(Some(worker_replies_rx)),
         closer: Mutex::new(Some(close_tx)),
     })
 }
@@ -358,6 +411,29 @@ impl IrohSession {
         tokio_rt().spawn(async move {
             while let Some(bytes) = rx.recv().await {
                 if sink.add(bytes).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Start pushing decoded worker replies into the given Dart StreamSink.
+    /// Same one-shot subscription shape as [`subscribe`]; the second call
+    /// returns an error. Replies arrive in the order the daemon sent them.
+    pub async fn subscribe_worker_replies(
+        &self,
+        sink: StreamSink<WorkerReply>,
+    ) -> anyhow::Result<()> {
+        let mut guard = self.worker_replies_rx.lock().await;
+        let mut rx = guard
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("already subscribed to worker replies"))?;
+        drop(guard);
+
+        tokio_rt().spawn(async move {
+            while let Some(reply) = rx.recv().await {
+                if sink.add(reply).is_err() {
                     break;
                 }
             }
