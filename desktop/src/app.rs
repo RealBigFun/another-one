@@ -340,36 +340,11 @@ struct TerminalRuntimeRequest {
     size: TerminalGridSize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ChangedFilesGitMutation {
-    StageFile { changed: ChangedFile },
-    UnstageFile { changed: ChangedFile },
-    StageAll,
-    UnstageAll,
-}
-
-impl ChangedFilesGitMutation {
-    fn stages_file(&self, path: &str) -> bool {
-        matches!(self, Self::StageFile { changed } if changed.path == path)
-    }
-
-    fn unstages_file(&self, path: &str) -> bool {
-        matches!(self, Self::UnstageFile { changed } if changed.path == path)
-    }
-
-    fn stages_all(&self) -> bool {
-        matches!(self, Self::StageAll)
-    }
-
-    fn unstages_all(&self) -> bool {
-        matches!(self, Self::UnstageAll)
-    }
-}
-
-struct ChangedFilesGitMutationReply {
-    project_id: String,
-    result: Result<ProjectGitState, String>,
-}
+// Both types + the worker fn now live in another_one_core::git_service;
+// re-exported under the same local names so every existing call site
+// (the right-sidebar event handlers, the drain loop, the pending-mutation
+// helpers) keeps compiling.
+use another_one_core::git_service::{ChangedFilesGitMutation, ChangedFilesGitMutationReply};
 
 #[derive(Clone)]
 struct PendingChangedFilesGitMutations {
@@ -5235,33 +5210,12 @@ impl AnotherOneApp {
         project_path: std::path::PathBuf,
         mutation: ChangedFilesGitMutation,
     ) {
-        let reply_project_id = project_id.to_string();
-        let tx = self.changed_files_git_mutation_sender.clone();
-        std::thread::spawn(move || {
-            let result = match mutation {
-                ChangedFilesGitMutation::StageFile { changed } => {
-                    crate::project_store::stage_changed_file(&project_path, &changed)
-                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
-                }
-                ChangedFilesGitMutation::UnstageFile { changed } => {
-                    crate::project_store::unstage_changed_file(&project_path, &changed)
-                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
-                }
-                ChangedFilesGitMutation::StageAll => {
-                    crate::project_store::stage_all_changes(&project_path)
-                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
-                }
-                ChangedFilesGitMutation::UnstageAll => {
-                    crate::project_store::unstage_all_changes(&project_path)
-                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
-                }
-            };
-
-            let _ = tx.send(ChangedFilesGitMutationReply {
-                project_id: reply_project_id,
-                result,
-            });
-        });
+        another_one_core::git_service::spawn_changed_files_mutation(
+            self.changed_files_git_mutation_sender.clone(),
+            project_id.to_string(),
+            project_path,
+            mutation,
+        );
     }
 
     fn project_path(&self, project_id: &str) -> Option<std::path::PathBuf> {
