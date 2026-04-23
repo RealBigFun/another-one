@@ -147,18 +147,27 @@ pub async fn serve() -> anyhow::Result<()> {
 
     // Print a single-line pairing URL and ASCII QR on stdout — the phone
     // can scan the QR with its default camera app, copy the URL, and paste
-    // it into the endpoint field. Direct addrs are included so on-LAN
-    // devices can use the fast path; relay is included so cellular/off-LAN
-    // falls back cleanly.
+    // it into the endpoint field. Also write a PNG next to the ticket so
+    // you can open it in any image viewer if your terminal's font/contrast
+    // isn't scannable. Direct addrs are included so on-LAN devices can use
+    // the fast path; relay is included so cellular/off-LAN falls back.
     let pairing_url = build_pairing_url(&addr);
     println!();
     println!("Pairing URL:\n  {pairing_url}");
-    match render_qr(&pairing_url) {
+    match render_qr_ascii(&pairing_url) {
         Ok(qr) => {
             println!();
             print!("{qr}");
         }
-        Err(e) => warn!(error = %e, "failed to render pairing QR"),
+        Err(e) => warn!(error = %e, "failed to render ASCII pairing QR"),
+    }
+    let png_path = std::env::temp_dir().join("daemon-sandbox.pairing.png");
+    match write_qr_png(&pairing_url, &png_path) {
+        Ok(()) => {
+            println!();
+            println!("Pairing QR also written to {}", png_path.display());
+        }
+        Err(e) => warn!(error = %e, "failed to write pairing PNG"),
     }
 
     while let Some(incoming) = endpoint.accept().await {
@@ -356,7 +365,7 @@ fn build_pairing_url(addr: &iroh::EndpointAddr) -> String {
 /// Renders `input` as an ASCII QR code (two chars per pixel, quiet zone
 /// included) suitable for pasting into a terminal window. Returns a
 /// string that ends with a newline.
-fn render_qr(input: &str) -> anyhow::Result<String> {
+fn render_qr_ascii(input: &str) -> anyhow::Result<String> {
     use qrcode::{render::unicode::Dense1x2, QrCode};
     let code = QrCode::new(input.as_bytes()).context("encode QR")?;
     Ok(code
@@ -364,4 +373,20 @@ fn render_qr(input: &str) -> anyhow::Result<String> {
         .dark_color(Dense1x2::Light)
         .light_color(Dense1x2::Dark)
         .build())
+}
+
+/// Renders `input` as a PNG and writes it to `path`. We scale modules up
+/// to 12 px with an 8-module quiet zone so phone cameras can focus on it
+/// at typical laptop-viewing distance without hunting.
+fn write_qr_png(input: &str, path: &std::path::Path) -> anyhow::Result<()> {
+    use qrcode::QrCode;
+    let code = QrCode::new(input.as_bytes()).context("encode QR")?;
+    let buf = code
+        .render::<image::Luma<u8>>()
+        .min_dimensions(480, 480)
+        .quiet_zone(true)
+        .build();
+    buf.save_with_format(path, image::ImageFormat::Png)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
 }
