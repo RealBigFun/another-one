@@ -6669,6 +6669,8 @@ impl AnotherOneApp {
                 .flex()
                 .flex_row()
                 .items_center()
+                .relative()
+                .top(px(-3.))
                 .gap(px(6.))
                 .child(
                     svg()
@@ -6710,6 +6712,8 @@ impl AnotherOneApp {
                 .flex()
                 .flex_row()
                 .items_center()
+                .relative()
+                .top(px(-3.))
                 .gap(px(6.))
                 .child(
                     svg()

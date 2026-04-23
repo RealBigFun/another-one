@@ -12,6 +12,16 @@ use serde::Deserialize;
 
 const LEGACY_GIT_COMMIT_DIFF_PATCH_TOKEN: &str = "{{diff_patch}}";
 const GIT_PULL_REQUEST_CONTEXT_TOKEN: &str = "{{pull_request_context}}";
+const GIT_PULL_REQUEST_FORMAT_CONTRACT: &str = concat!(
+    "Response format requirements:\n",
+    "- Return only the PR title/body content.\n",
+    "- The first line must be the PR title.\n",
+    "- The second line must be blank.\n",
+    "- The remaining lines are the PR body.\n",
+    "- Do not wrap the response in markdown fences.\n",
+    "- Do not add commentary before or after the title/body.\n",
+    "- Do not surround the title or body with quotes.\n"
+);
 const GIT_COMMIT_TIMEOUT: Duration = Duration::from_secs(30);
 const GIT_COMMIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -869,16 +879,12 @@ pub fn default_commit_generation_script() -> &'static str {
 pub fn default_pr_generation_script() -> &'static str {
     concat!(
         "Generate a GitHub pull request title and body for these branch changes.\n",
-        "Return only:\n",
-        "1. The PR title on the first line.\n",
-        "2. A blank line.\n",
-        "3. The PR body after that, if a body is useful.\n",
+        "Focus on the substance of the change, not the git mechanics.\n",
         "Rules:\n",
-        "- The first line must be a concise PR title.\n",
+        "- Write a concise, specific PR title.\n",
         "- The body should summarize what changed and any important reviewer context.\n",
-        "- Do not wrap the response in markdown fences.\n",
-        "- Do not add commentary before or after the title/body.\n",
-        "- Do not surround the title or body with quotes.\n"
+        "- Mention notable user-visible behavior changes, refactors, fixes, or follow-up context when relevant.\n",
+        "- Keep the body skimmable and avoid filler.\n"
     )
 }
 
@@ -899,12 +905,17 @@ fn render_pull_request_generation_script(
     let context = format!(
         "Base branch: {base_branch}\n\nBranch-only commits:\n{commit_list}\n\nDiff against {base_branch}:\n{diff_patch}\n"
     );
+    let script_with_contract = format!(
+        "{}\n\n{}",
+        script_template.trim(),
+        GIT_PULL_REQUEST_FORMAT_CONTRACT.trim_end()
+    );
 
     if script_template.contains(GIT_PULL_REQUEST_CONTEXT_TOKEN) {
-        return script_template.replace(GIT_PULL_REQUEST_CONTEXT_TOKEN, &context);
+        return script_with_contract.replace(GIT_PULL_REQUEST_CONTEXT_TOKEN, context.trim_end());
     }
 
-    format!("{script_template}\n\n{context}")
+    format!("{script_with_contract}\n\n{context}")
 }
 
 fn generate_commit_message(
@@ -1379,7 +1390,7 @@ mod tests {
         parse_pull_request_checks_output, parse_pull_request_content, push_branch,
         render_commit_generation_script, render_pull_request_generation_script,
         simple_toolbar_git_command, PullRequestCheckBucket, ToolbarGitAction,
-        GIT_PULL_REQUEST_CONTEXT_TOKEN,
+        GIT_PULL_REQUEST_CONTEXT_TOKEN, GIT_PULL_REQUEST_FORMAT_CONTRACT,
     };
     use std::path::Path;
     use std::process::Command;
@@ -1624,7 +1635,10 @@ mod tests {
 
         assert_eq!(
             rendered,
-            "Summarize:\nBase branch: main\n\nBranch-only commits:\nabc123 feat: add PR AI\n\nDiff against main:\ndiff --git a b\n"
+            format!(
+                "Summarize:\nBase branch: main\n\nBranch-only commits:\nabc123 feat: add PR AI\n\nDiff against main:\ndiff --git a b\n\n{}",
+                GIT_PULL_REQUEST_FORMAT_CONTRACT.trim_end()
+            )
         );
     }
 
@@ -1639,7 +1653,10 @@ mod tests {
 
         assert_eq!(
             rendered,
-            "Write a concise PR summary.\n\nBase branch: main\n\nBranch-only commits:\nabc123 feat: add PR AI\n\nDiff against main:\ndiff --git a b\n"
+            format!(
+                "Write a concise PR summary.\n\n{}\n\nBase branch: main\n\nBranch-only commits:\nabc123 feat: add PR AI\n\nDiff against main:\ndiff --git a b\n",
+                GIT_PULL_REQUEST_FORMAT_CONTRACT.trim_end()
+            )
         );
     }
 
