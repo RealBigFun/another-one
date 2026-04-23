@@ -359,13 +359,12 @@ impl PendingChangedFilesGitMutations {
     }
 }
 
-struct TaskCreationReply {
-    result: Result<TaskCreationSuccess, TaskCreationFailure>,
-}
-
-struct ProjectAddReply {
-    result: Result<crate::project_store::PreparedProject, String>,
-}
+// Worker bodies + reply types moved to core::project_service;
+// re-exported at these paths so existing channel fields and drain
+// loops keep compiling. Only the two Reply types are reached from
+// outside the drain loop; Success/Failure are inspected via
+// `reply.result` at the call site.
+use another_one_core::project_service::{ProjectAddReply, TaskCreationReply};
 
 // All four github-lookup reply types + their spawn workers live in
 // another_one_core::git_service now; re-exported here so existing
@@ -381,18 +380,6 @@ pub(crate) enum ProjectCheckRunsState {
     Loaded(Arc<[crate::git_actions::PullRequestCheck]>),
     NoPullRequest,
     Failed(String),
-}
-
-struct TaskCreationSuccess {
-    original_project_id: String,
-    project: crate::project_store::PreparedProject,
-    branch_name: String,
-    task_name: String,
-    launch_config: TerminalLaunchConfig,
-}
-
-struct TaskCreationFailure {
-    message: String,
 }
 
 #[derive(Debug, Clone)]
@@ -4204,12 +4191,7 @@ impl AnotherOneApp {
             .unwrap_or_else(|| path.display().to_string());
         self.show_info_toast(format!("Adding {}...", project_label), cx);
 
-        let (tx, rx) = mpsc::channel();
-        self.project_add_receiver = Some(rx);
-        std::thread::spawn(move || {
-            let result = crate::project_store::prepare_project(&path);
-            let _ = tx.send(ProjectAddReply { result });
-        });
+        self.project_add_receiver = Some(another_one_core::project_service::spawn_project_add(path));
         cx.notify();
     }
 
@@ -4993,56 +4975,15 @@ impl AnotherOneApp {
         self.cancel_active_new_task_prewarm();
         self.show_info_toast("Creating worktree task...", cx);
 
-        let project_path = project.path.clone();
-        let project_name = project.name.clone();
-        let (tx, rx) = mpsc::channel();
-        self.task_creation_receiver = Some(rx);
-        std::thread::spawn(move || {
-            let result = crate::project_store::create_task_worktree(
-                &project_path,
-                &project_name,
-                &task_name,
-                &generated_task_name,
-                &source_branch,
-            )
-            .map(|created| TaskCreationSuccess {
-                original_project_id: project_id,
-                project: crate::project_store::prepare_project(&created.path).unwrap_or_else(
-                    |_| crate::project_store::PreparedProject {
-                        project: crate::project_store::Project {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            repo_id: uuid::Uuid::new_v4().to_string(),
-                            name: created
-                                .path
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| created.path.display().to_string()),
-                            path: created.path.clone(),
-                            kind: crate::project_store::ProjectKind::Worktree,
-                            checkout: crate::project_store::ProjectCheckoutState::default(),
-                            branch_settings: crate::project_store::ProjectBranchSettings::default(),
-                            worktree_name: created
-                                .path
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned()),
-                            repo_common_dir: None,
-                        },
-                        repo: crate::project_store::RepoRecord {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            common_dir: None,
-                            branch_order: Vec::new(),
-                            branches_by_name: HashMap::new(),
-                        },
-                    },
-                ),
-                branch_name: created.branch_name,
-                task_name: created.task_name,
-                launch_config,
-            })
-            .map_err(|message| TaskCreationFailure { message });
-
-            let _ = tx.send(TaskCreationReply { result });
-        });
+        self.task_creation_receiver = Some(another_one_core::project_service::spawn_task_creation(
+            project_id,
+            project.path.clone(),
+            project.name.clone(),
+            task_name,
+            generated_task_name,
+            source_branch,
+            launch_config,
+        ));
         cx.notify();
     }
 

@@ -20,6 +20,7 @@ pub mod git_actions;
 pub mod git_service;
 pub mod open_in;
 pub mod process;
+pub mod project_service;
 pub mod project_store;
 pub mod section;
 pub mod shortcuts;
