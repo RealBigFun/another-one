@@ -42,13 +42,10 @@ const MAX_FRAME_BYTES: usize = 64 * 1024;
 /// Messages that can be sent via a type=1 control frame. Extend in lock-step
 /// with `daemon-sandbox/src/frame.rs::Control`.
 ///
-/// Serialize-only mirror: the Dart side doesn't need to decode control
-/// frames (they're strictly client → daemon today). Adding the
-/// `WatchProject` variant here so the serde schema matches the
-/// daemon's even before we add a public FRB method that sends it.
+/// Serialize-only: the Dart side doesn't need to decode control
+/// frames (they're strictly client → daemon today).
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(dead_code)]
 enum Control {
     Resize {
         cols: u16,
@@ -56,8 +53,7 @@ enum Control {
     },
     /// Ask the daemon to watch `project_path` and start pushing
     /// [`WorkerReply::GitRefresh`] frames for it. Mirror of
-    /// `daemon-sandbox/src/frame.rs::Control::WatchProject`. Not yet
-    /// sent from Dart — a future PR will add a public FRB method.
+    /// `daemon-sandbox/src/frame.rs::Control::WatchProject`.
     WatchProject {
         project_path: String,
     },
@@ -414,6 +410,17 @@ impl IrohSession {
     pub async fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         let payload =
             serde_json::to_vec(&Control::Resize { cols, rows }).context("encode resize")?;
+        self.send_frame(TY_CONTROL, payload).await
+    }
+
+    /// Ask the daemon to watch `project_path` and start forwarding
+    /// [`WorkerReply::GitRefresh`] frames for it. See
+    /// `daemon-sandbox/src/frame.rs::Control::WatchProject` for the
+    /// daemon-side semantics. Reissuing replaces the previous
+    /// subscription.
+    pub async fn watch_project(&self, project_path: String) -> anyhow::Result<()> {
+        let payload = serde_json::to_vec(&Control::WatchProject { project_path })
+            .context("encode watch_project")?;
         self.send_frame(TY_CONTROL, payload).await
     }
 

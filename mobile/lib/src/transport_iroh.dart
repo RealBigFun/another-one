@@ -30,9 +30,17 @@ class IrohTransport implements TerminalTransport {
       StreamController<Uint8List>.broadcast();
   final StreamController<TransportStatus> _status =
       StreamController<TransportStatus>.broadcast();
+  // Worker replies are domain-data pushes from the daemon (git state,
+  // future: PR status, etc.) — distinct from PTY bytes in semantics and
+  // rate, so they get their own broadcast stream rather than being
+  // union'd into [incoming]. Null WorkerReply sentinel never flows —
+  // the Rust side guarantees every `add` carries a real variant.
+  final StreamController<WorkerReply> _workerReplies =
+      StreamController<WorkerReply>.broadcast();
 
   IrohSession? _session;
   StreamSubscription<Uint8List>? _incomingSub;
+  StreamSubscription<WorkerReply>? _workerRepliesSub;
   TransportStatus _current = const TransportStatus.disconnected();
   bool _closed = false;
 
@@ -50,6 +58,11 @@ class IrohTransport implements TerminalTransport {
 
   @override
   TransportStatus get currentStatus => _current;
+
+  /// Daemon-pushed worker replies (git state etc.) for the currently
+  /// watched project. Call [watchProject] first; nothing arrives on
+  /// this stream until the daemon has a subscription to forward.
+  Stream<WorkerReply> get workerReplies => _workerReplies.stream;
 
   @override
   void connect() {
@@ -81,10 +94,26 @@ class IrohTransport implements TerminalTransport {
         onDone: () => _publish(const TransportStatus.disconnected()),
         cancelOnError: true,
       );
+      // Errors here don't tear down the transport — worker-reply
+      // delivery is best-effort relative to the core PTY path.
+      _workerRepliesSub = session.subscribeWorkerReplies().listen(
+        _workerReplies.add,
+        onError: (_) {},
+      );
       _publish(const TransportStatus.connected());
     } catch (e) {
       _publish(TransportStatus.error(e.toString()));
     }
+  }
+
+  /// Ask the daemon to start forwarding git state (and later, more
+  /// worker replies) for [projectPath]. Safe to call multiple times —
+  /// the daemon treats each call as a fresh subscription, replacing
+  /// any prior one for this session.
+  void watchProject(String projectPath) {
+    final session = _session;
+    if (session == null) return;
+    unawaited(session.watchProject(projectPath: projectPath));
   }
 
   @override
@@ -111,6 +140,8 @@ class IrohTransport implements TerminalTransport {
     _closed = true;
     await _incomingSub?.cancel();
     _incomingSub = null;
+    await _workerRepliesSub?.cancel();
+    _workerRepliesSub = null;
     final s = _session;
     _session = null;
     if (s != null) {
@@ -118,6 +149,7 @@ class IrohTransport implements TerminalTransport {
     }
     _publish(const TransportStatus.disconnected());
     await _incoming.close();
+    await _workerReplies.close();
     await _status.close();
   }
 
