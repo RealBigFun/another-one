@@ -11,6 +11,7 @@ use crate::agents::{
     effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus,
     DEFAULT_AGENT_ID,
 };
+use crate::git_actions::default_commit_generation_script;
 use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 
@@ -305,6 +306,8 @@ pub struct UiState {
     #[serde(default)]
     pub agent_launch_args: HashMap<String, Vec<String>>,
     #[serde(default)]
+    pub git_commit_generation_script: Option<String>,
+    #[serde(default)]
     pub shortcuts: ShortcutSettings,
 }
 
@@ -321,6 +324,7 @@ impl Default for UiState {
             enabled_agents: None,
             default_agent_id: None,
             agent_launch_args: HashMap::new(),
+            git_commit_generation_script: None,
             shortcuts: ShortcutSettings::default(),
         }
     }
@@ -941,6 +945,41 @@ impl ProjectStore {
             self.save();
         }
         removed
+    }
+
+    pub fn git_commit_generation_script(&self) -> &str {
+        match self.ui.git_commit_generation_script.as_deref() {
+            Some(script) if !script.trim().is_empty() => script,
+            _ => default_commit_generation_script(),
+        }
+    }
+
+    pub fn set_git_commit_generation_script(&mut self, script: impl Into<String>) -> bool {
+        let script = script.into();
+        let normalized = if script.trim().is_empty()
+            || script.trim() == default_commit_generation_script().trim()
+        {
+            None
+        } else {
+            Some(script)
+        };
+
+        if self.ui.git_commit_generation_script == normalized {
+            return false;
+        }
+
+        self.ui.git_commit_generation_script = normalized;
+        self.save();
+        true
+    }
+
+    pub fn reset_git_commit_generation_script(&mut self) -> bool {
+        if self.ui.git_commit_generation_script.take().is_none() {
+            return false;
+        }
+
+        self.save();
+        true
     }
 
     pub fn enabled_agent_ids(&self) -> Vec<&'static str> {
@@ -2907,6 +2946,7 @@ mod tests {
                 enabled_agents: None,
                 default_agent_id: None,
                 agent_launch_args: HashMap::new(),
+                git_commit_generation_script: None,
                 shortcuts: ShortcutSettings::default(),
             },
         };
@@ -3337,6 +3377,49 @@ mod tests {
             ]))
         );
         assert_eq!(round_trip.ui.default_agent_id.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn git_commit_generation_script_helpers_persist_and_reset() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let file_path = temp_dir.path().join("projects.json");
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            file_path: file_path.clone(),
+        };
+
+        let custom_script = "Use conventional commits.";
+        assert!(store.set_git_commit_generation_script(custom_script));
+        assert_eq!(store.git_commit_generation_script(), custom_script);
+
+        let saved: StoreFile = serde_json::from_str(
+            &fs::read_to_string(&file_path).expect("saved config should exist"),
+        )
+        .expect("saved config should deserialize");
+        assert_eq!(
+            saved.ui.git_commit_generation_script.as_deref(),
+            Some(custom_script)
+        );
+
+        assert!(store.reset_git_commit_generation_script());
+        assert_eq!(
+            store.git_commit_generation_script(),
+            crate::git_actions::default_commit_generation_script()
+        );
+
+        let saved: StoreFile = serde_json::from_str(
+            &fs::read_to_string(&file_path).expect("saved config should exist"),
+        )
+        .expect("saved config should deserialize");
+        assert!(saved.ui.git_commit_generation_script.is_none());
     }
 
     #[test]

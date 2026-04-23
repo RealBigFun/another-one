@@ -308,11 +308,17 @@ struct GitRefreshReply {
     compare_state: Option<Result<ProjectBranchCompareState, String>>,
 }
 
-struct GitActionReply {
-    project_id: String,
-    refresh_git_state: bool,
-    toast_kind: ToastKind,
-    toast_message: String,
+enum GitActionReply {
+    Progress {
+        toast_kind: ToastKind,
+        toast_message: String,
+    },
+    Finished {
+        project_id: String,
+        refresh_git_state: bool,
+        toast_kind: ToastKind,
+        toast_message: String,
+    },
 }
 
 struct CommitFileChangesReply {
@@ -5510,9 +5516,7 @@ impl AnotherOneApp {
                 }
                 "Generating an AI commit message before commit and push..."
             }
-            crate::git_actions::ToolbarGitAction::UndoLastCommit => {
-                "Undoing the most recent commit and keeping its changes staged..."
-            }
+            crate::git_actions::ToolbarGitAction::UndoLastCommit => "",
             crate::git_actions::ToolbarGitAction::Fetch => "Fetching remote updates...",
             crate::git_actions::ToolbarGitAction::Pull => {
                 "Pulling remote updates with fast-forward only..."
@@ -5567,12 +5571,19 @@ impl AnotherOneApp {
         self.active_git_action = Some(action.clone());
         self.git_action_receiver = Some(rx);
         std::thread::spawn(move || {
+            let mut progress = |message: String| {
+                let _ = tx.send(GitActionReply::Progress {
+                    toast_kind: ToastKind::Info,
+                    toast_message: message,
+                });
+            };
             let reply = match crate::git_actions::execute_toolbar_git_action(
                 &project_path,
                 action,
                 git_action_settings,
+                &mut progress,
             ) {
-                Ok(outcome) => GitActionReply {
+                Ok(outcome) => GitActionReply::Finished {
                     project_id: project_id.clone(),
                     refresh_git_state: outcome.refresh_git_state,
                     toast_kind: if outcome.warning {
@@ -5582,7 +5593,7 @@ impl AnotherOneApp {
                     },
                     toast_message: outcome.toast_message,
                 },
-                Err(error) => GitActionReply {
+                Err(error) => GitActionReply::Finished {
                     project_id: project_id.clone(),
                     refresh_git_state: error.refresh_git_state,
                     toast_kind: ToastKind::Error,
@@ -5601,32 +5612,50 @@ impl AnotherOneApp {
 
         match receiver.try_recv() {
             Ok(reply) => {
-                let refresh_pull_request_lookup =
-                    matches!(
-                        self.active_git_action,
-                        Some(crate::git_actions::ToolbarGitAction::CreatePr { .. })
-                    ) && matches!(reply.toast_kind, ToastKind::Success);
-                self.active_git_action = None;
-                self.git_action_receiver = None;
-                if reply.refresh_git_state {
-                    let invalid_settings = self.refresh_project_git_state(&reply.project_id);
-                    let _ = self.handle_invalid_project_branch_settings(
-                        &reply.project_id,
-                        invalid_settings,
-                        cx,
-                    );
-                }
-                match reply.toast_kind {
-                    ToastKind::Success => self.show_success_toast(reply.toast_message, cx),
-                    ToastKind::Error => self.show_error_toast(reply.toast_message, cx),
-                    ToastKind::Warning => self.show_warning_toast(reply.toast_message, cx),
-                    ToastKind::Info => self.show_info_toast(reply.toast_message, cx),
-                }
-                if refresh_pull_request_lookup {
-                    self.invalidate_active_project_pull_request_lookup(cx);
-                    self.refresh_active_project_pull_request_lookup(cx);
-                    self.invalidate_active_project_check_runs_lookup(cx);
-                    self.refresh_active_project_check_runs_lookup(cx);
+                match reply {
+                    GitActionReply::Progress {
+                        toast_kind,
+                        toast_message,
+                    } => match toast_kind {
+                        ToastKind::Success => self.show_success_toast(toast_message, cx),
+                        ToastKind::Error => self.show_error_toast(toast_message, cx),
+                        ToastKind::Warning => self.show_warning_toast(toast_message, cx),
+                        ToastKind::Info => self.show_info_toast(toast_message, cx),
+                    },
+                    GitActionReply::Finished {
+                        project_id,
+                        refresh_git_state,
+                        toast_kind,
+                        toast_message,
+                    } => {
+                        let refresh_pull_request_lookup =
+                            matches!(
+                                self.active_git_action,
+                                Some(crate::git_actions::ToolbarGitAction::CreatePr { .. })
+                            ) && matches!(toast_kind, ToastKind::Success);
+                        self.active_git_action = None;
+                        self.git_action_receiver = None;
+                        if refresh_git_state {
+                            let invalid_settings = self.refresh_project_git_state(&project_id);
+                            let _ = self.handle_invalid_project_branch_settings(
+                                &project_id,
+                                invalid_settings,
+                                cx,
+                            );
+                        }
+                        match toast_kind {
+                            ToastKind::Success => self.show_success_toast(toast_message, cx),
+                            ToastKind::Error => self.show_error_toast(toast_message, cx),
+                            ToastKind::Warning => self.show_warning_toast(toast_message, cx),
+                            ToastKind::Info => self.show_info_toast(toast_message, cx),
+                        }
+                        if refresh_pull_request_lookup {
+                            self.invalidate_active_project_pull_request_lookup(cx);
+                            self.refresh_active_project_pull_request_lookup(cx);
+                            self.invalidate_active_project_check_runs_lookup(cx);
+                            self.refresh_active_project_check_runs_lookup(cx);
+                        }
+                    }
                 }
                 true
             }

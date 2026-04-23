@@ -5,10 +5,14 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
 const LEGACY_GIT_COMMIT_DIFF_PATCH_TOKEN: &str = "{{diff_patch}}";
+const GIT_COMMIT_TIMEOUT: Duration = Duration::from_secs(30);
+const GIT_COMMIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitActionSettings {
@@ -166,10 +170,11 @@ pub fn execute_toolbar_git_action(
     repo_path: &Path,
     action: ToolbarGitAction,
     settings: GitActionSettings,
+    on_progress: &mut dyn FnMut(String),
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
     match action {
-        ToolbarGitAction::Commit => commit_with_ai(repo_path, false, &settings),
-        ToolbarGitAction::CommitAndPush => commit_with_ai(repo_path, true, &settings),
+        ToolbarGitAction::Commit => commit_with_ai(repo_path, false, &settings, on_progress),
+        ToolbarGitAction::CommitAndPush => commit_with_ai(repo_path, true, &settings, on_progress),
         ToolbarGitAction::UndoLastCommit => undo_last_commit(repo_path),
         ToolbarGitAction::Fetch => run_simple_git_command(repo_path, ToolbarGitAction::Fetch),
         ToolbarGitAction::Pull => run_simple_git_command(repo_path, ToolbarGitAction::Pull),
@@ -198,7 +203,7 @@ fn simple_toolbar_git_command(action: ToolbarGitAction) -> Option<SimpleToolbarG
             args: &["reset", "--soft", "HEAD~1"],
             failure_prefix: "Undo last commit failed",
             success_toast: "Undid the last commit.",
-            warning: true,
+            warning: false,
             refresh_git_state: true,
         }),
         ToolbarGitAction::Fetch => Some(SimpleToolbarGitCommand {
@@ -478,12 +483,22 @@ fn commit_with_ai(
     repo_path: &Path,
     push_after: bool,
     settings: &GitActionSettings,
+    on_progress: &mut dyn FnMut(String),
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
     let _staged_all_changes = ensure_staged_changes(repo_path)?;
     let diff_patch = staged_diff_patch(repo_path).map_err(ToolbarActionError::from_message)?;
     let prompt = render_commit_generation_script(settings.commit_generation_script(), &diff_patch);
     let generated =
         generate_commit_message(repo_path, &prompt).map_err(ToolbarActionError::from_message)?;
+    on_progress(format!(
+        "Generated commit message:\n{}",
+        format_commit_message_text(&generated)
+    ));
+    on_progress(if push_after {
+        "Commit message generated. Creating commit before push...".to_string()
+    } else {
+        "Commit message generated. Creating commit...".to_string()
+    });
     git_commit(repo_path, &generated).map_err(ToolbarActionError::from_message)?;
 
     if push_after {
@@ -970,9 +985,42 @@ fn git_commit(repo_path: &Path, message: &GeneratedCommitMessage) -> Result<(), 
         cmd.arg("-m").arg(body);
     }
 
-    let output = cmd
+    let mut child = cmd
         .current_dir(repo_path)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("Commit failed: {err}"))?;
+
+    let deadline = Instant::now() + GIT_COMMIT_TIMEOUT;
+    loop {
+        match child
+            .try_wait()
+            .map_err(|err| format!("Commit failed: {err}"))?
+        {
+            Some(_status) => break,
+            None if Instant::now() < deadline => thread::sleep(GIT_COMMIT_POLL_INTERVAL),
+            None => {
+                let _ = child.kill();
+                let output = child.wait_with_output().map_err(|err| {
+                    format!("Commit timed out and could not be cleaned up: {err}")
+                })?;
+                let details = command_output_details(&output);
+                return Err(format!(
+                    "Commit timed out after {} seconds. This usually means a git hook or signing step is waiting or running too long.{}",
+                    GIT_COMMIT_TIMEOUT.as_secs(),
+                    if details.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {details}")
+                    }
+                ));
+            }
+        }
+    }
+
+    let output = child
+        .wait_with_output()
         .map_err(|err| format!("Commit failed: {err}"))?;
 
     if !output.status.success() {
@@ -980,6 +1028,25 @@ fn git_commit(repo_path: &Path, message: &GeneratedCommitMessage) -> Result<(), 
     }
 
     Ok(())
+}
+
+fn format_commit_message_text(message: &GeneratedCommitMessage) -> String {
+    match message.body.as_deref() {
+        Some(body) => format!("{}\n\n{}", message.subject, body),
+        None => message.subject.clone(),
+    }
+}
+
+fn command_output_details(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        format!("stderr: {stderr}")
+    } else if !stdout.is_empty() {
+        format!("stdout: {stdout}")
+    } else {
+        String::new()
+    }
 }
 
 fn git_current_branch(repo_path: &Path) -> Option<String> {
