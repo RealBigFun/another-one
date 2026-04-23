@@ -1824,6 +1824,7 @@ dependencies = [
 name = "daemon-sandbox"
 version = "0.1.0"
 dependencies = [
+ "another-one-core",
  "anyhow",
  "axum",
  "futures-util",
