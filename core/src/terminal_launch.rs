@@ -2,7 +2,6 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -13,7 +12,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::agents::{
-    AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode, TerminalSessionKind,
+    harness, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode, TerminalSessionKind,
     TerminalSessionRef,
 };
 use crate::terminal_types::{PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey};
@@ -21,7 +20,7 @@ use crate::terminal_types::{PreparedTerminalRuntime, TerminalGridSize, TerminalR
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const CODEX_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(400);
-const CODEX_HOME_ENV: &str = "CODEX_HOME";
+pub(crate) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const ANOTHER_ONE_PI_SESSION_CAPTURE_ENV: &str = "ANOTHER_ONE_PI_SESSION_CAPTURE";
 
 pub enum TerminalLaunchReply {
@@ -134,8 +133,9 @@ fn launch_terminal(
 ) -> anyhow::Result<()> {
     let launch_started_at = SystemTime::now();
     let cwd = cwd.unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let env = HarnessEnv::from_os();
     let (mut builder, launch_config, discovery_kind) =
-        build_command(&cwd, launch_config, &agent_launch_args)?;
+        build_command(&env, &cwd, launch_config, &agent_launch_args)?;
 
     builder.cwd(&cwd);
     apply_terminal_environment(&mut builder);
@@ -227,8 +227,9 @@ fn launch_warm_terminal(
 ) -> anyhow::Result<()> {
     let launch_started_at = SystemTime::now();
     let cwd = cwd.unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let env = HarnessEnv::from_os();
     let (mut builder, launch_config, discovery_kind) =
-        build_command(&cwd, launch_config, &agent_launch_args)?;
+        build_command(&env, &cwd, launch_config, &agent_launch_args)?;
 
     builder.cwd(&cwd);
     apply_terminal_environment(&mut builder);
@@ -303,17 +304,18 @@ fn launch_warm_terminal(
 }
 
 #[derive(Clone, Debug)]
-enum DiscoveryKind {
+pub(crate) enum DiscoveryKind {
     Codex { root: PathBuf },
     Pi { capture: PiSessionCapture },
 }
 
 #[derive(Clone, Debug)]
-struct PiSessionCapture {
+pub(crate) struct PiSessionCapture {
     path: PathBuf,
 }
 
 fn build_command(
+    env: &HarnessEnv,
     cwd: &Path,
     launch_config: TerminalLaunchConfig,
     agent_launch_args: &[String],
@@ -329,94 +331,10 @@ fn build_command(
     let mut combined_agent_launch_args = agent_launch_args.to_vec();
     combined_agent_launch_args.extend(launch_config.extra_args.iter().cloned());
 
-    match provider {
-        AgentProviderKind::ClaudeCode => {
-            build_claude_command(cwd, launch_config, &combined_agent_launch_args, None)
-        }
-        AgentProviderKind::CursorAgent => {
-            let session = if let Some(session) = launch_config.session.clone() {
-                session
-            } else {
-                TerminalSessionRef {
-                    kind: TerminalSessionKind::CursorChat,
-                    id: create_cursor_chat(cwd)?,
-                }
-            };
-            let mut builder = CommandBuilder::new("agent");
-            builder.args(&combined_agent_launch_args);
-            builder.args(["--resume", session.id.as_str()]);
-            Ok((builder, launch_config.with_session(Some(session)), None))
-        }
-        AgentProviderKind::Codex => {
-            let mut builder = CommandBuilder::new("codex");
-            builder.args(&combined_agent_launch_args);
-            let (launch_config, codex_home_override) = resolve_codex_home_override(launch_config)?;
-            if let Some(codex_home_override) = codex_home_override.as_ref() {
-                builder.env(
-                    CODEX_HOME_ENV,
-                    codex_home_override.to_string_lossy().into_owned(),
-                );
-            }
-            let discovery = if let Some(session) = launch_config.session.clone() {
-                builder.args(["resume", session.id.as_str()]);
-                None
-            } else {
-                Some(DiscoveryKind::Codex {
-                    root: codex_home_override
-                        .clone()
-                        .expect("fresh codex launches should always have an isolated home"),
-                })
-            };
-            Ok((builder, launch_config, discovery))
-        }
-        AgentProviderKind::Pi => {
-            let mut builder = CommandBuilder::new("pi");
-            builder.args(&combined_agent_launch_args);
-            let discovery = if let Some(session) =
-                resolve_pi_session(cwd, launch_config.session.as_ref(), None)
-            {
-                builder.args(["--session", session.id.as_str()]);
-                None
-            } else {
-                let capture = prepare_pi_session_capture()?;
-                capture.attach_to_command(&mut builder);
-                let extension_path = pi_session_capture_extension_path();
-                let extension_path = extension_path.to_string_lossy().into_owned();
-                builder.args(["-e", extension_path.as_str()]);
-                Some(DiscoveryKind::Pi { capture })
-            };
-            Ok((builder, launch_config, discovery))
-        }
-        provider => {
-            let mut builder = CommandBuilder::new(provider_command(provider));
-            builder.args(&combined_agent_launch_args);
-            if let Some(session) = launch_config.session.clone() {
-                builder.arg(session.id);
-            }
-            Ok((builder, launch_config, None))
-        }
-    }
+    harness(provider).build_launch(env, cwd, launch_config, &combined_agent_launch_args)
 }
 
-fn build_claude_command(
-    cwd: &Path,
-    launch_config: TerminalLaunchConfig,
-    agent_launch_args: &[String],
-    projects_root: Option<&Path>,
-) -> anyhow::Result<(CommandBuilder, TerminalLaunchConfig, Option<DiscoveryKind>)> {
-    let (session, should_resume) =
-        resolve_claude_session(cwd, launch_config.session.as_ref(), projects_root);
-    let mut builder = CommandBuilder::new("claude");
-    builder.args(agent_launch_args);
-    if should_resume {
-        builder.args(["--resume", session.id.as_str()]);
-    } else {
-        builder.args(["--session-id", session.id.as_str()]);
-    }
-    Ok((builder, launch_config.with_session(Some(session)), None))
-}
-
-fn resolve_pi_session(
+pub(crate) fn resolve_pi_session(
     cwd: &Path,
     requested_session: Option<&TerminalSessionRef>,
     sessions_root: Option<&Path>,
@@ -480,7 +398,7 @@ fn pi_session_exists(cwd: &Path, session_id: &str, sessions_root: Option<&Path>)
     false
 }
 
-fn resolve_claude_session(
+pub(crate) fn resolve_claude_session(
     cwd: &Path,
     requested_session: Option<&TerminalSessionRef>,
     projects_root: Option<&Path>,
@@ -541,7 +459,7 @@ fn apply_terminal_environment(builder: &mut CommandBuilder) {
 }
 
 impl PiSessionCapture {
-    fn attach_to_command(&self, builder: &mut CommandBuilder) {
+    pub(crate) fn attach_to_command(&self, builder: &mut CommandBuilder) {
         builder.env(
             ANOTHER_ONE_PI_SESSION_CAPTURE_ENV,
             self.path.to_string_lossy().into_owned(),
@@ -549,11 +467,12 @@ impl PiSessionCapture {
     }
 }
 
-fn resolve_codex_home_override(
+pub(crate) fn resolve_codex_home_override(
+    env: &HarnessEnv,
     launch_config: TerminalLaunchConfig,
 ) -> anyhow::Result<(TerminalLaunchConfig, Option<PathBuf>)> {
     if let Some(home_override) = launch_config.home_override.clone() {
-        prepare_codex_home_override(&home_override)?;
+        prepare_codex_home_override(env, &home_override)?;
         return Ok((launch_config, Some(home_override)));
     }
 
@@ -561,33 +480,26 @@ fn resolve_codex_home_override(
         return Ok((launch_config, None));
     }
 
-    let home_override = create_codex_home_override_path()?;
-    prepare_codex_home_override(&home_override)?;
+    let home_override = create_codex_home_override_path(env)?;
+    prepare_codex_home_override(env, &home_override)?;
     Ok((
         launch_config.with_home_override(Some(home_override.clone())),
         Some(home_override),
     ))
 }
 
-fn create_codex_home_override_path() -> anyhow::Result<PathBuf> {
-    let codex_homes_dir = dirs::config_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("another-one")
-        .join("codex-homes");
+fn create_codex_home_override_path(env: &HarnessEnv) -> anyhow::Result<PathBuf> {
+    let codex_homes_dir = env
+        .codex_isolated_homes_root
+        .clone()
+        .ok_or_else(|| anyhow!("no codex isolated home root configured"))?;
     fs::create_dir_all(&codex_homes_dir)
         .with_context(|| format!("failed to create {}", codex_homes_dir.display()))?;
     Ok(codex_homes_dir.join(Uuid::new_v4().to_string()))
 }
 
-fn default_codex_home() -> Option<PathBuf> {
-    std::env::var_os(CODEX_HOME_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))
-}
-
-fn prepare_codex_home_override(home_override: &Path) -> anyhow::Result<()> {
-    prepare_codex_home_override_from(default_codex_home().as_deref(), home_override)
+fn prepare_codex_home_override(env: &HarnessEnv, home_override: &Path) -> anyhow::Result<()> {
+    prepare_codex_home_override_from(env.codex_root.as_deref(), home_override)
 }
 
 fn prepare_codex_home_override_from(
@@ -672,11 +584,11 @@ fn ensure_symlink_if_exists(source: &Path, target: &Path) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn prepare_pi_session_capture() -> anyhow::Result<PiSessionCapture> {
-    let capture_dir = dirs::config_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("another-one")
-        .join("pi-session-captures");
+pub(crate) fn prepare_pi_session_capture(env: &HarnessEnv) -> anyhow::Result<PiSessionCapture> {
+    let capture_dir = env
+        .pi_session_captures_root
+        .clone()
+        .ok_or_else(|| anyhow!("no pi session captures root configured"))?;
     fs::create_dir_all(&capture_dir)
         .with_context(|| format!("failed to create {}", capture_dir.display()))?;
     Ok(PiSessionCapture {
@@ -684,7 +596,7 @@ fn prepare_pi_session_capture() -> anyhow::Result<PiSessionCapture> {
     })
 }
 
-fn pi_session_capture_extension_path() -> PathBuf {
+pub(crate) fn pi_session_capture_extension_path() -> PathBuf {
     // `terminal_launch.rs` lives in the `core` crate, but the Pi extension is
     // checked into the workspace-level `scripts/` directory.
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -694,40 +606,25 @@ fn pi_session_capture_extension_path() -> PathBuf {
         .join("pi-session-start-extension.ts")
 }
 
-fn create_cursor_chat(cwd: &Path) -> anyhow::Result<String> {
-    let output = Command::new("agent")
-        .arg("create-chat")
-        .current_dir(cwd)
-        .output()
+pub(crate) fn create_cursor_chat(env: &HarnessEnv, cwd: &Path) -> anyhow::Result<String> {
+    let output = env
+        .command_runner
+        .run("agent", &["create-chat"], cwd)
         .context("failed to create Cursor Agent chat")?;
-    if !output.status.success() {
+    if !output.success {
         return Err(anyhow!(
             "agent create-chat failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            output.stderr.trim()
         ));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let chat_id = stdout
+    let chat_id = output
+        .stdout
         .lines()
         .rev()
         .map(str::trim)
         .find(|line| !line.is_empty())
         .ok_or_else(|| anyhow!("agent create-chat returned no chat id"))?;
     Ok(chat_id.to_string())
-}
-
-fn provider_command(provider: AgentProviderKind) -> &'static str {
-    match provider {
-        AgentProviderKind::ClaudeCode => "claude",
-        AgentProviderKind::CursorAgent => "agent",
-        AgentProviderKind::Codex => "codex",
-        AgentProviderKind::Pi => "pi",
-        AgentProviderKind::Gemini => "gemini",
-        AgentProviderKind::OpenCode => "opencode",
-        AgentProviderKind::Amp => "amp",
-        AgentProviderKind::RovoDev => "rovo-dev",
-        AgentProviderKind::Forge => "forge",
-    }
 }
 
 fn discover_session(
@@ -1023,15 +920,14 @@ fn newest_matching_jsonl(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_claude_command, build_command, claude_project_dir_name, claude_session_exists,
-        discover_codex_session, discover_codex_session_from_index,
-        discover_codex_session_from_saved_sessions, discover_pi_session,
-        discovery_timeout_for_kind, pi_session_capture_extension_path, pi_session_exists,
-        prepare_codex_home_override_from, read_session_capture, resolve_claude_session,
-        resolve_pi_session, DiscoveryKind, PiSessionCapture, SessionCaptureState,
-        TerminalSessionKind, TerminalSessionRef,
+        build_command, claude_project_dir_name, claude_session_exists, discover_codex_session,
+        discover_codex_session_from_index, discover_codex_session_from_saved_sessions,
+        discover_pi_session, discovery_timeout_for_kind, pi_session_capture_extension_path,
+        pi_session_exists, prepare_codex_home_override_from, read_session_capture,
+        resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
+        SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
     };
-    use crate::agents::{AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode};
+    use crate::agents::{HarnessEnv, AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
     use std::fs;
     use std::path::Path;
@@ -1439,7 +1335,8 @@ mod tests {
         let agent_launch_args = vec!["--yolo".to_string(), "--profile".to_string()];
 
         let (builder, launch_config, discovery) =
-            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
+                .expect("build should succeed");
 
         assert_eq!(argv(&builder), vec!["codex", "--yolo", "--profile"]);
         assert_eq!(launch_config.home_override, Some(codex_root.clone()));
@@ -1464,7 +1361,8 @@ mod tests {
         let agent_launch_args = vec!["--yolo".to_string()];
 
         let (builder, launch_config, discovery) =
-            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
+                .expect("build should succeed");
 
         assert_eq!(
             argv(&builder),
@@ -1481,7 +1379,8 @@ mod tests {
         let agent_launch_args = vec!["--dangerously-skip-permissions".to_string()];
 
         let (builder, launch_config, discovery) =
-            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
+                .expect("build should succeed");
 
         let argv = argv(&builder);
         assert_eq!(argv[0], "claude");
@@ -1508,9 +1407,13 @@ mod tests {
         let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode)
             .with_session(Some(session));
         let agent_launch_args = vec!["--dangerously-skip-permissions".to_string()];
+        let env = HarnessEnv {
+            claude_projects_root: Some(projects_root.clone()),
+            ..HarnessEnv::for_test()
+        };
 
         let (builder, _, discovery) =
-            build_claude_command(cwd, launch_config, &agent_launch_args, Some(&projects_root))
+            build_command(&env, cwd, launch_config, &agent_launch_args)
                 .expect("build should succeed");
 
         assert_eq!(
@@ -1539,7 +1442,8 @@ mod tests {
         let agent_launch_args = vec!["--model".to_string(), "sonnet".to_string()];
 
         let (builder, launch_config, discovery) =
-            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
+                .expect("build should succeed");
 
         assert_eq!(
             argv(&builder),
@@ -1561,7 +1465,8 @@ mod tests {
         let agent_launch_args = vec!["--log-level".to_string(), "debug".to_string()];
 
         let (builder, _, discovery) =
-            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
+                .expect("build should succeed");
 
         assert_eq!(
             argv(&builder),
@@ -1580,7 +1485,8 @@ mod tests {
         let agent_launch_args = vec!["--ignored".to_string()];
 
         let (builder, _, discovery) =
-            build_command(cwd, launch_config, &agent_launch_args).expect("build should succeed");
+            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
+                .expect("build should succeed");
 
         assert!(builder.is_default_prog());
         assert!(builder.get_argv().is_empty());
