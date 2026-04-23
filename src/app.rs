@@ -28,8 +28,8 @@ actions!(
 );
 
 use crate::agents::{
-    terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
-    AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
+    harness, terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
+    TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
 use crate::layout::*;
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
@@ -70,10 +70,6 @@ const PROJECT_EXPAND_ANIMATION_DURATION: Duration = Duration::from_millis(160);
 const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
 const TERMINAL_RECENT_OUTPUT_LIMIT: usize = 16 * 1024;
 pub(crate) const RECENT_COMMITS_PAGE_SIZE: usize = 20;
-
-fn output_mentions_missing_claude_conversation(text: &str) -> bool {
-    text.to_ascii_lowercase().contains("no conversation found")
-}
 
 fn trim_to_recent_output_limit(buffer: &mut String) {
     if buffer.len() <= TERMINAL_RECENT_OUTPUT_LIMIT {
@@ -2915,10 +2911,10 @@ impl AnotherOneApp {
         let Some(request) = self.terminal_request_for_key(key, cx) else {
             return false;
         };
-        let is_claude_restore = request.launch_config.provider
-            == Some(AgentProviderKind::ClaudeCode)
-            && request.launch_config.session.is_some();
-        if !is_claude_restore {
+        let Some(provider) = request.launch_config.provider else {
+            return false;
+        };
+        if request.launch_config.session.is_none() {
             return false;
         }
 
@@ -2927,7 +2923,7 @@ impl AnotherOneApp {
             .get(key)
             .map(String::as_str)
             .unwrap_or_default();
-        if !output_mentions_missing_claude_conversation(recent_output) {
+        if !harness(provider).output_indicates_missing_session(recent_output) {
             return false;
         }
 
@@ -7020,17 +7016,17 @@ mod tests {
     use super::{
         apply_terminal_session_backfill, choose_initial_section, global_tab_navigation_targets,
         next_global_tab_navigation_target, next_project_navigation_target,
-        next_task_navigation_target, output_mentions_missing_claude_conversation,
-        remove_terminal_runtime_state, resolve_new_task_shortcut_target,
-        root_project_navigation_targets, sidebar_task_navigation_targets,
-        terminal_line_selection_range, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
-        AnotherOneApp, NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState,
-        TerminalCellPosition, TerminalSelectionRange, TERMINAL_RECENT_OUTPUT_LIMIT,
+        next_task_navigation_target, remove_terminal_runtime_state,
+        resolve_new_task_shortcut_target, root_project_navigation_targets,
+        sidebar_task_navigation_targets, terminal_line_selection_range, terminal_scroll_lines,
+        terminal_selected_text, terminal_selection_range, terminal_word_selection_range,
+        trim_to_recent_output_limit, AnotherOneApp, NavigationDirection, NewTaskShortcutTarget,
+        SectionId, SectionState, TerminalCellPosition, TerminalSelectionRange,
+        TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
-        AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
-        TerminalSessionRef,
+        harness, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus,
+        TerminalSessionKind, TerminalSessionRef,
     };
     use crate::project_store::{
         PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
@@ -8076,12 +8072,10 @@ mod tests {
 
     #[test]
     fn detects_missing_claude_restore_conversation_output() {
-        assert!(output_mentions_missing_claude_conversation(
-            "Error: No conversation found for session abc123"
-        ));
-        assert!(!output_mentions_missing_claude_conversation(
-            "Error: network request failed"
-        ));
+        let claude = harness(AgentProviderKind::ClaudeCode);
+        assert!(claude
+            .output_indicates_missing_session("Error: No conversation found for session abc123"));
+        assert!(!claude.output_indicates_missing_session("Error: network request failed"));
     }
 
     #[test]
