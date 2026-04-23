@@ -5,6 +5,11 @@
 //! Types:
 //! - `0x00` — PTY data (raw bytes, either direction)
 //! - `0x01` — JSON control message (UTF-8; see [`Control`])
+//! - `0x02` — JSON worker reply (UTF-8; see [`WorkerReply`]).
+//!   Daemon → client only. One variant per core-extracted worker that
+//!   the daemon forwards to the client. Unknown variants MUST be
+//!   ignored by clients so older clients keep working as we add
+//!   workers.
 //!
 //! Used by both the server ([`super::transport_iroh`]) and the client
 //! smoke test (`bin/iroh-client.rs`). See [[docs/architecture/transport-abstraction]].
@@ -14,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 pub const TY_DATA: u8 = 0x00;
 pub const TY_CONTROL: u8 = 0x01;
+pub const TY_WORKER_REPLY: u8 = 0x02;
 
 /// Reject any frame larger than this. 64 KiB is comfortably more than
 /// any real PTY chunk (readers use 4 KiB buffers) or resize JSON payload
@@ -27,6 +33,44 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {
     Resize { cols: u16, rows: u16 },
+}
+
+/// Worker replies (type=2 frames). Payload is JSON. Daemon → client
+/// only.
+///
+/// Each variant is a lossy projection of one `core::*_service`
+/// worker's reply type. We deliberately do *not* derive Serialize on
+/// the core reply types themselves — those structs are shaped for the
+/// desktop's GPUI state, with nested `Result<_, String>` and internal
+/// metadata the mobile UI doesn't need. This wire type is the curated
+/// subset we commit to as a public protocol.
+///
+/// Wire-compat rules:
+/// - `#[serde(tag = "kind")]` — every message carries its discriminator,
+///   so new variants can be added without renumbering.
+/// - New variants: clients built before the variant existed hit
+///   serde's "unknown variant" error. To stay forwards-compatible,
+///   clients SHOULD decode into a shape that tolerates unknown
+///   variants (e.g., decode to `serde_json::Value` first, then try
+///   `WorkerReply`). The current Flutter client just logs-and-ignores
+///   unknown frame *types* (via the `0x02` discriminator itself), so
+///   until it upgrades to variant-awareness, the daemon should only
+///   emit variants the contemporaneous client supports. Track client
+///   capability out of band (ALPN version bump or a hello frame) when
+///   we move beyond this slice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkerReply {
+    /// Projection of `core::git_service::GitRefreshReply`. Contains
+    /// only the fields the mobile UI currently needs; expand as UI
+    /// grows.
+    GitRefresh {
+        project_id: String,
+        current_branch: Option<String>,
+        changed_file_count: usize,
+        ahead: usize,
+        behind: usize,
+    },
 }
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the

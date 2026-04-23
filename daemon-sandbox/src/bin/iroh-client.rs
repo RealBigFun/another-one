@@ -113,6 +113,15 @@ async fn main() -> anyhow::Result<()> {
                     let text = String::from_utf8_lossy(&payload);
                     eprintln!("[server→client {}B] {:?}", payload.len(), text);
                 }
+                Ok(Some((frame::TY_WORKER_REPLY, payload))) => {
+                    match serde_json::from_slice::<frame::WorkerReply>(&payload) {
+                        Ok(reply) => eprintln!("[server→client worker_reply] {:?}", reply),
+                        Err(e) => eprintln!(
+                            "[server→client worker_reply {}B — decode failed] {e}",
+                            payload.len()
+                        ),
+                    }
+                }
                 Ok(Some((ty, payload))) => {
                     eprintln!("[server→client type={} {}B]", ty, payload.len());
                 }

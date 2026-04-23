@@ -993,8 +993,14 @@ pub struct AnotherOneApp {
     pub(crate) refresh_timer_started: bool,
     /// The toolbar git action currently running in the background, if any.
     pub(crate) active_git_action: Option<crate::git_actions::ToolbarGitAction>,
-    /// Receiver for the in-flight toolbar git action result.
-    git_action_receiver: Option<broadcast::Receiver<GitActionReply>>,
+    /// Receiver for the in-flight toolbar git action progress + result.
+    /// Desktop-local: `GitActionReply` here is the streaming
+    /// `Progress`/`Finished` enum defined in this file, not the
+    /// one-shot `core::git_service::GitActionReply` struct. Kept on
+    /// mpsc for the same reason the other desktop-local channels are:
+    /// no daemon/mobile client would subscribe to a toast-stream type
+    /// that's scoped to the GPUI UI.
+    git_action_receiver: Option<mpsc::Receiver<GitActionReply>>,
     /// Pending right-sidebar git mutations keyed by project id.
     pending_changed_files_git_mutations: HashMap<String, PendingChangedFilesGitMutations>,
     /// Sender for background right-sidebar git mutation replies.
@@ -5639,7 +5645,7 @@ impl AnotherOneApp {
     }
 
     fn drain_git_action(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.git_action_receiver.as_mut() else {
+        let Some(receiver) = self.git_action_receiver.as_ref() else {
             return false;
         };
 
@@ -5692,12 +5698,8 @@ impl AnotherOneApp {
                 }
                 true
             }
-            Err(broadcast::error::TryRecvError::Empty) => false,
-            Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                log::warn!("git_action drain lagged {n} messages");
-                false
-            }
-            Err(broadcast::error::TryRecvError::Closed) => {
+            Err(mpsc::TryRecvError::Empty) => false,
+            Err(mpsc::TryRecvError::Disconnected) => {
                 self.active_git_action = None;
                 self.git_action_receiver = None;
                 self.show_error_toast("The background git action did not complete.", cx);

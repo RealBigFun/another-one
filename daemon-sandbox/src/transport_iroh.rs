@@ -13,8 +13,19 @@ use iroh::{Endpoint, SecretKey};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control};
+use crate::frame::{self, Control, WorkerReply};
 use crate::pty::PtySession;
+
+/// Env var naming the project directory the daemon forwards a
+/// `core::git_service::spawn_refresh` result for on each incoming
+/// connection. Unset = feature off (old behaviour: PTY only).
+///
+/// This is a sandbox escape hatch: eventually projects will be
+/// negotiated over the wire (client sends the project it's looking at,
+/// daemon checks it against a configured allowlist and opens a
+/// per-project subscription). For now, one hardcoded project gives us
+/// an end-to-end path to verify before we design that.
+const PROJECT_PATH_ENV: &str = "ANOTHER_ONE_PROJECT_PATH";
 
 /// ALPN advertised by the sandbox. Version-suffixed so future protocol breaks
 /// can be versioned cleanly (`/1`, `/2`, …).
@@ -310,10 +321,50 @@ async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
         drop(master);
     });
 
-    // PTY output → Iroh send stream, framed as type-0.
-    let send_task = tokio::spawn(async move {
+    // Multiplexed outbound frames. Anything the daemon wants to send
+    // the client (PTY bytes, worker replies, future push
+    // notifications) goes through this channel so a single task owns
+    // `send` and serialises writes — concurrent writers on a QUIC
+    // send stream would either race or require an async mutex.
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<(u8, Vec<u8>)>(16);
+
+    // PTY output → outbound queue as TY_DATA frames.
+    let pty_outbound_tx = outbound_tx.clone();
+    let pty_relay_task = tokio::spawn(async move {
         while let Some(bytes) = output_rx.recv().await {
-            if let Err(e) = frame::write_frame(&mut send, frame::TY_DATA, &bytes).await {
+            if pty_outbound_tx
+                .send((frame::TY_DATA, bytes))
+                .await
+                .is_err()
+            {
+                // writer task exited; stop pumping.
+                break;
+            }
+        }
+    });
+
+    // Optional: subscribe to one `core::git_service` worker and push
+    // its single reply onto the outbound queue as a TY_WORKER_REPLY
+    // frame. Gated on `PROJECT_PATH_ENV` so running the daemon without
+    // the env var still just bridges PTY (unchanged behaviour).
+    if let Some(project_path) = std::env::var_os(PROJECT_PATH_ENV).map(PathBuf::from) {
+        let worker_tx = outbound_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = forward_git_refresh(worker_tx, project_path).await {
+                warn!(error = %e, "git refresh forward failed");
+            }
+        });
+    }
+
+    // Drop our local outbound sender so the writer exits cleanly once
+    // every producer (pty_relay_task, worker forwarders) has dropped
+    // its clone.
+    drop(outbound_tx);
+
+    // Single writer: drains the outbound queue into the QUIC stream.
+    let send_task = tokio::spawn(async move {
+        while let Some((ty, payload)) = outbound_rx.recv().await {
+            if let Err(e) = frame::write_frame(&mut send, ty, &payload).await {
                 debug!(error = %e, "iroh frame write failed");
                 break;
             }
@@ -361,12 +412,51 @@ async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
     // Teardown. Dropping resize_tx closes the resize channel → resize_task
     // drops the master → PTY frees. Then stop pumping output + kill shell.
     drop(resize_tx);
+    pty_relay_task.abort();
     send_task.abort();
     resize_task.abort();
     let mut child = session.child;
     let _ = child.kill();
     let _ = child.wait();
     info!("iroh session ended");
+    Ok(())
+}
+
+/// Subscribe to one `spawn_refresh` call for `project_path` and push
+/// the projected reply onto the outbound queue. One-shot: the worker
+/// sends exactly one reply, we forward it, done.
+///
+/// Errors here are never fatal to the session — they drop this task
+/// silently; PTY bridging keeps working.
+async fn forward_git_refresh(
+    outbound_tx: mpsc::Sender<(u8, Vec<u8>)>,
+    project_path: PathBuf,
+) -> anyhow::Result<()> {
+    let project_id = project_path.display().to_string();
+    let mut rx = another_one_core::git_service::spawn_refresh(
+        project_id,
+        project_path,
+        /* include_metadata */ true,
+        /* commit_limit      */ None,
+        /* compare_target    */ None,
+    );
+    let reply = rx
+        .recv()
+        .await
+        .context("git_refresh sender dropped before sending a reply")?;
+
+    let wire = WorkerReply::GitRefresh {
+        project_id: reply.project_id,
+        current_branch: reply.state.current_branch,
+        changed_file_count: reply.state.changed_files.len(),
+        ahead: reply.state.ahead_count,
+        behind: reply.state.behind_count,
+    };
+    let payload = serde_json::to_vec(&wire).context("serialize worker reply")?;
+    outbound_tx
+        .send((frame::TY_WORKER_REPLY, payload))
+        .await
+        .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))?;
     Ok(())
 }
 
