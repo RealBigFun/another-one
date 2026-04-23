@@ -15,9 +15,12 @@ use serde::{Deserialize, Serialize};
 pub const TY_DATA: u8 = 0x00;
 pub const TY_CONTROL: u8 = 0x01;
 
-/// Reject any frame larger than this so a bogus length header can't
-/// make us allocate gigabytes.
-pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+/// Reject any frame larger than this. 64 KiB is comfortably more than
+/// any real PTY chunk (readers use 4 KiB buffers) or resize JSON payload
+/// (~40 bytes), so there is no legitimate reason for a peer to announce
+/// a larger frame. Keeping the cap tight limits how much a compromised
+/// paired peer can make the daemon allocate per frame.
+pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 /// Control messages (type=1 frames). Payload is JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]

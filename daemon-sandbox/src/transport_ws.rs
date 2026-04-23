@@ -4,10 +4,18 @@
 //! - Binary frames carry raw PTY bytes (both directions).
 //! - Text frames carry JSON control messages; currently just `resize`.
 //!
-//! This is the transport the Flutter sandbox client uses until Iroh has a
-//! Flutter-reachable wrapper.
+//! **Authentication: none.** This transport is an emulator-and-loopback
+//! convenience: the Flutter emulator reaches the host via `10.0.2.2`,
+//! which is really the host's `127.0.0.1`. Any off-LAN device (real
+//! phone, tablet, another machine) **must** use the Iroh transport,
+//! which has pairing + TOFU-allowlist auth.
+//!
+//! To enforce this, [`serve`] refuses to bind a non-loopback address.
+//! Do not add a "let me turn this off" flag — that's the footgun. If
+//! you need a remote unauthenticated shell you can roll your own with
+//! `socat`; don't grow this daemon to accept one.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use anyhow::Context;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -22,6 +30,13 @@ use crate::pty::PtySession;
 /// Default listen address when `DAEMON_ADDR` isn't set.
 pub const DEFAULT_ADDR: &str = "127.0.0.1:5617";
 
+fn is_loopback(addr: &SocketAddr) -> bool {
+    match addr.ip() {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Control {
@@ -32,6 +47,14 @@ pub async fn serve<F>(addr: SocketAddr, shutdown: F) -> anyhow::Result<()>
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
+    if !is_loopback(&addr) {
+        anyhow::bail!(
+            "refusing to bind WebSocket to non-loopback address {addr}: this \
+             transport is unauthenticated and only safe on loopback. Off-host \
+             clients must use the Iroh transport (see the pairing URL/QR \
+             printed on startup)."
+        );
+    }
     let app = Router::new().route("/pty", get(handler));
     let listener = tokio::net::TcpListener::bind(addr)
         .await

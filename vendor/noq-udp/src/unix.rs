@@ -480,7 +480,31 @@ fn send(
                                     break;
                                 }
                                 let e2 = io::Error::last_os_error();
-                                if e2.kind() == io::ErrorKind::Interrupted {
+                                match e2.kind() {
+                                    io::ErrorKind::Interrupted => continue,
+                                    _ => {}
+                                }
+                                // If the per-chunk send hit a fresh EINVAL
+                                // (e.g. IP_TOS cmsg not supported on this
+                                // kernel), mirror the outer path's
+                                // sendmsg_einval fallback: flip the flag,
+                                // re-prepare without the offending cmsg, and
+                                // try the same chunk one more time. Without
+                                // this the GSO fallback silently fails on
+                                // the first datagram.
+                                if e2.raw_os_error() == Some(libc::EINVAL)
+                                    && !state.sendmsg_einval()
+                                {
+                                    state.set_sendmsg_einval();
+                                    prepare_msg(
+                                        &single,
+                                        &dst_addr,
+                                        &mut msg_hdr,
+                                        &mut iovec,
+                                        &mut cmsgs,
+                                        encode_src_ip,
+                                        state.sendmsg_einval(),
+                                    );
                                     continue;
                                 }
                                 return Err(e2);

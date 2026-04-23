@@ -34,7 +34,9 @@ const ALPN: &[u8] = b"anotherone/pty/0";
 //   [1 byte type][4 bytes BE length][N bytes payload]
 const TY_DATA: u8 = 0x00;
 const TY_CONTROL: u8 = 0x01;
-const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+/// See `daemon-sandbox/src/frame.rs::MAX_FRAME_BYTES` for the rationale;
+/// keep this value in lockstep with the daemon's cap.
+const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 /// Messages that can be sent via a type=1 control frame. Extend in lock-step
 /// with `daemon-sandbox/src/frame.rs::Control`.
@@ -117,7 +119,7 @@ fn setup_tracing() {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("warn,mobile_core=info,iroh=info"));
+        .unwrap_or_else(|_| EnvFilter::new("warn,mobile_core=info,iroh=warn"));
 
     #[cfg(target_os = "android")]
     let layer = tracing_android::layer("mobile_core")
@@ -220,11 +222,23 @@ async fn iroh_connect_inner(
     // which tries to read `/etc/resolv.conf`. iroh's own doc notes this "does
     // not work at least on some Androids" and says it falls back to Google
     // DNS — but in practice on the emulator the read hangs long enough to
-    // stall bind(). We explicitly hand iroh a resolver pinned to 8.8.8.8 to
-    // skip system detection entirely.
-    let dns = DnsResolver::with_nameserver(
-        "8.8.8.8:53".parse().expect("static ipv4 socket addr"),
-    );
+    // stall bind(). We explicitly hand iroh a resolver so it skips system
+    // detection entirely.
+    //
+    // Default is Cloudflare (`1.1.1.1:53`) rather than Google (`8.8.8.8:53`)
+    // so every user's daemon lookups don't default to a Google-operated
+    // resolver. Override with the `ANOTHERONE_DNS` env var if the user
+    // wants a different provider — any `<ip>:<port>` string parseable as a
+    // `SocketAddr` works. Fall back to the default silently on parse error
+    // so a fat-fingered env var doesn't brick the mobile app.
+    let dns_addr: std::net::SocketAddr = std::env::var("ANOTHERONE_DNS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| {
+            "1.1.1.1:53".parse().expect("static ipv4 socket addr")
+        });
+    tracing::info!(%dns_addr, "iroh_connect: using configured DNS resolver");
+    let dns = DnsResolver::with_nameserver(dns_addr);
     let endpoint = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         Endpoint::builder(presets::Minimal)

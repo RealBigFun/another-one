@@ -2,9 +2,9 @@
 //
 // Wraps the flutter_rust_bridge-generated IrohSession (see rust/api/iroh_client.dart),
 // which in turn wraps an iroh::Endpoint QUIC connection to a daemon speaking
-// the `anotherone/pty/0` ALPN. Resize messages are currently dropped because
-// the daemon's Iroh path doesn't frame control yet; that'll be added when
-// the daemon-side protocol is wired up.
+// the `anotherone/pty/0` ALPN. Data and control (resize) frames share the
+// same bidirectional stream via the length-prefixed framing defined in
+// daemon-sandbox/src/frame.rs — resizes are delivered, not dropped.
 
 import 'dart:async';
 import 'dart:typed_data';

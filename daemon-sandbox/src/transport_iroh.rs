@@ -215,27 +215,73 @@ enum Authorization {
 
 /// Check the allowlist at `<data_dir>/paired_peers` against `remote_id`.
 /// Adds the remote on the first-ever call (TOFU). Returns `Err` on any
-/// other mismatch.
+/// other mismatch — the caller closes the connection without starting a
+/// PTY.
+///
+/// Read failures other than `NotFound` bail out rather than TOFU-pair
+/// the connecting peer: a transient `EACCES`/`EIO` or a manually-edited
+/// permissions botch used to look exactly like "file empty" and would
+/// silently accept the next incoming EndpointId, overwriting a real
+/// pairing.
+///
+/// The first-pair write uses `create_new(true)` so two clients racing to
+/// be the first-ever connection can't both win: exactly one CREATE
+/// syscall succeeds; the other collides with `AlreadyExists` and falls
+/// through to a normal allowlist check. Non-atomic read-then-write
+/// would otherwise happily let both through.
 fn authorize_remote(remote_id: &str) -> anyhow::Result<Authorization> {
+    use std::io::{ErrorKind, Write};
+
     let path = data_dir()?.join("paired_peers");
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(anyhow::Error::from(e))
+                .with_context(|| format!("read allowlist {}", path.display()));
+        }
+    };
     let peers: Vec<&str> = existing
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .collect();
-    if peers.is_empty() {
-        let line = format!("{remote_id}\n");
-        std::fs::write(&path, line)
-            .with_context(|| format!("write allowlist {}", path.display()))?;
-        Ok(Authorization::FirstPair)
-    } else if peers.iter().any(|p| *p == remote_id) {
-        Ok(Authorization::Paired)
-    } else {
+    if peers.contains(&remote_id) {
+        return Ok(Authorization::Paired);
+    }
+    if !peers.is_empty() {
         anyhow::bail!(
             "remote {remote_id} is not in {} (delete the file to re-pair)",
             path.display()
         )
+    }
+
+    // First-pair path. Atomic create so a concurrent first connect can't
+    // both pair; losers get `AlreadyExists` and must re-enter through
+    // the normal allowlist check above on their next dial.
+    let line = format!("{remote_id}\n");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    match opts.open(&path) {
+        Ok(mut f) => {
+            f.write_all(line.as_bytes())
+                .with_context(|| format!("write allowlist {}", path.display()))?;
+            Ok(Authorization::FirstPair)
+        }
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+            anyhow::bail!(
+                "lost first-pair race for {remote_id}; \
+                 re-dial after inspecting {}",
+                path.display()
+            )
+        }
+        Err(e) => Err(anyhow::Error::from(e))
+            .with_context(|| format!("create allowlist {}", path.display())),
     }
 }
 
