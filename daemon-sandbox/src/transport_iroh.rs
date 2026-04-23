@@ -16,17 +16,6 @@ use tracing::{debug, info, warn};
 use crate::frame::{self, Control, WorkerReply};
 use crate::pty::PtySession;
 
-/// Env var naming the project directory the daemon forwards a
-/// `core::git_service::spawn_refresh` result for on each incoming
-/// connection. Unset = feature off (old behaviour: PTY only).
-///
-/// This is a sandbox escape hatch: eventually projects will be
-/// negotiated over the wire (client sends the project it's looking at,
-/// daemon checks it against a configured allowlist and opens a
-/// per-project subscription). For now, one hardcoded project gives us
-/// an end-to-end path to verify before we design that.
-const PROJECT_PATH_ENV: &str = "ANOTHER_ONE_PROJECT_PATH";
-
 /// ALPN advertised by the sandbox. Version-suffixed so future protocol breaks
 /// can be versioned cleanly (`/1`, `/2`, …).
 pub const ALPN: &[u8] = b"anotherone/pty/0";
@@ -343,25 +332,12 @@ async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
         }
     });
 
-    // Optional: subscribe to one `core::git_service` worker and push
-    // its single reply onto the outbound queue as a TY_WORKER_REPLY
-    // frame. Gated on `PROJECT_PATH_ENV` so running the daemon without
-    // the env var still just bridges PTY (unchanged behaviour).
-    if let Some(project_path) = std::env::var_os(PROJECT_PATH_ENV).map(PathBuf::from) {
-        let worker_tx = outbound_tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = forward_git_refresh(worker_tx, project_path).await {
-                warn!(error = %e, "git refresh forward failed");
-            }
-        });
-    }
-
-    // Drop our local outbound sender so the writer exits cleanly once
-    // every producer (pty_relay_task, worker forwarders) has dropped
-    // its clone.
-    drop(outbound_tx);
-
     // Single writer: drains the outbound queue into the QUIC stream.
+    // Keeps running as long as any producer (pty_relay_task or a
+    // worker forwarder spawned from the Control::WatchProject dispatch
+    // below) still holds a clone of `outbound_tx`. We drop our own
+    // clone after the recv loop exits so the writer terminates
+    // cleanly during teardown.
     let send_task = tokio::spawn(async move {
         while let Some((ty, payload)) = outbound_rx.recv().await {
             if let Err(e) = frame::write_frame(&mut send, ty, &payload).await {
@@ -390,6 +366,22 @@ async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
                             break;
                         }
                     }
+                    Ok(Control::WatchProject { project_path }) => {
+                        let path = PathBuf::from(&project_path);
+                        if !path.is_dir() {
+                            warn!(
+                                project_path = %project_path,
+                                "WatchProject ignored: path does not exist or is not a directory"
+                            );
+                        } else {
+                            let worker_tx = outbound_tx.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = forward_git_refresh(worker_tx, path).await {
+                                    warn!(error = %e, "git refresh forward failed");
+                                }
+                            });
+                        }
+                    }
                     Err(e) => {
                         warn!(error = %e, "bad iroh control frame");
                     }
@@ -409,9 +401,13 @@ async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
         }
     }
 
-    // Teardown. Dropping resize_tx closes the resize channel → resize_task
-    // drops the master → PTY frees. Then stop pumping output + kill shell.
+    // Teardown. Dropping resize_tx closes the resize channel →
+    // resize_task drops the master → PTY frees. Dropping outbound_tx
+    // lets send_task finish once all worker forwarders die off —
+    // spawn_refresh workers are one-shot and self-terminate, so this
+    // naturally converges.
     drop(resize_tx);
+    drop(outbound_tx);
     pty_relay_task.abort();
     send_task.abort();
     resize_task.abort();
