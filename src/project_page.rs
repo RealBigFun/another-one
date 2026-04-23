@@ -9,45 +9,6 @@ use crate::app::{AnotherOneApp, WorkspacePane};
 use crate::left_sidebar::open_external_url;
 use crate::project_store::{ProjectBranchSettingField, ResolvedProjectBranchSettings};
 
-// ── Mock PR data (UI only, not wired) ────────────────────────────────
-
-struct MockPr {
-    number: u32,
-    title: &'static str,
-    branch: &'static str,
-    author: &'static str,
-    lines_added: i32,
-    lines_removed: i32,
-    ci_passed: bool,
-    review_required: bool,
-    reviewers: &'static [(&'static str, u32)], // (name, colour)
-}
-
-const MOCK_PRS: &[MockPr] = &[
-    MockPr {
-        number: 1800,
-        title: "SMP-247: Custom form option group buttons",
-        branch: "SMP-247-custom-f-btns",
-        author: "brian-lifemd",
-        lines_added: 612,
-        lines_removed: 20,
-        ci_passed: false,
-        review_required: true,
-        reviewers: &[("fazulk", 0xE8A838), ("MasonRhodesDev", 0x4CAF50)],
-    },
-    MockPr {
-        number: 1795,
-        title: "SMP-251: Fix patient intake validation",
-        branch: "SMP-251-intake-fix",
-        author: "fazulk",
-        lines_added: 42,
-        lines_removed: 8,
-        ci_passed: true,
-        review_required: false,
-        reviewers: &[("brian-lifemd", 0x5B4A9E)],
-    },
-];
-
 const PR_FILTER_TABS: &[&str] = &["All Open", "Needs My Review", "My PRs", "Draft"];
 
 // ── Colours ──────────────────────────────────────────────────────────
@@ -79,12 +40,14 @@ impl WorkspacePane {
                     .child("Project not found"),
             );
         };
-        let app = app_entity.read(cx);
-        let project = app
-            .project_store
-            .projects
-            .iter()
-            .find(|p| p.id == project_id);
+        let project = {
+            let app = app_entity.read(cx);
+            app.project_store
+                .projects
+                .iter()
+                .find(|p| p.id == project_id)
+                .cloned()
+        };
 
         let Some(project) = project else {
             return div().flex().flex_col().size_full().bg(rgb(0x1e1f22)).child(
@@ -102,11 +65,30 @@ impl WorkspacePane {
         let project_name: SharedString = project.name.clone().into();
         let project_id_owned = project_id.to_string();
 
-        let github_url = app.project_github_links.get(project_id).cloned();
-        let branch_settings = app.project_store.resolved_branch_settings(project_id);
-        let config_panel_expanded = app.project_page_config_panel_expanded;
-        let config_panel_targeted = app.project_page_config_panel_targeted;
-        let config_dropdown = app.project_page_config_dropdown;
+        let (
+            github_url,
+            branch_settings,
+            config_panel_expanded,
+            config_panel_targeted,
+            config_dropdown,
+        ) = {
+            let app = app_entity.read(cx);
+            (
+                app.project_github_links.get(project_id).cloned(),
+                app.project_store.resolved_branch_settings(project_id),
+                app.project_page_config_panel_expanded,
+                app.project_page_config_panel_targeted,
+                app.project_page_config_dropdown,
+            )
+        };
+        let _ = app_entity.update(cx, |app, _cx| {
+            app.request_project_page_pull_requests(
+                project_id,
+                &project.path,
+                self.project_page_pr_filter,
+                &self.project_page_pr_query,
+            );
+        });
 
         div()
             .flex()
@@ -287,7 +269,25 @@ impl WorkspacePane {
 
     fn project_page_prs_section(&self, cx: &mut Context<Self>) -> gpui::Div {
         let collapsed = self.project_page_prs_collapsed;
-        let pr_count = MOCK_PRS.len();
+        let app = self.app.upgrade().map(|entity| entity.read(cx));
+        let project_id = self.active_project_page.clone().unwrap_or_default();
+        let query_key = crate::app::AnotherOneApp::project_page_pr_query_key(
+            &project_id,
+            self.project_page_pr_filter,
+            &self.project_page_pr_query,
+        );
+        let prs = app
+            .as_ref()
+            .and_then(|app| app.project_page_pull_requests.get(&query_key))
+            .cloned();
+        let pr_count = prs.as_ref().map_or(0, |prs| prs.len());
+        let loading = app
+            .as_ref()
+            .is_some_and(|app| app.project_page_pull_requests_loading.contains(&query_key));
+        let load_error = app
+            .as_ref()
+            .and_then(|app| app.project_page_pull_requests_errors.get(&query_key))
+            .cloned();
         let chevron_icon = if collapsed {
             "assets/icons/icons__chevron-right.svg"
         } else {
@@ -411,12 +411,18 @@ impl WorkspacePane {
                                 .size(px(14.))
                                 .text_color(TEXT_MUTED()),
                         )
-                        .child(
+                        .child({
+                            let pr_query_hint: SharedString =
+                                if self.project_page_pr_query_draft.is_empty() {
+                                    "GitHub query, e.g. author:@me review-requested:@me".into()
+                                } else {
+                                    self.project_page_pr_query_draft.clone().into()
+                                };
                             div()
                                 .text_sm()
                                 .text_color(TEXT_MUTED())
-                                .child("GitHub query, e.g. author:@me review-requested:@me"),
-                        ),
+                                .child(pr_query_hint)
+                        }),
                 )
                 .child(
                     div()
@@ -434,7 +440,33 @@ impl WorkspacePane {
                         .text_size(rems(11. / 16.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(TEXT_PRIMARY())
-                        .child("Apply"),
+                        .child("Apply")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                this.project_page_pr_query =
+                                    this.project_page_pr_query_draft.clone();
+                                if let Some(app) = this.app.upgrade() {
+                                    let _ = app.update(cx, |app, _app_cx| {
+                                        if let Some(project_id) = this.active_project_page.clone() {
+                                            let project_path = app
+                                                .project_store
+                                                .project(&project_id)
+                                                .map(|project| project.path.clone());
+                                            if let Some(project_path) = project_path {
+                                                app.request_project_page_pull_requests(
+                                                    &project_id,
+                                                    &project_path,
+                                                    this.project_page_pr_filter,
+                                                    &this.project_page_pr_query,
+                                                );
+                                            }
+                                        }
+                                    });
+                                }
+                                cx.notify();
+                            }),
+                        ),
                 )
                 .child(
                     div()
@@ -449,7 +481,33 @@ impl WorkspacePane {
                         .text_size(rems(11. / 16.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(TEXT_SECONDARY())
-                        .child("Clear"),
+                        .child("Clear")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                this.project_page_pr_query_draft.clear();
+                                this.project_page_pr_query.clear();
+                                if let Some(app) = this.app.upgrade() {
+                                    let _ = app.update(cx, |app, _app_cx| {
+                                        if let Some(project_id) = this.active_project_page.clone() {
+                                            let project_path = app
+                                                .project_store
+                                                .project(&project_id)
+                                                .map(|project| project.path.clone());
+                                            if let Some(project_path) = project_path {
+                                                app.request_project_page_pull_requests(
+                                                    &project_id,
+                                                    &project_path,
+                                                    this.project_page_pr_filter,
+                                                    "",
+                                                );
+                                            }
+                                        }
+                                    });
+                                }
+                                cx.notify();
+                            }),
+                        ),
                 ),
         );
 
@@ -464,27 +522,47 @@ impl WorkspacePane {
         );
 
         // PR rows
-        for pr in MOCK_PRS {
-            section = section.child(Self::project_page_pr_row(pr));
+        if let Some(error) = load_error {
+            section = section.child(div().text_sm().text_color(TEXT_MUTED()).child(error));
+        } else if loading && prs.is_none() {
+            section = section.child(
+                div()
+                    .text_sm()
+                    .text_color(TEXT_MUTED())
+                    .child("Loading pull requests..."),
+            );
+        } else if let Some(prs) = prs {
+            if prs.is_empty() {
+                section = section.child(
+                    div()
+                        .text_sm()
+                        .text_color(TEXT_MUTED())
+                        .child("No matching open pull requests."),
+                );
+            } else {
+                for pr in prs.iter() {
+                    section = section.child(Self::project_page_pr_row(pr));
+                }
+            }
         }
 
         section
     }
 
-    fn project_page_pr_row(pr: &MockPr) -> impl IntoElement {
+    fn project_page_pr_row(pr: &crate::git_actions::ProjectPagePullRequest) -> impl IntoElement {
         let number_label: SharedString = format!("#{}", pr.number).into();
-        let title: SharedString = pr.title.into();
-        let branch: SharedString = pr.branch.into();
-        let author: SharedString = pr.author.into();
+        let title: SharedString = pr.title.clone().into();
+        let branch: SharedString = pr.branch.clone().into();
+        let author: SharedString = pr.author.clone().into();
         let added: SharedString = format!("+{}", pr.lines_added).into();
         let removed: SharedString = format!("-{}", pr.lines_removed).into();
 
-        let ci_icon = if pr.ci_passed {
-            "assets/icons/icons__badge-check.svg"
-        } else {
+        let ci_icon = if pr.review_required {
             "assets/icons/icons__badge-x.svg"
+        } else {
+            "assets/icons/icons__badge-check.svg"
         };
-        let ci_color = if pr.ci_passed { GREEN() } else { RED() };
+        let ci_color = if pr.review_required { RED() } else { GREEN() };
 
         let row_id = SharedString::from(format!("pr-row-{}", pr.number));
 
@@ -529,7 +607,7 @@ impl WorkspacePane {
                     .child(title),
             );
 
-        if pr.review_required {
+        if pr.review_required || pr.draft {
             top = top.child(
                 div()
                     .flex()
@@ -549,7 +627,7 @@ impl WorkspacePane {
                         0.65,
                         1.,
                     )))
-                    .child("Review required"),
+                    .child(if pr.draft { "Draft" } else { "Review required" }),
             );
         }
 
@@ -603,11 +681,6 @@ impl WorkspacePane {
 
         // Spacer
         bottom = bottom.child(div().flex_1());
-
-        // Reviewer dots
-        for &(_name, color) in pr.reviewers {
-            bottom = bottom.child(div().w(px(8.)).h(px(8.)).rounded_full().bg(rgb(color)));
-        }
 
         // Review button
         let review_btn_id = SharedString::from(format!("pr-review-{}", pr.number));

@@ -453,6 +453,13 @@ struct ProjectPullRequestReply {
     pull_request: Option<crate::git_actions::PullRequestStatus>,
 }
 
+struct ProjectPagePullRequestsReply {
+    project_id: String,
+    filter_index: usize,
+    query: String,
+    result: Result<Vec<crate::git_actions::ProjectPagePullRequest>, String>,
+}
+
 struct ProjectCheckRunsReply {
     lookup_key: String,
     result: Result<Option<Vec<crate::git_actions::PullRequestCheck>>, String>,
@@ -618,6 +625,8 @@ pub(crate) struct WorkspacePane {
     pub(crate) project_page_prs_collapsed: bool,
     /// Active PR filter tab index (0=All Open, 1=Needs My Review, 2=My PRs, 3=Draft).
     pub(crate) project_page_pr_filter: usize,
+    pub(crate) project_page_pr_query: String,
+    pub(crate) project_page_pr_query_draft: String,
     /// Per-section placeholder tab state.
     pub(crate) section_states: HashMap<SectionId, SectionState>,
 }
@@ -642,6 +651,8 @@ impl WorkspacePane {
             active_project_page: None,
             project_page_prs_collapsed: false,
             project_page_pr_filter: 0,
+            project_page_pr_query: String::new(),
+            project_page_pr_query_draft: String::new(),
             section_states,
         }
     }
@@ -1072,6 +1083,8 @@ pub struct AnotherOneApp {
     project_pull_request_sender: mpsc::Sender<ProjectPullRequestReply>,
     /// Receiver for background pull-request lookups.
     project_pull_request_receiver: mpsc::Receiver<ProjectPullRequestReply>,
+    project_page_pull_requests_sender: mpsc::Sender<ProjectPagePullRequestsReply>,
+    project_page_pull_requests_receiver: mpsc::Receiver<ProjectPagePullRequestsReply>,
     /// Sender used by background PR check lookups.
     project_check_runs_sender: mpsc::Sender<ProjectCheckRunsReply>,
     /// Receiver for background PR check lookups.
@@ -1118,6 +1131,10 @@ pub struct AnotherOneApp {
     pub(crate) project_github_link_checked: HashSet<String>,
     /// In-flight pull-request lookups keyed by `project_id:branch_name`.
     pub(crate) project_pull_request_requests: HashSet<String>,
+    pub(crate) project_page_pull_requests:
+        HashMap<String, Arc<[crate::git_actions::ProjectPagePullRequest]>>,
+    pub(crate) project_page_pull_requests_loading: HashSet<String>,
+    pub(crate) project_page_pull_requests_errors: HashMap<String, String>,
     /// Branches whose pull-request lookup has been resolved at least once.
     pub(crate) project_pull_request_checked: HashSet<String>,
     /// Last successful lookup completion time keyed by `project_id:branch_name`.
@@ -2748,6 +2765,8 @@ impl AnotherOneApp {
         let left_sidebar_open = store.ui.left_sidebar_open;
         let (project_github_link_sender, project_github_link_receiver) = mpsc::channel();
         let (project_pull_request_sender, project_pull_request_receiver) = mpsc::channel();
+        let (project_page_pull_requests_sender, project_page_pull_requests_receiver) =
+            mpsc::channel();
         let (project_check_runs_sender, project_check_runs_receiver) = mpsc::channel();
         let (commit_file_changes_sender, commit_file_changes_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
@@ -2866,6 +2885,8 @@ impl AnotherOneApp {
             project_pull_requests: HashMap::new(),
             project_pull_request_sender,
             project_pull_request_receiver,
+            project_page_pull_requests_sender,
+            project_page_pull_requests_receiver,
             project_check_runs_sender,
             project_check_runs_receiver,
             terminal_launch_sender,
@@ -2889,6 +2910,9 @@ impl AnotherOneApp {
             project_github_link_requests: HashSet::new(),
             project_github_link_checked: HashSet::new(),
             project_pull_request_requests: HashSet::new(),
+            project_page_pull_requests: HashMap::new(),
+            project_page_pull_requests_loading: HashSet::new(),
+            project_page_pull_requests_errors: HashMap::new(),
             project_pull_request_checked: HashSet::new(),
             project_pull_request_checked_at: HashMap::new(),
             project_check_runs_states: HashMap::new(),
@@ -5831,6 +5855,79 @@ impl AnotherOneApp {
         });
     }
 
+    pub(crate) fn project_page_pr_query_key(
+        project_id: &str,
+        filter_index: usize,
+        query: &str,
+    ) -> String {
+        format!(
+            "{project_id}:{filter_index}:{}",
+            query.trim().to_ascii_lowercase()
+        )
+    }
+
+    pub(crate) fn request_project_page_pull_requests(
+        &mut self,
+        project_id: &str,
+        project_path: &std::path::Path,
+        filter_index: usize,
+        query: &str,
+    ) {
+        let key = Self::project_page_pr_query_key(project_id, filter_index, query);
+        if self.project_page_pull_requests.contains_key(&key)
+            || self.project_page_pull_requests_loading.contains(&key)
+        {
+            return;
+        }
+
+        self.project_page_pull_requests_loading.insert(key.clone());
+        self.project_page_pull_requests_errors.remove(&key);
+        let tx = self.project_page_pull_requests_sender.clone();
+        let project_id = project_id.to_string();
+        let project_path = project_path.to_path_buf();
+        let query_string = query.to_string();
+        std::thread::spawn(move || {
+            let result = crate::git_actions::find_project_pull_requests(
+                &project_path,
+                filter_index,
+                Some(&query_string),
+            );
+            let _ = tx.send(ProjectPagePullRequestsReply {
+                project_id,
+                filter_index,
+                query: query_string,
+                result,
+            });
+        });
+    }
+
+    fn drain_project_page_pull_requests(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut should_notify = false;
+        while let Ok(reply) = self.project_page_pull_requests_receiver.try_recv() {
+            let key = Self::project_page_pr_query_key(
+                &reply.project_id,
+                reply.filter_index,
+                &reply.query,
+            );
+            self.project_page_pull_requests_loading.remove(&key);
+            match reply.result {
+                Ok(items) => {
+                    self.project_page_pull_requests_errors.remove(&key);
+                    self.project_page_pull_requests
+                        .insert(key, Arc::from(items));
+                    should_notify = true;
+                }
+                Err(error) => {
+                    self.project_page_pull_requests_errors
+                        .insert(key, error.clone());
+                    self.show_warning_toast(error, cx);
+                    should_notify = true;
+                }
+            }
+        }
+        should_notify
+    }
+
     fn drain_project_pull_request_lookup(&mut self, cx: &mut Context<Self>) -> bool {
         let mut should_notify = false;
 
@@ -8750,6 +8847,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_commit_file_changes(cx);
                             should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.drain_project_pull_request_lookup(cx);
+                            should_notify |= this.drain_project_page_pull_requests(cx);
                             should_notify |= this.drain_project_check_runs_lookup(cx);
                             should_notify |= this.drain_terminal_launch_replies(cx);
                             should_notify |= this.drain_warm_terminal_launch_replies(cx);
