@@ -9,6 +9,7 @@
 //! No auth, no session management — this exists to prove the transport
 //! shape. See `plan` / `AGENTS.md` for where this is headed.
 
+mod frame;
 mod pty;
 mod transport_iroh;
 mod transport_ws;

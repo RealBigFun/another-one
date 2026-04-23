@@ -4732,6 +4732,8 @@ dependencies = [
  "anyhow",
  "flutter_rust_bridge",
  "iroh",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-android",

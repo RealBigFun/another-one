@@ -6,7 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `iroh_connect_inner`, `setup_tracing`, `tokio_rt`
+// These functions are ignored because they are not marked as `pub`: `iroh_connect_inner`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Control`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`, with one or more
 /// explicit direct `host:port` socket addresses.
@@ -26,6 +28,10 @@ Future<IrohSession> irohConnect({
 abstract class IrohSession implements RustOpaqueInterface {
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
+
+  /// Request a PTY resize on the daemon's end. Goes through the same
+  /// stream as data, multiplexed by frame type.
+  Future<void> resize({required int cols, required int rows});
 
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});

@@ -24,10 +24,67 @@ use tokio::sync::{mpsc, Mutex};
 use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
+use iroh::endpoint::{RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode};
 
 /// Must match the daemon's ALPN byte string.
 const ALPN: &[u8] = b"anotherone/pty/0";
+
+// Frame wire format, matching daemon-sandbox/src/frame.rs:
+//   [1 byte type][4 bytes BE length][N bytes payload]
+const TY_DATA: u8 = 0x00;
+const TY_CONTROL: u8 = 0x01;
+const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+/// Messages that can be sent via a type=1 control frame. Extend in lock-step
+/// with `daemon-sandbox/src/frame.rs::Control`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Control {
+    Resize { cols: u16, rows: u16 },
+}
+
+/// Writes one frame to the Iroh send stream.
+async fn write_frame(send: &mut SendStream, ty: u8, payload: &[u8]) -> anyhow::Result<()> {
+    let mut header = [0u8; 5];
+    header[0] = ty;
+    header[1..5].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+    send.write_all(&header).await?;
+    send.write_all(payload).await?;
+    Ok(())
+}
+
+/// Reads one frame from the Iroh recv stream; returns `None` on clean EOF.
+async fn read_frame(recv: &mut RecvStream) -> anyhow::Result<Option<(u8, Vec<u8>)>> {
+    let mut header = [0u8; 5];
+    let mut read = 0;
+    while read < 5 {
+        match recv.read(&mut header[read..]).await? {
+            Some(0) | None => {
+                return if read == 0 {
+                    Ok(None)
+                } else {
+                    Err(anyhow::anyhow!("stream ended mid-header"))
+                };
+            }
+            Some(n) => read += n,
+        }
+    }
+    let ty = header[0];
+    let len = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+    if len > MAX_FRAME_BYTES {
+        anyhow::bail!("frame too large: {len} bytes");
+    }
+    let mut payload = vec![0u8; len];
+    read = 0;
+    while read < len {
+        match recv.read(&mut payload[read..]).await? {
+            Some(0) | None => anyhow::bail!("stream ended mid-payload"),
+            Some(n) => read += n,
+        }
+    }
+    Ok(Some((ty, payload)))
+}
 
 /// Dedicated tokio runtime for all iroh work. FRB's default async executor
 /// is not a tokio runtime, so iroh's network actors never get polled if we
@@ -78,9 +135,9 @@ fn setup_tracing() {
 pub struct IrohSession {
     /// The local endpoint we bound for this session. Closed on Drop.
     _endpoint: Endpoint,
-    /// Sends bytes from Rust to the send task, which writes them into the
-    /// QUIC send stream. `None` means closed.
-    send_tx: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
+    /// Sends framed messages (ty, payload) from Rust to the send task,
+    /// which writes them into the QUIC send stream. `None` means closed.
+    send_tx: Mutex<Option<mpsc::Sender<(u8, Vec<u8>)>>>,
     /// Holds the bytes-from-daemon stream until `subscribe()` wires it to a
     /// Dart `StreamSink`. Taken once and moved into the forwarding task.
     incoming_rx: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
@@ -174,35 +231,43 @@ async fn iroh_connect_inner(
     let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
     tracing::info!("iroh_connect: opened bidi stream");
 
-    // Outbound pipe: Dart → channel → QUIC send stream.
-    let (send_tx, mut send_rx) = mpsc::channel::<Vec<u8>>(64);
+    // Outbound pipe: Dart → channel → framed writes to Iroh send stream.
+    // Channel items are already-framed (ty, payload) pairs so the writer
+    // task doesn't need to know the protocol.
+    let (send_tx, mut send_rx) = mpsc::channel::<(u8, Vec<u8>)>(64);
     tokio_rt().spawn(async move {
-        while let Some(bytes) = send_rx.recv().await {
-            if send.write_all(&bytes).await.is_err() {
+        while let Some((ty, payload)) = send_rx.recv().await {
+            if let Err(e) = write_frame(&mut send, ty, &payload).await {
+                tracing::debug!(error = %e, "iroh frame write failed");
                 break;
             }
         }
         let _ = send.finish();
     });
 
-    // Inbound pipe: QUIC recv stream → channel → Dart (once subscribed).
+    // Inbound pipe: framed reads from Iroh → channel → Dart (once subscribed).
+    // Only type=0 frames forward to Dart; type=1 (control) are reserved for
+    // server→client messages we haven't defined yet. Unknown types are
+    // logged and dropped.
     let (incoming_tx, incoming_rx) = mpsc::channel::<Vec<u8>>(128);
     let (close_tx, mut close_rx) = tokio::sync::oneshot::channel::<()>();
     let conn_for_close = conn.clone();
     tokio_rt().spawn(async move {
-        let mut buf = vec![0u8; 4096];
         loop {
             tokio::select! {
                 _ = &mut close_rx => break,
-                read = recv.read(&mut buf) => match read {
-                    Ok(Some(0)) | Ok(None) => break,
-                    Ok(Some(n)) => {
-                        if incoming_tx.send(buf[..n].to_vec()).await.is_err() {
+                frame = read_frame(&mut recv) => match frame {
+                    Ok(Some((TY_DATA, payload))) => {
+                        if incoming_tx.send(payload).await.is_err() {
                             break;
                         }
                     }
+                    Ok(Some((ty, _))) => {
+                        tracing::debug!(frame_type = ty, "unhandled iroh frame type");
+                    }
+                    Ok(None) => break,
                     Err(e) => {
-                        tracing::warn!(error = %e, "iroh recv error");
+                        tracing::warn!(error = %e, "iroh frame read failed");
                         break;
                     }
                 },
@@ -222,10 +287,22 @@ async fn iroh_connect_inner(
 impl IrohSession {
     /// Send raw bytes to the daemon (will be written into the PTY's stdin).
     pub async fn send(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.send_frame(TY_DATA, bytes).await
+    }
+
+    /// Request a PTY resize on the daemon's end. Goes through the same
+    /// stream as data, multiplexed by frame type.
+    pub async fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        let payload =
+            serde_json::to_vec(&Control::Resize { cols, rows }).context("encode resize")?;
+        self.send_frame(TY_CONTROL, payload).await
+    }
+
+    async fn send_frame(&self, ty: u8, payload: Vec<u8>) -> anyhow::Result<()> {
         let tx = self.send_tx.lock().await;
         match tx.as_ref() {
             Some(tx) => tx
-                .send(bytes)
+                .send((ty, payload))
                 .await
                 .map_err(|_| anyhow::anyhow!("send channel closed")),
             None => Err(anyhow::anyhow!("session closed")),

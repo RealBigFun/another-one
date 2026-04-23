@@ -88,8 +88,11 @@ class IrohTransport implements TerminalTransport {
 
   @override
   void sendResize({required int cols, required int rows}) {
-    // The daemon's Iroh path doesn't frame control yet — silently drop.
-    // When the daemon gains a control stream, encode + forward here.
+    final session = _session;
+    if (session == null) return;
+    // Fire-and-forget; if the session is torn down before this completes,
+    // the resize is simply lost, which matches how we handle `sendBytes`.
+    unawaited(session.resize(cols: cols, rows: rows));
   }
 
   @override
