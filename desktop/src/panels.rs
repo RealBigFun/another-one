@@ -36,6 +36,238 @@ fn tab_icon_element(
 }
 
 impl AnotherOneApp {
+    pub(crate) fn terminal_tab_menu_overlay(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(menu) = self.workspace_pane.read(cx).terminal_tab_menu.clone() else {
+            return div().id("terminal-tab-menu-popover");
+        };
+
+        let menu_w = 156.0;
+        let menu_h = 46.0;
+        let window_w = f32::from(window.bounds().size.width);
+        let window_h = f32::from(window.bounds().size.height);
+        let left = (menu.anchor_x + 4.0).min((window_w - menu_w - 8.0).max(8.0));
+        let top = (menu.anchor_y + 4.0).min((window_h - menu_h - 8.0).max(8.0));
+        let is_pinned = self
+            .workspace_pane
+            .read(cx)
+            .section_states
+            .get(&menu.section_id)
+            .and_then(|state| state.tabs.iter().find(|tab| tab.id == menu.tab_id))
+            .is_some_and(|tab| tab.pinned);
+        let label = if is_pinned { "Unpin" } else { "Pin" };
+        let tooltip = if is_pinned {
+            "Move this tab back with unpinned tabs"
+        } else {
+            "Keep this tab at the left of the tab strip"
+        };
+        let section_id = menu.section_id.clone();
+        let tab_id = menu.tab_id.clone();
+
+        div()
+            .id("terminal-tab-menu-popover")
+            .absolute()
+            .left(px(left.max(8.0)))
+            .top(px(top.max(8.0)))
+            .on_mouse_down_out(cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                this.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.terminal_tab_menu = None;
+                    cx.notify();
+                });
+            }))
+            .child(
+                div()
+                    .w(px(menu_w))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(gpui::black().opacity(0.35))
+                    .bg(rgb(0x2b2d31))
+                    .shadow_lg()
+                    .overflow_hidden()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .id("terminal-tab-menu-pin")
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .h(px(38.))
+                            .px(px(14.))
+                            .cursor_pointer()
+                            .hover(|hover| hover.bg(gpui::white().opacity(0.06)))
+                            .tooltip(move |_window, cx| {
+                                AnotherOneApp::action_tooltip_view(tooltip, cx)
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                    this.focus_handle.focus(window);
+                                    let section_id = section_id.clone();
+                                    let tab_id = tab_id.clone();
+                                    this.workspace_pane.update(cx, |workspace, cx| {
+                                        workspace.terminal_tab_menu = None;
+                                        workspace.toggle_tab_pinned(&section_id, &tab_id, cx);
+                                    });
+                                    cx.stop_propagation();
+                                }),
+                            )
+                            .child(
+                                svg()
+                                    .path("assets/icons/icons__pin-off.svg")
+                                    .size(px(15.))
+                                    .text_color(hsla(0., 0., 0.92, 1.)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(hsla(0., 0., 0.92, 1.))
+                                    .child(label),
+                            ),
+                    ),
+            )
+    }
+
+    pub(crate) fn pinned_tab_close_confirm_modal(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(confirm) = self
+            .workspace_pane
+            .read(cx)
+            .pinned_tab_close_confirm
+            .clone()
+        else {
+            return div().id("pinned-tab-close-confirm-overlay");
+        };
+        let message: SharedString = format!(
+            "Close pinned tab \"{}\"? It will be removed from this task.",
+            confirm.title
+        )
+        .into();
+
+        div()
+            .id("pinned-tab-close-confirm-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.50))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.workspace_pane.update(cx, |workspace, cx| {
+                        workspace.pinned_tab_close_confirm = None;
+                        cx.notify();
+                    });
+                    cx.stop_propagation();
+                }),
+            )
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _window, cx| {
+                if ev.keystroke.key.as_str() == "escape" {
+                    this.workspace_pane.update(cx, |workspace, cx| {
+                        workspace.pinned_tab_close_confirm = None;
+                        cx.notify();
+                    });
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                div()
+                    .w(px(364.))
+                    .rounded_lg()
+                    .bg(rgb(0x2b2d31))
+                    .border_1()
+                    .border_color(gpui::white().opacity(0.08))
+                    .shadow_lg()
+                    .overflow_hidden()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .px(px(20.))
+                            .pt(px(20.))
+                            .pb(px(14.))
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(hsla(0., 0., 0.92, 1.))
+                                    .child("Close pinned tab?"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(hsla(0., 0., 0.74, 1.))
+                                    .child(message),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(8.))
+                            .px(px(20.))
+                            .pb(px(18.))
+                            .child(
+                                div()
+                                    .id("pinned-tab-close-cancel")
+                                    .px(px(12.))
+                                    .h(px(30.))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(6.))
+                                    .cursor_pointer()
+                                    .bg(gpui::white().opacity(0.08))
+                                    .hover(|s| s.bg(gpui::white().opacity(0.14)))
+                                    .text_sm()
+                                    .text_color(hsla(0., 0., 0.90, 1.))
+                                    .child("Cancel")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            this.workspace_pane.update(cx, |workspace, cx| {
+                                                workspace.pinned_tab_close_confirm = None;
+                                                cx.notify();
+                                            });
+                                            cx.stop_propagation();
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("pinned-tab-close-confirm")
+                                    .px(px(12.))
+                                    .h(px(30.))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(6.))
+                                    .cursor_pointer()
+                                    .bg(hsla(0., 0.62, 0.50, 1.))
+                                    .hover(|s| s.bg(hsla(0., 0.62, 0.58, 1.)))
+                                    .text_sm()
+                                    .text_color(hsla(0., 0., 1., 1.))
+                                    .child("Close")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            this.workspace_pane.update(cx, |workspace, cx| {
+                                                workspace.confirm_close_pinned_tab(cx);
+                                            });
+                                            cx.stop_propagation();
+                                        }),
+                                    ),
+                            ),
+                    ),
+            )
+    }
+
     /// Generic bordered panel with a title strip and body text.
     pub fn panel(
         title: &'static str,
@@ -159,8 +391,11 @@ impl WorkspacePane {
                 let sid_click = section_id.clone();
                 let tab_index = i;
                 let sid_close = section_id.clone();
+                let sid_menu = section_id.clone();
                 let close_index = i;
                 let tab_id_val = tab.id.clone();
+                let tab_id_for_menu = tab.id.clone();
+                let is_pinned = tab.pinned;
 
                 tab_strip = tab_strip.child(
                     div()
@@ -190,6 +425,31 @@ impl WorkspacePane {
                                 this.activate_tab(&sid_click, tab_index, cx);
                             }),
                         )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, ev: &MouseDownEvent, _window, cx| {
+                                this.terminal_tab_menu = Some(crate::app::TerminalTabMenuState {
+                                    section_id: sid_menu.clone(),
+                                    tab_id: tab_id_for_menu.clone(),
+                                    anchor_x: f32::from(ev.position.x),
+                                    anchor_y: f32::from(ev.position.y),
+                                });
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        )
+                        .when(is_pinned, |tab| {
+                            tab.child(
+                                svg()
+                                    .path("assets/icons/icons__pin-off.svg")
+                                    .size(px(12.))
+                                    .text_color(if is_active {
+                                        tab_text_active
+                                    } else {
+                                        tab_text_inactive
+                                    }),
+                            )
+                        })
                         .child(tab_icon_element(
                             tab.launch_config.provider,
                             if is_active {
@@ -229,7 +489,7 @@ impl WorkspacePane {
                                     MouseButton::Left,
                                     cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                                         cx.stop_propagation();
-                                        this.close_tab(&sid_close, close_index, cx);
+                                        this.request_close_tab(&sid_close, close_index, cx);
                                     }),
                                 )
                                 .child(

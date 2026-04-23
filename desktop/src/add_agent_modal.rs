@@ -567,7 +567,7 @@ impl AnotherOneApp {
         };
         let section_id = state.section_id.clone();
         let added_tab_id = self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.add_tab_with_launch_config(&section_id, launch_config.clone(), cx)
+            workspace.add_tab_with_launch_config(&section_id, launch_config.clone(), None, cx)
         });
 
         let Some(tab_id) = added_tab_id else {
