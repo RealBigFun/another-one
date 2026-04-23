@@ -6,14 +6,6 @@ mod agent_icons;
 mod app;
 mod assets;
 mod layout;
-
-// `agents` and `git_actions` live in the `another-one-core` crate; we
-// re-export them at the crate root so pre-existing `crate::agents::…`
-// and `crate::git_actions::…` paths throughout the binary keep
-// resolving without a global find-and-replace. Phase 1 of the plan
-// extracts more modules in subsequent PRs; each one goes through this
-// same re-export shim first, then paths can migrate opportunistically.
-pub use another_one_core::{agents, git_actions};
 mod left_sidebar;
 mod new_task_modal;
 mod open_in;
@@ -31,6 +23,14 @@ mod terminal_runtime;
 mod theme;
 mod titlebar;
 mod tokens;
+
+// `agents` and `git_actions` live in the `another-one-core` crate; we
+// re-export them at the crate root so pre-existing `crate::agents::…`
+// and `crate::git_actions::…` paths throughout the binary keep
+// resolving without a global find-and-replace. Phase 1 of the plan
+// extracts more modules in subsequent PRs; each one goes through this
+// same re-export shim first, then paths can migrate opportunistically.
+pub(crate) use another_one_core::{agents, git_actions};
 
 use std::path::PathBuf;
 
