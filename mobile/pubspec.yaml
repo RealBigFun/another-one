@@ -41,6 +41,9 @@ dependencies:
   mobile_core:
     path: rust_builder
   flutter_rust_bridge: 2.12.0
+  # Required for FRB's generated Dart tagged-union classes (one per
+  # Rust enum passed across the bridge — e.g. `WorkerReply`).
+  freezed_annotation: ^3.1.0
 
 dev_dependencies:
   flutter_test:
@@ -52,6 +55,10 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  # FRB-generated tagged-union classes use the freezed codegen; see
+  # `freezed_annotation` above for the runtime side.
+  freezed: ^3.2.5
+  build_runner: ^2.4.13
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

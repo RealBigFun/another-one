@@ -66,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 2060538528;
+  int get rustContentHash => -1072950955;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -92,6 +92,10 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Stream<Uint8List> crateApiIrohClientIrohSessionSubscribe({
+    required IrohSession that,
+  });
+
+  Stream<WorkerReply> crateApiIrohClientIrohSessionSubscribeWorkerReplies({
     required IrohSession that,
   });
 
@@ -271,6 +275,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Stream<WorkerReply> crateApiIrohClientIrohSessionSubscribeWorkerReplies({
+    required IrohSession that,
+  }) {
+    final sink = RustStreamSink<WorkerReply>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+              that,
+              serializer,
+            );
+            sse_encode_StreamSink_worker_reply_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 5,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta:
+              kCrateApiIrohClientIrohSessionSubscribeWorkerRepliesConstMeta,
+          argValues: [that, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta
+  get kCrateApiIrohClientIrohSessionSubscribeWorkerRepliesConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_subscribe_worker_replies",
+        argNames: ["that", "sink"],
+      );
+
+  @override
   Future<void> crateApiIrohClientInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -279,7 +326,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 6,
             port: port_,
           );
         },
@@ -313,7 +360,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 7,
             port: port_,
           );
         },
@@ -385,6 +432,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustStreamSink<WorkerReply> dco_decode_StreamSink_worker_reply_Sse(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError();
+  }
+
+  @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as String;
@@ -409,6 +464,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
   int dco_decode_u_16(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -430,6 +491,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt dco_decode_usize(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dcoDecodeU64(raw);
+  }
+
+  @protected
+  WorkerReply dco_decode_worker_reply(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return WorkerReply_GitRefresh(
+          projectId: dco_decode_String(raw[1]),
+          currentBranch: dco_decode_opt_String(raw[2]),
+          changedFileCount: dco_decode_usize(raw[3]),
+          ahead: dco_decode_usize(raw[4]),
+          behind: dco_decode_usize(raw[5]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
   }
 
   @protected
@@ -484,6 +562,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustStreamSink<WorkerReply> sse_decode_StreamSink_worker_reply_Sse(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    throw UnimplementedError('Unreachable ()');
+  }
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
@@ -517,6 +603,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   int sse_decode_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint16();
@@ -537,6 +634,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt sse_decode_usize(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getBigUint64();
+  }
+
+  @protected
+  WorkerReply sse_decode_worker_reply(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_projectId = sse_decode_String(deserializer);
+        var var_currentBranch = sse_decode_opt_String(deserializer);
+        var var_changedFileCount = sse_decode_usize(deserializer);
+        var var_ahead = sse_decode_usize(deserializer);
+        var var_behind = sse_decode_usize(deserializer);
+        return WorkerReply_GitRefresh(
+          projectId: var_projectId,
+          currentBranch: var_currentBranch,
+          changedFileCount: var_changedFileCount,
+          ahead: var_ahead,
+          behind: var_behind,
+        );
+      default:
+        throw UnimplementedError('');
+    }
   }
 
   @protected
@@ -617,6 +738,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_StreamSink_worker_reply_Sse(
+    RustStreamSink<WorkerReply> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(
+      self.setupAndSerialize(
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_worker_reply,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+      ),
+      serializer,
+    );
+  }
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
@@ -654,6 +792,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_u_16(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint16(self);
@@ -674,6 +822,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
+  }
+
+  @protected
+  void sse_encode_worker_reply(WorkerReply self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case WorkerReply_GitRefresh(
+        projectId: final projectId,
+        currentBranch: final currentBranch,
+        changedFileCount: final changedFileCount,
+        ahead: final ahead,
+        behind: final behind,
+      ):
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(projectId, serializer);
+        sse_encode_opt_String(currentBranch, serializer);
+        sse_encode_usize(changedFileCount, serializer);
+        sse_encode_usize(ahead, serializer);
+        sse_encode_usize(behind, serializer);
+    }
   }
 
   @protected
@@ -727,4 +895,10 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   /// per session; subsequent calls return an error.
   Stream<Uint8List> subscribe() =>
       RustLib.instance.api.crateApiIrohClientIrohSessionSubscribe(that: this);
+
+  /// Start pushing decoded worker replies into the given Dart StreamSink.
+  /// Same one-shot subscription shape as [`subscribe`]; the second call
+  /// returns an error. Replies arrive in the order the daemon sent them.
+  Stream<WorkerReply> subscribeWorkerReplies() => RustLib.instance.api
+      .crateApiIrohClientIrohSessionSubscribeWorkerReplies(that: this);
 }

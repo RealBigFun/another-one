@@ -5,10 +5,12 @@
 
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
+part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `iroh_connect_inner`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`.
 ///
@@ -43,4 +45,23 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
   Stream<Uint8List> subscribe();
+
+  /// Start pushing decoded worker replies into the given Dart StreamSink.
+  /// Same one-shot subscription shape as [`subscribe`]; the second call
+  /// returns an error. Replies arrive in the order the daemon sent them.
+  Stream<WorkerReply> subscribeWorkerReplies();
+}
+
+@freezed
+sealed class WorkerReply with _$WorkerReply {
+  const WorkerReply._();
+
+  /// Projection of `core::git_service::GitRefreshReply`.
+  const factory WorkerReply.gitRefresh({
+    required String projectId,
+    String? currentBranch,
+    required BigInt changedFileCount,
+    required BigInt ahead,
+    required BigInt behind,
+  }) = WorkerReply_GitRefresh;
 }
