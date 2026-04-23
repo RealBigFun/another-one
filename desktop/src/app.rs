@@ -300,13 +300,10 @@ impl TerminalTab {
     }
 }
 
-struct GitRefreshReply {
-    project_id: String,
-    include_metadata: bool,
-    state: ProjectGitState,
-    commit_state: Option<Result<ProjectBranchCommitState, String>>,
-    compare_state: Option<Result<ProjectBranchCompareState, String>>,
-}
+// Moved to `another_one_core::git_service::GitRefreshReply`; the
+// struct stays named the same at this path so existing call sites
+// keep compiling, but the body + the spawn worker now live in core.
+use another_one_core::git_service::GitRefreshReply;
 
 struct GitActionReply {
     project_id: String,
@@ -4853,31 +4850,13 @@ impl AnotherOneApp {
 
         let include_metadata = metadata_due;
         self.git_refresh_in_flight = true;
-        let (tx, rx) = mpsc::channel();
-        self.git_refresh_receiver = Some(rx);
-        std::thread::spawn(move || {
-            let state =
-                crate::project_store::read_project_git_state(&project_path, include_metadata);
-            let commit_state = commit_limit.map(|requested_limit| {
-                crate::project_store::read_project_branch_commit_state(
-                    &project_path,
-                    requested_limit,
-                )
-            });
-            let compare_state = compare_target_branch.as_deref().map(|target_branch| {
-                crate::project_store::read_project_branch_compare_state(
-                    &project_path,
-                    target_branch,
-                )
-            });
-            let _ = tx.send(GitRefreshReply {
-                project_id,
-                include_metadata,
-                state,
-                commit_state,
-                compare_state,
-            });
-        });
+        self.git_refresh_receiver = Some(another_one_core::git_service::spawn_refresh(
+            project_id,
+            project_path,
+            include_metadata,
+            commit_limit,
+            compare_target_branch,
+        ));
     }
 
     #[hotpath::measure]
