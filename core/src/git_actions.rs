@@ -322,6 +322,10 @@ pub fn find_pull_request_checks(
         return Ok(None);
     }
 
+    if indicates_missing_pull_request_checks(&detail) {
+        return Ok(Some(Vec::new()));
+    }
+
     if output.status.success() {
         return Ok(Some(Vec::new()));
     }
@@ -381,6 +385,11 @@ fn indicates_missing_pull_request(text: &str) -> bool {
         || lowered.contains("no pull requests found")
         || lowered.contains("no associated pull requests")
         || lowered.contains("pull request not found")
+}
+
+fn indicates_missing_pull_request_checks(text: &str) -> bool {
+    text.to_ascii_lowercase()
+        .contains("no checks reported on the")
 }
 
 fn github_https_url(path: &str) -> String {
@@ -1036,7 +1045,8 @@ fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
 mod tests {
     use super::{
         create_pull_request_args, find_latest_pull_request_args, git_stdout,
-        indicates_missing_pull_request, normalize_github_remote,
+        indicates_missing_pull_request, indicates_missing_pull_request_checks,
+        normalize_github_remote,
         normalize_pull_request_check_bucket, parse_commit_message,
         parse_pull_request_checks_output, push_branch, simple_toolbar_git_command,
         PullRequestCheckBucket, ToolbarGitAction,
@@ -1221,6 +1231,16 @@ mod tests {
         ));
         assert!(indicates_missing_pull_request("pull request not found"));
         assert!(!indicates_missing_pull_request("GraphQL request failed"));
+    }
+
+    #[test]
+    fn indicates_missing_pull_request_checks_matches_gh_message() {
+        assert!(indicates_missing_pull_request_checks(
+            "no checks reported on the 'main' branch"
+        ));
+        assert!(!indicates_missing_pull_request_checks(
+            "no pull requests found for branch feature/test"
+        ));
     }
 
     #[test]

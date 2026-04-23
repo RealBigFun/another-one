@@ -153,6 +153,24 @@ impl AnotherOneApp {
             .child(text)
     }
 
+    fn centered_sidebar_message(message: impl Into<SharedString>, color: gpui::Hsla) -> impl IntoElement {
+        div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .px(px(18.))
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.))
+                    .text_sm()
+                    .text_center()
+                    .text_color(color)
+                    .child(message.into()),
+            )
+    }
+
     fn changed_file_action_button(
         props: ChangedFileActionButtonProps,
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
@@ -1356,29 +1374,15 @@ impl AnotherOneApp {
         match sidebar_mode {
             RightSidebarMode::WorkingTree => {
                 if !has_loaded_changed_files {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child("Loading changes..."),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        "Loading changes...",
+                        muted_col,
+                    ));
                 } else if changed_files.is_empty() {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child("Working tree clean"),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        "Working tree clean",
+                        muted_col,
+                    ));
                 } else {
                     let staged_collapsed = self.collapsed_change_sections.contains("staged");
                     let uncommitted_collapsed =
@@ -1496,32 +1500,18 @@ impl AnotherOneApp {
                 );
 
                 if commit_state.is_none() {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child("Loading commits..."),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        "Loading commits...",
+                        muted_col,
+                    ));
                 } else if commit_state
                     .as_ref()
                     .is_some_and(|state| state.commits.is_empty())
                 {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child("No commits yet on this branch."),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        "No commits yet on this branch.",
+                        muted_col,
+                    ));
                 } else if let Some(commit_state) = commit_state {
                     let mut rows = div()
                         .id("right-sidebar-commits-scroll")
@@ -1570,56 +1560,25 @@ impl AnotherOneApp {
             }
             RightSidebarMode::Checks => match check_runs_state {
                 None | Some(ProjectCheckRunsState::Loading) => {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child("Loading checks..."),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        "Loading checks...",
+                        muted_col,
+                    ));
                 }
                 Some(ProjectCheckRunsState::NoPullRequest) => {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child("No pull request exists for this branch."),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        "No pull request exists for this branch.",
+                        muted_col,
+                    ));
                 }
                 Some(ProjectCheckRunsState::Failed(error)) => {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child(error),
-                    );
+                    body = body.child(Self::centered_sidebar_message(error, muted_col));
                 }
                 Some(ProjectCheckRunsState::Loaded(checks)) if checks.is_empty() => {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child("No CI checks found for this pull request."),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        "No CI checks found for this pull request.",
+                        muted_col,
+                    ));
                 }
                 Some(ProjectCheckRunsState::Loaded(checks)) => {
                     let mut checks: Vec<_> = checks.iter().cloned().collect();
@@ -1744,32 +1703,18 @@ impl AnotherOneApp {
                 );
 
                 if compare_state.is_none() {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child("Loading compare view..."),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        "Loading compare view...",
+                        muted_col,
+                    ));
                 } else if compare_state
                     .as_ref()
                     .is_some_and(|state| state.files.is_empty())
                 {
-                    body = body.child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(18.))
-                            .text_sm()
-                            .text_color(muted_col)
-                            .child(format!("No differences from {}.", target_branch)),
-                    );
+                    body = body.child(Self::centered_sidebar_message(
+                        format!("No differences from {}.", target_branch),
+                        muted_col,
+                    ));
                 } else if let Some(compare_state) = compare_state {
                     let mut rows = div()
                         .id("right-sidebar-compare-scroll")
