@@ -2308,6 +2308,17 @@ impl AnotherOneApp {
         }
     }
 
+    fn request_active_project_github_link_lookup(&mut self, cx: &App) {
+        let Some(project_id) = self.active_open_in_project_id(cx) else {
+            return;
+        };
+        let Some(project_path) = self.project_path(&project_id) else {
+            return;
+        };
+
+        self.request_project_github_link_lookup(&project_id, &project_path);
+    }
+
     fn project_pull_request_lookup_is_fresh(&self, lookup_key: &str) -> bool {
         self.project_pull_request_checked_at
             .get(lookup_key)
@@ -9721,6 +9732,7 @@ impl Render for AnotherOneApp {
         self.clamp_layout(window);
         self.sync_workspace_layout(cx);
         self.ensure_active_terminal_runtime(window, cx);
+        self.request_active_project_github_link_lookup(cx);
         let sw = self.sidebar_w;
         let rw = self.right_w;
         let open = self.sidebar_is_open();

@@ -16,6 +16,10 @@ use crate::tokens;
 
 const TITLEBAR_OPEN_IN_BUTTON_W: f32 = 114.;
 const TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT: f32 = 6.;
+const TITLEBAR_GITHUB_BUTTON_W: f32 = 32.;
+const TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT: f32 = 6.;
+const TITLEBAR_PULL_REQUEST_BUTTON_W: f32 = 32.;
+const TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT: f32 = 6.;
 const TITLEBAR_CUSTOM_ACTIONS_BUTTON_W: f32 = 124.;
 const TITLEBAR_CUSTOM_ACTIONS_BUTTON_MARGIN_RIGHT: f32 = 6.;
 const TITLEBAR_GIT_ACTIONS_BUTTON_W: f32 = 156.;
@@ -392,6 +396,10 @@ impl AnotherOneApp {
                 + RESOURCE_INDICATOR_BUTTON_W
                 + TITLEBAR_GIT_ACTIONS_BUTTON_W
                 + TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT
+                + TITLEBAR_PULL_REQUEST_BUTTON_W
+                + TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT
+                + TITLEBAR_GITHUB_BUTTON_W
+                + TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT
                 + TITLEBAR_OPEN_IN_BUTTON_W
                 + TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT))
             .top(px(TITLEBAR_MENU_OFFSET_TOP))
@@ -669,6 +677,10 @@ impl AnotherOneApp {
             + RESOURCE_INDICATOR_BUTTON_W
             + TITLEBAR_GIT_ACTIONS_BUTTON_W
             + TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT
+            + TITLEBAR_PULL_REQUEST_BUTTON_W
+            + TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT
+            + TITLEBAR_GITHUB_BUTTON_W
+            + TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT
             + TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT;
 
         let mut menu = div()
@@ -742,6 +754,120 @@ impl AnotherOneApp {
                 }),
             )
             .child(menu)
+            .into_any_element()
+    }
+
+    pub fn titlebar_github_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(project_id) = self.active_open_in_project_id(cx) else {
+            return div().into_any_element();
+        };
+        let Some(github_url) = self.project_github_links.get(&project_id).cloned() else {
+            return div().into_any_element();
+        };
+
+        div()
+            .id(SharedString::from(format!(
+                "titlebar-github-trigger-{project_id}"
+            )))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .w(px(TITLEBAR_GITHUB_BUTTON_W))
+            .h(px(28.))
+            .mr(px(TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT))
+            .rounded(px(11.))
+            .bg(gpui::white().opacity(0.05))
+            .border_1()
+            .border_color(gpui::white().opacity(0.08))
+            .cursor_pointer()
+            .hover(|style| style.bg(gpui::white().opacity(0.08)))
+            .tooltip(move |_window, cx| Self::action_tooltip_view("Open repository in GitHub", cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    this.project_page_open_in_menu_project_id = None;
+                    this.custom_actions_menu_open = false;
+                    this.git_actions_menu_open = false;
+                    if let Err(err) =
+                        crate::platform::CurrentPlatform::open_external_url(&github_url)
+                    {
+                        this.show_error_toast(err, cx);
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .child(
+                svg()
+                    .path("assets/icons/icons__github.svg")
+                    .size(px(15.))
+                    .text_color(gpui::white().opacity(0.88)),
+            )
+            .into_any_element()
+    }
+
+    pub fn titlebar_pull_request_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(pull_request) = self.active_project_pull_request(cx).cloned() else {
+            return div().into_any_element();
+        };
+
+        let (state_color, tooltip) = match pull_request.state {
+            crate::git_actions::PullRequestState::Open => (
+                hsla(160. / 360., 0.84, 0.35, 1.),
+                "Open pull request in GitHub",
+            ),
+            crate::git_actions::PullRequestState::Closed => (
+                hsla(240. / 360., 0.04, 0.46, 1.),
+                "Open closed pull request in GitHub",
+            ),
+            crate::git_actions::PullRequestState::Merged => (
+                hsla(262. / 360., 0.83, 0.58, 1.),
+                "Open merged pull request in GitHub",
+            ),
+        };
+        let pull_request_url = pull_request.url.clone();
+
+        div()
+            .id(SharedString::from(format!(
+                "titlebar-pull-request-trigger-{}",
+                pull_request.number
+            )))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .w(px(TITLEBAR_PULL_REQUEST_BUTTON_W))
+            .h(px(28.))
+            .mr(px(TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT))
+            .rounded(px(11.))
+            .bg(state_color.opacity(0.13))
+            .border_1()
+            .border_color(state_color.opacity(0.46))
+            .cursor_pointer()
+            .hover(move |style| style.bg(state_color.opacity(0.20)))
+            .tooltip(move |_window, cx| Self::action_tooltip_view(tooltip, cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    this.project_page_open_in_menu_project_id = None;
+                    this.custom_actions_menu_open = false;
+                    this.git_actions_menu_open = false;
+                    if let Err(err) =
+                        crate::platform::CurrentPlatform::open_external_url(&pull_request_url)
+                    {
+                        this.show_error_toast(err, cx);
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .child(
+                svg()
+                    .path("assets/icons/icons__pull-request.svg")
+                    .size(px(13.))
+                    .text_color(state_color),
+            )
             .into_any_element()
     }
 
@@ -908,7 +1034,6 @@ impl AnotherOneApp {
         let has_existing_pull_request = pull_request_url.is_some();
         let can_create_pull_request =
             toolbar_enabled && pull_request_lookup_checked && !has_existing_pull_request;
-        let can_view_pull_request = toolbar_enabled && has_existing_pull_request;
 
         let menu = div()
             .id("titlebar-git-actions-menu")
@@ -1298,57 +1423,6 @@ impl AnotherOneApp {
                             .text_color(text_col)
                             .child("Draft PR"),
                     ),
-            )
-            .child(
-                div()
-                    .id("titlebar-git-actions-view-pr")
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(34.))
-                    .px(px(12.))
-                    .opacity(if can_view_pull_request { 1. } else { 0.55 })
-                    .when(can_view_pull_request, |d| {
-                        let pull_request_url = pull_request_url.clone();
-                        d.cursor_pointer()
-                            .hover(move |s| s.bg(hover_bg))
-                            .tooltip(move |_window, cx| {
-                                Self::action_tooltip_view(
-                                    "Open the existing pull request in the browser",
-                                    cx,
-                                )
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                                    this.git_actions_menu_open = false;
-                                    if let Some(pull_request_url) = pull_request_url.clone() {
-                                        if let Err(err) =
-                                            crate::platform::CurrentPlatform::open_external_url(
-                                                &pull_request_url,
-                                            )
-                                        {
-                                            this.show_error_toast(err, cx);
-                                        }
-                                    }
-                                    cx.stop_propagation();
-                                    cx.notify();
-                                }),
-                            )
-                    })
-                    .child(
-                        svg()
-                            .path("assets/icons/icons__external-link.svg")
-                            .size(px(14.))
-                            .text_color(text_col),
-                    )
-                    .child(
-                        div()
-                            .text_size(rems(12. / 16.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(text_col)
-                            .child("View PR"),
-                    ),
             );
 
         div()
@@ -1457,6 +1531,8 @@ impl AnotherOneApp {
             )
             .child(self.titlebar_custom_actions_button(cx))
             .child(self.titlebar_open_in_button(cx))
+            .child(self.titlebar_github_button(cx))
+            .child(self.titlebar_pull_request_button(cx))
             .child(self.titlebar_git_actions_button(cx))
             .child(self.resource_indicator_button(window, cx))
             .child(
