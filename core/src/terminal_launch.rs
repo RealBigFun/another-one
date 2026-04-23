@@ -682,7 +682,11 @@ fn prepare_pi_session_capture() -> anyhow::Result<PiSessionCapture> {
 }
 
 fn pi_session_capture_extension_path() -> PathBuf {
+    // `terminal_launch.rs` lives in the `core` crate, but the Pi extension is
+    // checked into the workspace-level `scripts/` directory.
     Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
         .join("scripts")
         .join("pi-session-start-extension.ts")
 }
@@ -1019,9 +1023,10 @@ mod tests {
         build_claude_command, build_command, claude_project_dir_name, claude_session_exists,
         discover_codex_session, discover_codex_session_from_index,
         discover_codex_session_from_saved_sessions, discover_pi_session,
-        discovery_timeout_for_kind, pi_session_exists, prepare_codex_home_override_from,
-        read_session_capture, resolve_claude_session, resolve_pi_session, DiscoveryKind,
-        PiSessionCapture, SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
+        discovery_timeout_for_kind, pi_session_capture_extension_path, pi_session_exists,
+        prepare_codex_home_override_from, read_session_capture, resolve_claude_session,
+        resolve_pi_session, DiscoveryKind, PiSessionCapture, SessionCaptureState,
+        TerminalSessionKind, TerminalSessionRef,
     };
     use crate::agents::{AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
@@ -1255,6 +1260,11 @@ mod tests {
             !path.exists(),
             "discovery should clean up consumed capture files"
         );
+    }
+
+    #[test]
+    fn pi_session_capture_extension_path_points_to_workspace_script() {
+        assert!(pi_session_capture_extension_path().is_file());
     }
 
     #[test]
