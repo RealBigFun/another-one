@@ -93,53 +93,7 @@ fn trim_to_recent_output_limit(buffer: &mut String) {
     buffer.drain(..start);
 }
 
-/// Identifies a section: a specific branch within a specific project.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SectionId {
-    pub project_id: String,
-    pub branch_name: String,
-    pub task_id: Option<String>,
-}
-
-impl SectionId {
-    pub fn new(project_id: &str, branch_name: &str) -> Self {
-        Self {
-            project_id: project_id.to_string(),
-            branch_name: branch_name.to_string(),
-            task_id: None,
-        }
-    }
-
-    pub fn for_task(project_id: &str, branch_name: &str, task_id: &str) -> Self {
-        Self {
-            project_id: project_id.to_string(),
-            branch_name: branch_name.to_string(),
-            task_id: Some(task_id.to_string()),
-        }
-    }
-
-    pub fn store_key(&self) -> String {
-        format!(
-            "{}::{}::{}",
-            self.project_id,
-            self.branch_name,
-            self.task_id.as_deref().unwrap_or("")
-        )
-    }
-
-    pub fn from_store_key(key: &str) -> Option<Self> {
-        let mut parts = key.splitn(3, "::");
-        let project_id = parts.next()?.to_string();
-        let branch_name = parts.next()?.to_string();
-        let task_id = parts.next()?.to_string();
-
-        Some(Self {
-            project_id,
-            branch_name,
-            task_id: (!task_id.is_empty()).then_some(task_id),
-        })
-    }
-}
+pub use another_one_core::section::SectionId;
 
 /// A single terminal tab within a section.
 pub struct TerminalTab {
