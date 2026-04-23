@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `iroh_connect_inner`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`.
 ///
@@ -32,8 +32,25 @@ Future<IrohSession> irohConnect({
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
 abstract class IrohSession implements RustOpaqueInterface {
+  /// Subscribe this session to the live PTY byte stream for
+  /// `(section_id, tab_id)`. The daemon will forward the attached
+  /// tab's output as [`TY_DATA`] frames on the existing `subscribe`
+  /// sink. At most one attachment per session — re-issuing replaces
+  /// the previous one. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::AttachTab`.
+  Future<void> attachTab({required String sectionId, required String tabId});
+
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
+
+  /// Stop forwarding PTY bytes for the currently-attached tab.
+  /// Idempotent if nothing is attached. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
+  Future<void> detachTab();
+
+  /// Ask the daemon to send back its current project list as a
+  /// [`WorkerReply::ProjectList`] frame.
+  Future<void> listProjects();
 
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type.
@@ -51,12 +68,80 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// returns an error. Replies arrive in the order the daemon sent them.
   Stream<WorkerReply> subscribeWorkerReplies();
 
+  /// Resize the currently-attached tab's PTY. Silently no-ops on
+  /// the daemon when nothing is attached. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
+  Future<void> tabResize({required int cols, required int rows});
+
   /// Ask the daemon to watch `project_path` and start forwarding
   /// [`WorkerReply::GitRefresh`] frames for it. See
   /// `daemon-sandbox/src/frame.rs::Control::WatchProject` for the
   /// daemon-side semantics. Reissuing replaces the previous
   /// subscription.
   Future<void> watchProject({required String projectPath});
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form
+/// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
+/// `Shell` is the catch-all for plain-PTY tabs with no agent
+/// provider set.
+enum AgentProvider {
+  claudeCode,
+  cursorAgent,
+  codex,
+  pi,
+  gemini,
+  openCode,
+  amp,
+  rovoDev,
+  forge,
+  shell,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ProjectKind`.
+enum ProjectKind { root, worktree }
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ProjectSummary`. Contains
+/// the nested task + tab tree so one `ListProjects` response is enough
+/// for the mobile drawer + task page to render without follow-up
+/// round-trips.
+class ProjectSummary {
+  final String id;
+  final String name;
+  final String path;
+  final ProjectKind kind;
+  final String? currentBranch;
+  final List<TaskSummary> tasks;
+
+  const ProjectSummary({
+    required this.id,
+    required this.name,
+    required this.path,
+    required this.kind,
+    this.currentBranch,
+    required this.tasks,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      path.hashCode ^
+      kind.hashCode ^
+      currentBranch.hashCode ^
+      tasks.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ProjectSummary &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          path == other.path &&
+          kind == other.kind &&
+          currentBranch == other.currentBranch &&
+          tasks == other.tasks;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::PullRequestInfo`.
@@ -88,6 +173,80 @@ class PullRequestInfo {
 /// Wire form is lowercase: `"open"`, `"closed"`, `"merged"`.
 enum PullRequestState { open, closed, merged }
 
+/// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
+/// reflects whether the desktop has a live `LiveTerminalRuntime` for
+/// this tab right now; `AttachTab` on a non-running tab yields no
+/// data.
+class TabSummary {
+  final String id;
+  final String title;
+  final AgentProvider? provider;
+  final bool running;
+
+  const TabSummary({
+    required this.id,
+    required this.title,
+    this.provider,
+    required this.running,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ title.hashCode ^ provider.hashCode ^ running.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TabSummary &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          title == other.title &&
+          provider == other.provider &&
+          running == other.running;
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::TaskSummary`. Carries the
+/// `section_id` half of the compound `TerminalRuntimeKey` used by
+/// [`Control::AttachTab`].
+class TaskSummary {
+  final String id;
+  final String name;
+  final String sectionId;
+  final String branchName;
+  final String activeTabId;
+  final List<TabSummary> tabs;
+
+  const TaskSummary({
+    required this.id,
+    required this.name,
+    required this.sectionId,
+    required this.branchName,
+    required this.activeTabId,
+    required this.tabs,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      sectionId.hashCode ^
+      branchName.hashCode ^
+      activeTabId.hashCode ^
+      tabs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TaskSummary &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          sectionId == other.sectionId &&
+          branchName == other.branchName &&
+          activeTabId == other.activeTabId &&
+          tabs == other.tabs;
+}
+
 @freezed
 sealed class WorkerReply with _$WorkerReply {
   const WorkerReply._();
@@ -109,4 +268,11 @@ sealed class WorkerReply with _$WorkerReply {
     required String branchName,
     PullRequestInfo? pr,
   }) = WorkerReply_PullRequestStatus;
+
+  /// Response to [`Control::ListProjects`]. Order matches the
+  /// desktop sidebar. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectList`.
+  const factory WorkerReply.projectList({
+    required List<ProjectSummary> projects,
+  }) = WorkerReply_ProjectList;
 }

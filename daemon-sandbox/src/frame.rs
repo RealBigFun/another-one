@@ -34,19 +34,44 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {
+    /// Legacy resize for the standalone sandbox shell. On embedded
+    /// (desktop-hosted) daemons, use [`Control::TabResize`] after
+    /// [`Control::AttachTab`] — that routes the resize to the
+    /// specific tab's PTY.
     Resize {
         cols: u16,
         rows: u16,
     },
-    /// Ask the daemon to spawn the `git_refresh` worker for
-    /// `project_path` and forward its reply as a
-    /// [`TY_WORKER_REPLY`] frame. Per-session; reissuing replaces
-    /// the previous subscription. `project_path` is an absolute
-    /// path on the daemon host — the paired client is trusted to
-    /// ask for paths it's allowed to see (the TOFU allowlist is
-    /// the trust boundary for the sandbox).
+    /// Legacy: ask the daemon to spawn `git_refresh` for a literal
+    /// path. Preserved for backward compat with clients built before
+    /// the projects/tasks/tabs protocol. New clients call
+    /// [`Control::ListProjects`] then [`Control::AttachTab`].
     WatchProject {
         project_path: String,
+    },
+    /// Ask the daemon to send its full project tree as a
+    /// [`WorkerReply::ProjectList`] frame (projects → tasks → tabs).
+    /// The embedded (desktop) daemon projects straight off the
+    /// running `AnotherOneApp`; the standalone sandbox returns a
+    /// synthetic tree with one task + one tab.
+    ListProjects,
+    /// Subscribe to the live PTY byte stream for `(section_id,
+    /// tab_id)`. The daemon forwards the stream as a series of
+    /// [`TY_DATA`] frames until either the session closes or
+    /// another `AttachTab` / `DetachTab` arrives — at most one
+    /// attachment per session.
+    AttachTab {
+        section_id: String,
+        tab_id: String,
+    },
+    /// Stop forwarding PTY bytes for the currently-attached tab.
+    /// Idempotent if nothing is attached.
+    DetachTab,
+    /// Resize the currently-attached tab's PTY. Silently no-ops
+    /// when nothing is attached.
+    TabResize {
+        cols: u16,
+        rows: u16,
     },
 }
 
@@ -97,6 +122,89 @@ pub enum WorkerReply {
         branch_name: String,
         pr: Option<PullRequestInfo>,
     },
+    /// Response to [`Control::ListProjects`]. Order matches the
+    /// desktop sidebar's `project_order`; worktrees of a root are
+    /// emitted as their own entries rather than nested children
+    /// (the mobile UI can still group them by `repo_id` if it
+    /// wants a tree rendering later).
+    ProjectList {
+        projects: Vec<ProjectSummary>,
+    },
+}
+
+/// Lossy wire projection of `core::project_store::Project`, with
+/// nested `tasks` + `tabs` so one `ListProjects` response tells the
+/// mobile UI everything it needs to render its home drawer + each
+/// project's task list without follow-up round-trips.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectSummary {
+    pub id: String,
+    pub name: String,
+    /// Absolute path on the daemon host. Read-only on the wire —
+    /// mobile never dereferences this, the desktop does all FS work.
+    pub path: String,
+    pub kind: ProjectKind,
+    /// Last-observed current branch from the ProjectStore's
+    /// `checkout.current_branch`; may be `None` if never read.
+    pub current_branch: Option<String>,
+    pub tasks: Vec<TaskSummary>,
+}
+
+/// Lossy wire projection of `core::project_store::Task`. Contains
+/// enough for the mobile task page to render the tab strip and
+/// request an attach; no live PTY state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskSummary {
+    pub id: String,
+    pub name: String,
+    /// Stable section id — half of the compound
+    /// `TerminalRuntimeKey { section_id, tab_id }` used to address
+    /// a live PTY.
+    pub section_id: String,
+    pub branch_name: String,
+    pub active_tab_id: String,
+    pub tabs: Vec<TabSummary>,
+}
+
+/// Lossy wire projection of
+/// `core::project_store::PersistedTerminalTab`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabSummary {
+    pub id: String,
+    pub title: String,
+    pub provider: Option<AgentProvider>,
+    /// `true` iff the desktop has a live `LiveTerminalRuntime` for
+    /// this tab right now. Persisted-but-not-launched tabs report
+    /// `false` and an `AttachTab` for them returns no data.
+    pub running: bool,
+}
+
+/// Mirror of `core::project_store::ProjectKind`. Wire-serialised as
+/// lowercase strings: `"root"` / `"worktree"`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectKind {
+    Root,
+    Worktree,
+}
+
+/// Mirror of `core::agents::AgentProviderKind`. Wire-serialised as
+/// snake_case: `"claude_code"` / `"codex"` / `"cursor_agent"` etc.
+/// `Shell` is the catch-all for tabs launched without an agent
+/// provider set (plain PTY).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProvider {
+    ClaudeCode,
+    CursorAgent,
+    Codex,
+    Pi,
+    Gemini,
+    OpenCode,
+    Amp,
+    RovoDev,
+    Forge,
+    Shell,
 }
 
 /// Lossy wire projection of `core::git_actions::PullRequestStatus`.

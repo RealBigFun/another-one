@@ -66,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1352254398;
+  int get rustContentHash => 1030758759;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -78,7 +78,21 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  Future<void> crateApiIrohClientIrohSessionAttachTab({
+    required IrohSession that,
+    required String sectionId,
+    required String tabId,
+  });
+
   Future<void> crateApiIrohClientIrohSessionClose({required IrohSession that});
+
+  Future<void> crateApiIrohClientIrohSessionDetachTab({
+    required IrohSession that,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionListProjects({
+    required IrohSession that,
+  });
 
   Future<void> crateApiIrohClientIrohSessionResize({
     required IrohSession that,
@@ -97,6 +111,12 @@ abstract class RustLibApi extends BaseApi {
 
   Stream<WorkerReply> crateApiIrohClientIrohSessionSubscribeWorkerReplies({
     required IrohSession that,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionTabResize({
+    required IrohSession that,
+    required int cols,
+    required int rows,
   });
 
   Future<void> crateApiIrohClientIrohSessionWatchProject({
@@ -130,6 +150,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  Future<void> crateApiIrohClientIrohSessionAttachTab({
+    required IrohSession that,
+    required String sectionId,
+    required String tabId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(sectionId, serializer);
+          sse_encode_String(tabId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionAttachTabConstMeta,
+        argValues: [that, sectionId, tabId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionAttachTabConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_attach_tab",
+        argNames: ["that", "sectionId", "tabId"],
+      );
+
+  @override
   Future<void> crateApiIrohClientIrohSessionClose({required IrohSession that}) {
     return handler.executeNormal(
       NormalTask(
@@ -142,7 +202,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 1,
+            funcId: 2,
             port: port_,
           );
         },
@@ -159,6 +219,78 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiIrohClientIrohSessionCloseConstMeta =>
       const TaskConstMeta(debugName: "IrohSession_close", argNames: ["that"]);
+
+  @override
+  Future<void> crateApiIrohClientIrohSessionDetachTab({
+    required IrohSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionDetachTabConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionDetachTabConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_detach_tab",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<void> crateApiIrohClientIrohSessionListProjects({
+    required IrohSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionListProjectsConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionListProjectsConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_list_projects",
+        argNames: ["that"],
+      );
 
   @override
   Future<void> crateApiIrohClientIrohSessionResize({
@@ -179,7 +311,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 2,
+            funcId: 5,
             port: port_,
           );
         },
@@ -217,7 +349,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 6,
             port: port_,
           );
         },
@@ -256,7 +388,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 4,
+              funcId: 7,
               port: port_,
             );
           },
@@ -297,7 +429,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 5,
+              funcId: 8,
               port: port_,
             );
           },
@@ -323,6 +455,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiIrohClientIrohSessionTabResize({
+    required IrohSession that,
+    required int cols,
+    required int rows,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_16(cols, serializer);
+          sse_encode_u_16(rows, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 9,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionTabResizeConstMeta,
+        argValues: [that, cols, rows],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionTabResizeConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_tab_resize",
+        argNames: ["that", "cols", "rows"],
+      );
+
+  @override
   Future<void> crateApiIrohClientIrohSessionWatchProject({
     required IrohSession that,
     required String projectPath,
@@ -339,7 +511,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 10,
             port: port_,
           );
         },
@@ -369,7 +541,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 11,
             port: port_,
           );
         },
@@ -403,7 +575,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 12,
             port: port_,
           );
         },
@@ -489,6 +661,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AgentProvider dco_decode_agent_provider(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return AgentProvider.values[raw as int];
+  }
+
+  @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
+  AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_agent_provider(raw);
+  }
+
+  @protected
   PullRequestInfo dco_decode_box_autoadd_pull_request_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_pull_request_info(raw);
@@ -519,15 +709,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProjectSummary> dco_decode_list_project_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_project_summary).toList();
+  }
+
+  @protected
+  List<TabSummary> dco_decode_list_tab_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_tab_summary).toList();
+  }
+
+  @protected
+  List<TaskSummary> dco_decode_list_task_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_task_summary).toList();
+  }
+
+  @protected
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
   }
 
   @protected
+  AgentProvider? dco_decode_opt_box_autoadd_agent_provider(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_agent_provider(raw);
+  }
+
+  @protected
   PullRequestInfo? dco_decode_opt_box_autoadd_pull_request_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_pull_request_info(raw);
+  }
+
+  @protected
+  ProjectKind dco_decode_project_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ProjectKind.values[raw as int];
+  }
+
+  @protected
+  ProjectSummary dco_decode_project_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return ProjectSummary(
+      id: dco_decode_String(arr[0]),
+      name: dco_decode_String(arr[1]),
+      path: dco_decode_String(arr[2]),
+      kind: dco_decode_project_kind(arr[3]),
+      currentBranch: dco_decode_opt_String(arr[4]),
+      tasks: dco_decode_list_task_summary(arr[5]),
+    );
   }
 
   @protected
@@ -547,6 +783,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PullRequestState dco_decode_pull_request_state(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return PullRequestState.values[raw as int];
+  }
+
+  @protected
+  TabSummary dco_decode_tab_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return TabSummary(
+      id: dco_decode_String(arr[0]),
+      title: dco_decode_String(arr[1]),
+      provider: dco_decode_opt_box_autoadd_agent_provider(arr[2]),
+      running: dco_decode_bool(arr[3]),
+    );
+  }
+
+  @protected
+  TaskSummary dco_decode_task_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return TaskSummary(
+      id: dco_decode_String(arr[0]),
+      name: dco_decode_String(arr[1]),
+      sectionId: dco_decode_String(arr[2]),
+      branchName: dco_decode_String(arr[3]),
+      activeTabId: dco_decode_String(arr[4]),
+      tabs: dco_decode_list_tab_summary(arr[5]),
+    );
   }
 
   @protected
@@ -596,6 +862,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           projectId: dco_decode_String(raw[1]),
           branchName: dco_decode_String(raw[2]),
           pr: dco_decode_opt_box_autoadd_pull_request_info(raw[3]),
+        );
+      case 2:
+        return WorkerReply_ProjectList(
+          projects: dco_decode_list_project_summary(raw[1]),
         );
       default:
         throw Exception("unreachable");
@@ -669,6 +939,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AgentProvider sse_decode_agent_provider(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return AgentProvider.values[inner];
+  }
+
+  @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  AgentProvider sse_decode_box_autoadd_agent_provider(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_agent_provider(deserializer));
+  }
+
+  @protected
   PullRequestInfo sse_decode_box_autoadd_pull_request_info(
     SseDeserializer deserializer,
   ) {
@@ -709,11 +1000,62 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProjectSummary> sse_decode_list_project_summary(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ProjectSummary>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_project_summary(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<TabSummary> sse_decode_list_tab_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TabSummary>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_tab_summary(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<TaskSummary> sse_decode_list_task_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TaskSummary>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_task_summary(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  AgentProvider? sse_decode_opt_box_autoadd_agent_provider(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_agent_provider(deserializer));
     } else {
       return null;
     }
@@ -733,6 +1075,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ProjectKind sse_decode_project_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ProjectKind.values[inner];
+  }
+
+  @protected
+  ProjectSummary sse_decode_project_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_name = sse_decode_String(deserializer);
+    var var_path = sse_decode_String(deserializer);
+    var var_kind = sse_decode_project_kind(deserializer);
+    var var_currentBranch = sse_decode_opt_String(deserializer);
+    var var_tasks = sse_decode_list_task_summary(deserializer);
+    return ProjectSummary(
+      id: var_id,
+      name: var_name,
+      path: var_path,
+      kind: var_kind,
+      currentBranch: var_currentBranch,
+      tasks: var_tasks,
+    );
+  }
+
+  @protected
   PullRequestInfo sse_decode_pull_request_info(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_number = sse_decode_u_64(deserializer);
@@ -746,6 +1114,40 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return PullRequestState.values[inner];
+  }
+
+  @protected
+  TabSummary sse_decode_tab_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_title = sse_decode_String(deserializer);
+    var var_provider = sse_decode_opt_box_autoadd_agent_provider(deserializer);
+    var var_running = sse_decode_bool(deserializer);
+    return TabSummary(
+      id: var_id,
+      title: var_title,
+      provider: var_provider,
+      running: var_running,
+    );
+  }
+
+  @protected
+  TaskSummary sse_decode_task_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_name = sse_decode_String(deserializer);
+    var var_sectionId = sse_decode_String(deserializer);
+    var var_branchName = sse_decode_String(deserializer);
+    var var_activeTabId = sse_decode_String(deserializer);
+    var var_tabs = sse_decode_list_tab_summary(deserializer);
+    return TaskSummary(
+      id: var_id,
+      name: var_name,
+      sectionId: var_sectionId,
+      branchName: var_branchName,
+      activeTabId: var_activeTabId,
+      tabs: var_tabs,
+    );
   }
 
   @protected
@@ -805,15 +1207,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           branchName: var_branchName,
           pr: var_pr,
         );
+      case 2:
+        var var_projects = sse_decode_list_project_summary(deserializer);
+        return WorkerReply_ProjectList(projects: var_projects);
       default:
         throw UnimplementedError('');
     }
-  }
-
-  @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
   }
 
   @protected
@@ -905,6 +1304,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_agent_provider(AgentProvider self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_agent_provider(
+    AgentProvider self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_agent_provider(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_pull_request_info(
     PullRequestInfo self,
     SseSerializer serializer,
@@ -951,12 +1371,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_project_summary(
+    List<ProjectSummary> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_project_summary(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_tab_summary(
+    List<TabSummary> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_tab_summary(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_task_summary(
+    List<TaskSummary> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_task_summary(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_agent_provider(
+    AgentProvider? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_agent_provider(self, serializer);
     }
   }
 
@@ -971,6 +1440,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (self != null) {
       sse_encode_box_autoadd_pull_request_info(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_project_kind(ProjectKind self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_project_summary(
+    ProjectSummary self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.name, serializer);
+    sse_encode_String(self.path, serializer);
+    sse_encode_project_kind(self.kind, serializer);
+    sse_encode_opt_String(self.currentBranch, serializer);
+    sse_encode_list_task_summary(self.tasks, serializer);
   }
 
   @protected
@@ -991,6 +1480,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_tab_summary(TabSummary self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.title, serializer);
+    sse_encode_opt_box_autoadd_agent_provider(self.provider, serializer);
+    sse_encode_bool(self.running, serializer);
+  }
+
+  @protected
+  void sse_encode_task_summary(TaskSummary self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.name, serializer);
+    sse_encode_String(self.sectionId, serializer);
+    sse_encode_String(self.branchName, serializer);
+    sse_encode_String(self.activeTabId, serializer);
+    sse_encode_list_tab_summary(self.tabs, serializer);
   }
 
   @protected
@@ -1048,13 +1557,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(projectId, serializer);
         sse_encode_String(branchName, serializer);
         sse_encode_opt_box_autoadd_pull_request_info(pr, serializer);
+      case WorkerReply_ProjectList(projects: final projects):
+        sse_encode_i_32(2, serializer);
+        sse_encode_list_project_summary(projects, serializer);
     }
-  }
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
   }
 }
 
@@ -1077,9 +1583,33 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
         RustLib.instance.api.rust_arc_decrement_strong_count_IrohSessionPtr,
   );
 
+  /// Subscribe this session to the live PTY byte stream for
+  /// `(section_id, tab_id)`. The daemon will forward the attached
+  /// tab's output as [`TY_DATA`] frames on the existing `subscribe`
+  /// sink. At most one attachment per session — re-issuing replaces
+  /// the previous one. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::AttachTab`.
+  Future<void> attachTab({required String sectionId, required String tabId}) =>
+      RustLib.instance.api.crateApiIrohClientIrohSessionAttachTab(
+        that: this,
+        sectionId: sectionId,
+        tabId: tabId,
+      );
+
   /// Closes the session. Safe to call multiple times.
   Future<void> close() =>
       RustLib.instance.api.crateApiIrohClientIrohSessionClose(that: this);
+
+  /// Stop forwarding PTY bytes for the currently-attached tab.
+  /// Idempotent if nothing is attached. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
+  Future<void> detachTab() =>
+      RustLib.instance.api.crateApiIrohClientIrohSessionDetachTab(that: this);
+
+  /// Ask the daemon to send back its current project list as a
+  /// [`WorkerReply::ProjectList`] frame.
+  Future<void> listProjects() => RustLib.instance.api
+      .crateApiIrohClientIrohSessionListProjects(that: this);
 
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type.
@@ -1102,6 +1632,16 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   /// returns an error. Replies arrive in the order the daemon sent them.
   Stream<WorkerReply> subscribeWorkerReplies() => RustLib.instance.api
       .crateApiIrohClientIrohSessionSubscribeWorkerReplies(that: this);
+
+  /// Resize the currently-attached tab's PTY. Silently no-ops on
+  /// the daemon when nothing is attached. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
+  Future<void> tabResize({required int cols, required int rows}) =>
+      RustLib.instance.api.crateApiIrohClientIrohSessionTabResize(
+        that: this,
+        cols: cols,
+        rows: rows,
+      );
 
   /// Ask the daemon to watch `project_path` and start forwarding
   /// [`WorkerReply::GitRefresh`] frames for it. See

@@ -15,6 +15,7 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "another-one-core/hotpath-a
 alacritty_terminal = "0.26.0"
 another-one-core = { path = "../core" }
 anyhow = "1"
+daemon-sandbox = { path = "../daemon-sandbox" }
 gpui = "0.2.2"
 hotpath = "0.15"
 libc = "0.2"
@@ -22,10 +23,12 @@ portable-pty = "0.9.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
-# `sync` only — same story as in core: desktop drains worker replies
-# via `broadcast::Receiver::try_recv` on the GPUI render tick, no
-# tokio runtime required.
-tokio = { version = "1", features = ["sync"] }
+# `sync` is used by the GPUI render tick to drain worker replies via
+# `broadcast::Receiver::try_recv` (no runtime required for that). The
+# `rt-multi-thread` feature is needed so `daemon_host` can construct a
+# dedicated `tokio::runtime::Runtime` on an OS thread for the embedded
+# iroh endpoint; GPUI itself remains tokio-free.
+tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 

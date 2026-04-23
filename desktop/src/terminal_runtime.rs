@@ -132,6 +132,13 @@ pub(crate) struct LiveTerminalRuntime {
     size: TerminalGridSize,
     dirty: bool,
     cached_snapshot: TerminalSurfaceSnapshot,
+    /// Kept around so `daemon_host` can clone it on attach (including
+    /// the deferred warm-launch attach path, where the runtime is
+    /// stashed on the prewarm slot and later moved into the live map
+    /// under a real `TerminalRuntimeKey`). The reader thread retains
+    /// its own clone for pushing bytes; this copy is read-only from
+    /// the registry's perspective.
+    output_broadcast: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 impl LiveTerminalRuntime {
@@ -151,7 +158,15 @@ impl LiveTerminalRuntime {
             size: prepared.size,
             dirty: true,
             cached_snapshot: TerminalSurfaceSnapshot::default(),
+            output_broadcast: prepared.output_broadcast,
         }
+    }
+
+    /// Clone of the PTY byte broadcast sender that
+    /// `core::terminal_launch` tees every read into. The embedded
+    /// daemon subscribes to this to forward bytes to mobile clients.
+    pub fn output_broadcast(&self) -> tokio::sync::broadcast::Sender<Vec<u8>> {
+        self.output_broadcast.clone()
     }
 
     pub fn resize(&mut self, size: TerminalGridSize) -> anyhow::Result<bool> {
@@ -268,6 +283,14 @@ impl LiveTerminalRuntime {
 
     pub fn kill(&mut self) {
         let _ = self.child_killer.kill();
+    }
+
+    /// Clone the shared writer handle. The embedded daemon's
+    /// `TerminalRegistry` clones this on tab launch so incoming mobile
+    /// keystrokes can feed into the same `Arc<Mutex<…>>` the desktop
+    /// writes to. See `daemon_host::DesktopTerminalRegistry::tab_input`.
+    pub fn writer_handle(&self) -> Arc<Mutex<Box<dyn Write + Send>>> {
+        self.writer.clone()
     }
 }
 

@@ -175,6 +175,7 @@ dependencies = [
  "another-one-core",
  "anyhow",
  "cocoa 0.26.0",
+ "daemon-sandbox",
  "dirs 5.0.1",
  "gpui",
  "hotpath",

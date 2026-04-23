@@ -116,6 +116,50 @@ class IrohTransport implements TerminalTransport {
     unawaited(session.watchProject(projectPath: projectPath));
   }
 
+  /// Ask the daemon to send its project list. The response arrives on
+  /// [workerReplies] as a `WorkerReply_ProjectList`. Returns a
+  /// future for callers that want to surface send errors; most call
+  /// sites can ignore it (the list will simply not arrive).
+  Future<void> listProjects() async {
+    final session = _session;
+    if (session == null) return;
+    await session.listProjects();
+  }
+
+  /// Attach this session's PTY-byte stream to a specific live tab on
+  /// the daemon. Replaces any previous attachment; daemon begins
+  /// forwarding TY_DATA frames for `tabId` under section `sectionId`.
+  ///
+  /// After calling, subscribe to [incoming] to receive bytes for the
+  /// attached tab. Calling [attachTab] again with a different tab
+  /// implicitly detaches the previous one.
+  Future<void> attachTab({
+    required String sectionId,
+    required String tabId,
+  }) async {
+    final session = _session;
+    if (session == null) return;
+    await session.attachTab(sectionId: sectionId, tabId: tabId);
+  }
+
+  /// Stop receiving PTY bytes for the currently-attached tab. Safe to
+  /// call without an active attachment (no-op).
+  Future<void> detachTab() async {
+    final session = _session;
+    if (session == null) return;
+    await session.detachTab();
+  }
+
+  /// Resize the currently-attached tab's PTY. Unlike [sendResize],
+  /// this targets the tab on the daemon's side, not a single-session
+  /// PTY — required when the daemon is bridging into a
+  /// desktop-hosted live tab.
+  Future<void> tabResize({required int cols, required int rows}) async {
+    final session = _session;
+    if (session == null) return;
+    await session.tabResize(cols: cols, rows: rows);
+  }
+
   @override
   void sendBytes(List<int> bytes) {
     final session = _session;

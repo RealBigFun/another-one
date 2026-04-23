@@ -2,8 +2,12 @@
 name = "daemon-sandbox"
 version = "0.1.0"
 edition = "2021"
-description = "Throwaway daemon for mobile-companion sandbox: bridges a PTY over WebSocket and Iroh QUIC"
+description = "Daemon for mobile-companion. Library form is embedded by the desktop app; the binary form is a standalone PTY sandbox for smoke-testing."
 publish = false
+
+[lib]
+name = "daemon_sandbox"
+path = "src/lib.rs"
 
 [[bin]]
 name = "daemon-sandbox"

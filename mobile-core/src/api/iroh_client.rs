@@ -47,6 +47,10 @@ const MAX_FRAME_BYTES: usize = 64 * 1024;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Control {
+    /// Legacy resize for the standalone sandbox shell. On the embedded
+    /// (desktop-hosted) daemon, use [`Control::TabResize`] after
+    /// [`Control::AttachTab`] — that routes the resize to the specific
+    /// tab's PTY. Kept for backward compat with the smoke-test binary.
     Resize {
         cols: u16,
         rows: u16,
@@ -56,6 +60,30 @@ enum Control {
     /// `daemon-sandbox/src/frame.rs::Control::WatchProject`.
     WatchProject {
         project_path: String,
+    },
+    /// Ask the daemon to send back its current project list as a
+    /// [`WorkerReply::ProjectList`] frame. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ListProjects`.
+    ListProjects,
+    /// Subscribe to the live PTY byte stream for `(section_id, tab_id)`.
+    /// The daemon forwards the stream as a series of [`TY_DATA`] frames
+    /// until the session closes or another `AttachTab` / `DetachTab`
+    /// arrives — at most one attachment per session. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::AttachTab`.
+    AttachTab {
+        section_id: String,
+        tab_id: String,
+    },
+    /// Stop forwarding PTY bytes for the currently-attached tab.
+    /// Idempotent if nothing is attached. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
+    DetachTab,
+    /// Resize the currently-attached tab's PTY. Silently no-ops when
+    /// nothing is attached. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
+    TabResize {
+        cols: u16,
+        rows: u16,
     },
 }
 
@@ -89,6 +117,78 @@ pub enum WorkerReply {
         branch_name: String,
         pr: Option<PullRequestInfo>,
     },
+    /// Response to [`Control::ListProjects`]. Order matches the
+    /// desktop sidebar. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectList`.
+    ProjectList {
+        projects: Vec<ProjectSummary>,
+    },
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ProjectSummary`. Contains
+/// the nested task + tab tree so one `ListProjects` response is enough
+/// for the mobile drawer + task page to render without follow-up
+/// round-trips.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ProjectSummary {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub kind: ProjectKind,
+    pub current_branch: Option<String>,
+    pub tasks: Vec<TaskSummary>,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::TaskSummary`. Carries the
+/// `section_id` half of the compound `TerminalRuntimeKey` used by
+/// [`Control::AttachTab`].
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TaskSummary {
+    pub id: String,
+    pub name: String,
+    pub section_id: String,
+    pub branch_name: String,
+    pub active_tab_id: String,
+    pub tabs: Vec<TabSummary>,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
+/// reflects whether the desktop has a live `LiveTerminalRuntime` for
+/// this tab right now; `AttachTab` on a non-running tab yields no
+/// data.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TabSummary {
+    pub id: String,
+    pub title: String,
+    pub provider: Option<AgentProvider>,
+    pub running: bool,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ProjectKind`.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectKind {
+    Root,
+    Worktree,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form
+/// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
+/// `Shell` is the catch-all for plain-PTY tabs with no agent
+/// provider set.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProvider {
+    ClaudeCode,
+    CursorAgent,
+    Codex,
+    Pi,
+    Gemini,
+    OpenCode,
+    Amp,
+    RovoDev,
+    Forge,
+    Shell,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::PullRequestInfo`.
@@ -447,6 +547,45 @@ impl IrohSession {
     pub async fn watch_project(&self, project_path: String) -> anyhow::Result<()> {
         let payload = serde_json::to_vec(&Control::WatchProject { project_path })
             .context("encode watch_project")?;
+        self.send_frame(TY_CONTROL, payload).await
+    }
+
+    /// Ask the daemon to send back its current project list as a
+    /// [`WorkerReply::ProjectList`] frame.
+    pub async fn list_projects(&self) -> anyhow::Result<()> {
+        let payload = serde_json::to_vec(&Control::ListProjects).context("encode list_projects")?;
+        self.send_frame(TY_CONTROL, payload).await
+    }
+
+    /// Subscribe this session to the live PTY byte stream for
+    /// `(section_id, tab_id)`. The daemon will forward the attached
+    /// tab's output as [`TY_DATA`] frames on the existing `subscribe`
+    /// sink. At most one attachment per session — re-issuing replaces
+    /// the previous one. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::AttachTab`.
+    pub async fn attach_tab(&self, section_id: String, tab_id: String) -> anyhow::Result<()> {
+        let payload = serde_json::to_vec(&Control::AttachTab {
+            section_id,
+            tab_id,
+        })
+        .context("encode attach_tab")?;
+        self.send_frame(TY_CONTROL, payload).await
+    }
+
+    /// Stop forwarding PTY bytes for the currently-attached tab.
+    /// Idempotent if nothing is attached. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
+    pub async fn detach_tab(&self) -> anyhow::Result<()> {
+        let payload = serde_json::to_vec(&Control::DetachTab).context("encode detach_tab")?;
+        self.send_frame(TY_CONTROL, payload).await
+    }
+
+    /// Resize the currently-attached tab's PTY. Silently no-ops on
+    /// the daemon when nothing is attached. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
+    pub async fn tab_resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        let payload =
+            serde_json::to_vec(&Control::TabResize { cols, rows }).context("encode tab_resize")?;
         self.send_frame(TY_CONTROL, payload).await
     }
 
