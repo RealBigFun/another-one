@@ -28,11 +28,26 @@ pub const TY_WORKER_REPLY: u8 = 0x02;
 /// paired peer can make the daemon allocate per frame.
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
-/// Control messages (type=1 frames). Payload is JSON.
+/// Client → daemon session-control messages (type=1 frames). Payload
+/// is JSON. Server → client control is not currently used (the daemon
+/// pushes data via `0x00` and worker replies via `0x02`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    /// Ask the daemon to spawn the `git_refresh` worker for
+    /// `project_path` and forward its reply as a
+    /// [`TY_WORKER_REPLY`] frame. Per-session; reissuing replaces
+    /// the previous subscription. `project_path` is an absolute
+    /// path on the daemon host — the paired client is trusted to
+    /// ask for paths it's allowed to see (the TOFU allowlist is
+    /// the trust boundary for the sandbox).
+    WatchProject {
+        project_path: String,
+    },
 }
 
 /// Worker replies (type=2 frames). Payload is JSON. Daemon → client

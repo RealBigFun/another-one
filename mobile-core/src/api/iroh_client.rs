@@ -41,10 +41,26 @@ const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 /// Messages that can be sent via a type=1 control frame. Extend in lock-step
 /// with `daemon-sandbox/src/frame.rs::Control`.
+///
+/// Serialize-only mirror: the Dart side doesn't need to decode control
+/// frames (they're strictly client → daemon today). Adding the
+/// `WatchProject` variant here so the serde schema matches the
+/// daemon's even before we add a public FRB method that sends it.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
 enum Control {
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    /// Ask the daemon to watch `project_path` and start pushing
+    /// [`WorkerReply::GitRefresh`] frames for it. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::WatchProject`. Not yet
+    /// sent from Dart — a future PR will add a public FRB method.
+    WatchProject {
+        project_path: String,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
