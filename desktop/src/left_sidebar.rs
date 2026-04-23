@@ -781,6 +781,32 @@ impl AnotherOneApp {
             return;
         }
 
+        let terminal_overlay_open = self.workspace_pane.read(cx).terminal_tab_menu.is_some();
+        if terminal_overlay_open && ev.keystroke.key.as_str() == "escape" {
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.terminal_tab_menu = None;
+                cx.notify();
+            });
+            cx.stop_propagation();
+            return;
+        }
+
+        let pinned_confirm_open = self
+            .workspace_pane
+            .read(cx)
+            .pinned_tab_close_confirm
+            .is_some();
+        if pinned_confirm_open {
+            if ev.keystroke.key.as_str() == "escape" {
+                self.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.pinned_tab_close_confirm = None;
+                    cx.notify();
+                });
+            }
+            cx.stop_propagation();
+            return;
+        }
+
         if self.handle_sidebar_task_rename_key_down(ev, cx) {
             return;
         }

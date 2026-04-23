@@ -393,6 +393,10 @@ pub struct PersistedTerminalTab {
     pub id: String,
     pub title: String,
     #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub fixed_title: Option<String>,
+    #[serde(default)]
     pub provider: Option<AgentProviderKind>,
     #[serde(default)]
     pub launch_config: Option<TerminalLaunchConfig>,
@@ -3037,6 +3041,55 @@ mod tests {
         }
     }
 
+    #[test]
+    fn persisted_terminal_tab_round_trips_pinned() {
+        let tab = PersistedTerminalTab {
+            id: "tab-1".to_string(),
+            title: "Codex".to_string(),
+            pinned: true,
+            fixed_title: None,
+            provider: None,
+            launch_config: None,
+            restore_status: Default::default(),
+        };
+
+        let json = serde_json::to_string(&tab).expect("serialize persisted tab");
+        let restored: PersistedTerminalTab =
+            serde_json::from_str(&json).expect("deserialize persisted tab");
+
+        assert!(restored.pinned);
+    }
+
+    #[test]
+    fn persisted_terminal_tab_round_trips_fixed_title() {
+        let tab = PersistedTerminalTab {
+            id: "tab-1".to_string(),
+            title: "Run tests".to_string(),
+            pinned: false,
+            fixed_title: Some("Run tests".to_string()),
+            provider: None,
+            launch_config: None,
+            restore_status: Default::default(),
+        };
+
+        let json = serde_json::to_string(&tab).expect("serialize persisted tab");
+        let restored: PersistedTerminalTab =
+            serde_json::from_str(&json).expect("deserialize persisted tab");
+
+        assert_eq!(restored.fixed_title.as_deref(), Some("Run tests"));
+    }
+
+    #[test]
+    fn persisted_terminal_tab_defaults_missing_pinned_to_false() {
+        let json = r#"{"id":"tab-1","title":"Codex"}"#;
+
+        let restored: PersistedTerminalTab =
+            serde_json::from_str(json).expect("deserialize older persisted tab");
+
+        assert!(!restored.pinned);
+        assert_eq!(restored.fixed_title, None);
+    }
+
     fn sample_project_store(root_project: Project) -> super::ProjectStore {
         let file_path = std::env::temp_dir().join(format!(
             "another-one-project-store-test-{}.json",
@@ -3360,6 +3413,8 @@ mod tests {
                             PersistedTerminalTab {
                                 id: "0".to_string(),
                                 title: "Terminal".to_string(),
+                                pinned: false,
+                                fixed_title: None,
                                 provider: None,
                                 launch_config: Some(TerminalLaunchConfig::default()),
                                 restore_status: TerminalRestoreStatus::NotStarted,
@@ -3367,6 +3422,8 @@ mod tests {
                             PersistedTerminalTab {
                                 id: "1".to_string(),
                                 title: "Claude Code".to_string(),
+                                pinned: false,
+                                fixed_title: None,
                                 provider: Some(AgentProviderKind::ClaudeCode),
                                 launch_config: Some(
                                     TerminalLaunchConfig::for_provider(
@@ -3401,6 +3458,8 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: "0".to_string(),
                             title: "Pi".to_string(),
+                            pinned: false,
+                            fixed_title: None,
                             provider: Some(AgentProviderKind::Pi),
                             launch_config: Some(
                                 TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)
@@ -3432,6 +3491,8 @@ mod tests {
                             PersistedTerminalTab {
                                 id: "0".to_string(),
                                 title: "Terminal".to_string(),
+                                pinned: false,
+                                fixed_title: None,
                                 provider: None,
                                 launch_config: Some(TerminalLaunchConfig::default()),
                                 restore_status: TerminalRestoreStatus::NotStarted,
@@ -3439,6 +3500,8 @@ mod tests {
                             PersistedTerminalTab {
                                 id: "1".to_string(),
                                 title: "Claude Code".to_string(),
+                                pinned: false,
+                                fixed_title: None,
                                 provider: Some(AgentProviderKind::ClaudeCode),
                                 launch_config: Some(
                                     TerminalLaunchConfig::for_provider(
@@ -3465,6 +3528,8 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: "0".to_string(),
                             title: "Pi".to_string(),
+                            pinned: false,
+                            fixed_title: None,
                             provider: Some(AgentProviderKind::Pi),
                             launch_config: Some(
                                 TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)
