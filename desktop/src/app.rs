@@ -1054,16 +1054,13 @@ pub struct AnotherOneApp {
     warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
     /// Live PTY-backed terminal runtimes keyed by section and tab id.
     live_terminal_runtimes: HashMap<TerminalRuntimeKey, LiveTerminalRuntime>,
-    /// Child process ids for attached terminal tabs shown in the resource indicator.
-    terminal_processes: HashMap<TerminalRuntimeKey, TrackedProcess>,
+    /// GPUI-free bookkeeping for per-tab terminal state: recent output,
+    /// last error, tracked process, pending-launch flag. Backed by
+    /// `another_one_core::terminal_manager::TerminalManager` so it can
+    /// be consumed by the headless daemon too.
+    pub(crate) terminal_manager: another_one_core::terminal_manager::TerminalManager,
     /// Cached render snapshots for live terminal tabs.
     terminal_surface_snapshots: HashMap<TerminalRuntimeKey, TerminalSurfaceSnapshot>,
-    /// Launches currently in flight.
-    pending_terminal_launches: HashSet<TerminalRuntimeKey>,
-    /// Recent terminal output used for restore-failure detection.
-    terminal_recent_output: HashMap<TerminalRuntimeKey, String>,
-    /// Last launch/exit error for a terminal tab.
-    terminal_runtime_errors: HashMap<TerminalRuntimeKey, String>,
     /// Fractional wheel delta carried across scroll events for terminal scrollback.
     terminal_scroll_remainder_lines: HashMap<TerminalRuntimeKey, f32>,
     /// Mouse selection state for the currently selected terminal text.
@@ -2871,11 +2868,8 @@ impl AnotherOneApp {
             warm_terminal_launch_sender,
             warm_terminal_launch_receiver,
             live_terminal_runtimes: HashMap::new(),
-            terminal_processes: HashMap::new(),
+            terminal_manager: another_one_core::terminal_manager::TerminalManager::new(),
             terminal_surface_snapshots: HashMap::new(),
-            pending_terminal_launches: HashSet::new(),
-            terminal_recent_output: HashMap::new(),
-            terminal_runtime_errors: HashMap::new(),
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
             prewarmed_terminal_launches: HashMap::new(),
@@ -3038,7 +3032,8 @@ impl AnotherOneApp {
 
     pub(crate) fn refresh_resource_usage(&mut self) -> bool {
         let tracked_processes = self
-            .terminal_processes
+            .terminal_manager
+            .processes
             .values()
             .cloned()
             .chain(self.prewarmed_terminal_processes.values().cloned())
@@ -3133,13 +3128,13 @@ impl AnotherOneApp {
 
     fn append_terminal_recent_output(&mut self, key: &TerminalRuntimeKey, bytes: &[u8]) {
         let text = String::from_utf8_lossy(bytes);
-        let buffer = self.terminal_recent_output.entry(key.clone()).or_default();
+        let buffer = self.terminal_manager.recent_output.entry(key.clone()).or_default();
         buffer.push_str(&text);
         trim_to_recent_output_limit(buffer);
     }
 
     fn clear_terminal_recent_output(&mut self, key: &TerminalRuntimeKey) {
-        self.terminal_recent_output.remove(key);
+        self.terminal_manager.recent_output.remove(key);
     }
 
     fn maybe_retry_claude_restore(
@@ -3147,7 +3142,7 @@ impl AnotherOneApp {
         key: &TerminalRuntimeKey,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.pending_terminal_launches.contains(key) {
+        if self.terminal_manager.pending_launches.contains(key) {
             return false;
         }
 
@@ -3162,17 +3157,16 @@ impl AnotherOneApp {
         }
 
         let recent_output = self
-            .terminal_recent_output
-            .get(key)
-            .map(String::as_str)
+            .terminal_manager
+            .recent_output_for(key)
             .unwrap_or_default();
         if !output_mentions_missing_claude_conversation(recent_output) {
             return false;
         }
 
         let launch_config = request.launch_config.with_session(None);
-        self.pending_terminal_launches.insert(key.clone());
-        self.terminal_runtime_errors.remove(key);
+        self.terminal_manager.pending_launches.insert(key.clone());
+        self.terminal_manager.errors.remove(key);
         self.clear_terminal_recent_output(key);
         self.update_terminal_tab(key, cx, |tab| {
             tab.launch_config = launch_config.clone();
@@ -3381,8 +3375,8 @@ impl AnotherOneApp {
 
         self.prewarmed_terminal_processes.remove(&launch_id);
         if let Some(key) = launch.attached_tab {
-            self.pending_terminal_launches.remove(&key);
-            self.terminal_processes.remove(&key);
+            self.terminal_manager.pending_launches.remove(&key);
+            self.terminal_manager.processes.remove(&key);
         }
         if let Some(mut runtime) = launch.runtime {
             runtime.kill();
@@ -3418,7 +3412,7 @@ impl AnotherOneApp {
 
         launch.attached_tab = Some(key.clone());
         if let Some(process) = self.prewarmed_terminal_processes.remove(&launch_id) {
-            self.terminal_processes.insert(
+            self.terminal_manager.processes.insert(
                 key.clone(),
                 TrackedProcess {
                     pid: process.pid,
@@ -3434,8 +3428,8 @@ impl AnotherOneApp {
         }
 
         if let Some(mut runtime) = launch.runtime.take() {
-            self.pending_terminal_launches.remove(&key);
-            self.terminal_runtime_errors.remove(&key);
+            self.terminal_manager.pending_launches.remove(&key);
+            self.terminal_manager.errors.remove(&key);
             self.terminal_surface_snapshots
                 .insert(key.clone(), runtime.snapshot());
             self.live_terminal_runtimes.insert(key.clone(), runtime);
@@ -3445,7 +3439,7 @@ impl AnotherOneApp {
                 tab.restore_status = TerminalRestoreStatus::Ready;
             });
         } else {
-            self.pending_terminal_launches.insert(key.clone());
+            self.terminal_manager.pending_launches.insert(key.clone());
             let launch_config = launch.launch_config.clone();
             self.update_terminal_tab(&key, cx, |tab| {
                 tab.launch_config = launch_config.clone();
@@ -3477,7 +3471,7 @@ impl AnotherOneApp {
                 }
                 Ok(false) => {}
                 Err(error) => {
-                    self.terminal_runtime_errors
+                    self.terminal_manager.errors
                         .insert(request.key.clone(), error.to_string());
                     self.show_error_toast(error.to_string(), cx);
                 }
@@ -3485,11 +3479,11 @@ impl AnotherOneApp {
             return;
         }
 
-        if self.pending_terminal_launches.contains(&request.key) {
+        if self.terminal_manager.pending_launches.contains(&request.key) {
             return;
         }
 
-        self.pending_terminal_launches.insert(request.key.clone());
+        self.terminal_manager.pending_launches.insert(request.key.clone());
         self.update_terminal_tab(&request.key, cx, |tab| {
             tab.restore_status = TerminalRestoreStatus::Launching;
         });
@@ -3514,11 +3508,11 @@ impl AnotherOneApp {
                     launch_config,
                     process_id,
                 }) => {
-                    self.pending_terminal_launches.remove(&key);
+                    self.terminal_manager.pending_launches.remove(&key);
                     self.clear_terminal_recent_output(&key);
-                    self.terminal_runtime_errors.remove(&key);
+                    self.terminal_manager.errors.remove(&key);
                     if let Some(process_id) = process_id {
-                        self.terminal_processes.insert(
+                        self.terminal_manager.processes.insert(
                             key.clone(),
                             self.tracked_process_for_tab(&key, &launch_config, process_id),
                         );
@@ -3572,16 +3566,16 @@ impl AnotherOneApp {
                 }
                 Ok(TerminalLaunchReply::Exited { key, status }) => {
                     if self.maybe_retry_claude_restore(&key, cx) {
-                        self.terminal_processes.remove(&key);
+                        self.terminal_manager.processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
                         self.terminal_surface_snapshots.remove(&key);
                         updated = true;
                         continue;
                     }
-                    self.pending_terminal_launches.remove(&key);
-                    self.terminal_processes.remove(&key);
+                    self.terminal_manager.pending_launches.remove(&key);
+                    self.terminal_manager.processes.remove(&key);
                     self.terminal_surface_snapshots.remove(&key);
-                    self.terminal_runtime_errors.insert(key.clone(), status);
+                    self.terminal_manager.errors.insert(key.clone(), status);
                     self.clear_terminal_recent_output(&key);
                     self.live_terminal_runtimes.remove(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
@@ -3590,11 +3584,11 @@ impl AnotherOneApp {
                     updated = true;
                 }
                 Ok(TerminalLaunchReply::Failed { key, message }) => {
-                    self.pending_terminal_launches.remove(&key);
-                    self.terminal_processes.remove(&key);
+                    self.terminal_manager.pending_launches.remove(&key);
+                    self.terminal_manager.processes.remove(&key);
                     self.live_terminal_runtimes.remove(&key);
                     self.terminal_surface_snapshots.remove(&key);
-                    self.terminal_runtime_errors
+                    self.terminal_manager.errors
                         .insert(key.clone(), message.clone());
                     self.clear_terminal_recent_output(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
@@ -3641,14 +3635,14 @@ impl AnotherOneApp {
 
                     if let Some(key) = attached_key {
                         if let Some(process_id) = process_id {
-                            self.terminal_processes.insert(
+                            self.terminal_manager.processes.insert(
                                 key.clone(),
                                 self.tracked_process_for_tab(&key, &launch_config, process_id),
                             );
                         }
-                        self.pending_terminal_launches.remove(&key);
+                        self.terminal_manager.pending_launches.remove(&key);
                         self.clear_terminal_recent_output(&key);
-                        self.terminal_runtime_errors.remove(&key);
+                        self.terminal_manager.errors.remove(&key);
                         self.terminal_surface_snapshots
                             .insert(key.clone(), runtime.snapshot());
                         self.live_terminal_runtimes.insert(key.clone(), runtime);
@@ -3747,16 +3741,16 @@ impl AnotherOneApp {
 
                     if let Some(key) = attached_key {
                         if self.maybe_retry_claude_restore(&key, cx) {
-                            self.terminal_processes.remove(&key);
+                            self.terminal_manager.processes.remove(&key);
                             self.live_terminal_runtimes.remove(&key);
                             self.terminal_surface_snapshots.remove(&key);
                             updated = true;
                             continue;
                         }
-                        self.pending_terminal_launches.remove(&key);
-                        self.terminal_processes.remove(&key);
+                        self.terminal_manager.pending_launches.remove(&key);
+                        self.terminal_manager.processes.remove(&key);
                         self.terminal_surface_snapshots.remove(&key);
-                        self.terminal_runtime_errors.insert(key.clone(), status);
+                        self.terminal_manager.errors.insert(key.clone(), status);
                         self.clear_terminal_recent_output(&key);
                         self.live_terminal_runtimes.remove(&key);
                         self.update_terminal_tab(&key, cx, |tab| {
@@ -3779,11 +3773,11 @@ impl AnotherOneApp {
                     }
 
                     if let Some(key) = attached_key {
-                        self.pending_terminal_launches.remove(&key);
-                        self.terminal_processes.remove(&key);
+                        self.terminal_manager.pending_launches.remove(&key);
+                        self.terminal_manager.processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
                         self.terminal_surface_snapshots.remove(&key);
-                        self.terminal_runtime_errors
+                        self.terminal_manager.errors
                             .insert(key.clone(), message.clone());
                         self.clear_terminal_recent_output(&key);
                         self.update_terminal_tab(&key, cx, |tab| {
@@ -3809,11 +3803,11 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn terminal_error_for(&self, key: &TerminalRuntimeKey) -> Option<&str> {
-        self.terminal_runtime_errors.get(key).map(String::as_str)
+        self.terminal_manager.errors.get(key).map(String::as_str)
     }
 
     pub(crate) fn terminal_is_pending(&self, key: &TerminalRuntimeKey) -> bool {
-        self.pending_terminal_launches.contains(key)
+        self.terminal_manager.pending_launches.contains(key)
     }
 
     pub(crate) fn active_terminal_key(&self, cx: &App) -> Option<TerminalRuntimeKey> {
@@ -4147,14 +4141,14 @@ impl AnotherOneApp {
             self.terminal_selection = None;
         }
         self.terminal_scroll_remainder_lines.remove(&key);
-        self.terminal_processes.remove(&key);
+        self.terminal_manager.processes.remove(&key);
         self.cancel_prewarmed_launch_for_tab(&key);
         if let Some(mut runtime) = remove_terminal_runtime_state(
             &mut self.live_terminal_runtimes,
             &mut self.terminal_surface_snapshots,
-            &mut self.pending_terminal_launches,
-            &mut self.terminal_recent_output,
-            &mut self.terminal_runtime_errors,
+            &mut self.terminal_manager.pending_launches,
+            &mut self.terminal_manager.recent_output,
+            &mut self.terminal_manager.errors,
             &key,
         ) {
             runtime.kill();
@@ -6553,7 +6547,7 @@ impl AnotherOneApp {
     }
 
     fn refresh_timer_interval(&self) -> Duration {
-        if !self.pending_terminal_launches.is_empty()
+        if !self.terminal_manager.pending_launches.is_empty()
             || !self.live_terminal_runtimes.is_empty()
             || !self.prewarmed_terminal_launches.is_empty()
             || self.resource_indicator_open

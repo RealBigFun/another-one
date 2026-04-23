@@ -18,8 +18,10 @@
 pub mod agents;
 pub mod git_actions;
 pub mod open_in;
+pub mod process;
 pub mod project_store;
 pub mod section;
 pub mod shortcuts;
 pub mod terminal_launch;
+pub mod terminal_manager;
 pub mod terminal_types;
