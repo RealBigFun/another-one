@@ -8,6 +8,46 @@ use std::process::{Command, Output, Stdio};
 
 use serde::Deserialize;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectPagePullRequest {
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+    pub branch: String,
+    pub author: String,
+    pub lines_added: i32,
+    pub lines_removed: i32,
+    pub draft: bool,
+    pub review_required: bool,
+    pub review_requested_to_me: bool,
+    pub created_by_me: bool,
+    pub state: PullRequestState,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubProjectPagePullRequestRecord {
+    number: u64,
+    url: String,
+    title: String,
+    #[serde(rename = "headRefName")]
+    head_ref_name: Option<String>,
+    #[serde(rename = "isDraft")]
+    is_draft: Option<bool>,
+    additions: Option<i32>,
+    deletions: Option<i32>,
+    state: Option<String>,
+    #[serde(rename = "mergedAt")]
+    merged_at: Option<String>,
+    author: Option<GitHubActorRecord>,
+    #[serde(rename = "reviewDecision")]
+    review_decision: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubActorRecord {
+    login: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullRequestState {
     Open,
@@ -1241,4 +1281,86 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+pub fn find_project_pull_requests(
+    repo_path: &Path,
+    filter_index: usize,
+    query: Option<&str>,
+) -> Result<Vec<ProjectPagePullRequest>, String> {
+    let gh = find_gh_cli().ok_or_else(|| {
+        "Could not load pull requests. GitHub CLI (`gh`) is not installed or not on the app PATH."
+            .to_string()
+    })?;
+
+    let mut search_terms = Vec::new();
+    match filter_index {
+        1 => search_terms.push("review-requested:@me".to_string()),
+        2 => search_terms.push("author:@me".to_string()),
+        3 => search_terms.push("draft:true".to_string()),
+        _ => {}
+    }
+    if let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) {
+        search_terms.push(query.to_string());
+    }
+
+    let mut command = Command::new(gh);
+    command.args([
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "100",
+        "--json",
+        "number,url,title,headRefName,isDraft,additions,deletions,state,mergedAt,author,reviewDecision",
+    ]);
+    if !search_terms.is_empty() {
+        command.arg("--search");
+        command.arg(search_terms.join(" "));
+    }
+
+    let output = command
+        .current_dir(repo_path)
+        .output()
+        .map_err(|err| format!("Could not load pull requests: {err}"))?;
+
+    if !output.status.success() {
+        return Err(command_failure("Could not load pull requests", &output));
+    }
+
+    let records = serde_json::from_slice::<Vec<GitHubProjectPagePullRequestRecord>>(&output.stdout)
+        .map_err(|err| format!("Could not parse pull requests: {err}"))?;
+
+    Ok(records
+        .into_iter()
+        .map(|record| {
+            let state = normalize_pull_request_state(&GitHubPullRequestRecord {
+                number: record.number,
+                url: record.url.clone(),
+                state: record.state.clone(),
+                merged_at: record.merged_at.clone(),
+                updated_at: None,
+            });
+            let author = record
+                .author
+                .and_then(|author| author.login)
+                .unwrap_or_else(|| "unknown".to_string());
+            let review_decision = record.review_decision.unwrap_or_default();
+            ProjectPagePullRequest {
+                number: record.number,
+                url: record.url,
+                title: record.title,
+                branch: record.head_ref_name.unwrap_or_default(),
+                author: author.clone(),
+                lines_added: record.additions.unwrap_or(0),
+                lines_removed: record.deletions.unwrap_or(0),
+                draft: record.is_draft.unwrap_or(false),
+                review_required: review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED"),
+                review_requested_to_me: filter_index == 1,
+                created_by_me: author.eq_ignore_ascii_case("fazulk"),
+                state,
+            }
+        })
+        .collect())
 }
