@@ -214,6 +214,26 @@ impl AnotherOneApp {
             .collect()
     }
 
+    fn removed_repo_ids_without_remaining_projects(
+        projects: &[Project],
+        removed_project_ids: &std::collections::HashSet<String>,
+    ) -> std::collections::HashSet<String> {
+        let removed_repo_ids = projects
+            .iter()
+            .filter(|project| removed_project_ids.contains(&project.id))
+            .map(|project| project.repo_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+
+        removed_repo_ids
+            .into_iter()
+            .filter(|repo_id| {
+                !projects.iter().any(|project| {
+                    project.repo_id == *repo_id && !removed_project_ids.contains(&project.id)
+                })
+            })
+            .collect()
+    }
+
     fn project_group_remove_confirm(
         &self,
         root_project_id: &str,
@@ -249,13 +269,10 @@ impl AnotherOneApp {
     fn remove_project_group_ids(&mut self, project_ids: &[String], cx: &mut Context<Self>) {
         let project_id_set: std::collections::HashSet<String> =
             project_ids.iter().cloned().collect();
-        let removed_repo_ids: std::collections::HashSet<String> = self
-            .project_store
-            .projects
-            .iter()
-            .filter(|project| project_id_set.contains(&project.id))
-            .map(|project| project.repo_id.clone())
-            .collect();
+        let removed_repo_ids = Self::removed_repo_ids_without_remaining_projects(
+            &self.project_store.projects,
+            &project_id_set,
+        );
 
         for project_id in project_ids {
             self.project_store.remove_project(project_id);
@@ -2950,6 +2967,8 @@ fn control_key_byte(value: &str) -> Option<u8> {
 mod tests {
     use super::*;
     use gpui::{KeyDownEvent, Keystroke, Modifiers};
+    use std::collections::HashSet;
+    use std::path::PathBuf;
 
     fn key_event(key: &str, key_char: Option<&str>, modifiers: Modifiers) -> KeyDownEvent {
         KeyDownEvent {
@@ -2989,6 +3008,65 @@ mod tests {
             macos_terminal_command_bytes(&key_event("delete", None, Modifiers::command())),
             Some(vec![0x0b])
         );
+    }
+
+    fn sample_project(
+        id: &str,
+        repo_id: &str,
+        kind: crate::project_store::ProjectKind,
+        worktree_name: Option<&str>,
+    ) -> Project {
+        Project {
+            id: id.to_string(),
+            repo_id: repo_id.to_string(),
+            name: id.to_string(),
+            path: PathBuf::from(format!("/tmp/{id}")),
+            kind,
+            checkout: crate::project_store::ProjectCheckoutState::default(),
+            branch_settings: crate::project_store::ProjectBranchSettings::default(),
+            worktree_name: worktree_name.map(str::to_string),
+            repo_common_dir: None,
+        }
+    }
+
+    #[test]
+    fn removed_repo_ids_without_remaining_projects_keeps_expanded_repo_when_root_remains() {
+        let projects = vec![
+            sample_project(
+                "root",
+                "repo-a",
+                crate::project_store::ProjectKind::Root,
+                None,
+            ),
+            sample_project(
+                "wt-1",
+                "repo-a",
+                crate::project_store::ProjectKind::Worktree,
+                Some("wt-1"),
+            ),
+        ];
+        let removed = HashSet::from(["wt-1".to_string()]);
+
+        let removed_repo_ids =
+            AnotherOneApp::removed_repo_ids_without_remaining_projects(&projects, &removed);
+
+        assert!(removed_repo_ids.is_empty());
+    }
+
+    #[test]
+    fn removed_repo_ids_without_remaining_projects_removes_repo_when_last_project_is_removed() {
+        let projects = vec![sample_project(
+            "root",
+            "repo-a",
+            crate::project_store::ProjectKind::Root,
+            None,
+        )];
+        let removed = HashSet::from(["root".to_string()]);
+
+        let removed_repo_ids =
+            AnotherOneApp::removed_repo_ids_without_remaining_projects(&projects, &removed);
+
+        assert_eq!(removed_repo_ids, HashSet::from(["repo-a".to_string()]));
     }
 }
 
