@@ -31,8 +31,12 @@ pub struct PtySession {
 }
 
 impl PtySession {
-    /// Opens a PTY and spawns the user's `$SHELL` (falling back to `bash`)
-    /// with `TERM=xterm-256color` and `cwd=$HOME`.
+    /// Opens a PTY and spawns a command with `TERM=xterm-256color` and
+    /// `cwd=$HOME`. Command resolution order:
+    ///   1. `AGENT_CMD` env var (e.g. `AGENT_CMD=claude`) — lets you point the
+    ///      sandbox at an agent CLI without overloading `$SHELL`.
+    ///   2. `$SHELL` — your login shell.
+    ///   3. `bash` — hard fallback.
     pub fn spawn(cols: u16, rows: u16) -> anyhow::Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -44,7 +48,9 @@ impl PtySession {
             })
             .context("openpty")?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
+        let shell = std::env::var("AGENT_CMD")
+            .or_else(|_| std::env::var("SHELL"))
+            .unwrap_or_else(|_| "bash".to_string());
         let mut cmd = CommandBuilder::new(&shell);
         cmd.env("TERM", "xterm-256color");
         if let Ok(home) = std::env::var("HOME") {
