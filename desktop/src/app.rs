@@ -300,13 +300,10 @@ impl TerminalTab {
     }
 }
 
-struct GitRefreshReply {
-    project_id: String,
-    include_metadata: bool,
-    state: ProjectGitState,
-    commit_state: Option<Result<ProjectBranchCommitState, String>>,
-    compare_state: Option<Result<ProjectBranchCompareState, String>>,
-}
+// Moved to `another_one_core::git_service::GitRefreshReply`; the
+// struct stays named the same at this path so existing call sites
+// keep compiling, but the body + the spawn worker now live in core.
+use another_one_core::git_service::GitRefreshReply;
 
 enum GitActionReply {
     Progress {
@@ -350,36 +347,11 @@ struct TerminalRuntimeRequest {
     size: TerminalGridSize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ChangedFilesGitMutation {
-    StageFile { changed: ChangedFile },
-    UnstageFile { changed: ChangedFile },
-    StageAll,
-    UnstageAll,
-}
-
-impl ChangedFilesGitMutation {
-    fn stages_file(&self, path: &str) -> bool {
-        matches!(self, Self::StageFile { changed } if changed.path == path)
-    }
-
-    fn unstages_file(&self, path: &str) -> bool {
-        matches!(self, Self::UnstageFile { changed } if changed.path == path)
-    }
-
-    fn stages_all(&self) -> bool {
-        matches!(self, Self::StageAll)
-    }
-
-    fn unstages_all(&self) -> bool {
-        matches!(self, Self::UnstageAll)
-    }
-}
-
-struct ChangedFilesGitMutationReply {
-    project_id: String,
-    result: Result<ProjectGitState, String>,
-}
+// Both types + the worker fn now live in another_one_core::git_service;
+// re-exported under the same local names so every existing call site
+// (the right-sidebar event handlers, the drain loop, the pending-mutation
+// helpers) keeps compiling.
+use another_one_core::git_service::{ChangedFilesGitMutation, ChangedFilesGitMutationReply};
 
 #[derive(Clone)]
 struct PendingChangedFilesGitMutations {
@@ -394,35 +366,20 @@ impl PendingChangedFilesGitMutations {
     }
 }
 
-struct TaskCreationReply {
-    result: Result<TaskCreationSuccess, TaskCreationFailure>,
-}
+// Worker bodies + reply types moved to core::project_service;
+// re-exported at these paths so existing channel fields and drain
+// loops keep compiling. Only the two Reply types are reached from
+// outside the drain loop; Success/Failure are inspected via
+// `reply.result` at the call site.
+use another_one_core::project_service::{ProjectAddReply, TaskCreationReply};
 
-struct ProjectAddReply {
-    result: Result<crate::project_store::PreparedProject, String>,
-}
-
-struct ProjectGitHubLinkReply {
-    project_id: String,
-    github_url: Option<String>,
-}
-
-struct ProjectPullRequestReply {
-    lookup_key: String,
-    pull_request: Option<crate::git_actions::PullRequestStatus>,
-}
-
-struct ProjectPagePullRequestsReply {
-    project_id: String,
-    filter_index: usize,
-    query: String,
-    result: Result<Vec<crate::git_actions::ProjectPagePullRequest>, String>,
-}
-
-struct ProjectCheckRunsReply {
-    lookup_key: String,
-    result: Result<Option<Vec<crate::git_actions::PullRequestCheck>>, String>,
-}
+// All four github-lookup reply types + their spawn workers live in
+// another_one_core::git_service now; re-exported here so existing
+// channel-field types and drain-loop field accesses keep compiling.
+use another_one_core::git_service::{
+    ProjectCheckRunsReply, ProjectGitHubLinkReply, ProjectPagePullRequestsReply,
+    ProjectPullRequestReply,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProjectCheckRunsState {
@@ -430,18 +387,6 @@ pub(crate) enum ProjectCheckRunsState {
     Loaded(Arc<[crate::git_actions::PullRequestCheck]>),
     NoPullRequest,
     Failed(String),
-}
-
-struct TaskCreationSuccess {
-    original_project_id: String,
-    project: crate::project_store::PreparedProject,
-    branch_name: String,
-    task_name: String,
-    launch_config: TerminalLaunchConfig,
-}
-
-struct TaskCreationFailure {
-    message: String,
 }
 
 #[derive(Debug, Clone)]
@@ -4482,12 +4427,7 @@ impl AnotherOneApp {
             .unwrap_or_else(|| path.display().to_string());
         self.show_info_toast(format!("Adding {}...", project_label), cx);
 
-        let (tx, rx) = mpsc::channel();
-        self.project_add_receiver = Some(rx);
-        std::thread::spawn(move || {
-            let result = crate::project_store::prepare_project(&path);
-            let _ = tx.send(ProjectAddReply { result });
-        });
+        self.project_add_receiver = Some(another_one_core::project_service::spawn_project_add(path));
         cx.notify();
     }
 
@@ -5088,31 +5028,13 @@ impl AnotherOneApp {
 
         let include_metadata = metadata_due;
         self.git_refresh_in_flight = true;
-        let (tx, rx) = mpsc::channel();
-        self.git_refresh_receiver = Some(rx);
-        std::thread::spawn(move || {
-            let state =
-                crate::project_store::read_project_git_state(&project_path, include_metadata);
-            let commit_state = commit_limit.map(|requested_limit| {
-                crate::project_store::read_project_branch_commit_state(
-                    &project_path,
-                    requested_limit,
-                )
-            });
-            let compare_state = compare_target_branch.as_deref().map(|target_branch| {
-                crate::project_store::read_project_branch_compare_state(
-                    &project_path,
-                    target_branch,
-                )
-            });
-            let _ = tx.send(GitRefreshReply {
-                project_id,
-                include_metadata,
-                state,
-                commit_state,
-                compare_state,
-            });
-        });
+        self.git_refresh_receiver = Some(another_one_core::git_service::spawn_refresh(
+            project_id,
+            project_path,
+            include_metadata,
+            commit_limit,
+            compare_target_branch,
+        ));
     }
 
     #[hotpath::measure]
@@ -5289,56 +5211,15 @@ impl AnotherOneApp {
         self.cancel_active_new_task_prewarm();
         self.show_info_toast("Creating worktree task...", cx);
 
-        let project_path = project.path.clone();
-        let project_name = project.name.clone();
-        let (tx, rx) = mpsc::channel();
-        self.task_creation_receiver = Some(rx);
-        std::thread::spawn(move || {
-            let result = crate::project_store::create_task_worktree(
-                &project_path,
-                &project_name,
-                &task_name,
-                &generated_task_name,
-                &source_branch,
-            )
-            .map(|created| TaskCreationSuccess {
-                original_project_id: project_id,
-                project: crate::project_store::prepare_project(&created.path).unwrap_or_else(
-                    |_| crate::project_store::PreparedProject {
-                        project: crate::project_store::Project {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            repo_id: uuid::Uuid::new_v4().to_string(),
-                            name: created
-                                .path
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| created.path.display().to_string()),
-                            path: created.path.clone(),
-                            kind: crate::project_store::ProjectKind::Worktree,
-                            checkout: crate::project_store::ProjectCheckoutState::default(),
-                            branch_settings: crate::project_store::ProjectBranchSettings::default(),
-                            worktree_name: created
-                                .path
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned()),
-                            repo_common_dir: None,
-                        },
-                        repo: crate::project_store::RepoRecord {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            common_dir: None,
-                            branch_order: Vec::new(),
-                            branches_by_name: HashMap::new(),
-                        },
-                    },
-                ),
-                branch_name: created.branch_name,
-                task_name: created.task_name,
-                launch_config,
-            })
-            .map_err(|message| TaskCreationFailure { message });
-
-            let _ = tx.send(TaskCreationReply { result });
-        });
+        self.task_creation_receiver = Some(another_one_core::project_service::spawn_task_creation(
+            project_id,
+            project.path.clone(),
+            project.name.clone(),
+            task_name,
+            generated_task_name,
+            source_branch,
+            launch_config,
+        ));
         cx.notify();
     }
 
@@ -5492,33 +5373,12 @@ impl AnotherOneApp {
         project_path: std::path::PathBuf,
         mutation: ChangedFilesGitMutation,
     ) {
-        let reply_project_id = project_id.to_string();
-        let tx = self.changed_files_git_mutation_sender.clone();
-        std::thread::spawn(move || {
-            let result = match mutation {
-                ChangedFilesGitMutation::StageFile { changed } => {
-                    crate::project_store::stage_changed_file(&project_path, &changed)
-                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
-                }
-                ChangedFilesGitMutation::UnstageFile { changed } => {
-                    crate::project_store::unstage_changed_file(&project_path, &changed)
-                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
-                }
-                ChangedFilesGitMutation::StageAll => {
-                    crate::project_store::stage_all_changes(&project_path)
-                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
-                }
-                ChangedFilesGitMutation::UnstageAll => {
-                    crate::project_store::unstage_all_changes(&project_path)
-                        .map(|_| crate::project_store::read_project_git_state(&project_path, false))
-                }
-            };
-
-            let _ = tx.send(ChangedFilesGitMutationReply {
-                project_id: reply_project_id,
-                result,
-            });
-        });
+        another_one_core::git_service::spawn_changed_files_mutation(
+            self.changed_files_git_mutation_sender.clone(),
+            project_id.to_string(),
+            project_path,
+            mutation,
+        );
     }
 
     fn project_path(&self, project_id: &str) -> Option<std::path::PathBuf> {
@@ -6088,17 +5948,11 @@ impl AnotherOneApp {
 
         self.project_github_link_requests
             .insert(project_id.to_string());
-
-        let tx = self.project_github_link_sender.clone();
-        let project_id = project_id.to_string();
-        let project_path = project_path.to_path_buf();
-        std::thread::spawn(move || {
-            let github_url = crate::git_actions::find_github_repo_url(&project_path);
-            let _ = tx.send(ProjectGitHubLinkReply {
-                project_id,
-                github_url,
-            });
-        });
+        another_one_core::git_service::spawn_github_link_lookup(
+            self.project_github_link_sender.clone(),
+            project_id.to_string(),
+            project_path.to_path_buf(),
+        );
     }
 
     fn drain_project_github_link_lookup(&mut self) -> bool {
@@ -6146,19 +6000,12 @@ impl AnotherOneApp {
 
         self.project_pull_request_requests
             .insert(lookup_key.to_string());
-
-        let tx = self.project_pull_request_sender.clone();
-        let lookup_key = lookup_key.to_string();
-        let branch_name = branch_name.to_string();
-        let project_path = project_path.to_path_buf();
-        std::thread::spawn(move || {
-            let pull_request =
-                crate::git_actions::find_latest_pull_request_status(&project_path, &branch_name);
-            let _ = tx.send(ProjectPullRequestReply {
-                lookup_key,
-                pull_request,
-            });
-        });
+        another_one_core::git_service::spawn_pull_request_lookup(
+            self.project_pull_request_sender.clone(),
+            lookup_key.to_string(),
+            project_path.to_path_buf(),
+            branch_name.to_string(),
+        );
     }
 
     pub(crate) fn project_page_pr_query_key(
@@ -6188,23 +6035,13 @@ impl AnotherOneApp {
 
         self.project_page_pull_requests_loading.insert(key.clone());
         self.project_page_pull_requests_errors.remove(&key);
-        let tx = self.project_page_pull_requests_sender.clone();
-        let project_id = project_id.to_string();
-        let project_path = project_path.to_path_buf();
-        let query_string = query.to_string();
-        std::thread::spawn(move || {
-            let result = crate::git_actions::find_project_pull_requests(
-                &project_path,
-                filter_index,
-                Some(&query_string),
-            );
-            let _ = tx.send(ProjectPagePullRequestsReply {
-                project_id,
-                filter_index,
-                query: query_string,
-                result,
-            });
-        });
+        another_one_core::git_service::spawn_project_page_pull_requests(
+            self.project_page_pull_requests_sender.clone(),
+            project_id.to_string(),
+            project_path.to_path_buf(),
+            filter_index,
+            query.to_string(),
+        );
     }
 
     fn drain_project_page_pull_requests(&mut self, cx: &mut Context<Self>) -> bool {
@@ -6294,15 +6131,12 @@ impl AnotherOneApp {
             self.project_check_runs_states
                 .insert(lookup_key.to_string(), ProjectCheckRunsState::Loading);
         }
-
-        let tx = self.project_check_runs_sender.clone();
-        let lookup_key = lookup_key.to_string();
-        let project_path = project_path.to_path_buf();
-        std::thread::spawn(move || {
-            let result =
-                crate::git_actions::find_pull_request_checks(&project_path, pull_request_number);
-            let _ = tx.send(ProjectCheckRunsReply { lookup_key, result });
-        });
+        another_one_core::git_service::spawn_check_runs_lookup(
+            self.project_check_runs_sender.clone(),
+            lookup_key.to_string(),
+            project_path.to_path_buf(),
+            pull_request_number,
+        );
     }
 
     fn drain_project_check_runs_lookup(&mut self, cx: &mut Context<Self>) -> bool {

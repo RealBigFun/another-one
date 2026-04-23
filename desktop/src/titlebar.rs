@@ -12,6 +12,7 @@ use crate::platform::PlatformServices;
 use crate::project_store::RepoDefaultCommitAction;
 use crate::resource_indicator::RESOURCE_INDICATOR_BUTTON_W;
 use crate::theme;
+use crate::tokens;
 
 const TITLEBAR_OPEN_IN_BUTTON_W: f32 = 114.;
 const TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT: f32 = 6.;
@@ -1054,11 +1055,37 @@ impl AnotherOneApp {
             .flex()
             .flex_row()
             .items_center()
+            .relative()
             .h(px(TITLEBAR_CHROME_H))
             .flex_shrink_0()
             .bg(chrome)
             .border_b_1()
             .border_color(rgb(0x27292e))
+            // `debug_assertions` is on for `cargo run` / `cargo build` and
+            // off for `--release`. The badge is absolutely positioned so
+            // it doesn't eat width from the drag region below.
+            .when(cfg!(debug_assertions), |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        // Can't intercept drag or window-control events.
+                        .occlude()
+                        .cursor_default()
+                        .child(
+                            div()
+                                .text_color(tokens::ErrorColors::text())
+                                .text_size(rems(11. / 16.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(gpui::SharedString::new_static(
+                                    "DEBUG BUILD — not for daily use",
+                                )),
+                        ),
+                )
+            })
             .child(
                 div()
                     .w(px(crate::platform::CurrentPlatform::traffic_light_pad_px()))
