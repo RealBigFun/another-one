@@ -1,0 +1,37 @@
+[package]
+name = "another-one-core"
+version = "0.1.0"
+edition = "2021"
+description = "Headless domain logic for the AnotherOne desktop app — shared by both the GPUI UI and the (future) sandbox/mobile daemon."
+publish = false
+
+[lib]
+name = "another_one_core"
+
+[features]
+default = []
+# Forwarded from the desktop crate's `hotpath` / `hotpath-alloc` features;
+# controls whether `#[hotpath::measure]` in moved code actually records
+# anything. The `hotpath` crate is always linked (the proc-macro needs to
+# resolve unconditionally), but its features gate whether it does work
+# at runtime — so neither feature on means the attribute is effectively
+# a no-op, matching desktop's pre-extraction setup.
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+
+[dependencies]
+alacritty_terminal = "0.26.0"
+anyhow = "1"
+dirs = "5"
+hotpath = "0.15"
+portable-pty = "0.9.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `sync` only — brings in `tokio::sync::broadcast`, which we use
+# with its synchronous `send` / `try_recv` surface. No runtime is
+# constructed in core; broadcast's send + try_recv do not require one.
+tokio = { version = "1", features = ["sync"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
