@@ -3499,6 +3499,15 @@ impl AnotherOneApp {
 
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
         let mut updated = false;
+        // Tracks tabs that accumulated VT output during this drain tick. We
+        // used to rebuild + clone each tab's surface snapshot on *every*
+        // `Output` reply, so a burst of 10 chunks paid the full-grid
+        // rebuild cost 10 times before GPUI even had a chance to repaint.
+        // Defer the rebuild to once per tab per tick: collect the keys
+        // that got output, drain the whole queue, then rebuild snapshots
+        // once at the end. At 60 Hz drain frequency this caps snapshot
+        // work at 60 rebuilds/sec even under sustained output storms.
+        let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
 
         loop {
             match self.terminal_launch_receiver.try_recv() {
@@ -3532,8 +3541,7 @@ impl AnotherOneApp {
                     self.append_terminal_recent_output(&key, &bytes);
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                         let terminal_update = runtime.apply_output(&bytes);
-                        self.terminal_surface_snapshots
-                            .insert(key.clone(), runtime.snapshot());
+                        output_dirty_keys.insert(key.clone());
                         if terminal_update.reset_title {
                             self.update_terminal_tab(&key, cx, |tab| {
                                 tab.title = tab.launch_config.default_title();
@@ -3599,6 +3607,36 @@ impl AnotherOneApp {
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        // Coalesced per-tab snapshot rebuild (see comment at the top of
+        // this method). On top of coalescing, skip rebuilds for
+        // non-focused tabs entirely — backgrounded tabs still accumulate
+        // VT parser state via `apply_output`, but their GPUI-facing
+        // snapshot isn't being painted, so there's no need to pay the
+        // grid-rebuild cost until the user brings them to the front.
+        //
+        // The catch-up step below covers "tab just became focused": its
+        // dirty flag is still set from the backgrounded period, so we
+        // rebuild once on the first drain tick after the switch.
+        let focused_key = self.active_terminal_key(cx);
+        for key in output_dirty_keys {
+            if focused_key.as_ref() != Some(&key) {
+                continue;
+            }
+            if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                let snapshot = runtime.snapshot();
+                self.terminal_surface_snapshots.insert(key, snapshot);
+            }
+        }
+        if let Some(key) = focused_key {
+            if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                if runtime.is_dirty() {
+                    let snapshot = runtime.snapshot();
+                    self.terminal_surface_snapshots.insert(key, snapshot);
+                    updated = true;
+                }
             }
         }
 
