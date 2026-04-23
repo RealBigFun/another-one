@@ -5436,6 +5436,15 @@ impl AnotherOneApp {
                 Err(broadcast::error::TryRecvError::Empty)
                 | Err(broadcast::error::TryRecvError::Closed) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    // Unlike the four lookup drains, the pending state
+                    // here is a HashMap of optimistic UI state
+                    // (queued + in-flight mutations, confirmed files),
+                    // not a dedupe set. Clearing it would strand
+                    // queued mutations and orphan the optimistic view.
+                    // Log and carry on — capacity=64 plus a single
+                    // 16 ms-tick consumer means this arm is
+                    // effectively unreachable today; revisit if a
+                    // daemon/mobile subscriber joins this stream.
                     log::warn!("changed_files_git_mutation drain lagged {n} messages");
                     continue;
                 }
@@ -5717,7 +5726,15 @@ impl AnotherOneApp {
                 Err(broadcast::error::TryRecvError::Empty)
                 | Err(broadcast::error::TryRecvError::Closed) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                    log::warn!("project_github_link drain lagged {n} messages");
+                    // Lost `n` replies. We can't know which project ids
+                    // were dropped, so wipe the in-flight set; the next
+                    // render tick will re-request any still-needed
+                    // lookups. Without this, a dropped reply strands
+                    // its project id in the set forever and
+                    // `request_project_github_link_lookup` early-returns
+                    // for that project until app restart.
+                    log::warn!("project_github_link drain lagged {n} messages; clearing in-flight set");
+                    self.project_github_link_requests.clear();
                     continue;
                 }
             };
@@ -5814,7 +5831,11 @@ impl AnotherOneApp {
                 Err(broadcast::error::TryRecvError::Empty)
                 | Err(broadcast::error::TryRecvError::Closed) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                    log::warn!("project_page_pull_requests drain lagged {n} messages");
+                    // See note on `drain_project_github_link_lookup`:
+                    // wipe the in-flight set so dropped replies don't
+                    // strand their query keys as permanent ghosts.
+                    log::warn!("project_page_pull_requests drain lagged {n} messages; clearing in-flight set");
+                    self.project_page_pull_requests_loading.clear();
                     continue;
                 }
             };
@@ -5851,7 +5872,11 @@ impl AnotherOneApp {
                 Err(broadcast::error::TryRecvError::Empty)
                 | Err(broadcast::error::TryRecvError::Closed) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                    log::warn!("project_pull_request drain lagged {n} messages");
+                    // See note on `drain_project_github_link_lookup`:
+                    // wipe the in-flight set so dropped replies don't
+                    // strand their lookup keys as permanent ghosts.
+                    log::warn!("project_pull_request drain lagged {n} messages; clearing in-flight set");
+                    self.project_pull_request_requests.clear();
                     continue;
                 }
             };
@@ -5928,7 +5953,11 @@ impl AnotherOneApp {
                 Err(broadcast::error::TryRecvError::Empty)
                 | Err(broadcast::error::TryRecvError::Closed) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                    log::warn!("project_check_runs drain lagged {n} messages");
+                    // See note on `drain_project_github_link_lookup`:
+                    // wipe the in-flight set so dropped replies don't
+                    // strand their lookup keys as permanent ghosts.
+                    log::warn!("project_check_runs drain lagged {n} messages; clearing in-flight set");
+                    self.project_check_runs_requests.clear();
                     continue;
                 }
             };
