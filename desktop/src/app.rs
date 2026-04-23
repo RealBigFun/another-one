@@ -1818,6 +1818,14 @@ impl AnotherOneApp {
         self.project_store.agent_enabled(agent_id)
     }
 
+    pub(crate) fn default_agent_id(&self) -> Option<&'static str> {
+        self.project_store.default_agent_id()
+    }
+
+    pub(crate) fn agent_is_default(&self, agent_id: &str) -> bool {
+        self.project_store.agent_is_default(agent_id)
+    }
+
     pub(crate) fn preferred_open_in_app(&self) -> Option<OpenInAppKind> {
         self.project_store
             .preferred_open_in_app(&self.available_open_in_apps)
@@ -2544,6 +2552,14 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) {
         if self.project_store.set_agent_enabled(agent_id, enabled) {
+            self.sync_new_task_modal_prewarm(cx);
+            self.sync_add_agent_modal_prewarm(cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_default_agent(&mut self, agent_id: &str, cx: &mut Context<Self>) {
+        if self.project_store.set_default_agent(agent_id) {
             self.sync_new_task_modal_prewarm(cx);
             self.sync_add_agent_modal_prewarm(cx);
             cx.notify();

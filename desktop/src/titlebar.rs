@@ -1092,7 +1092,10 @@ impl AnotherOneApp {
                     .flex_1()
                     .h_full()
                     .window_control_area(WindowControlArea::Drag)
-                    .on_mouse_down(MouseButton::Left, cx.listener(Self::titlebar_background_mouse))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(Self::titlebar_background_mouse),
+                    )
                     .on_mouse_up(
                         MouseButton::Left,
                         cx.listener(Self::titlebar_background_mouse_up),

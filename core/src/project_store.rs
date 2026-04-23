@@ -9,6 +9,7 @@ use std::process::{Command, Output};
 
 use crate::agents::{
     effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus,
+    DEFAULT_AGENT_ID,
 };
 use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
@@ -300,6 +301,8 @@ pub struct UiState {
     #[serde(default)]
     pub enabled_agents: Option<HashSet<String>>,
     #[serde(default)]
+    pub default_agent_id: Option<String>,
+    #[serde(default)]
     pub agent_launch_args: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub shortcuts: ShortcutSettings,
@@ -316,6 +319,7 @@ impl Default for UiState {
             enabled_open_in_apps: None,
             preferred_open_in_app: None,
             enabled_agents: None,
+            default_agent_id: None,
             agent_launch_args: HashMap::new(),
             shortcuts: ShortcutSettings::default(),
         }
@@ -946,11 +950,50 @@ impl ProjectStore {
             .collect()
     }
 
+    pub fn default_agent_id(&self) -> Option<&'static str> {
+        let enabled = self.enabled_agent_ids();
+
+        self.ui
+            .default_agent_id
+            .as_deref()
+            .and_then(|agent_id| {
+                enabled
+                    .iter()
+                    .copied()
+                    .find(|enabled_id| *enabled_id == agent_id)
+            })
+            .or_else(|| {
+                enabled
+                    .iter()
+                    .copied()
+                    .find(|agent_id| *agent_id == DEFAULT_AGENT_ID)
+            })
+            .or_else(|| enabled.first().copied())
+    }
+
     pub fn agent_enabled(&self, agent_id: &str) -> bool {
         self.ui
             .enabled_agents
             .as_ref()
             .map_or(true, |enabled| enabled.contains(agent_id))
+    }
+
+    pub fn agent_is_default(&self, agent_id: &str) -> bool {
+        self.default_agent_id() == Some(agent_id)
+    }
+
+    pub fn set_default_agent(&mut self, agent_id: &str) -> bool {
+        if !self.agent_enabled(agent_id) {
+            return false;
+        }
+
+        if self.ui.default_agent_id.as_deref() == Some(agent_id) {
+            return false;
+        }
+
+        self.ui.default_agent_id = Some(agent_id.to_string());
+        self.save();
+        true
     }
 
     pub fn set_agent_enabled(&mut self, agent_id: &str, enabled: bool) -> bool {
@@ -972,6 +1015,7 @@ impl ProjectStore {
         }
 
         self.ui.enabled_agents = Some(configured);
+        self.ui.default_agent_id = self.default_agent_id().map(str::to_string);
         self.save();
         true
     }
@@ -2534,7 +2578,7 @@ mod tests {
 
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
-        TerminalSessionRef,
+        TerminalSessionRef, DEFAULT_AGENT_ID,
     };
     use crate::open_in::OpenInAppKind;
     use crate::shortcuts::ShortcutSettings;
@@ -2861,6 +2905,7 @@ mod tests {
                 enabled_open_in_apps: None,
                 preferred_open_in_app: None,
                 enabled_agents: None,
+                default_agent_id: None,
                 agent_launch_args: HashMap::new(),
                 shortcuts: ShortcutSettings::default(),
             },
@@ -3262,6 +3307,7 @@ mod tests {
                 "codex".to_string(),
                 "claude-code".to_string(),
             ])),
+            default_agent_id: Some("codex".to_string()),
             agent_launch_args: HashMap::from([
                 ("codex".to_string(), vec!["--yolo".to_string()]),
                 (
@@ -3290,6 +3336,7 @@ mod tests {
                 "claude-code".to_string()
             ]))
         );
+        assert_eq!(round_trip.ui.default_agent_id.as_deref(), Some("codex"));
     }
 
     #[test]
@@ -3311,6 +3358,7 @@ mod tests {
                 "enabled_open_in_apps": null,
                 "preferred_open_in_app": null,
                 "enabled_agents": null,
+                "default_agent_id": null,
                 "shortcuts": ShortcutSettings::default()
             }
         });
@@ -3320,6 +3368,7 @@ mod tests {
 
         assert!(store.ui.agent_launch_args.is_empty());
         assert!(store.ui.enabled_agents.is_none());
+        assert!(store.ui.default_agent_id.is_none());
     }
 
     #[test]
@@ -3425,6 +3474,7 @@ mod tests {
         assert!(crate::agents::AGENTS
             .iter()
             .all(|agent| store.agent_enabled(agent.id)));
+        assert_eq!(store.default_agent_id(), Some(DEFAULT_AGENT_ID));
     }
 
     #[test]
@@ -3444,6 +3494,7 @@ mod tests {
                     "codex".to_string(),
                     "claude-code".to_string(),
                 ])),
+                default_agent_id: Some("codex".to_string()),
                 ..UiState::default()
             },
             file_path: PathBuf::from("/tmp/test-projects.json"),
@@ -3455,14 +3506,48 @@ mod tests {
         );
         assert!(store.agent_enabled("codex"));
         assert!(!store.agent_enabled("pi"));
+        assert!(store.agent_is_default("codex"));
 
         assert!(store.set_agent_enabled("codex", false));
         assert!(!store.agent_enabled("codex"));
+        assert_eq!(store.default_agent_id(), Some("claude-code"));
         assert!(store.set_agent_enabled("pi", true));
         assert!(store.agent_enabled("pi"));
         assert_eq!(
             store.enabled_agent_ids(),
             vec!["claude-code", "pi", "forge"]
         );
+        assert_eq!(store.default_agent_id(), Some("claude-code"));
+    }
+
+    #[test]
+    fn store_default_agent_prefers_saved_enabled_value_and_falls_back() {
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState {
+                enabled_agents: Some(HashSet::from([
+                    "claude-code".to_string(),
+                    "codex".to_string(),
+                ])),
+                default_agent_id: Some("codex".to_string()),
+                ..UiState::default()
+            },
+            file_path: PathBuf::from("/tmp/test-projects.json"),
+        };
+
+        assert_eq!(store.default_agent_id(), Some("codex"));
+        assert!(store.set_default_agent("claude-code"));
+        assert_eq!(store.default_agent_id(), Some("claude-code"));
+        assert!(!store.set_default_agent("pi"));
+
+        assert!(store.set_agent_enabled("claude-code", false));
+        assert_eq!(store.default_agent_id(), Some("codex"));
     }
 }

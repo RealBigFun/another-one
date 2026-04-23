@@ -559,6 +559,7 @@ impl AnotherOneApp {
         for (index, agent) in AGENTS.iter().enumerate() {
             let args = self.project_store.agent_launch_args(agent.id);
             let is_enabled = self.agent_enabled(agent.id);
+            let is_default = self.agent_is_default(agent.id);
             let draft = self
                 .settings_agent_input
                 .drafts
@@ -674,6 +675,7 @@ impl AnotherOneApp {
                             .child(
                                 div()
                                     .flex()
+                                    .flex_1()
                                     .flex_col()
                                     .gap(px(10.))
                                     .min_w(px(0.))
@@ -684,13 +686,16 @@ impl AnotherOneApp {
                                             .flex_row()
                                             .items_center()
                                             .gap(px(12.))
-                                            .child(branded_icon(
-                                                agent.icon,
-                                                18.,
-                                                Some(TEXT_PRIMARY()),
-                                            ))
+                                            .child(
+                                                div().flex_none().child(branded_icon(
+                                                    agent.icon,
+                                                    18.,
+                                                    Some(TEXT_PRIMARY()),
+                                                )),
+                                            )
                                             .child(
                                                 div()
+                                                    .min_w(px(0.))
                                                     .flex()
                                                     .flex_col()
                                                     .gap(px(4.))
@@ -719,6 +724,8 @@ impl AnotherOneApp {
                                 div()
                                     .flex()
                                     .flex_row()
+                                    .flex_wrap()
+                                    .justify_end()
                                     .items_center()
                                     .gap(px(8.))
                                     .child(
@@ -789,6 +796,90 @@ impl AnotherOneApp {
                                                     )
                                                     .text_color(TEXT_PRIMARY())
                                                     .child("Add"),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .h(px(34.))
+                                            .px(px(10.))
+                                            .rounded(px(8.))
+                                            .border_1()
+                                            .border_color(if is_default {
+                                                active_button_bg.opacity(0.85)
+                                            } else {
+                                                BORDER_SUBTLE()
+                                            })
+                                            .bg(if is_default { active_button_bg } else { button_bg })
+                                            .cursor_pointer()
+                                            .hover(move |style| {
+                                                style.bg(if is_default {
+                                                    active_button_bg
+                                                } else {
+                                                    button_hover
+                                                })
+                                            })
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(
+                                                    move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                        this.set_default_agent(agent.id, cx);
+                                                        cx.stop_propagation();
+                                                    },
+                                                ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h_full()
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap(px(10.))
+                                                    .child(
+                                                        div()
+                                                            .text_size(rems(11. / 16.))
+                                                            .font_weight(
+                                                                gpui::FontWeight::MEDIUM,
+                                                            )
+                                                            .text_color(if is_default {
+                                                                gpui::white()
+                                                            } else {
+                                                                TEXT_SECONDARY()
+                                                            })
+                                                            .child(if is_default {
+                                                                "Default"
+                                                            } else {
+                                                                "Make default"
+                                                            }),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w(px(18.))
+                                                            .h(px(18.))
+                                                            .rounded(px(999.))
+                                                            .border_1()
+                                                            .border_color(if is_default {
+                                                                gpui::white().opacity(0.85)
+                                                            } else {
+                                                                BORDER_SUBTLE()
+                                                            })
+                                                            .bg(if is_default {
+                                                                gpui::white().opacity(0.16)
+                                                            } else {
+                                                                button_bg
+                                                            })
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .when(is_default, |container| {
+                                                                container.child(
+                                                                    div()
+                                                                        .w(px(8.))
+                                                                        .h(px(8.))
+                                                                        .rounded(px(999.))
+                                                                        .bg(gpui::white()),
+                                                                )
+                                                            }),
+                                                    ),
                                             ),
                                     )
                                     .child(
@@ -933,7 +1024,7 @@ impl AnotherOneApp {
                                     .text_size(rems(11. / 16.))
                                     .text_color(TEXT_SECONDARY())
                                     .child(
-                                        "Toggle agents off to hide them from creation pickers. Arg editing still applies while an agent is disabled.",
+                                        "Choose which enabled agent is used first for new tasks and new agent tabs. Disabled agents can still be re-enabled and edited here.",
                                     ),
                             ),
                     )

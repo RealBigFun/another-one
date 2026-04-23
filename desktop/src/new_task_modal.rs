@@ -9,7 +9,7 @@ use gpui::{
 use uuid::Uuid;
 
 use crate::agent_icons::branded_icon;
-use crate::agents::{AgentDef, AGENTS, DEFAULT_AGENT_ID};
+use crate::agents::{AgentDef, AGENTS};
 use crate::app::AnotherOneApp;
 
 #[derive(Clone)]
@@ -89,12 +89,13 @@ struct SourceBranchSectionProps<'a> {
     submitting: bool,
 }
 
-fn default_new_task_agent_id(enabled_agents: &[&'static AgentDef]) -> Option<&'static str> {
-    enabled_agents
-        .iter()
-        .find(|agent| agent.id == DEFAULT_AGENT_ID)
-        .or_else(|| enabled_agents.first())
-        .map(|agent| agent.id)
+fn default_new_task_agent_id(
+    enabled_agents: &[&'static AgentDef],
+    default_agent_id: Option<&'static str>,
+) -> Option<&'static str> {
+    default_agent_id
+        .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
+        .or_else(|| enabled_agents.first().map(|agent| agent.id))
 }
 
 fn sanitized_new_task_selected_agents(
@@ -165,7 +166,9 @@ impl AnotherOneApp {
         };
 
         let enabled_agents = self.enabled_agents();
-        let Some(default_agent_id) = default_new_task_agent_id(&enabled_agents) else {
+        let Some(default_agent_id) =
+            default_new_task_agent_id(&enabled_agents, self.default_agent_id())
+        else {
             self.show_error_toast(
                 "Enable at least one agent in Settings > Agents before creating a task.",
                 cx,
@@ -1987,7 +1990,7 @@ mod tests {
         let enabled_agents = vec![&AGENTS[1], &AGENTS[4], &AGENTS[6]];
 
         assert_eq!(
-            default_new_task_agent_id(&enabled_agents),
+            default_new_task_agent_id(&enabled_agents, Some(DEFAULT_AGENT_ID)),
             Some(DEFAULT_AGENT_ID)
         );
     }
@@ -1997,14 +2000,14 @@ mod tests {
         let enabled_agents = vec![&AGENTS[0], &AGENTS[1], &AGENTS[2]];
 
         assert_eq!(
-            default_new_task_agent_id(&enabled_agents),
+            default_new_task_agent_id(&enabled_agents, Some(DEFAULT_AGENT_ID)),
             Some(AGENTS[0].id)
         );
     }
 
     #[test]
     fn default_selection_returns_none_when_no_agents_are_enabled() {
-        assert_eq!(default_new_task_agent_id(&[]), None);
+        assert_eq!(default_new_task_agent_id(&[], Some(DEFAULT_AGENT_ID)), None);
     }
 
     #[test]

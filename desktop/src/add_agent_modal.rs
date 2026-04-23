@@ -64,20 +64,34 @@ fn focus_col() -> gpui::Hsla {
     hsla(220. / 360., 0.55, 0.60, 1.)
 }
 
-fn sanitized_add_agent_selection(
+fn resolved_add_agent_selection(
     selected_agent_id: Option<&str>,
+    fallback_agent_id: Option<&str>,
     enabled_agents: &[&'static AgentDef],
 ) -> Option<String> {
-    match selected_agent_id {
-        Some(selected_agent_id)
-            if enabled_agents
-                .iter()
-                .any(|agent| agent.id == selected_agent_id) =>
-        {
-            Some(selected_agent_id.to_string())
-        }
-        _ => enabled_agents.first().map(|agent| agent.id.to_string()),
-    }
+    selected_agent_id
+        .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
+        .or_else(|| {
+            fallback_agent_id
+                .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
+        })
+        .or_else(|| enabled_agents.first().map(|agent| agent.id))
+        .map(str::to_string)
+}
+
+fn initial_add_agent_selection(
+    seeded_agent_id: Option<&str>,
+    default_agent_id: Option<&str>,
+    enabled_agents: &[&'static AgentDef],
+) -> Option<String> {
+    default_agent_id
+        .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
+        .or_else(|| {
+            seeded_agent_id
+                .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
+        })
+        .or_else(|| enabled_agents.first().map(|agent| agent.id))
+        .map(str::to_string)
 }
 
 fn add_agent_option_count(enabled_agents: &[&'static AgentDef]) -> usize {
@@ -165,9 +179,13 @@ fn next_add_agent_option_focus(
 impl AnotherOneApp {
     pub(crate) fn sanitize_add_agent_modal_selection(&mut self) -> Vec<&'static AgentDef> {
         let enabled_agents = self.enabled_agents();
+        let default_agent_id = self.default_agent_id();
         if let Some(state) = self.add_agent_modal.as_mut() {
-            state.selected_agent_id =
-                sanitized_add_agent_selection(state.selected_agent_id.as_deref(), &enabled_agents);
+            state.selected_agent_id = resolved_add_agent_selection(
+                state.selected_agent_id.as_deref(),
+                default_agent_id,
+                &enabled_agents,
+            );
         }
         enabled_agents
     }
@@ -181,8 +199,9 @@ impl AnotherOneApp {
         let enabled_agents = self.enabled_agents();
         self.add_agent_modal = Some(AddAgentModalState {
             section_id,
-            selected_agent_id: sanitized_add_agent_selection(
+            selected_agent_id: initial_add_agent_selection(
                 selected_agent_id.as_deref(),
+                self.default_agent_id(),
                 &enabled_agents,
             ),
             agent_dropdown_open: false,
@@ -196,8 +215,11 @@ impl AnotherOneApp {
             return div().id("add-agent-modal-overlay");
         };
         let enabled_agents = self.enabled_agents();
-        let selected_agent_id =
-            sanitized_add_agent_selection(state.selected_agent_id.as_deref(), &enabled_agents);
+        let selected_agent_id = resolved_add_agent_selection(
+            state.selected_agent_id.as_deref(),
+            self.default_agent_id(),
+            &enabled_agents,
+        );
         let keyboard_focus = state.keyboard_focus;
 
         let (trigger_icon, trigger_label, trigger_help_text) = selected_agent_id
@@ -836,8 +858,9 @@ impl AnotherOneApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_agent_option_count, add_agent_option_id, add_agent_option_index, next_add_agent_focus,
-        next_add_agent_option_focus, sanitized_add_agent_selection, AddAgentModalFocus, AGENTS,
+        add_agent_option_count, add_agent_option_id, add_agent_option_index,
+        initial_add_agent_selection, next_add_agent_focus, next_add_agent_option_focus,
+        resolved_add_agent_selection, AddAgentModalFocus, AGENTS,
     };
 
     #[test]
@@ -910,13 +933,38 @@ mod tests {
         let enabled_agents = vec![&AGENTS[1], &AGENTS[2]];
 
         assert_eq!(
-            sanitized_add_agent_selection(Some(AGENTS[0].id), &enabled_agents).as_deref(),
+            initial_add_agent_selection(Some(AGENTS[0].id), None, &enabled_agents).as_deref(),
             Some(AGENTS[1].id)
         );
     }
 
     #[test]
     fn no_enabled_agents_fall_back_to_cli_only() {
-        assert_eq!(sanitized_add_agent_selection(Some(AGENTS[0].id), &[]), None);
+        assert_eq!(
+            initial_add_agent_selection(Some(AGENTS[0].id), None, &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn preferred_default_agent_overrides_seeded_agent() {
+        let enabled_agents = vec![&AGENTS[0], &AGENTS[1], &AGENTS[2]];
+
+        assert_eq!(
+            initial_add_agent_selection(Some(AGENTS[0].id), Some(AGENTS[2].id), &enabled_agents)
+                .as_deref(),
+            Some(AGENTS[2].id)
+        );
+    }
+
+    #[test]
+    fn resolved_selection_preserves_valid_manual_choice() {
+        let enabled_agents = vec![&AGENTS[0], &AGENTS[1], &AGENTS[2]];
+
+        assert_eq!(
+            resolved_add_agent_selection(Some(AGENTS[0].id), Some(AGENTS[2].id), &enabled_agents)
+                .as_deref(),
+            Some(AGENTS[0].id)
+        );
     }
 }
