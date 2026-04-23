@@ -326,9 +326,12 @@ fn build_command(
         return Ok((CommandBuilder::new_default_prog(), launch_config, None));
     };
 
+    let mut combined_agent_launch_args = agent_launch_args.to_vec();
+    combined_agent_launch_args.extend(launch_config.extra_args.iter().cloned());
+
     match provider {
         AgentProviderKind::ClaudeCode => {
-            build_claude_command(cwd, launch_config, agent_launch_args, None)
+            build_claude_command(cwd, launch_config, &combined_agent_launch_args, None)
         }
         AgentProviderKind::CursorAgent => {
             let session = if let Some(session) = launch_config.session.clone() {
@@ -340,13 +343,13 @@ fn build_command(
                 }
             };
             let mut builder = CommandBuilder::new("agent");
-            builder.args(agent_launch_args);
+            builder.args(&combined_agent_launch_args);
             builder.args(["--resume", session.id.as_str()]);
             Ok((builder, launch_config.with_session(Some(session)), None))
         }
         AgentProviderKind::Codex => {
             let mut builder = CommandBuilder::new("codex");
-            builder.args(agent_launch_args);
+            builder.args(&combined_agent_launch_args);
             let (launch_config, codex_home_override) = resolve_codex_home_override(launch_config)?;
             if let Some(codex_home_override) = codex_home_override.as_ref() {
                 builder.env(
@@ -368,7 +371,7 @@ fn build_command(
         }
         AgentProviderKind::Pi => {
             let mut builder = CommandBuilder::new("pi");
-            builder.args(agent_launch_args);
+            builder.args(&combined_agent_launch_args);
             let discovery = if let Some(session) =
                 resolve_pi_session(cwd, launch_config.session.as_ref(), None)
             {
@@ -386,7 +389,7 @@ fn build_command(
         }
         provider => {
             let mut builder = CommandBuilder::new(provider_command(provider));
-            builder.args(agent_launch_args);
+            builder.args(&combined_agent_launch_args);
             if let Some(session) = launch_config.session.clone() {
                 builder.arg(session.id);
             }

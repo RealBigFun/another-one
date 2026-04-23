@@ -153,6 +153,8 @@ pub struct TerminalLaunchConfig {
     pub session: Option<TerminalSessionRef>,
     #[serde(default)]
     pub home_override: Option<PathBuf>,
+    #[serde(default)]
+    pub extra_args: Vec<String>,
 }
 
 impl TerminalLaunchConfig {
@@ -162,6 +164,7 @@ impl TerminalLaunchConfig {
             provider: Some(provider),
             session: None,
             home_override: None,
+            extra_args: Vec::new(),
         }
     }
 
@@ -172,6 +175,11 @@ impl TerminalLaunchConfig {
 
     pub fn with_home_override(mut self, home_override: Option<PathBuf>) -> Self {
         self.home_override = home_override;
+        self
+    }
+
+    pub fn with_extra_args(mut self, extra_args: Vec<String>) -> Self {
+        self.extra_args = extra_args;
         self
     }
 

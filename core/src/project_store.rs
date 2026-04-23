@@ -71,6 +71,131 @@ pub struct ProjectBranchSettings {
     pub default_target_branch: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionIcon {
+    #[default]
+    Play,
+    Test,
+    Lint,
+    Configure,
+    Build,
+    Debug,
+    Agent,
+}
+
+impl ProjectActionIcon {
+    pub fn icon_path(self) -> &'static str {
+        match self {
+            Self::Play => "assets/icons/action__play.svg",
+            Self::Test => "assets/icons/action__test.svg",
+            Self::Lint => "assets/icons/action__lint.svg",
+            Self::Configure => "assets/icons/action__configure.svg",
+            Self::Build => "assets/icons/action__build.svg",
+            Self::Debug => "assets/icons/action__debug.svg",
+            Self::Agent => "assets/icons/action__agent.svg",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Play => "Play",
+            Self::Test => "Test",
+            Self::Lint => "Lint",
+            Self::Configure => "Configure",
+            Self::Build => "Build",
+            Self::Debug => "Debug",
+            Self::Agent => "Agent",
+        }
+    }
+
+    pub const ALL: [Self; 7] = [
+        Self::Play,
+        Self::Test,
+        Self::Lint,
+        Self::Configure,
+        Self::Build,
+        Self::Debug,
+        Self::Agent,
+    ];
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionScope {
+    #[default]
+    Project,
+    Global,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionAccess {
+    #[default]
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    FullAccess,
+}
+
+impl ProjectActionAccess {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::ReadOnly => "Read only",
+            Self::WorkspaceWrite => "Workspace write",
+            Self::FullAccess => "Full access",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ProjectActionKind {
+    Shell {
+        command: String,
+    },
+    Agent {
+        prompt: String,
+        provider: AgentProviderKind,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        traits: Option<String>,
+        #[serde(default)]
+        mode: Option<String>,
+        #[serde(default)]
+        access: ProjectActionAccess,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectAction {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub icon: ProjectActionIcon,
+    #[serde(default)]
+    pub run_on_worktree_create: bool,
+    #[serde(default)]
+    pub scope: ProjectActionScope,
+    pub kind: ProjectActionKind,
+}
+
+impl ProjectAction {
+    pub fn display_name(&self) -> &str {
+        let name = self.name.trim();
+        if name.is_empty() {
+            match self.kind {
+                ProjectActionKind::Shell { .. } => "Shell action",
+                ProjectActionKind::Agent { .. } => "Agent action",
+            }
+        } else {
+            name
+        }
+    }
+}
+
 /// A git branch with optional diff stats resolved for a specific project/worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {
@@ -95,6 +220,8 @@ pub struct Project {
     pub checkout: ProjectCheckoutState,
     #[serde(default)]
     pub branch_settings: ProjectBranchSettings,
+    #[serde(default)]
+    pub actions: Vec<ProjectAction>,
     #[serde(skip)]
     pub worktree_name: Option<String>,
     #[serde(skip)]
@@ -311,6 +438,8 @@ pub struct UiState {
     pub git_pr_generation_script: Option<String>,
     #[serde(default)]
     pub shortcuts: ShortcutSettings,
+    #[serde(default)]
+    pub global_actions: Vec<ProjectAction>,
 }
 
 impl Default for UiState {
@@ -329,12 +458,140 @@ impl Default for UiState {
             git_commit_generation_script: None,
             git_pr_generation_script: None,
             shortcuts: ShortcutSettings::default(),
+            global_actions: Vec::new(),
         }
     }
 }
 
 fn default_left_sidebar_open() -> bool {
     true
+}
+
+pub fn project_action_agent_launch_args(action: &ProjectAction) -> Result<Vec<String>, String> {
+    let ProjectActionKind::Agent {
+        prompt,
+        provider,
+        model,
+        traits,
+        mode,
+        access,
+    } = &action.kind
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut args = Vec::new();
+    let trimmed_model = model.as_deref().unwrap_or_default().trim();
+    let trimmed_traits = traits.as_deref().unwrap_or_default().trim();
+    let trimmed_mode = mode.as_deref().unwrap_or_default().trim();
+    let mut effective_prompt = prompt.trim().to_string();
+    if trimmed_mode == "plan" && !effective_prompt.is_empty() {
+        effective_prompt = format!(
+            "{}\n{}",
+            [
+                "You are in plan mode.",
+                "Analyze the codebase and return a concrete implementation plan only.",
+                "Do not modify files or execute mutating commands.",
+                "",
+                "User request:",
+            ]
+            .join("\n"),
+            effective_prompt
+        );
+    }
+
+    match provider {
+        AgentProviderKind::Codex => {
+            if !trimmed_model.is_empty() {
+                args.extend(["--model".to_string(), trimmed_model.to_string()]);
+            }
+            if trimmed_mode == "plan" {
+                args.extend(["--sandbox".to_string(), "read-only".to_string()]);
+                args.extend(["--ask-for-approval".to_string(), "on-request".to_string()]);
+            } else {
+                match access {
+                    ProjectActionAccess::Default => {}
+                    ProjectActionAccess::ReadOnly => {
+                        args.extend(["--sandbox".to_string(), "read-only".to_string()]);
+                        args.extend(["--ask-for-approval".to_string(), "on-request".to_string()]);
+                    }
+                    ProjectActionAccess::WorkspaceWrite => {
+                        args.extend(["--sandbox".to_string(), "workspace-write".to_string()]);
+                        args.extend(["--ask-for-approval".to_string(), "on-request".to_string()]);
+                    }
+                    ProjectActionAccess::FullAccess => {
+                        args.extend(["--sandbox".to_string(), "danger-full-access".to_string()]);
+                        args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+                    }
+                }
+            }
+            if !trimmed_traits.is_empty() {
+                args.extend([
+                    "--config".to_string(),
+                    format!("model_reasoning_effort=\"{trimmed_traits}\""),
+                ]);
+            }
+            if !trimmed_mode.is_empty() && trimmed_mode != "default" && trimmed_mode != "plan" {
+                return Err(format!("Unsupported Codex action mode: {trimmed_mode}."));
+            }
+        }
+        AgentProviderKind::ClaudeCode => {
+            if !trimmed_model.is_empty() {
+                args.extend(["--model".to_string(), trimmed_model.to_string()]);
+            }
+            if !trimmed_traits.is_empty() {
+                args.extend(["--effort".to_string(), trimmed_traits.to_string()]);
+            }
+            if trimmed_mode == "plan" {
+                args.extend(["--permission-mode".to_string(), "plan".to_string()]);
+            } else {
+                match access {
+                    ProjectActionAccess::Default => {}
+                    ProjectActionAccess::ReadOnly => {
+                        args.extend(["--permission-mode".to_string(), "plan".to_string()]);
+                    }
+                    ProjectActionAccess::WorkspaceWrite => {
+                        args.extend(["--permission-mode".to_string(), "default".to_string()]);
+                    }
+                    ProjectActionAccess::FullAccess => {
+                        args.extend([
+                            "--permission-mode".to_string(),
+                            "bypassPermissions".to_string(),
+                        ]);
+                    }
+                }
+            }
+            if !trimmed_mode.is_empty() && trimmed_mode != "default" && trimmed_mode != "plan" {
+                return Err(format!("Unsupported Claude action mode: {trimmed_mode}."));
+            }
+        }
+        provider => {
+            if !trimmed_model.is_empty()
+                || !trimmed_traits.is_empty()
+                || !trimmed_mode.is_empty()
+                || *access != ProjectActionAccess::Default
+            {
+                return Err(format!(
+                    "{} actions do not support custom model, traits, mode, or access options yet.",
+                    provider.label()
+                ));
+            }
+        }
+    }
+
+    if !effective_prompt.is_empty() {
+        args.push(effective_prompt);
+    }
+
+    Ok(args)
+}
+
+fn upsert_action(actions: &mut Vec<ProjectAction>, action: ProjectAction) {
+    if let Some(existing) = actions.iter_mut().find(|existing| existing.id == action.id) {
+        *existing = action;
+    } else {
+        actions.push(action);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -716,6 +973,95 @@ impl ProjectStore {
 
     pub fn repo_default_commit_action(&self, repo_id: &str) -> Option<RepoDefaultCommitAction> {
         self.ui.repo_default_commit_actions.get(repo_id).copied()
+    }
+
+    pub fn project_actions(&self, project_id: &str) -> Vec<ProjectAction> {
+        let Some(root_project_id) = self.root_project_id_for_project(project_id) else {
+            return self.ui.global_actions.clone();
+        };
+
+        let global_action_ids: HashSet<&str> = self
+            .ui
+            .global_actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect();
+        let mut actions = self
+            .project(&root_project_id)
+            .map(|project| project.actions.clone())
+            .unwrap_or_default();
+        actions.retain(|action| !global_action_ids.contains(action.id.as_str()));
+        actions.extend(self.ui.global_actions.clone());
+        actions
+    }
+
+    pub fn upsert_project_action(
+        &mut self,
+        project_id: &str,
+        mut action: ProjectAction,
+        save_global_copy: bool,
+    ) -> Result<(), String> {
+        let root_project_id = self
+            .root_project_id_for_project(project_id)
+            .ok_or_else(|| "Could not find the project group for this repository.".to_string())?;
+        if save_global_copy {
+            if let Some(project) = self.project_mut(&root_project_id) {
+                project.actions.retain(|existing| existing.id != action.id);
+            } else {
+                return Err("Could not find the root project for this repository.".to_string());
+            }
+
+            action.scope = ProjectActionScope::Global;
+            upsert_action(&mut self.ui.global_actions, action);
+        } else {
+            self.ui
+                .global_actions
+                .retain(|existing| existing.id != action.id);
+
+            action.scope = ProjectActionScope::Project;
+            let Some(project) = self.project_mut(&root_project_id) else {
+                return Err("Could not find the root project for this repository.".to_string());
+            };
+            upsert_action(&mut project.actions, action);
+        }
+        self.refresh_runtime_views();
+        self.save();
+        Ok(())
+    }
+
+    pub fn upsert_global_action(&mut self, mut action: ProjectAction) {
+        action.scope = ProjectActionScope::Global;
+        upsert_action(&mut self.ui.global_actions, action);
+        self.save();
+    }
+
+    pub fn delete_project_action(&mut self, project_id: &str, action_id: &str) -> bool {
+        let Some(root_project_id) = self.root_project_id_for_project(project_id) else {
+            return false;
+        };
+        let mut removed = false;
+        if let Some(project) = self.project_mut(&root_project_id) {
+            let before = project.actions.len();
+            project.actions.retain(|action| action.id != action_id);
+            removed = project.actions.len() != before;
+        }
+        let before_global = self.ui.global_actions.len();
+        self.ui
+            .global_actions
+            .retain(|action| action.id != action_id);
+        removed |= self.ui.global_actions.len() != before_global;
+        if removed {
+            self.refresh_runtime_views();
+            self.save();
+        }
+        removed
+    }
+
+    pub fn automatic_project_actions(&self, project_id: &str) -> Vec<ProjectAction> {
+        self.project_actions(project_id)
+            .into_iter()
+            .filter(|action| action.run_on_worktree_create)
+            .collect()
     }
 
     pub fn set_repo_default_commit_action(
@@ -1391,6 +1737,7 @@ pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {
             kind,
             checkout: checkout_state_from_resolved(&branches),
             branch_settings: ProjectBranchSettings::default(),
+            actions: Vec::new(),
             worktree_name: detect_worktree_name(&canonical),
             repo_common_dir: common_dir.clone(),
         },
@@ -2663,10 +3010,12 @@ mod tests {
         app_worktrees_root, combine_commit_file_changes, format_git_command_error,
         parse_branch_commit_entries, parse_branch_compare_name_status_entries,
         parse_branch_compare_numstat_entries, parse_recent_branch_commit_page,
-        worktree_parent_dir_with_root, BranchCompareNameStatusEntry, BranchCompareNumStatEntry,
-        PersistedSectionState, PersistedTerminalTab, Project, ProjectBranchSettingField,
-        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
-        RepoRecord, StoreFile, Task, TaskKind, UiState,
+        project_action_agent_launch_args, worktree_parent_dir_with_root,
+        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, PersistedSectionState,
+        PersistedTerminalTab, Project, ProjectAction, ProjectActionAccess, ProjectActionIcon,
+        ProjectActionKind, ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings,
+        ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task,
+        TaskKind, UiState,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -2682,8 +3031,45 @@ mod tests {
             },
             checkout: ProjectCheckoutState::default(),
             branch_settings: ProjectBranchSettings::default(),
+            actions: Vec::new(),
             worktree_name: worktree_name.map(str::to_string),
             repo_common_dir: None,
+        }
+    }
+
+    fn sample_project_store(root_project: Project) -> super::ProjectStore {
+        let file_path = std::env::temp_dir().join(format!(
+            "another-one-project-store-test-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let project_id = root_project.id.clone();
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::from([(project_id.clone(), root_project)]),
+            projects: Vec::new(),
+            project_order: vec![project_id],
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: super::UiState::default(),
+            file_path,
+        };
+        store.refresh_runtime_views();
+        store
+    }
+
+    fn sample_shell_action(id: &str, scope: ProjectActionScope) -> ProjectAction {
+        ProjectAction {
+            id: id.to_string(),
+            name: "Ok".to_string(),
+            icon: ProjectActionIcon::Play,
+            run_on_worktree_create: false,
+            scope,
+            kind: ProjectActionKind::Shell {
+                command: "echo ok".to_string(),
+            },
         }
     }
 
@@ -2786,6 +3172,8 @@ mod tests {
         let project = store.projects.get("root").expect("project should exist");
 
         assert_eq!(project.branch_settings, ProjectBranchSettings::default());
+        assert!(project.actions.is_empty());
+        assert!(store.ui.global_actions.is_empty());
     }
 
     #[test]
@@ -2812,6 +3200,127 @@ mod tests {
                 default_target_branch: Some("release".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn project_and_global_actions_round_trip() {
+        let mut store = StoreFile::default();
+        let mut project = sample_project("root", None);
+        project.actions.push(ProjectAction {
+            id: "project-action".to_string(),
+            name: "Test".to_string(),
+            icon: ProjectActionIcon::Test,
+            run_on_worktree_create: true,
+            scope: ProjectActionScope::Project,
+            kind: ProjectActionKind::Shell {
+                command: "cargo test".to_string(),
+            },
+        });
+        store.projects.insert(project.id.clone(), project);
+        store.ui.global_actions.push(ProjectAction {
+            id: "global-action".to_string(),
+            name: "Review".to_string(),
+            icon: ProjectActionIcon::Agent,
+            run_on_worktree_create: false,
+            scope: ProjectActionScope::Global,
+            kind: ProjectActionKind::Agent {
+                prompt: "Review this branch".to_string(),
+                provider: AgentProviderKind::Codex,
+                model: Some("gpt-5.4".to_string()),
+                traits: None,
+                mode: None,
+                access: ProjectActionAccess::WorkspaceWrite,
+            },
+        });
+
+        let json = serde_json::to_string(&store).expect("store should serialize");
+        let round_trip: StoreFile = serde_json::from_str(&json).expect("store should deserialize");
+
+        assert_eq!(round_trip.projects["root"].actions.len(), 1);
+        assert_eq!(round_trip.ui.global_actions.len(), 1);
+        assert_eq!(
+            round_trip.projects["root"].actions[0].kind,
+            ProjectActionKind::Shell {
+                command: "cargo test".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn upserting_global_action_removes_project_scoped_copy() {
+        let mut project = sample_project("root", None);
+        project.actions.push(sample_shell_action(
+            "action-ok",
+            ProjectActionScope::Project,
+        ));
+        let mut store = sample_project_store(project);
+
+        store
+            .upsert_project_action(
+                "root",
+                sample_shell_action("action-ok", ProjectActionScope::Project),
+                true,
+            )
+            .expect("global action save should succeed");
+
+        assert!(store.projects_by_id["root"].actions.is_empty());
+        assert_eq!(store.ui.global_actions.len(), 1);
+        assert_eq!(store.ui.global_actions[0].scope, ProjectActionScope::Global);
+
+        let visible_actions = store.project_actions("root");
+        assert_eq!(visible_actions.len(), 1);
+        assert_eq!(visible_actions[0].id, "action-ok");
+        assert_eq!(visible_actions[0].scope, ProjectActionScope::Global);
+    }
+
+    #[test]
+    fn project_actions_prefer_global_copy_when_ids_overlap() {
+        let mut project = sample_project("root", None);
+        project.actions.push(sample_shell_action(
+            "action-ok",
+            ProjectActionScope::Project,
+        ));
+        let mut store = sample_project_store(project);
+        store
+            .ui
+            .global_actions
+            .push(sample_shell_action("action-ok", ProjectActionScope::Global));
+
+        let visible_actions = store.project_actions("root");
+
+        assert_eq!(visible_actions.len(), 1);
+        assert_eq!(visible_actions[0].id, "action-ok");
+        assert_eq!(visible_actions[0].scope, ProjectActionScope::Global);
+    }
+
+    #[test]
+    fn upserting_project_action_removes_global_scoped_copy() {
+        let project = sample_project("root", None);
+        let mut store = sample_project_store(project);
+        store
+            .ui
+            .global_actions
+            .push(sample_shell_action("action-ok", ProjectActionScope::Global));
+
+        store
+            .upsert_project_action(
+                "root",
+                sample_shell_action("action-ok", ProjectActionScope::Global),
+                false,
+            )
+            .expect("project action save should succeed");
+
+        assert!(store.ui.global_actions.is_empty());
+        assert_eq!(store.projects_by_id["root"].actions.len(), 1);
+        assert_eq!(
+            store.projects_by_id["root"].actions[0].scope,
+            ProjectActionScope::Project
+        );
+
+        let visible_actions = store.project_actions("root");
+        assert_eq!(visible_actions.len(), 1);
+        assert_eq!(visible_actions[0].id, "action-ok");
+        assert_eq!(visible_actions[0].scope, ProjectActionScope::Project);
     }
 
     #[test]
@@ -2986,6 +3495,7 @@ mod tests {
                 git_commit_generation_script: None,
                 git_pr_generation_script: None,
                 shortcuts: ShortcutSettings::default(),
+                global_actions: Vec::new(),
             },
         };
 
@@ -3415,6 +3925,138 @@ mod tests {
             ]))
         );
         assert_eq!(round_trip.ui.default_agent_id.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn project_action_codex_launch_args_include_prompt_model_and_access() {
+        let action = ProjectAction {
+            id: "a".to_string(),
+            name: "Ask Codex".to_string(),
+            icon: ProjectActionIcon::Agent,
+            run_on_worktree_create: false,
+            scope: ProjectActionScope::Project,
+            kind: ProjectActionKind::Agent {
+                prompt: "Fix the bug".to_string(),
+                provider: AgentProviderKind::Codex,
+                model: Some("gpt-5.4".to_string()),
+                traits: None,
+                mode: None,
+                access: ProjectActionAccess::WorkspaceWrite,
+            },
+        };
+
+        assert_eq!(
+            project_action_agent_launch_args(&action).expect("args should build"),
+            vec![
+                "--model",
+                "gpt-5.4",
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "on-request",
+                "Fix the bug"
+            ]
+        );
+    }
+
+    #[test]
+    fn project_action_claude_launch_args_include_prompt_model_traits_and_access() {
+        let action = ProjectAction {
+            id: "a".to_string(),
+            name: "Ask Claude".to_string(),
+            icon: ProjectActionIcon::Agent,
+            run_on_worktree_create: false,
+            scope: ProjectActionScope::Project,
+            kind: ProjectActionKind::Agent {
+                prompt: "Summarize".to_string(),
+                provider: AgentProviderKind::ClaudeCode,
+                model: Some("sonnet".to_string()),
+                traits: Some("high".to_string()),
+                mode: None,
+                access: ProjectActionAccess::FullAccess,
+            },
+        };
+
+        assert_eq!(
+            project_action_agent_launch_args(&action).expect("args should build"),
+            vec![
+                "--model",
+                "sonnet",
+                "--effort",
+                "high",
+                "--permission-mode",
+                "bypassPermissions",
+                "Summarize"
+            ]
+        );
+    }
+
+    #[test]
+    fn project_action_plan_mode_overrides_access() {
+        let codex_action = ProjectAction {
+            id: "a".to_string(),
+            name: "Plan with Codex".to_string(),
+            icon: ProjectActionIcon::Agent,
+            run_on_worktree_create: false,
+            scope: ProjectActionScope::Project,
+            kind: ProjectActionKind::Agent {
+                prompt: "Refactor this".to_string(),
+                provider: AgentProviderKind::Codex,
+                model: None,
+                traits: None,
+                mode: Some("plan".to_string()),
+                access: ProjectActionAccess::FullAccess,
+            },
+        };
+        let codex_args =
+            project_action_agent_launch_args(&codex_action).expect("args should build");
+        assert_eq!(
+            codex_args[0..4],
+            ["--sandbox", "read-only", "--ask-for-approval", "on-request"]
+        );
+        assert!(codex_args
+            .last()
+            .expect("prompt arg should exist")
+            .starts_with("You are in plan mode."));
+
+        let claude_action = ProjectAction {
+            id: "b".to_string(),
+            name: "Plan with Claude".to_string(),
+            icon: ProjectActionIcon::Agent,
+            run_on_worktree_create: false,
+            scope: ProjectActionScope::Project,
+            kind: ProjectActionKind::Agent {
+                prompt: "Refactor this".to_string(),
+                provider: AgentProviderKind::ClaudeCode,
+                model: None,
+                traits: None,
+                mode: Some("plan".to_string()),
+                access: ProjectActionAccess::FullAccess,
+            },
+        };
+        assert_eq!(
+            project_action_agent_launch_args(&claude_action).expect("args should build")[0..2],
+            ["--permission-mode", "plan"]
+        );
+    }
+
+    #[test]
+    fn shell_action_launch_args_are_empty() {
+        let action = ProjectAction {
+            id: "a".to_string(),
+            name: "Test".to_string(),
+            icon: ProjectActionIcon::Test,
+            run_on_worktree_create: false,
+            scope: ProjectActionScope::Project,
+            kind: ProjectActionKind::Shell {
+                command: "cargo test".to_string(),
+            },
+        };
+
+        assert_eq!(
+            project_action_agent_launch_args(&action).expect("shell args should build"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

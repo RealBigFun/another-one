@@ -40,8 +40,9 @@ use crate::panels::terminal_cell_width;
 use crate::platform::PlatformServices;
 use crate::project_store::{
     ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
-    ProjectBranchCommitState, ProjectBranchCompareState, ProjectBranchSettingField,
-    ProjectGitState, ProjectStore, RepoBranchRecord, RepoDefaultCommitAction, Task, TaskKind,
+    ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchCompareState,
+    ProjectBranchSettingField, ProjectGitState, ProjectStore, RepoBranchRecord,
+    RepoDefaultCommitAction, Task, TaskKind,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
 use crate::terminal_launch::{
@@ -967,6 +968,10 @@ pub struct AnotherOneApp {
     pub(crate) expanded_commit_rows: HashSet<String>,
     /// Whether the right-sidebar git actions dropdown menu is open.
     pub(crate) git_actions_menu_open: bool,
+    /// Whether the titlebar custom actions dropdown menu is open.
+    pub(crate) custom_actions_menu_open: bool,
+    /// Last manually-run custom action id used to label and target the titlebar action button.
+    pub(crate) last_used_custom_action_id: Option<String>,
     /// Active transient notifications displayed above the app chrome.
     toasts: Vec<AppToast>,
     next_toast_id: u64,
@@ -1045,6 +1050,8 @@ pub struct AnotherOneApp {
     warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
     /// Live PTY-backed terminal runtimes keyed by section and tab id.
     live_terminal_runtimes: HashMap<TerminalRuntimeKey, LiveTerminalRuntime>,
+    /// Input to send once a newly launched action terminal is ready.
+    pending_post_launch_input: HashMap<TerminalRuntimeKey, Vec<u8>>,
     /// GPUI-free bookkeeping for per-tab terminal state: recent output,
     /// last error, tracked process, pending-launch flag. Backed by
     /// `another_one_core::terminal_manager::TerminalManager` so it can
@@ -1092,6 +1099,8 @@ pub struct AnotherOneApp {
     pub(crate) new_task_modal: Option<crate::new_task_modal::NewTaskModalState>,
     /// Add Agent modal state. Some when open, None when closed.
     pub(crate) add_agent_modal: Option<crate::add_agent_modal::AddAgentModalState>,
+    /// Add/Edit custom action modal state. Some when open, None when closed.
+    pub(crate) custom_action_modal: Option<crate::custom_actions_modal::CustomActionModalState>,
     /// Inline rename state for a direct task in the left sidebar.
     pub(crate) sidebar_task_rename: Option<SidebarTaskRenameState>,
     /// Most recent direct-task click used to detect double-click rename reliably.
@@ -1886,6 +1895,10 @@ impl AnotherOneApp {
             return TextInputTarget::Blocked;
         }
 
+        if self.custom_action_modal.is_some() {
+            return TextInputTarget::Blocked;
+        }
+
         if self.sidebar_task_rename.is_some() {
             return TextInputTarget::SidebarTaskRename;
         }
@@ -2388,12 +2401,14 @@ impl AnotherOneApp {
     pub(crate) fn dismiss_titlebar_dropdowns(&mut self) -> bool {
         let had_open_in = self.project_page_open_in_menu_project_id.take().is_some();
         let had_git_actions = self.git_actions_menu_open;
+        let had_custom_actions = self.custom_actions_menu_open;
         self.git_actions_menu_open = false;
+        self.custom_actions_menu_open = false;
         let had_project_config = self.project_page_config_dropdown.take().is_some();
         if had_project_config {
             self.project_page_config_panel_targeted = false;
         }
-        had_open_in || had_git_actions || had_project_config
+        had_open_in || had_git_actions || had_custom_actions || had_project_config
     }
 
     pub(crate) fn toggle_project_page_config_panel(&mut self, cx: &mut Context<Self>) {
@@ -2413,6 +2428,7 @@ impl AnotherOneApp {
     ) {
         self.project_page_open_in_menu_project_id = None;
         self.git_actions_menu_open = false;
+        self.custom_actions_menu_open = false;
         self.project_page_config_panel_expanded = true;
         self.project_page_config_panel_targeted = false;
         self.project_page_config_dropdown = if self.project_page_config_dropdown == Some(field) {
@@ -2676,6 +2692,7 @@ impl AnotherOneApp {
             self.project_page_open_in_menu_project_id = Some(project_id.to_string());
         }
         self.git_actions_menu_open = false;
+        self.custom_actions_menu_open = false;
 
         cx.stop_propagation();
         cx.notify();
@@ -3001,6 +3018,8 @@ impl AnotherOneApp {
             collapsed_change_sections: HashSet::new(),
             expanded_commit_rows: HashSet::new(),
             git_actions_menu_open: false,
+            custom_actions_menu_open: false,
+            last_used_custom_action_id: None,
             toasts: Vec::new(),
             next_toast_id: 1,
             toast_drag: None,
@@ -3042,6 +3061,7 @@ impl AnotherOneApp {
             warm_terminal_launch_sender,
             warm_terminal_launch_receiver,
             live_terminal_runtimes: HashMap::new(),
+            pending_post_launch_input: HashMap::new(),
             terminal_manager: another_one_core::terminal_manager::TerminalManager::new(),
             terminal_surface_snapshots: HashMap::new(),
             terminal_scroll_remainder_lines: HashMap::new(),
@@ -3091,6 +3111,7 @@ impl AnotherOneApp {
             branch_compare_states: HashMap::new(),
             marked_text: None,
             add_agent_modal: None,
+            custom_action_modal: None,
             sidebar_task_last_click: None,
             font_size: initial_font_size,
             last_viewport_size: window.viewport_size(),
@@ -3627,12 +3648,13 @@ impl AnotherOneApp {
         }
 
         if let Some(mut runtime) = launch.runtime.take() {
+            let launch_config = launch.launch_config.clone();
             self.terminal_manager.pending_launches.remove(&key);
             self.terminal_manager.errors.remove(&key);
             self.terminal_surface_snapshots
                 .insert(key.clone(), runtime.snapshot());
             self.live_terminal_runtimes.insert(key.clone(), runtime);
-            let launch_config = launch.launch_config.clone();
+            self.send_pending_post_launch_input(&key);
             self.update_terminal_tab(&key, cx, |tab| {
                 tab.launch_config = launch_config.clone();
                 tab.restore_status = TerminalRestoreStatus::Ready;
@@ -3737,6 +3759,7 @@ impl AnotherOneApp {
                     self.terminal_surface_snapshots
                         .insert(key.clone(), runtime.snapshot());
                     self.live_terminal_runtimes.insert(key.clone(), runtime);
+                    self.send_pending_post_launch_input(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
                         tab.launch_config = launch_config.clone();
                         tab.restore_status = TerminalRestoreStatus::Ready;
@@ -3891,6 +3914,7 @@ impl AnotherOneApp {
                         self.terminal_surface_snapshots
                             .insert(key.clone(), runtime.snapshot());
                         self.live_terminal_runtimes.insert(key.clone(), runtime);
+                        self.send_pending_post_launch_input(&key);
                         self.update_terminal_tab(&key, cx, |tab| {
                             tab.launch_config = launch_config.clone();
                             tab.restore_status = TerminalRestoreStatus::Ready;
@@ -4075,6 +4099,104 @@ impl AnotherOneApp {
             return false;
         };
         runtime.write_input(bytes).is_ok()
+    }
+
+    fn send_pending_post_launch_input(&mut self, key: &TerminalRuntimeKey) -> bool {
+        let Some(bytes) = self.pending_post_launch_input.remove(key) else {
+            return false;
+        };
+        let Some(runtime) = self.live_terminal_runtimes.get(key) else {
+            self.pending_post_launch_input.insert(key.clone(), bytes);
+            return false;
+        };
+        runtime.write_input(&bytes).is_ok()
+    }
+
+    pub(crate) fn run_project_action(
+        &mut self,
+        action: ProjectAction,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(section_id) = self.workspace_pane.read(cx).active_section.clone() else {
+            self.show_error_toast("Custom actions run inside an active task.", cx);
+            return;
+        };
+
+        let action_id = action.id.clone();
+        if let Err(error) = self.run_project_action_in_section(
+            &section_id,
+            action,
+            window.map(|window| self.terminal_panel_size(window)),
+            cx,
+        ) {
+            self.show_error_toast(error, cx);
+        } else {
+            self.last_used_custom_action_id = Some(action_id);
+        }
+    }
+
+    fn run_project_action_in_section(
+        &mut self,
+        section_id: &SectionId,
+        action: ProjectAction,
+        launch_size: Option<TerminalGridSize>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let cwd = self
+            .cwd_for_section(section_id, cx)
+            .ok_or_else(|| "Could not find the task worktree for this action.".to_string())?;
+        let (launch_config, post_launch_input) = match &action.kind {
+            ProjectActionKind::Shell { command } => {
+                let command = command.trim();
+                if command.is_empty() {
+                    return Err("Shell actions need a command before they can run.".to_string());
+                }
+                (
+                    TerminalLaunchConfig::default(),
+                    Some(format!("{command}\n").into_bytes()),
+                )
+            }
+            ProjectActionKind::Agent { provider, .. } => {
+                let args = crate::project_store::project_action_agent_launch_args(&action)?;
+                (
+                    TerminalLaunchConfig::for_provider(*provider).with_extra_args(args),
+                    None,
+                )
+            }
+        };
+
+        let tab_id = self
+            .workspace_pane
+            .update(cx, |workspace, cx| {
+                workspace.add_tab_with_launch_config(section_id, launch_config.clone(), cx)
+            })
+            .ok_or_else(|| "Could not add an action tab for this task.".to_string())?;
+        let key = TerminalRuntimeKey {
+            section_id: section_id.clone(),
+            tab_id,
+        };
+        if let Some(input) = post_launch_input {
+            self.pending_post_launch_input.insert(key.clone(), input);
+        }
+
+        if let Some(size) = launch_size {
+            self.terminal_manager.pending_launches.insert(key.clone());
+            self.update_terminal_tab(&key, cx, |tab| {
+                tab.restore_status = TerminalRestoreStatus::Launching;
+            });
+            spawn_terminal_launch(
+                self.terminal_launch_sender.clone(),
+                key,
+                Some(cwd),
+                launch_config.clone(),
+                self.agent_launch_args_for_launch_config(&launch_config),
+                size,
+            );
+        }
+
+        cx.notify();
+        Ok(())
     }
 
     pub(crate) fn paste_into_active_terminal(&mut self, cx: &App, text: &str) -> bool {
@@ -4440,7 +4562,8 @@ impl AnotherOneApp {
             .unwrap_or_else(|| path.display().to_string());
         self.show_info_toast(format!("Adding {}...", project_label), cx);
 
-        self.project_add_receiver = Some(another_one_core::project_service::spawn_project_add(path));
+        self.project_add_receiver =
+            Some(another_one_core::project_service::spawn_project_add(path));
         cx.notify();
     }
 
@@ -5872,6 +5995,19 @@ impl AnotherOneApp {
                                 cx,
                             );
                         }
+                        let automatic_actions = self
+                            .project_store
+                            .automatic_project_actions(&success.original_project_id);
+                        for action in automatic_actions {
+                            if let Err(error) = self.run_project_action_in_section(
+                                &section_id,
+                                action,
+                                Some(TerminalGridSize::default()),
+                                cx,
+                            ) {
+                                self.show_error_toast(error, cx);
+                            }
+                        }
                         self.mark_git_refresh_stale();
 
                         self.new_task_modal = None;
@@ -6014,7 +6150,9 @@ impl AnotherOneApp {
                     // its project id in the set forever and
                     // `request_project_github_link_lookup` early-returns
                     // for that project until app restart.
-                    log::warn!("project_github_link drain lagged {n} messages; clearing in-flight set");
+                    log::warn!(
+                        "project_github_link drain lagged {n} messages; clearing in-flight set"
+                    );
                     self.project_github_link_requests.clear();
                     continue;
                 }
@@ -6156,7 +6294,9 @@ impl AnotherOneApp {
                     // See note on `drain_project_github_link_lookup`:
                     // wipe the in-flight set so dropped replies don't
                     // strand their lookup keys as permanent ghosts.
-                    log::warn!("project_pull_request drain lagged {n} messages; clearing in-flight set");
+                    log::warn!(
+                        "project_pull_request drain lagged {n} messages; clearing in-flight set"
+                    );
                     self.project_pull_request_requests.clear();
                     continue;
                 }
@@ -6237,7 +6377,9 @@ impl AnotherOneApp {
                     // See note on `drain_project_github_link_lookup`:
                     // wipe the in-flight set so dropped replies don't
                     // strand their lookup keys as permanent ghosts.
-                    log::warn!("project_check_runs drain lagged {n} messages; clearing in-flight set");
+                    log::warn!(
+                        "project_check_runs drain lagged {n} messages; clearing in-flight set"
+                    );
                     self.project_check_runs_requests.clear();
                     continue;
                 }
@@ -7774,6 +7916,7 @@ mod tests {
                 lines_removed: 0,
             },
             branch_settings: crate::project_store::ProjectBranchSettings::default(),
+            actions: Vec::new(),
             worktree_name: None,
             repo_common_dir: None,
         }
@@ -9279,7 +9422,8 @@ impl Render for AnotherOneApp {
                 .child(main)
                 .child(footer)
                 .when(supports_custom_chrome, |d| {
-                    d.child(self.titlebar_open_in_overlay(cx))
+                    d.child(self.titlebar_custom_actions_overlay(cx))
+                        .child(self.titlebar_open_in_overlay(cx))
                         .child(self.titlebar_git_actions_overlay(cx))
                 })
                 .child(self.resource_indicator_overlay(window, cx))
@@ -9287,6 +9431,7 @@ impl Render for AnotherOneApp {
                 .child(self.sidebar_task_menu_overlay(window, cx))
                 .child(self.new_task_modal_overlay(cx))
                 .child(self.add_agent_modal_overlay(cx))
+                .child(self.custom_action_modal_overlay(cx))
                 .child(self.project_remove_confirm_modal(cx))
                 .child(self.sidebar_task_delete_confirm_modal(cx))
                 .child(self.toast_layer(cx)),

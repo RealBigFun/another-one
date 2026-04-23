@@ -107,6 +107,7 @@ pub fn spawn_task_creation(
                     kind: ProjectKind::Worktree,
                     checkout: ProjectCheckoutState::default(),
                     branch_settings: ProjectBranchSettings::default(),
+                    actions: Vec::new(),
                     worktree_name: created
                         .path
                         .file_name()
