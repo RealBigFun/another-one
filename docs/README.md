@@ -20,6 +20,8 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
   - [[postmortems/2026-04-23-android-gso-quinn-2399]] — Android QUIC sends
     silently dropped by `noq-udp`; fixed via vendored fork at
     `vendor/noq-udp/`.
+  - [[postmortems/2026-04-23-iroh-relay-path-validated]] — off-LAN
+    cellular connection proven to carry through the Iroh dev relay.
 
 ## When to add something
 

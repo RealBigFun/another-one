@@ -345,6 +345,7 @@ fn wire__crate__api__iroh_client__iroh_connect_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_endpoint_id = <String>::sse_decode(&mut deserializer);
             let api_direct_addrs = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_relay_urls = <Vec<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -352,6 +353,7 @@ fn wire__crate__api__iroh_client__iroh_connect_impl(
                         let output_ok = crate::api::iroh_client::iroh_connect(
                             api_endpoint_id,
                             api_direct_addrs,
+                            api_relay_urls,
                         )
                         .await?;
                         Ok(output_ok)

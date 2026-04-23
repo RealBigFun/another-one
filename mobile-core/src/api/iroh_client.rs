@@ -25,7 +25,7 @@ use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
 use iroh::endpoint::{RecvStream, SendStream};
-use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode};
+use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl};
 
 /// Must match the daemon's ALPN byte string.
 const ALPN: &[u8] = b"anotherone/pty/0";
@@ -117,7 +117,7 @@ fn setup_tracing() {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("warn,mobile_core=info,iroh=warn"));
+        .unwrap_or_else(|_| EnvFilter::new("warn,mobile_core=info,iroh=info"));
 
     #[cfg(target_os = "android")]
     let layer = tracing_android::layer("mobile_core")
@@ -146,18 +146,21 @@ pub struct IrohSession {
 }
 
 
-/// Dial a daemon's Iroh endpoint by its public `EndpointId`, with one or more
-/// explicit direct `host:port` socket addresses.
+/// Dial a daemon's Iroh endpoint by its public `EndpointId`.
 ///
-/// The sandbox does not ship an address-lookup service or relay, so the
-/// client needs the daemon's IP:port to dial. The daemon prints its
-/// EndpointAddr on startup; pass those addresses through here.
+/// At least one of `direct_addrs` or `relay_urls` must be non-empty — the
+/// sandbox has no address-lookup service, so we can't discover how to reach
+/// the daemon on our own. The daemon's ticket file prints both; pass them
+/// through. When both are given iroh prefers the direct path and falls
+/// back to the relay if hole-punching fails (the typical mobile-cellular
+/// path).
 pub async fn iroh_connect(
     endpoint_id: String,
     direct_addrs: Vec<String>,
+    relay_urls: Vec<String>,
 ) -> anyhow::Result<IrohSession> {
     tokio_rt()
-        .spawn(async move { iroh_connect_inner(endpoint_id, direct_addrs).await })
+        .spawn(async move { iroh_connect_inner(endpoint_id, direct_addrs, relay_urls).await })
         .await
         .map_err(|e| anyhow::anyhow!("connect task panicked: {e}"))?
 }
@@ -165,11 +168,13 @@ pub async fn iroh_connect(
 async fn iroh_connect_inner(
     endpoint_id: String,
     direct_addrs: Vec<String>,
+    relay_urls: Vec<String>,
 ) -> anyhow::Result<IrohSession> {
     tracing::info!(
-        "iroh_connect: id={} direct={:?}",
+        "iroh_connect: id={} direct={:?} relays={:?}",
         endpoint_id,
-        direct_addrs
+        direct_addrs,
+        relay_urls,
     );
 
     let id: EndpointId = endpoint_id
@@ -185,13 +190,32 @@ async fn iroh_connect_inner(
                 .map_err(|e| anyhow::anyhow!("bad direct addr {s:?}: {e}"))
         })
         .collect::<anyhow::Result<_>>()?;
-    if parsed_addrs.is_empty() {
+    let parsed_relays: Vec<RelayUrl> = relay_urls
+        .iter()
+        .map(|s| {
+            s.parse::<RelayUrl>()
+                .map_err(|e| anyhow::anyhow!("bad relay url {s:?}: {e}"))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    if parsed_addrs.is_empty() && parsed_relays.is_empty() {
         return Err(anyhow::anyhow!(
-            "at least one direct address is required (sandbox has no address lookup)"
+            "at least one direct address or relay URL is required \
+             (sandbox has no address lookup)"
         ));
     }
 
-    tracing::info!("iroh_connect: binding (Minimal preset + explicit DNS)");
+    // Relay mode: if the caller gave us a relay URL, honour it (N0's dev
+    // mesh lives behind `RelayMode::Default`). Otherwise stay disabled for
+    // the LAN-only direct path.
+    let relay_mode = if parsed_relays.is_empty() {
+        RelayMode::Disabled
+    } else {
+        RelayMode::Default
+    };
+    tracing::info!(
+        "iroh_connect: binding (Minimal preset, relay_mode={:?}, explicit DNS)",
+        relay_mode,
+    );
     // Android gotcha: `DnsResolver::default()` calls `with_system_defaults()`
     // which tries to read `/etc/resolv.conf`. iroh's own doc notes this "does
     // not work at least on some Androids" and says it falls back to Google
@@ -204,7 +228,7 @@ async fn iroh_connect_inner(
     let endpoint = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         Endpoint::builder(presets::Minimal)
-            .relay_mode(RelayMode::Disabled)
+            .relay_mode(relay_mode)
             .alpns(vec![])
             .dns_resolver(dns)
             .bind(),
@@ -217,6 +241,9 @@ async fn iroh_connect_inner(
     let mut addr = EndpointAddr::new(id);
     for sa in &parsed_addrs {
         addr = addr.with_ip_addr(*sa);
+    }
+    for url in parsed_relays {
+        addr = addr.with_relay_url(url);
     }
 
     let conn = tokio::time::timeout(

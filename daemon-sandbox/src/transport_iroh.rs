@@ -44,23 +44,30 @@ pub async fn serve() -> anyhow::Result<()> {
     info!("iroh endpoint online: {:?}", endpoint.addr());
 
     // After going online, also stash the full EndpointAddr (id + direct
-    // socket addrs) as a newline-delimited text file so iroh-client and the
-    // mobile sandbox can dial without depending on DNS address lookup.
+    // socket addrs + relay URLs) as a newline-delimited text file so
+    // iroh-client and the mobile sandbox can dial without depending on DNS
+    // address lookup. Relay entries let off-LAN clients (CGNAT'd mobile on
+    // cellular, different networks) reach the daemon through the dev relay
+    // mesh when direct hole-punching fails.
     // Format:
     //   id=<hex>
     //   addr=<ip:port>
-    //   addr=<ip:port>
+    //   …
+    //   relay=<url>
     //   …
     let addr = endpoint.addr();
     let mut ticket = format!("id={}\n", addr.id);
     for ip in addr.ip_addrs() {
         ticket.push_str(&format!("addr={ip}\n"));
     }
+    for relay in addr.relay_urls() {
+        ticket.push_str(&format!("relay={relay}\n"));
+    }
     let ticket_path = std::env::temp_dir().join("daemon-sandbox.ticket");
     if let Err(e) = std::fs::write(&ticket_path, ticket) {
         warn!(error = %e, "failed to write ticket file");
     } else {
-        info!("Ticket (id + direct addrs) written to {}", ticket_path.display());
+        info!("Ticket written to {}", ticket_path.display());
     }
 
     while let Some(incoming) = endpoint.accept().await {

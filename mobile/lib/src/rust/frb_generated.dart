@@ -100,6 +100,7 @@ abstract class RustLibApi extends BaseApi {
   Future<IrohSession> crateApiIrohClientIrohConnect({
     required String endpointId,
     required List<String> directAddrs,
+    required List<String> relayUrls,
   });
 
   RustArcIncrementStrongCountFnType
@@ -300,6 +301,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<IrohSession> crateApiIrohClientIrohConnect({
     required String endpointId,
     required List<String> directAddrs,
+    required List<String> relayUrls,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -307,6 +309,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(endpointId, serializer);
           sse_encode_list_String(directAddrs, serializer);
+          sse_encode_list_String(relayUrls, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -320,7 +323,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiIrohClientIrohConnectConstMeta,
-        argValues: [endpointId, directAddrs],
+        argValues: [endpointId, directAddrs, relayUrls],
         apiImpl: this,
       ),
     );
@@ -329,7 +332,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiIrohClientIrohConnectConstMeta =>
       const TaskConstMeta(
         debugName: "iroh_connect",
-        argNames: ["endpointId", "directAddrs"],
+        argNames: ["endpointId", "directAddrs", "relayUrls"],
       );
 
   RustArcIncrementStrongCountFnType

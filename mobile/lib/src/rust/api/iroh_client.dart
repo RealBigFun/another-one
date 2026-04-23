@@ -10,18 +10,22 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Control`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
 
-/// Dial a daemon's Iroh endpoint by its public `EndpointId`, with one or more
-/// explicit direct `host:port` socket addresses.
+/// Dial a daemon's Iroh endpoint by its public `EndpointId`.
 ///
-/// The sandbox does not ship an address-lookup service or relay, so the
-/// client needs the daemon's IP:port to dial. The daemon prints its
-/// EndpointAddr on startup; pass those addresses through here.
+/// At least one of `direct_addrs` or `relay_urls` must be non-empty — the
+/// sandbox has no address-lookup service, so we can't discover how to reach
+/// the daemon on our own. The daemon's ticket file prints both; pass them
+/// through. When both are given iroh prefers the direct path and falls
+/// back to the relay if hole-punching fails (the typical mobile-cellular
+/// path).
 Future<IrohSession> irohConnect({
   required String endpointId,
   required List<String> directAddrs,
+  required List<String> relayUrls,
 }) => RustLib.instance.api.crateApiIrohClientIrohConnect(
   endpointId: endpointId,
   directAddrs: directAddrs,
+  relayUrls: relayUrls,
 );
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>

@@ -16,10 +16,15 @@ class IrohTransport implements TerminalTransport {
   /// Hex-encoded EndpointId of the daemon to dial.
   final String endpointId;
 
-  /// Direct `host:port` socket addresses of the daemon. The sandbox doesn't
-  /// ship an address-lookup service, so the client must know at least one
-  /// direct address to dial.
+  /// Direct `host:port` socket addresses of the daemon. Sandbox-only: no
+  /// address-lookup service. At least one of [directAddrs]/[relayUrls]
+  /// must be non-empty.
   final List<String> directAddrs;
+
+  /// Relay URLs the daemon is reachable through. Needed when the client is
+  /// off-LAN (e.g. mobile on cellular behind CGNAT) and direct hole-punching
+  /// won't succeed.
+  final List<String> relayUrls;
 
   final StreamController<Uint8List> _incoming =
       StreamController<Uint8List>.broadcast();
@@ -31,7 +36,11 @@ class IrohTransport implements TerminalTransport {
   TransportStatus _current = const TransportStatus.disconnected();
   bool _closed = false;
 
-  IrohTransport(this.endpointId, {this.directAddrs = const []});
+  IrohTransport(
+    this.endpointId, {
+    this.directAddrs = const [],
+    this.relayUrls = const [],
+  });
 
   @override
   Stream<Uint8List> get incoming => _incoming.stream;
@@ -54,6 +63,7 @@ class IrohTransport implements TerminalTransport {
       final session = await irohConnect(
         endpointId: endpointId,
         directAddrs: directAddrs,
+        relayUrls: relayUrls,
       );
       if (_closed) {
         await session.close();

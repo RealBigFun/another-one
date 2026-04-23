@@ -78,20 +78,23 @@ class _TerminalPageState extends State<TerminalPage> {
 
   /// Factory for the active transport. Dispatches by URL scheme:
   ///   - `ws://…` / `wss://…` → WebSocket (local sandbox daemon)
-  ///   - `iroh://<endpoint_id>?direct=host:port[,host:port...]` → Iroh QUIC
-  ///     via mobile_core. At least one direct addr is required because the
-  ///     sandbox doesn't ship an address-lookup service.
+  ///   - `iroh://<endpoint_id>?direct=host:port[,host:port...][&relay=url[,url...]]`
+  ///     → Iroh QUIC via mobile_core. At least one `direct` or `relay`
+  ///     entry is required because the sandbox has no address lookup.
+  ///     On-LAN clients usually only need `direct`; off-LAN (cellular,
+  ///     CGNAT) paths need `relay` so the dev relay mesh can forward.
   TerminalTransport _buildTransport(String endpoint) {
     final uri = Uri.parse(endpoint);
     if (uri.scheme == 'iroh') {
       final id = uri.host.isNotEmpty ? uri.host : uri.path.replaceAll('/', '');
-      final direct = uri.queryParameters['direct'];
-      final addrs = (direct ?? '')
+      List<String> splitCsv(String? s) => (s ?? '')
           .split(',')
-          .map((s) => s.trim())
-          .where((s) => s.isNotEmpty)
+          .map((x) => x.trim())
+          .where((x) => x.isNotEmpty)
           .toList();
-      return IrohTransport(id, directAddrs: addrs);
+      final addrs = splitCsv(uri.queryParameters['direct']);
+      final relays = splitCsv(uri.queryParameters['relay']);
+      return IrohTransport(id, directAddrs: addrs, relayUrls: relays);
     }
     return WebSocketTransport(endpoint);
   }
