@@ -1,3 +1,11 @@
 [workspace]
 resolver = "2"
 members = ["desktop", "daemon-sandbox", "mobile-core"]
+
+# Vendored noq-udp with a local fix for quinn-rs/quinn#2399: Android (and some
+# Linux NIC drivers) accept UDP_SEGMENT at setsockopt time but then fail the
+# actual sendmsg with EIO. The upstream crate drops those packets; our patch
+# retries the transmit without UDP_SEGMENT, splitting GSO batches into
+# individual datagrams. Remove once upstream ships a fix and we bump iroh.
+[patch.crates-io]
+noq-udp = { path = "vendor/noq-udp" }

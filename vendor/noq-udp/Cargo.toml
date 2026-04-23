@@ -1,0 +1,49 @@
+# Vendored fork of `noq-udp` 0.10.0 with a local fix for quinn-rs/quinn#2399.
+#
+# Upstream: https://github.com/n0-computer/noq/tree/main/noq-udp
+# Commit:   c13d711 (HEAD of `main` at time of vendoring)
+#
+# The single local change is in `src/unix.rs` — when `sendmsg` fails with
+# `EIO`/`EINVAL` and the transmit had `UDP_SEGMENT` set, retry with GSO
+# stripped (splitting the batch into individual datagrams). Without this,
+# Android (and some older Linux NIC drivers) silently drop the datagrams
+# because the kernel accepts `UDP_SEGMENT` at `setsockopt` time but then
+# rejects it at `sendmsg` time.
+#
+# We've inlined the fields that the upstream Cargo.toml inherited from the
+# `noq` workspace so this crate is self-contained — no sibling crates need
+# to be vendored.
+
+[package]
+name = "noq-udp"
+version = "0.10.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/n0-computer/noq"
+description = "UDP sockets with ECN information for the QUIC transport protocol"
+keywords = ["quic"]
+categories = ["network-programming", "asynchronous"]
+
+[features]
+default = ["tracing", "tracing-log"]
+tracing-log = ["tracing/log"]
+log = ["dep:log"]
+fast-apple-datapath = []
+
+[dependencies]
+libc = "0.2.175"
+log = { version = "0.4", optional = true }
+tracing = { version = "0.1.10", default-features = false, features = ["std"], optional = true }
+
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+socket2 = ">=0.5, <0.7"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
+
+[build-dependencies]
+cfg_aliases = "0.2.1"
+
+[lib]
+bench = false

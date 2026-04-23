@@ -14,7 +14,12 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
   [[architecture/frb-tokio-runtime]],
   [[architecture/git-mv-for-restructures]].
 - `postmortems/` — real debugging sagas with root cause and fix.
-  Currently: [[postmortems/2026-04-23-iroh-android-hang]].
+  Currently:
+  - [[postmortems/2026-04-23-iroh-android-hang]] — four stacked causes that
+    made `irohConnect` hang silently on the emulator.
+  - [[postmortems/2026-04-23-android-gso-quinn-2399]] — Android QUIC sends
+    silently dropped by `noq-udp`; fixed via vendored fork at
+    `vendor/noq-udp/`.
 
 ## When to add something
 

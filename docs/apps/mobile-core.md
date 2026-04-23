@@ -58,7 +58,11 @@ underlying connection cleanly.
 
 ## Known gaps
 
-- No send-side framing yet — `IrohSession::send` writes raw bytes. Will
-  add length-prefixed frames to support resize/control messages on the
-  Iroh path (matching [[daemon-sandbox]]'s WS control protocol).
 - iroh crate is pre-1.0 (0.98.x); expect minor-version churn.
+- **Patched `noq-udp`** — `vendor/noq-udp/` is a vendored fork of iroh's
+  UDP layer with a local fix for [quinn-rs/quinn#2399][gso] so QUIC sends
+  work on Android. Wired up via `[patch.crates-io]` in the workspace
+  manifest. Remove once upstream ships a fix. See
+  [[../postmortems/2026-04-23-android-gso-quinn-2399]].
+
+[gso]: https://github.com/quinn-rs/quinn/issues/2399
