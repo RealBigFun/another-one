@@ -32,6 +32,7 @@ use crate::agents::{
     terminal_launch_config_for_selected_agents, AgentProviderKind, TerminalLaunchConfig,
     TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
+pub use another_one_core::section::SectionId;
 use crate::layout::*;
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::panels::terminal_cell_width;
@@ -92,8 +93,6 @@ fn trim_to_recent_output_limit(buffer: &mut String) {
 
     buffer.drain(..start);
 }
-
-pub use another_one_core::section::SectionId;
 
 /// A single terminal tab within a section.
 pub struct TerminalTab {

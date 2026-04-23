@@ -17,16 +17,19 @@ use portable_pty::{ChildKiller, MasterPty, PtySize};
 use crate::section::SectionId;
 
 /// Clamp floor: terminal must be at least 20 cols wide so prompts render.
-pub const MIN_TERMINAL_COLS: u16 = 20;
+/// Crate-private — only `from_panel_size` uses it.
+const MIN_TERMINAL_COLS: u16 = 20;
 
-/// Clamp floor: at least 4 rows tall.
-pub const MIN_TERMINAL_ROWS: u16 = 4;
+/// Clamp floor: at least 4 rows tall. Crate-private.
+const MIN_TERMINAL_ROWS: u16 = 4;
 
 /// How wide one cell is, as a fraction of the font size. Tuned to match
-/// Lilex NerdFont Mono at the default weight.
+/// Lilex NerdFont Mono at the default weight. `pub` because the desktop
+/// renderer uses the same ratio when sizing its grid.
 pub const TERMINAL_CELL_WIDTH_RATIO: f32 = 0.62;
 
-/// How tall one line is, as a multiple of the font size.
+/// How tall one line is, as a multiple of the font size. `pub` for the
+/// same reason.
 pub const TERMINAL_LINE_HEIGHT_RATIO: f32 = 1.25;
 
 /// Stable handle for a live terminal: the section it belongs to + the
