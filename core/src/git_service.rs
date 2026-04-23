@@ -19,8 +19,9 @@ use std::thread;
 
 use crate::git_actions::{
     execute_toolbar_git_action, find_github_repo_url, find_latest_pull_request_status,
-    find_project_pull_requests, find_pull_request_checks, ProjectPagePullRequest,
-    PullRequestCheck, PullRequestStatus, ToolbarActionError, ToolbarActionOutcome, ToolbarGitAction,
+    find_project_pull_requests, find_pull_request_checks, GitActionSettings,
+    ProjectPagePullRequest, PullRequestCheck, PullRequestStatus, ToolbarActionError,
+    ToolbarActionOutcome, ToolbarGitAction,
 };
 use crate::project_store::{
     read_project_branch_commit_state, read_project_branch_compare_state, read_project_git_state,
@@ -100,7 +101,13 @@ pub fn spawn_toolbar_action(
 ) -> mpsc::Receiver<GitActionReply> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let result = execute_toolbar_git_action(&project_path, action);
+        let mut on_progress = |_message: String| {};
+        let result = execute_toolbar_git_action(
+            &project_path,
+            action,
+            GitActionSettings::default(),
+            &mut on_progress,
+        );
         let _ = tx.send(GitActionReply { project_id, result });
     });
     rx

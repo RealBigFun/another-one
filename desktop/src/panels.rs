@@ -9,6 +9,7 @@ use gpui::{
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
 use crate::app::{AnotherOneApp, TerminalSelectionRange, WorkspacePane};
+use crate::layout::{TERMINAL_TAB_BAR_H, TERMINAL_VIEW_PADDING};
 use crate::terminal_runtime::{
     TerminalCursorKind, TerminalRuntimeKey, TerminalSurfaceSnapshot, TERMINAL_CELL_WIDTH_RATIO,
     TERMINAL_LINE_HEIGHT_RATIO,
@@ -124,15 +125,25 @@ impl WorkspacePane {
 
         let sid_for_add = section_id.clone();
 
-        let mut tab_bar = div()
+        let tab_bar = div()
             .flex()
             .flex_row()
             .items_center()
-            .h(px(36.))
+            .h(px(TERMINAL_TAB_BAR_H))
             .bg(tab_bar_bg)
             .border_b_1()
             .border_color(border_col)
             .overflow_hidden();
+        let mut tab_strip = div()
+            .id("terminal-tab-strip")
+            .flex()
+            .flex_row()
+            .items_center()
+            .h_full()
+            .flex_1()
+            .min_w_0()
+            .overflow_scroll()
+            .overflow_y_hidden();
 
         let section_state = self.section_states.get(section_id);
 
@@ -151,15 +162,17 @@ impl WorkspacePane {
                 let close_index = i;
                 let tab_id_val = tab.id.clone();
 
-                tab_bar = tab_bar.child(
+                tab_strip = tab_strip.child(
                     div()
                         .id(SharedString::from(format!("tab-{}", tab_id_val)))
                         .flex()
+                        .flex_none()
                         .flex_row()
                         .items_center()
                         .gap(px(6.))
                         .h_full()
                         .px(px(12.))
+                        .whitespace_nowrap()
                         .cursor_pointer()
                         .bg(if is_active {
                             tab_bg_active
@@ -230,15 +243,17 @@ impl WorkspacePane {
             }
         }
 
-        tab_bar = tab_bar.child(
+        let tab_bar = tab_bar.child(tab_strip).child(
             div()
                 .id("add-terminal-tab")
                 .flex()
+                .flex_shrink_0()
                 .items_center()
                 .justify_center()
                 .w(px(28.))
                 .h(px(28.))
                 .ml(px(4.))
+                .mr(px(4.))
                 .rounded(px(5.))
                 .cursor_pointer()
                 .hover(move |s| s.bg(tab_hover))
@@ -376,7 +391,7 @@ impl WorkspacePane {
         if let Some(snapshot) = snapshot {
             let line_height = px((self.font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0));
             let cell_width = terminal_cell_width(window, self.font_size);
-            let padding = px(12.);
+            let padding = px(TERMINAL_VIEW_PADDING);
             let canvas_snapshot = snapshot.clone();
             let selection_key = key.clone();
             let scroll_key = key.clone();
