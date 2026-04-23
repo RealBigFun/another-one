@@ -1,14 +1,16 @@
-// Sandbox mobile client for the AnotherOne companion daemon.
-// Connects to a raw-PTY WebSocket (see daemon-sandbox/) and displays the byte
-// stream. No alacritty_terminal yet — milestone 2 proves the transport shape;
-// milestone 3 swaps this raw-text view for a real VT100 grid.
+// Sandbox mobile client for the AnotherOne companion daemon (milestone 3).
+// Uses xterm.dart's Terminal engine + TerminalView for real VT100/xterm-256
+// interpretation and cell-grid rendering. Milestone 2 shipped raw-text pass-
+// through; this upgrade makes the display actually readable.
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
+import 'package:xterm/xterm.dart';
 
 void main() => runApp(const SandboxApp());
 
@@ -36,13 +38,32 @@ class _TerminalPageState extends State<TerminalPage> {
 
   final TextEditingController _urlCtrl =
       TextEditingController(text: _defaultUrl);
-  final TextEditingController _inputCtrl = TextEditingController();
-  final ScrollController _scrollCtrl = ScrollController();
+
+  late final Terminal _terminal;
+  late final TerminalController _terminalController;
+  final FocusNode _terminalFocus = FocusNode();
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _sub;
-  final StringBuffer _buffer = StringBuffer();
   String _status = 'disconnected';
+
+  @override
+  void initState() {
+    super.initState();
+    _terminal = Terminal(maxLines: 10000);
+    _terminalController = TerminalController();
+
+    // User input from the terminal (keyboard, paste, chord taps via terminal
+    // APIs) is emitted here as a String; forward the bytes to the daemon.
+    _terminal.onOutput = (data) {
+      _sendBytes(utf8.encode(data));
+    };
+
+    // When the terminal widget decides on a grid size, tell the PTY.
+    _terminal.onResize = (w, h, pw, ph) {
+      _sendResize(cols: w, rows: h);
+    };
+  }
 
   void _connect() {
     _disconnect();
@@ -52,18 +73,27 @@ class _TerminalPageState extends State<TerminalPage> {
       setState(() {
         _channel = channel;
         _status = 'connecting…';
-        _buffer.clear();
       });
+      // Tell the daemon about our grid size as soon as we connect.
+      // onResize has already fired at least once by now (first layout pass).
+      _sendResize(cols: _terminal.viewWidth, rows: _terminal.viewHeight);
+
       _sub = channel.stream.listen(
         (data) {
-          if (data is List<int>) {
-            setState(() {
-              _buffer.write(utf8.decode(data, allowMalformed: true));
-              if (_status.startsWith('connecting')) _status = 'connected';
-            });
-            _scrollToBottom();
+          Uint8List bytes;
+          if (data is Uint8List) {
+            bytes = data;
+          } else if (data is List<int>) {
+            bytes = Uint8List.fromList(data);
           } else if (data is String) {
-            setState(() => _buffer.writeln('[text-frame] $data'));
+            bytes = Uint8List.fromList(utf8.encode(data));
+          } else {
+            return;
+          }
+          // xterm.dart's Terminal.write accepts a String; decode as best we can.
+          _terminal.write(utf8.decode(bytes, allowMalformed: true));
+          if (_status.startsWith('connecting')) {
+            setState(() => _status = 'connected');
           }
         },
         onError: (err) => setState(() => _status = 'error: $err'),
@@ -82,38 +112,27 @@ class _TerminalPageState extends State<TerminalPage> {
     _channel = null;
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollCtrl.hasClients) return;
-      _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
-    });
-  }
-
   void _sendBytes(List<int> bytes) {
     final ch = _channel;
-    if (ch == null) {
-      setState(() => _status = 'not connected');
-      return;
-    }
-    ch.sink.add(bytes);
+    if (ch == null) return;
+    ch.sink.add(Uint8List.fromList(bytes));
   }
 
-  void _sendLine() {
-    final text = _inputCtrl.text;
-    _sendBytes(utf8.encode('$text\r'));
-    _inputCtrl.clear();
-  }
-
-  void _clearBuffer() {
-    setState(() => _buffer.clear());
+  void _sendResize({required int cols, required int rows}) {
+    final ch = _channel;
+    if (ch == null) return;
+    ch.sink.add(jsonEncode({
+      'type': 'resize',
+      'cols': cols,
+      'rows': rows,
+    }));
   }
 
   @override
   void dispose() {
     _disconnect();
     _urlCtrl.dispose();
-    _inputCtrl.dispose();
-    _scrollCtrl.dispose();
+    _terminalFocus.dispose();
     super.dispose();
   }
 
@@ -132,11 +151,6 @@ class _TerminalPageState extends State<TerminalPage> {
                 style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
               ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.clear_all),
-            tooltip: 'Clear buffer',
-            onPressed: _clearBuffer,
           ),
         ],
       ),
@@ -170,72 +184,43 @@ class _TerminalPageState extends State<TerminalPage> {
               ]),
             ),
             Expanded(
-              child: Container(
-                color: const Color(0xFF0C0C0C),
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                child: SingleChildScrollView(
-                  controller: _scrollCtrl,
-                  child: SelectableText(
-                    _buffer.isEmpty
-                        ? '(waiting for bytes…)'
-                        : _buffer.toString(),
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      color: Color(0xFFE5E5E5),
-                      fontSize: 12,
-                      height: 1.3,
-                    ),
+              child: GestureDetector(
+                onTap: () => _terminalFocus.requestFocus(),
+                child: TerminalView(
+                  _terminal,
+                  controller: _terminalController,
+                  focusNode: _terminalFocus,
+                  autofocus: true,
+                  backgroundOpacity: 1.0,
+                  padding: const EdgeInsets.all(6),
+                  textStyle: const TerminalStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
                   ),
                 ),
               ),
             ),
+            // Mobile chord bar — the soft keyboard has no Esc/Ctrl/arrows.
             Container(
               decoration: BoxDecoration(
                 border: Border(top: BorderSide(color: Colors.grey.shade800)),
               ),
-              padding: const EdgeInsets.all(8),
-              child: Column(children: [
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(children: [
-                    _chord('Esc', const [0x1B]),
-                    _chord('Tab', const [0x09]),
-                    _chord('Ctrl-C', const [0x03]),
-                    _chord('Ctrl-D', const [0x04]),
-                    _chord('Ctrl-L', const [0x0C]),
-                    _chord('↑', const [0x1B, 0x5B, 0x41]),
-                    _chord('↓', const [0x1B, 0x5B, 0x42]),
-                    _chord('←', const [0x1B, 0x5B, 0x44]),
-                    _chord('→', const [0x1B, 0x5B, 0x43]),
-                  ]),
-                ),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _inputCtrl,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      smartDashesType: SmartDashesType.disabled,
-                      smartQuotesType: SmartQuotesType.disabled,
-                      textInputAction: TextInputAction.send,
-                      style: const TextStyle(fontFamily: 'monospace'),
-                      decoration: const InputDecoration(
-                        hintText: 'type a command; Enter sends + \\r',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      onSubmitted: (_) => _sendLine(),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.send),
-                    tooltip: 'Send line',
-                    onPressed: _sendLine,
-                  ),
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  _chord('Esc', const [0x1B]),
+                  _chord('Tab', const [0x09]),
+                  _chord('Ctrl-C', const [0x03]),
+                  _chord('Ctrl-D', const [0x04]),
+                  _chord('Ctrl-L', const [0x0C]),
+                  _chord('Ctrl-R', const [0x12]),
+                  _chord('↑', const [0x1B, 0x5B, 0x41]),
+                  _chord('↓', const [0x1B, 0x5B, 0x42]),
+                  _chord('←', const [0x1B, 0x5B, 0x44]),
+                  _chord('→', const [0x1B, 0x5B, 0x43]),
                 ]),
-              ]),
+              ),
             ),
           ],
         ),
@@ -246,14 +231,17 @@ class _TerminalPageState extends State<TerminalPage> {
   Widget _chord(String label, List<int> bytes) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
         child: OutlinedButton(
-          onPressed: () => _sendBytes(bytes),
+          onPressed: () {
+            _sendBytes(bytes);
+            _terminalFocus.requestFocus();
+          },
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             minimumSize: Size.zero,
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
-          child:
-              Text(label, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+          child: Text(label,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
         ),
       );
 }
