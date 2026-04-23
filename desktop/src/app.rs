@@ -3158,7 +3158,9 @@ impl AnotherOneApp {
 
         let recent_output = self
             .terminal_manager
-            .recent_output_for(key)
+            .recent_output
+            .get(key)
+            .map(String::as_str)
             .unwrap_or_default();
         if !output_mentions_missing_claude_conversation(recent_output) {
             return false;
