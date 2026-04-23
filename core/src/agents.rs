@@ -139,6 +139,13 @@ pub const AGENTS: &[AgentDef] = &[
 
 pub const DEFAULT_AGENT_ID: &str = "pi";
 
+pub fn effective_enabled_agents(configured: Option<&HashSet<String>>) -> Vec<&'static AgentDef> {
+    AGENTS
+        .iter()
+        .filter(|agent| configured.map_or(true, |enabled| enabled.contains(agent.id)))
+        .collect()
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalLaunchConfig {
     pub mode: TerminalLaunchMode,
@@ -210,9 +217,9 @@ pub fn agent_id_for_provider(provider: AgentProviderKind) -> Option<&'static str
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_id_for_provider, terminal_launch_config_for_selected_agent,
+        agent_id_for_provider, effective_enabled_agents, terminal_launch_config_for_selected_agent,
         terminal_launch_config_for_selected_agents, AgentProviderKind, TerminalLaunchConfig,
-        TerminalLaunchMode,
+        TerminalLaunchMode, AGENTS,
     };
     use std::collections::HashSet;
 
@@ -241,6 +248,30 @@ mod tests {
 
         assert_eq!(config.provider, Some(AgentProviderKind::CursorAgent));
         assert_eq!(config.mode, TerminalLaunchMode::Agent);
+    }
+
+    #[test]
+    fn effective_enabled_agents_defaults_to_all_known_agents() {
+        let enabled = effective_enabled_agents(None);
+
+        assert_eq!(enabled.len(), AGENTS.len());
+        assert_eq!(enabled[0].id, AGENTS[0].id);
+        assert_eq!(
+            enabled.last().map(|agent| agent.id),
+            AGENTS.last().map(|agent| agent.id)
+        );
+    }
+
+    #[test]
+    fn effective_enabled_agents_filters_and_preserves_display_order() {
+        let configured = HashSet::from(["codex".to_string(), "claude-code".to_string()]);
+
+        let enabled = effective_enabled_agents(Some(&configured));
+
+        assert_eq!(
+            enabled.iter().map(|agent| agent.id).collect::<Vec<_>>(),
+            vec!["claude-code", "codex"]
+        );
     }
 
     #[test]

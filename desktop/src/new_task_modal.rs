@@ -9,7 +9,7 @@ use gpui::{
 use uuid::Uuid;
 
 use crate::agent_icons::branded_icon;
-use crate::agents::{AGENTS, DEFAULT_AGENT_ID};
+use crate::agents::{AgentDef, AGENTS, DEFAULT_AGENT_ID};
 use crate::app::AnotherOneApp;
 
 #[derive(Clone)]
@@ -89,7 +89,40 @@ struct SourceBranchSectionProps<'a> {
     submitting: bool,
 }
 
+fn default_new_task_agent_id(enabled_agents: &[&'static AgentDef]) -> Option<&'static str> {
+    enabled_agents
+        .iter()
+        .find(|agent| agent.id == DEFAULT_AGENT_ID)
+        .or_else(|| enabled_agents.first())
+        .map(|agent| agent.id)
+}
+
+fn sanitized_new_task_selected_agents(
+    selected_agents: &HashSet<String>,
+    enabled_agents: &[&'static AgentDef],
+) -> HashSet<String> {
+    let enabled_ids = enabled_agents
+        .iter()
+        .map(|agent| agent.id)
+        .collect::<HashSet<_>>();
+
+    selected_agents
+        .iter()
+        .filter(|agent_id| enabled_ids.contains(agent_id.as_str()))
+        .cloned()
+        .collect()
+}
+
 impl AnotherOneApp {
+    pub(crate) fn sanitize_new_task_modal_selected_agents(&mut self) -> Vec<&'static AgentDef> {
+        let enabled_agents = self.enabled_agents();
+        if let Some(state) = self.new_task_modal.as_mut() {
+            state.selected_agents =
+                sanitized_new_task_selected_agents(&state.selected_agents, &enabled_agents);
+        }
+        enabled_agents
+    }
+
     pub(crate) fn open_new_task_modal(&mut self, project_id: &str, cx: &mut Context<Self>) {
         let root_project_id = self
             .project_store
@@ -131,8 +164,17 @@ impl AnotherOneApp {
             return;
         };
 
+        let enabled_agents = self.enabled_agents();
+        let Some(default_agent_id) = default_new_task_agent_id(&enabled_agents) else {
+            self.show_error_toast(
+                "Enable at least one agent in Settings > Agents before creating a task.",
+                cx,
+            );
+            return;
+        };
+
         let mut selected_agents = HashSet::new();
-        selected_agents.insert(DEFAULT_AGENT_ID.to_string());
+        selected_agents.insert(default_agent_id.to_string());
 
         self.new_task_modal = Some(NewTaskModalState {
             project_id: project.id.clone(),
@@ -157,6 +199,7 @@ impl AnotherOneApp {
         let Some(ref state) = self.new_task_modal else {
             return div().id("new-task-modal-overlay");
         };
+        let enabled_agents = self.enabled_agents();
 
         let project = self
             .project_store
@@ -179,7 +222,8 @@ impl AnotherOneApp {
         let worktree_mode = state.worktree_mode;
         let branch_dropdown_open = state.branch_dropdown_open;
         let agent_dropdown_open = state.agent_dropdown_open;
-        let selected_agents = state.selected_agents.clone();
+        let selected_agents =
+            sanitized_new_task_selected_agents(&state.selected_agents, &enabled_agents);
         let task_name_focused = state.task_name_focused;
         let task_name_cursor = state.task_name_cursor;
         let task_name_selection = selected_task_name_range(state);
@@ -246,6 +290,7 @@ impl AnotherOneApp {
                                 cx,
                             ))
                             .child(self.render_agent_selector(
+                                &enabled_agents,
                                 agent_dropdown_open,
                                 &selected_agents,
                                 submitting,
@@ -749,21 +794,35 @@ impl AnotherOneApp {
 
     fn render_agent_selector(
         &self,
+        enabled_agents: &[&'static AgentDef],
         dropdown_open: bool,
         selected: &HashSet<String>,
         submitting: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let display_agent = AGENTS
+        let display_agent = enabled_agents
             .iter()
             .find(|agent| selected.contains(agent.id))
-            .unwrap_or(&AGENTS[0]);
+            .copied()
+            .or_else(|| enabled_agents.first().copied());
 
-        let trigger_icon: SharedString = display_agent.icon.into();
-        let trigger_label: SharedString = if selected.len() > 1 {
+        let trigger_icon: SharedString = display_agent
+            .map(|agent| agent.icon)
+            .unwrap_or(AGENTS[0].icon)
+            .into();
+        let trigger_label: SharedString = if selected.is_empty() {
+            if enabled_agents.is_empty() {
+                "No enabled agents".into()
+            } else {
+                "No agents selected".into()
+            }
+        } else if selected.len() > 1 {
             format!("{} agents selected", selected.len()).into()
         } else {
-            display_agent.label.into()
+            display_agent
+                .map(|agent| agent.label)
+                .unwrap_or("No enabled agents")
+                .into()
         };
 
         let mut section = div()
@@ -838,7 +897,8 @@ impl AnotherOneApp {
             );
 
         if dropdown_open {
-            section = section.child(self.render_agent_dropdown(selected, submitting, cx));
+            section =
+                section.child(self.render_agent_dropdown(enabled_agents, selected, submitting, cx));
         }
 
         section
@@ -846,11 +906,12 @@ impl AnotherOneApp {
 
     fn render_agent_dropdown(
         &self,
+        enabled_agents: &[&'static AgentDef],
         selected: &HashSet<String>,
         submitting: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let visible_rows = AGENTS.len().min(6) as f32;
+        let visible_rows = enabled_agents.len().min(6) as f32;
         let dropdown_height = px(visible_rows * 36. + 8.);
 
         let mut list = div()
@@ -865,7 +926,7 @@ impl AnotherOneApp {
             .overflow_y_scroll()
             .py(px(4.));
 
-        for agent in AGENTS {
+        for agent in enabled_agents {
             let is_selected = selected.contains(agent.id);
             let agent_id = agent.id.to_string();
             let icon_path: SharedString = agent.icon.into();
@@ -1911,5 +1972,53 @@ fn generate_task_name() -> String {
         )
     } else {
         PHRASES[choice - combo_count].to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{default_new_task_agent_id, sanitized_new_task_selected_agents};
+    use crate::agents::{AGENTS, DEFAULT_AGENT_ID};
+
+    #[test]
+    fn default_selection_prefers_default_agent_when_enabled() {
+        let enabled_agents = vec![&AGENTS[1], &AGENTS[4], &AGENTS[6]];
+
+        assert_eq!(
+            default_new_task_agent_id(&enabled_agents),
+            Some(DEFAULT_AGENT_ID)
+        );
+    }
+
+    #[test]
+    fn default_selection_falls_back_to_first_enabled_agent() {
+        let enabled_agents = vec![&AGENTS[0], &AGENTS[1], &AGENTS[2]];
+
+        assert_eq!(
+            default_new_task_agent_id(&enabled_agents),
+            Some(AGENTS[0].id)
+        );
+    }
+
+    #[test]
+    fn default_selection_returns_none_when_no_agents_are_enabled() {
+        assert_eq!(default_new_task_agent_id(&[]), None);
+    }
+
+    #[test]
+    fn sanitization_removes_disabled_agent_ids_from_selection() {
+        let enabled_agents = vec![&AGENTS[1], &AGENTS[4]];
+        let selected_agents = HashSet::from([
+            AGENTS[0].id.to_string(),
+            AGENTS[1].id.to_string(),
+            AGENTS[4].id.to_string(),
+        ]);
+
+        assert_eq!(
+            sanitized_new_task_selected_agents(&selected_agents, &enabled_agents),
+            HashSet::from([AGENTS[1].id.to_string(), AGENTS[4].id.to_string()])
+        );
     }
 }

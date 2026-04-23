@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use crate::agent_icons::branded_icon;
-use crate::agents::{terminal_launch_config_for_selected_agent, AGENTS};
+use crate::agents::{terminal_launch_config_for_selected_agent, AgentDef, AGENTS};
 use crate::app::{AnotherOneApp, SectionId};
 
 #[derive(Clone)]
@@ -64,22 +64,44 @@ fn focus_col() -> gpui::Hsla {
     hsla(220. / 360., 0.55, 0.60, 1.)
 }
 
-fn add_agent_option_count() -> usize {
-    AGENTS.len() + 1
+fn sanitized_add_agent_selection(
+    selected_agent_id: Option<&str>,
+    enabled_agents: &[&'static AgentDef],
+) -> Option<String> {
+    match selected_agent_id {
+        Some(selected_agent_id)
+            if enabled_agents
+                .iter()
+                .any(|agent| agent.id == selected_agent_id) =>
+        {
+            Some(selected_agent_id.to_string())
+        }
+        _ => enabled_agents.first().map(|agent| agent.id.to_string()),
+    }
 }
 
-fn add_agent_option_index(selected_agent_id: Option<&str>) -> usize {
+fn add_agent_option_count(enabled_agents: &[&'static AgentDef]) -> usize {
+    enabled_agents.len() + 1
+}
+
+fn add_agent_option_index(
+    selected_agent_id: Option<&str>,
+    enabled_agents: &[&'static AgentDef],
+) -> usize {
     selected_agent_id
-        .and_then(|selected| AGENTS.iter().position(|agent| agent.id == selected))
+        .and_then(|selected| enabled_agents.iter().position(|agent| agent.id == selected))
         .map(|index| index + 1)
         .unwrap_or(0)
 }
 
-fn add_agent_option_id(option_index: usize) -> Option<String> {
+fn add_agent_option_id(
+    option_index: usize,
+    enabled_agents: &[&'static AgentDef],
+) -> Option<String> {
     if option_index == 0 {
         None
     } else {
-        AGENTS
+        enabled_agents
             .get(option_index - 1)
             .map(|agent| agent.id.to_string())
     }
@@ -88,12 +110,13 @@ fn add_agent_option_id(option_index: usize) -> Option<String> {
 fn next_add_agent_focus(
     current_focus: Option<AddAgentModalFocus>,
     dropdown_open: bool,
+    option_count: usize,
     backwards: bool,
 ) -> AddAgentModalFocus {
-    let mut order = Vec::with_capacity(add_agent_option_count() + 3);
+    let mut order = Vec::with_capacity(option_count + 3);
     order.push(AddAgentModalFocus::Trigger);
     if dropdown_open {
-        for option_index in 0..add_agent_option_count() {
+        for option_index in 0..option_count {
             order.push(AddAgentModalFocus::Option(option_index));
         }
     }
@@ -122,9 +145,9 @@ fn next_add_agent_focus(
 fn next_add_agent_option_focus(
     current_focus: Option<AddAgentModalFocus>,
     fallback_option_index: usize,
+    option_count: usize,
     backwards: bool,
 ) -> AddAgentModalFocus {
-    let option_count = add_agent_option_count();
     let current_index = match current_focus {
         Some(AddAgentModalFocus::Option(index)) if index < option_count => index,
         _ => fallback_option_index.min(option_count.saturating_sub(1)),
@@ -140,16 +163,28 @@ fn next_add_agent_option_focus(
 }
 
 impl AnotherOneApp {
+    pub(crate) fn sanitize_add_agent_modal_selection(&mut self) -> Vec<&'static AgentDef> {
+        let enabled_agents = self.enabled_agents();
+        if let Some(state) = self.add_agent_modal.as_mut() {
+            state.selected_agent_id =
+                sanitized_add_agent_selection(state.selected_agent_id.as_deref(), &enabled_agents);
+        }
+        enabled_agents
+    }
+
     pub(crate) fn open_add_agent_modal(
         &mut self,
         section_id: SectionId,
         selected_agent_id: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        let enabled_agents = self.enabled_agents();
         self.add_agent_modal = Some(AddAgentModalState {
             section_id,
-            selected_agent_id: selected_agent_id
-                .filter(|selected| AGENTS.iter().any(|agent| agent.id == selected)),
+            selected_agent_id: sanitized_add_agent_selection(
+                selected_agent_id.as_deref(),
+                &enabled_agents,
+            ),
             agent_dropdown_open: false,
             keyboard_focus: Some(AddAgentModalFocus::Trigger),
         });
@@ -160,10 +195,12 @@ impl AnotherOneApp {
         let Some(state) = self.add_agent_modal.clone() else {
             return div().id("add-agent-modal-overlay");
         };
+        let enabled_agents = self.enabled_agents();
+        let selected_agent_id =
+            sanitized_add_agent_selection(state.selected_agent_id.as_deref(), &enabled_agents);
         let keyboard_focus = state.keyboard_focus;
 
-        let (trigger_icon, trigger_label, trigger_help_text) = state
-            .selected_agent_id
+        let (trigger_icon, trigger_label, trigger_help_text) = selected_agent_id
             .as_deref()
             .and_then(|selected_id| AGENTS.iter().find(|agent| agent.id == selected_id))
             .map(|selected_agent| {
@@ -251,6 +288,8 @@ impl AnotherOneApp {
                                                 MouseButton::Left,
                                                 cx.listener(
                                                     |this, _ev: &MouseDownEvent, _window, cx| {
+                                                        let enabled_agents = this
+                                                            .sanitize_add_agent_modal_selection();
                                                         if let Some(state) =
                                                             this.add_agent_modal.as_mut()
                                                         {
@@ -267,6 +306,7 @@ impl AnotherOneApp {
                                                                             state
                                                                                 .selected_agent_id
                                                                                 .as_deref(),
+                                                                            &enabled_agents,
                                                                         ),
                                                                     ),
                                                                 );
@@ -310,7 +350,8 @@ impl AnotherOneApp {
                                     )
                                     .when(state.agent_dropdown_open, |container| {
                                         container.child(self.render_add_agent_dropdown(
-                                            state.selected_agent_id.as_deref(),
+                                            &enabled_agents,
+                                            selected_agent_id.as_deref(),
                                             keyboard_focus,
                                             cx,
                                         ))
@@ -352,11 +393,15 @@ impl AnotherOneApp {
 
         cx.stop_propagation();
 
+        let enabled_agents = self.sanitize_add_agent_modal_selection();
+        let option_count = add_agent_option_count(&enabled_agents);
+
         if ev.keystroke.key.as_str() == "tab" {
             if let Some(state) = self.add_agent_modal.as_mut() {
                 state.keyboard_focus = Some(next_add_agent_focus(
                     state.keyboard_focus,
                     state.agent_dropdown_open,
+                    option_count,
                     ev.keystroke.modifiers.shift,
                 ));
                 if matches!(
@@ -379,7 +424,8 @@ impl AnotherOneApp {
             if let Some(state) = self.add_agent_modal.as_mut() {
                 state.keyboard_focus = Some(next_add_agent_option_focus(
                     state.keyboard_focus,
-                    add_agent_option_index(state.selected_agent_id.as_deref()),
+                    add_agent_option_index(state.selected_agent_id.as_deref(), &enabled_agents),
+                    option_count,
                     ev.keystroke.key.as_str() == "up",
                 ));
             }
@@ -417,6 +463,8 @@ impl AnotherOneApp {
     }
 
     fn activate_add_agent_modal_focus(&mut self, cx: &mut Context<Self>) {
+        let enabled_agents = self.sanitize_add_agent_modal_selection();
+        let option_count = add_agent_option_count(&enabled_agents);
         let Some(focus) = self
             .add_agent_modal
             .as_ref()
@@ -429,21 +477,28 @@ impl AnotherOneApp {
             AddAgentModalFocus::Trigger => {
                 if let Some(state) = self.add_agent_modal.as_mut() {
                     if state.agent_dropdown_open {
-                        state.keyboard_focus = Some(AddAgentModalFocus::Option(
-                            add_agent_option_index(state.selected_agent_id.as_deref()),
-                        ));
+                        state.keyboard_focus =
+                            Some(AddAgentModalFocus::Option(add_agent_option_index(
+                                state.selected_agent_id.as_deref(),
+                                &enabled_agents,
+                            )));
                     } else {
                         state.agent_dropdown_open = true;
-                        state.keyboard_focus = Some(AddAgentModalFocus::Option(
-                            add_agent_option_index(state.selected_agent_id.as_deref()),
-                        ));
+                        state.keyboard_focus =
+                            Some(AddAgentModalFocus::Option(add_agent_option_index(
+                                state.selected_agent_id.as_deref(),
+                                &enabled_agents,
+                            )));
                     }
                 }
                 cx.notify();
             }
             AddAgentModalFocus::Option(option_index) => {
                 let selection_changed = if let Some(state) = self.add_agent_modal.as_mut() {
-                    let next_selected_agent_id = add_agent_option_id(option_index);
+                    let next_selected_agent_id = add_agent_option_id(
+                        option_index.min(option_count.saturating_sub(1)),
+                        &enabled_agents,
+                    );
                     let selection_changed = state.selected_agent_id != next_selected_agent_id;
                     state.selected_agent_id = next_selected_agent_id;
                     state.agent_dropdown_open = false;
@@ -467,6 +522,7 @@ impl AnotherOneApp {
     }
 
     fn submit_add_agent_modal(&mut self, cx: &mut Context<Self>) {
+        self.sanitize_add_agent_modal_selection();
         let Some(state) = self.add_agent_modal.clone() else {
             return;
         };
@@ -557,11 +613,12 @@ impl AnotherOneApp {
 
     fn render_add_agent_dropdown(
         &self,
+        enabled_agents: &[&'static AgentDef],
         selected_agent_id: Option<&str>,
         keyboard_focus: Option<AddAgentModalFocus>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let visible_rows = (AGENTS.len() + 1).min(6) as f32;
+        let visible_rows = add_agent_option_count(enabled_agents).min(6) as f32;
         let dropdown_height = px(visible_rows * 36. + 8.);
 
         let mut list = div()
@@ -586,7 +643,7 @@ impl AnotherOneApp {
             cx,
         ));
 
-        for (index, agent) in AGENTS.iter().enumerate() {
+        for (index, agent) in enabled_agents.iter().enumerate() {
             list = list.child(self.render_add_agent_option(
                 SharedString::from(format!("add-agent-option-{}", agent.id)),
                 SharedString::from(agent.label),
@@ -780,31 +837,44 @@ impl AnotherOneApp {
 mod tests {
     use super::{
         add_agent_option_count, add_agent_option_id, add_agent_option_index, next_add_agent_focus,
-        next_add_agent_option_focus, AddAgentModalFocus, AGENTS,
+        next_add_agent_option_focus, sanitized_add_agent_selection, AddAgentModalFocus, AGENTS,
     };
 
     #[test]
     fn add_agent_option_index_maps_cli_and_known_agents() {
-        assert_eq!(add_agent_option_index(None), 0);
-        let first_agent = AGENTS.first().expect("expected at least one agent");
-        assert_eq!(add_agent_option_index(Some(first_agent.id)), 1);
+        let enabled_agents = vec![&AGENTS[0], &AGENTS[1]];
+
+        assert_eq!(add_agent_option_index(None, &enabled_agents), 0);
+        let first_agent = enabled_agents[0];
+        assert_eq!(
+            add_agent_option_index(Some(first_agent.id), &enabled_agents),
+            1
+        );
     }
 
     #[test]
     fn add_agent_option_id_maps_indices_back_to_agents() {
-        assert_eq!(add_agent_option_id(0), None);
-        let first_agent = AGENTS.first().expect("expected at least one agent");
-        assert_eq!(add_agent_option_id(1).as_deref(), Some(first_agent.id));
+        let enabled_agents = vec![&AGENTS[0], &AGENTS[1]];
+
+        assert_eq!(add_agent_option_id(0, &enabled_agents), None);
+        let first_agent = enabled_agents[0];
+        assert_eq!(
+            add_agent_option_id(1, &enabled_agents).as_deref(),
+            Some(first_agent.id)
+        );
     }
 
     #[test]
     fn tab_order_moves_from_trigger_to_selected_option_to_create() {
-        let option_focus = next_add_agent_focus(Some(AddAgentModalFocus::Trigger), true, false);
+        let option_count = add_agent_option_count(&[&AGENTS[0], &AGENTS[1]]);
+        let option_focus =
+            next_add_agent_focus(Some(AddAgentModalFocus::Trigger), true, option_count, false);
         assert_eq!(option_focus, AddAgentModalFocus::Option(0));
 
         let create_focus = next_add_agent_focus(
-            Some(AddAgentModalFocus::Option(add_agent_option_count() - 1)),
+            Some(AddAgentModalFocus::Option(option_count - 1)),
             true,
+            option_count,
             false,
         );
         assert_eq!(create_focus, AddAgentModalFocus::CreateButton);
@@ -812,22 +882,41 @@ mod tests {
 
     #[test]
     fn closed_dropdown_tab_order_moves_from_trigger_to_create() {
-        let create_focus = next_add_agent_focus(Some(AddAgentModalFocus::Trigger), false, false);
+        let create_focus = next_add_agent_focus(Some(AddAgentModalFocus::Trigger), false, 1, false);
         assert_eq!(create_focus, AddAgentModalFocus::CreateButton);
     }
 
     #[test]
     fn down_arrow_moves_to_next_dropdown_option() {
-        let next_focus = next_add_agent_option_focus(Some(AddAgentModalFocus::Option(0)), 0, false);
+        let next_focus = next_add_agent_option_focus(
+            Some(AddAgentModalFocus::Option(0)),
+            0,
+            add_agent_option_count(&[&AGENTS[0], &AGENTS[1]]),
+            false,
+        );
         assert_eq!(next_focus, AddAgentModalFocus::Option(1));
     }
 
     #[test]
     fn up_arrow_wraps_to_last_dropdown_option() {
-        let next_focus = next_add_agent_option_focus(Some(AddAgentModalFocus::Option(0)), 0, true);
+        let option_count = add_agent_option_count(&[&AGENTS[0], &AGENTS[1]]);
+        let next_focus =
+            next_add_agent_option_focus(Some(AddAgentModalFocus::Option(0)), 0, option_count, true);
+        assert_eq!(next_focus, AddAgentModalFocus::Option(option_count - 1));
+    }
+
+    #[test]
+    fn disabled_seeded_agent_falls_back_to_first_enabled_agent() {
+        let enabled_agents = vec![&AGENTS[1], &AGENTS[2]];
+
         assert_eq!(
-            next_focus,
-            AddAgentModalFocus::Option(add_agent_option_count() - 1)
+            sanitized_add_agent_selection(Some(AGENTS[0].id), &enabled_agents).as_deref(),
+            Some(AGENTS[1].id)
         );
+    }
+
+    #[test]
+    fn no_enabled_agents_fall_back_to_cli_only() {
+        assert_eq!(sanitized_add_agent_selection(Some(AGENTS[0].id), &[]), None);
     }
 }

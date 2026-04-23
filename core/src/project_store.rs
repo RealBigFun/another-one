@@ -7,7 +7,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use crate::agents::{AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus};
+use crate::agents::{
+    effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus,
+};
 use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 
@@ -296,6 +298,8 @@ pub struct UiState {
     #[serde(default)]
     pub preferred_open_in_app: Option<OpenInAppKind>,
     #[serde(default)]
+    pub enabled_agents: Option<HashSet<String>>,
+    #[serde(default)]
     pub agent_launch_args: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub shortcuts: ShortcutSettings,
@@ -311,6 +315,7 @@ impl Default for UiState {
             last_active_section_id: None,
             enabled_open_in_apps: None,
             preferred_open_in_app: None,
+            enabled_agents: None,
             agent_launch_args: HashMap::new(),
             shortcuts: ShortcutSettings::default(),
         }
@@ -932,6 +937,43 @@ impl ProjectStore {
             self.save();
         }
         removed
+    }
+
+    pub fn enabled_agent_ids(&self) -> Vec<&'static str> {
+        effective_enabled_agents(self.ui.enabled_agents.as_ref())
+            .into_iter()
+            .map(|agent| agent.id)
+            .collect()
+    }
+
+    pub fn agent_enabled(&self, agent_id: &str) -> bool {
+        self.ui
+            .enabled_agents
+            .as_ref()
+            .map_or(true, |enabled| enabled.contains(agent_id))
+    }
+
+    pub fn set_agent_enabled(&mut self, agent_id: &str, enabled: bool) -> bool {
+        let mut configured = self.ui.enabled_agents.clone().unwrap_or_else(|| {
+            self.enabled_agent_ids()
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        });
+
+        let changed = if enabled {
+            configured.insert(agent_id.to_string())
+        } else {
+            configured.remove(agent_id)
+        };
+
+        if !changed {
+            return false;
+        }
+
+        self.ui.enabled_agents = Some(configured);
+        self.save();
+        true
     }
 
     pub fn enabled_open_in_apps(&self, available: &[OpenInAppKind]) -> Vec<OpenInAppKind> {
@@ -2818,6 +2860,7 @@ mod tests {
                 last_active_section_id: None,
                 enabled_open_in_apps: None,
                 preferred_open_in_app: None,
+                enabled_agents: None,
                 agent_launch_args: HashMap::new(),
                 shortcuts: ShortcutSettings::default(),
             },
@@ -3215,6 +3258,10 @@ mod tests {
     fn store_file_round_trip_preserves_agent_launch_args() {
         let mut store = StoreFile::default();
         store.ui = UiState {
+            enabled_agents: Some(HashSet::from([
+                "codex".to_string(),
+                "claude-code".to_string(),
+            ])),
             agent_launch_args: HashMap::from([
                 ("codex".to_string(), vec!["--yolo".to_string()]),
                 (
@@ -3236,6 +3283,13 @@ mod tests {
             round_trip.ui.agent_launch_args.get("claude-code"),
             Some(&vec!["--dangerously-skip-permissions".to_string()])
         );
+        assert_eq!(
+            round_trip.ui.enabled_agents,
+            Some(HashSet::from([
+                "codex".to_string(),
+                "claude-code".to_string()
+            ]))
+        );
     }
 
     #[test]
@@ -3256,6 +3310,7 @@ mod tests {
                 "last_active_section_id": null,
                 "enabled_open_in_apps": null,
                 "preferred_open_in_app": null,
+                "enabled_agents": null,
                 "shortcuts": ShortcutSettings::default()
             }
         });
@@ -3264,6 +3319,7 @@ mod tests {
             serde_json::from_value(json).expect("legacy store JSON should deserialize");
 
         assert!(store.ui.agent_launch_args.is_empty());
+        assert!(store.ui.enabled_agents.is_none());
     }
 
     #[test]
@@ -3342,5 +3398,71 @@ mod tests {
         )
         .expect("saved config should deserialize");
         assert!(!saved.ui.agent_launch_args.contains_key("codex"));
+    }
+
+    #[test]
+    fn legacy_store_treats_all_agents_as_enabled() {
+        let store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            file_path: PathBuf::from("/tmp/test-projects.json"),
+        };
+
+        assert_eq!(
+            store.enabled_agent_ids(),
+            crate::agents::AGENTS
+                .iter()
+                .map(|agent| agent.id)
+                .collect::<Vec<_>>()
+        );
+        assert!(crate::agents::AGENTS
+            .iter()
+            .all(|agent| store.agent_enabled(agent.id)));
+    }
+
+    #[test]
+    fn store_agent_enabled_helpers_preserve_display_order() {
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState {
+                enabled_agents: Some(HashSet::from([
+                    "forge".to_string(),
+                    "codex".to_string(),
+                    "claude-code".to_string(),
+                ])),
+                ..UiState::default()
+            },
+            file_path: PathBuf::from("/tmp/test-projects.json"),
+        };
+
+        assert_eq!(
+            store.enabled_agent_ids(),
+            vec!["claude-code", "codex", "forge"]
+        );
+        assert!(store.agent_enabled("codex"));
+        assert!(!store.agent_enabled("pi"));
+
+        assert!(store.set_agent_enabled("codex", false));
+        assert!(!store.agent_enabled("codex"));
+        assert!(store.set_agent_enabled("pi", true));
+        assert!(store.agent_enabled("pi"));
+        assert_eq!(
+            store.enabled_agent_ids(),
+            vec!["claude-code", "pi", "forge"]
+        );
     }
 }

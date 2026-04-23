@@ -58,10 +58,7 @@ fn load_or_create_secret_key() -> anyhow::Result<SecretKey> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(
-                &path,
-                std::fs::Permissions::from_mode(0o600),
-            );
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
         info!("generated new persistent secret key at {}", path.display());
         Ok(sk)
@@ -181,7 +178,11 @@ pub async fn serve() -> anyhow::Result<()> {
 }
 
 async fn handle_incoming(incoming: Incoming) -> anyhow::Result<()> {
-    let conn = incoming.accept().context("accept")?.await.context("handshake")?;
+    let conn = incoming
+        .accept()
+        .context("accept")?
+        .await
+        .context("handshake")?;
     let remote = conn.remote_id();
 
     // Authorize via a trust-on-first-use allowlist. The first client to

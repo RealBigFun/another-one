@@ -1046,8 +1046,7 @@ mod tests {
     use super::{
         create_pull_request_args, find_latest_pull_request_args, git_stdout,
         indicates_missing_pull_request, indicates_missing_pull_request_checks,
-        normalize_github_remote,
-        normalize_pull_request_check_bucket, parse_commit_message,
+        normalize_github_remote, normalize_pull_request_check_bucket, parse_commit_message,
         parse_pull_request_checks_output, push_branch, simple_toolbar_git_command,
         PullRequestCheckBucket, ToolbarGitAction,
     };

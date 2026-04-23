@@ -46,9 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Prefer the ticket file (has direct addrs → no DNS dependency). Fall
     // back to a CLI argument or the older nodeid-only hint file.
-    let (endpoint_id, direct_addrs) = if let Some(args) =
-        std::env::args().nth(1)
-    {
+    let (endpoint_id, direct_addrs) = if let Some(args) = std::env::args().nth(1) {
         let id: EndpointId = args.parse().context("invalid EndpointId argument")?;
         (id, Vec::new())
     } else if let Some(ticket) = load_ticket()? {
@@ -61,7 +59,10 @@ async fn main() -> anyhow::Result<()> {
                 path.display()
             )
         })?;
-        (content.trim().parse().context("parse EndpointId")?, Vec::new())
+        (
+            content.trim().parse().context("parse EndpointId")?,
+            Vec::new(),
+        )
     };
     eprintln!(
         "[client] dialing {} ({} direct addrs)",
@@ -69,7 +70,9 @@ async fn main() -> anyhow::Result<()> {
         direct_addrs.len()
     );
 
-    let endpoint = Endpoint::bind(presets::N0).await.context("bind client endpoint")?;
+    let endpoint = Endpoint::bind(presets::N0)
+        .await
+        .context("bind client endpoint")?;
     let mut addr = EndpointAddr::new(endpoint_id);
     for sa in &direct_addrs {
         addr = addr.with_ip_addr(*sa);
@@ -81,7 +84,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Send a resize control frame first (type 1, JSON payload) so the
     // daemon's PTY is appropriately sized before anything else.
-    let resize = serde_json::to_vec(&frame::Control::Resize { cols: 100, rows: 30 })?;
+    let resize = serde_json::to_vec(&frame::Control::Resize {
+        cols: 100,
+        rows: 30,
+    })?;
     frame::write_frame(&mut send, frame::TY_CONTROL, &resize)
         .await
         .context("write resize control")?;

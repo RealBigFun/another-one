@@ -553,10 +553,12 @@ impl AnotherOneApp {
         let button_bg = gpui::white().opacity(0.04);
         let button_hover = gpui::white().opacity(0.08);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
+        let enabled_agents = self.enabled_agents();
 
         let mut rows = div().flex().flex_col();
         for (index, agent) in AGENTS.iter().enumerate() {
             let args = self.project_store.agent_launch_args(agent.id);
+            let is_enabled = self.agent_enabled(agent.id);
             let draft = self
                 .settings_agent_input
                 .drafts
@@ -788,6 +790,85 @@ impl AnotherOneApp {
                                                     .text_color(TEXT_PRIMARY())
                                                     .child("Add"),
                                             ),
+                                    )
+                                    .child(
+                                        div()
+                                            .h(px(34.))
+                                            .px(px(10.))
+                                            .rounded(px(8.))
+                                            .border_1()
+                                            .border_color(BORDER_SUBTLE())
+                                            .bg(button_bg)
+                                            .cursor_pointer()
+                                            .hover(move |style| style.bg(button_hover))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(
+                                                    move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                        this.set_agent_enabled(
+                                                            agent.id,
+                                                            !is_enabled,
+                                                            cx,
+                                                        );
+                                                        cx.stop_propagation();
+                                                    },
+                                                ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h_full()
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap(px(10.))
+                                                    .child(
+                                                        div()
+                                                            .text_size(rems(11. / 16.))
+                                                            .font_weight(
+                                                                gpui::FontWeight::MEDIUM,
+                                                            )
+                                                            .text_color(if is_enabled {
+                                                                gpui::white()
+                                                            } else {
+                                                                TEXT_SECONDARY()
+                                                            })
+                                                            .child(if is_enabled {
+                                                                "Enabled"
+                                                            } else {
+                                                                "Disabled"
+                                                            }),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w(px(18.))
+                                                            .h(px(18.))
+                                                            .rounded(px(5.))
+                                                            .border_1()
+                                                            .border_color(if is_enabled {
+                                                                active_button_bg.opacity(0.85)
+                                                            } else {
+                                                                BORDER_SUBTLE()
+                                                            })
+                                                            .bg(if is_enabled {
+                                                                active_button_bg
+                                                            } else {
+                                                                button_bg
+                                                            })
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .when(is_enabled, |container| {
+                                                                container.child(
+                                                                    svg()
+                                                                        .path(
+                                                                            "assets/icons/icons__check.svg",
+                                                                        )
+                                                                        .size(px(11.))
+                                                                        .text_color(gpui::white()),
+                                                                )
+                                                            }),
+                                                    ),
+                                            ),
                                     ),
                             ),
                     )
@@ -816,12 +897,57 @@ impl AnotherOneApp {
                     .line_height(rems(18. / 16.))
                     .text_color(TEXT_SECONDARY())
                     .child(
-                        "Add per-agent argv tokens here. Each value is one token, order is preserved, and changes save immediately.",
+                        "Manage per-agent argv tokens and availability. Disabled agents stay here so they can be re-enabled, but they are hidden from New Task and Add Agent pickers. Changes save immediately.",
                     ),
             )
             .child(
                 div()
                     .mt(px(24.))
+                    .mb(px(16.))
+                    .max_w(px(860.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(16.))
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(BORDER_SUBTLE())
+                    .bg(panel_bg)
+                    .px(px(16.))
+                    .py(px(14.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(TEXT_PRIMARY())
+                                    .child("Availability"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(11. / 16.))
+                                    .text_color(TEXT_SECONDARY())
+                                    .child(
+                                        "Toggle agents off to hide them from creation pickers. Arg editing still applies while an agent is disabled.",
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(11. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(TEXT_PRIMARY())
+                            .child(format!("{} enabled", enabled_agents.len())),
+                    ),
+            )
+            .child(
+                div()
+                    .mt(px(12.))
                     .mb(px(16.))
                     .max_w(px(860.))
                     .rounded(px(12.))

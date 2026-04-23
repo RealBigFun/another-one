@@ -28,8 +28,8 @@ actions!(
 );
 
 use crate::agents::{
-    agent_id_for_provider, terminal_launch_config_for_selected_agent,
-    terminal_launch_config_for_selected_agents, AgentProviderKind, TerminalLaunchConfig,
+    agent_id_for_provider, effective_enabled_agents, terminal_launch_config_for_selected_agent,
+    terminal_launch_config_for_selected_agents, AgentDef, AgentProviderKind, TerminalLaunchConfig,
     TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
 use crate::layout::*;
@@ -1049,6 +1049,8 @@ pub struct AnotherOneApp {
         HashMap<String, crate::right_sidebar::ChangedFilesListSnapshot>,
     /// Focus handle for terminal keyboard input.
     pub(crate) focus_handle: FocusHandle,
+    /// Whether the titlebar background should begin a window drag on the next mouse move.
+    pub(crate) titlebar_drag_pending: bool,
     /// Whether the refresh timer has been started.
     pub(crate) refresh_timer_started: bool,
     /// The toolbar git action currently running in the background, if any.
@@ -1855,6 +1857,14 @@ impl AnotherOneApp {
             .enabled_open_in_apps(&self.available_open_in_apps)
     }
 
+    pub(crate) fn enabled_agents(&self) -> Vec<&'static AgentDef> {
+        effective_enabled_agents(self.project_store.ui.enabled_agents.as_ref())
+    }
+
+    pub(crate) fn agent_enabled(&self, agent_id: &str) -> bool {
+        self.project_store.agent_enabled(agent_id)
+    }
+
     pub(crate) fn preferred_open_in_app(&self) -> Option<OpenInAppKind> {
         self.project_store
             .preferred_open_in_app(&self.available_open_in_apps)
@@ -2574,6 +2584,19 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    pub(crate) fn set_agent_enabled(
+        &mut self,
+        agent_id: &str,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.project_store.set_agent_enabled(agent_id, enabled) {
+            self.sync_new_task_modal_prewarm(cx);
+            self.sync_add_agent_modal_prewarm(cx);
+            cx.notify();
+        }
+    }
+
     pub(crate) fn open_project_directory_in_app(
         &mut self,
         project_id: &str,
@@ -2868,6 +2891,7 @@ impl AnotherOneApp {
             changed_files: HashMap::new(),
             changed_files_list_snapshots: HashMap::new(),
             focus_handle,
+            titlebar_drag_pending: false,
             refresh_timer_started: false,
             active_git_action: None,
             git_action_receiver: None,
@@ -3311,9 +3335,14 @@ impl AnotherOneApp {
     }
 
     fn new_task_modal_prewarm_request(
-        &self,
+        &mut self,
         _cx: &App,
     ) -> Option<(std::path::PathBuf, TerminalLaunchConfig)> {
+        let enabled_agents = self.sanitize_new_task_modal_selected_agents();
+        if enabled_agents.is_empty() {
+            return None;
+        }
+
         let state = self.new_task_modal.as_ref()?;
         if state.submitting || state.worktree_mode {
             return None;
@@ -3331,6 +3360,7 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn sync_add_agent_modal_prewarm(&mut self, cx: &mut Context<Self>) {
+        self.sanitize_add_agent_modal_selection();
         let Some(state) = self.add_agent_modal.as_ref() else {
             return;
         };
@@ -4901,6 +4931,15 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn submit_new_task_modal(&mut self, cx: &mut Context<Self>) {
+        let enabled_agents = self.sanitize_new_task_modal_selected_agents();
+        if enabled_agents.is_empty() {
+            self.show_error_toast(
+                "Enable at least one agent in Settings > Agents before creating a task.",
+                cx,
+            );
+            return;
+        }
+
         let (
             project_id,
             task_name,

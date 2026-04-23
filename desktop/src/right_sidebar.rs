@@ -153,7 +153,10 @@ impl AnotherOneApp {
             .child(text)
     }
 
-    fn centered_sidebar_message(message: impl Into<SharedString>, color: gpui::Hsla) -> impl IntoElement {
+    fn centered_sidebar_message(
+        message: impl Into<SharedString>,
+        color: gpui::Hsla,
+    ) -> impl IntoElement {
         div()
             .flex_1()
             .flex()

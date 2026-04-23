@@ -122,13 +122,15 @@ fn setup_tracing() {
         .unwrap_or_else(|_| EnvFilter::new("warn,mobile_core=info,iroh=warn"));
 
     #[cfg(target_os = "android")]
-    let layer = tracing_android::layer("mobile_core")
-        .expect("tracing-android layer");
+    let layer = tracing_android::layer("mobile_core").expect("tracing-android layer");
 
     #[cfg(not(target_os = "android"))]
     let layer = tracing_subscriber::fmt::layer();
 
-    let _ = tracing_subscriber::registry().with(filter).with(layer).try_init();
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(layer)
+        .try_init();
 }
 
 /// Opaque handle to a live Iroh QUIC session. Dart holds this object and
@@ -146,7 +148,6 @@ pub struct IrohSession {
     /// Closes the underlying connection when invoked.
     closer: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
-
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`.
 ///
@@ -179,10 +180,7 @@ async fn iroh_connect_inner(
         relay_urls,
     );
 
-    let id: EndpointId = endpoint_id
-        .trim()
-        .parse()
-        .context("invalid EndpointId")?;
+    let id: EndpointId = endpoint_id.trim().parse().context("invalid EndpointId")?;
 
     // Parse direct addresses eagerly so bad input surfaces before bind.
     let parsed_addrs: Vec<std::net::SocketAddr> = direct_addrs
@@ -234,9 +232,7 @@ async fn iroh_connect_inner(
     let dns_addr: std::net::SocketAddr = std::env::var("ANOTHERONE_DNS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| {
-            "1.1.1.1:53".parse().expect("static ipv4 socket addr")
-        });
+        .unwrap_or_else(|| "1.1.1.1:53".parse().expect("static ipv4 socket addr"));
     tracing::info!(%dns_addr, "iroh_connect: using configured DNS resolver");
     let dns = DnsResolver::with_nameserver(dns_addr);
     let endpoint = tokio::time::timeout(
@@ -352,10 +348,7 @@ impl IrohSession {
 
     /// Start pushing inbound bytes into the given Dart StreamSink. Call once
     /// per session; subsequent calls return an error.
-    pub async fn subscribe(
-        &self,
-        sink: StreamSink<Vec<u8>>,
-    ) -> anyhow::Result<()> {
+    pub async fn subscribe(&self, sink: StreamSink<Vec<u8>>) -> anyhow::Result<()> {
         let mut guard = self.incoming_rx.lock().await;
         let mut rx = guard
             .take()

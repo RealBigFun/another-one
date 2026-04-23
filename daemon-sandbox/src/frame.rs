@@ -62,8 +62,12 @@ where
     let mut header = [0u8; 5];
     header[0] = ty;
     header[1..5].copy_from_slice(&(payload.len() as u32).to_be_bytes());
-    send.write_all_async(&header).await.context("write header")?;
-    send.write_all_async(payload).await.context("write payload")?;
+    send.write_all_async(&header)
+        .await
+        .context("write header")?;
+    send.write_all_async(payload)
+        .await
+        .context("write payload")?;
     Ok(())
 }
 

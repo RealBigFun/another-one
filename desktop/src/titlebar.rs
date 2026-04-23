@@ -2,7 +2,7 @@
 
 use gpui::{
     div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, App, Context, MouseButton,
-    MouseDownEvent, SharedString, Window,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Window, WindowControlArea,
 };
 
 use crate::app::AnotherOneApp;
@@ -161,20 +161,44 @@ impl AnotherOneApp {
 
     pub fn titlebar_background_mouse(
         &mut self,
-        ev: &MouseDownEvent,
-        window: &mut Window,
+        _: &MouseDownEvent,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let dismissed = self.dismiss_titlebar_dropdowns();
+        self.titlebar_drag_pending = true;
         cx.stop_propagation();
-        if ev.click_count == 2 {
-            window.titlebar_double_click();
-        } else {
-            window.start_window_move();
-        }
         if dismissed {
             cx.notify();
         }
+    }
+
+    pub fn titlebar_background_mouse_up(
+        &mut self,
+        ev: &MouseUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.titlebar_drag_pending = false;
+        cx.stop_propagation();
+        if ev.click_count == 2 {
+            window.titlebar_double_click();
+        }
+    }
+
+    pub fn titlebar_background_mouse_move(
+        &mut self,
+        _: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.titlebar_drag_pending {
+            return;
+        }
+
+        self.titlebar_drag_pending = false;
+        cx.stop_propagation();
+        window.start_window_move();
     }
 
     pub fn sidebar_toggle_svg(window: &Window) -> impl IntoElement {
@@ -1063,10 +1087,18 @@ impl AnotherOneApp {
                     .when(busy, |d| d.opacity(0.45))
                     .child(Self::sidebar_toggle_svg(window)),
             )
-            .child(div().flex_1().h_full().on_mouse_down(
-                MouseButton::Left,
-                cx.listener(Self::titlebar_background_mouse),
-            ))
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .window_control_area(WindowControlArea::Drag)
+                    .on_mouse_down(MouseButton::Left, cx.listener(Self::titlebar_background_mouse))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(Self::titlebar_background_mouse_up),
+                    )
+                    .on_mouse_move(cx.listener(Self::titlebar_background_mouse_move)),
+            )
             .child(self.titlebar_open_in_button(cx))
             .child(self.titlebar_git_actions_button(cx))
             .child(self.resource_indicator_button(window, cx))
