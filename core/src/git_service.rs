@@ -22,6 +22,7 @@ use crate::git_actions::{
 };
 use crate::project_store::{
     read_project_branch_commit_state, read_project_branch_compare_state, read_project_git_state,
+    stage_all_changes, stage_changed_file, unstage_all_changes, unstage_changed_file, ChangedFile,
     ProjectBranchCommitState, ProjectBranchCompareState, ProjectGitState,
 };
 
@@ -101,4 +102,72 @@ pub fn spawn_toolbar_action(
         let _ = tx.send(GitActionReply { project_id, result });
     });
     rx
+}
+
+// ---- staged-file mutations (right-sidebar) --------------------------
+//
+// Unlike the two spawn fns above, the mutations path is queue-shaped:
+// the desktop app maintains one persistent `(tx, rx)` pair and drains
+// many replies over the UI's lifetime. Core exposes a `Sender`-taking
+// worker to match.
+
+/// One stage / unstage operation on the right-sidebar changed-files
+/// view. Moves verbatim from the desktop crate because the worker
+/// needs to dispatch on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChangedFilesGitMutation {
+    StageFile { changed: ChangedFile },
+    UnstageFile { changed: ChangedFile },
+    StageAll,
+    UnstageAll,
+}
+
+impl ChangedFilesGitMutation {
+    pub fn stages_file(&self, path: &str) -> bool {
+        matches!(self, Self::StageFile { changed } if changed.path == path)
+    }
+
+    pub fn unstages_file(&self, path: &str) -> bool {
+        matches!(self, Self::UnstageFile { changed } if changed.path == path)
+    }
+
+    pub fn stages_all(&self) -> bool {
+        matches!(self, Self::StageAll)
+    }
+
+    pub fn unstages_all(&self) -> bool {
+        matches!(self, Self::UnstageAll)
+    }
+}
+
+/// Reply carrying the post-mutation git state (or an error string) so
+/// the drain loop can reconcile optimistic UI with real disk state.
+pub struct ChangedFilesGitMutationReply {
+    pub project_id: String,
+    pub result: Result<ProjectGitState, String>,
+}
+
+/// Run one staged-file mutation on a background thread and send the
+/// result on `sender`. Re-reads the full project git state after a
+/// successful mutation so the drain loop has fresh data to replace
+/// the optimistic snapshot with.
+pub fn spawn_changed_files_mutation(
+    sender: mpsc::Sender<ChangedFilesGitMutationReply>,
+    project_id: String,
+    project_path: PathBuf,
+    mutation: ChangedFilesGitMutation,
+) {
+    thread::spawn(move || {
+        let result = match mutation {
+            ChangedFilesGitMutation::StageFile { changed } => stage_changed_file(&project_path, &changed)
+                .map(|_| read_project_git_state(&project_path, false)),
+            ChangedFilesGitMutation::UnstageFile { changed } => unstage_changed_file(&project_path, &changed)
+                .map(|_| read_project_git_state(&project_path, false)),
+            ChangedFilesGitMutation::StageAll => stage_all_changes(&project_path)
+                .map(|_| read_project_git_state(&project_path, false)),
+            ChangedFilesGitMutation::UnstageAll => unstage_all_changes(&project_path)
+                .map(|_| read_project_git_state(&project_path, false)),
+        };
+        let _ = sender.send(ChangedFilesGitMutationReply { project_id, result });
+    });
 }
