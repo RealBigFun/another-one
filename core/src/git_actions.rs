@@ -483,22 +483,13 @@ fn commit_with_ai(
     repo_path: &Path,
     push_after: bool,
     settings: &GitActionSettings,
-    on_progress: &mut dyn FnMut(String),
+    _on_progress: &mut dyn FnMut(String),
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
     let _staged_all_changes = ensure_staged_changes(repo_path)?;
     let diff_patch = staged_diff_patch(repo_path).map_err(ToolbarActionError::from_message)?;
     let prompt = render_commit_generation_script(settings.commit_generation_script(), &diff_patch);
     let generated =
         generate_commit_message(repo_path, &prompt).map_err(ToolbarActionError::from_message)?;
-    on_progress(format!(
-        "Generated commit message:\n{}",
-        format_commit_message_text(&generated)
-    ));
-    on_progress(if push_after {
-        "Commit message generated. Creating commit before push...".to_string()
-    } else {
-        "Commit message generated. Creating commit...".to_string()
-    });
     git_commit(repo_path, &generated).map_err(ToolbarActionError::from_message)?;
 
     if push_after {
@@ -1029,14 +1020,6 @@ fn git_commit(repo_path: &Path, message: &GeneratedCommitMessage) -> Result<(), 
 
     Ok(())
 }
-
-fn format_commit_message_text(message: &GeneratedCommitMessage) -> String {
-    match message.body.as_deref() {
-        Some(body) => format!("{}\n\n{}", message.subject, body),
-        None => message.subject.clone(),
-    }
-}
-
 fn command_output_details(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
