@@ -32,7 +32,6 @@ use crate::agents::{
     terminal_launch_config_for_selected_agents, AgentDef, AgentProviderKind, TerminalLaunchConfig,
     TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
-pub use another_one_core::section::SectionId;
 use crate::layout::*;
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::panels::terminal_cell_width;
@@ -51,6 +50,7 @@ use crate::terminal_runtime::{
     TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
+pub use another_one_core::section::SectionId;
 
 const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 const ACTIVE_GIT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
@@ -3307,10 +3307,7 @@ impl AnotherOneApp {
         &mut self,
         _cx: &App,
     ) -> Option<(std::path::PathBuf, TerminalLaunchConfig)> {
-        let enabled_agents = self.sanitize_new_task_modal_selected_agents();
-        if enabled_agents.is_empty() {
-            return None;
-        }
+        self.sanitize_new_task_modal_selected_agents();
 
         let state = self.new_task_modal.as_ref()?;
         if state.submitting || state.worktree_mode {
@@ -4900,14 +4897,7 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn submit_new_task_modal(&mut self, cx: &mut Context<Self>) {
-        let enabled_agents = self.sanitize_new_task_modal_selected_agents();
-        if enabled_agents.is_empty() {
-            self.show_error_toast(
-                "Enable at least one agent in Settings > Agents before creating a task.",
-                cx,
-            );
-            return;
-        }
+        self.sanitize_new_task_modal_selected_agents();
 
         let (
             project_id,

@@ -27,7 +27,7 @@ enum AddAgentModalFocus {
 
 const CARD_BG: u32 = 0x2b2d31;
 const CLI_ONLY_ICON: &str = "assets/icons/icons__terminal.svg";
-const CLI_ONLY_LABEL: &str = "CLI only";
+const CLI_ONLY_LABEL: &str = "Terminal";
 const TITLE_COL: (f32, f32, f32, f32) = (0., 0., 0.92, 1.);
 const BODY_COL: (f32, f32, f32, f32) = (0., 0., 0.78, 1.);
 const MUTED_COL: (f32, f32, f32, f32) = (0., 0., 0.58, 1.);
@@ -69,14 +69,19 @@ fn resolved_add_agent_selection(
     fallback_agent_id: Option<&str>,
     enabled_agents: &[&'static AgentDef],
 ) -> Option<String> {
-    selected_agent_id
-        .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
-        .or_else(|| {
-            fallback_agent_id
-                .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
-        })
-        .or_else(|| enabled_agents.first().map(|agent| agent.id))
-        .map(str::to_string)
+    match selected_agent_id {
+        Some(selected_agent_id) => enabled_agents
+            .iter()
+            .find(|agent| agent.id == selected_agent_id)
+            .map(|agent| agent.id.to_string())
+            .or_else(|| {
+                fallback_agent_id
+                    .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
+                    .map(str::to_string)
+            })
+            .or_else(|| enabled_agents.first().map(|agent| agent.id.to_string())),
+        None => None,
+    }
 }
 
 fn initial_add_agent_selection(
@@ -84,14 +89,19 @@ fn initial_add_agent_selection(
     default_agent_id: Option<&str>,
     enabled_agents: &[&'static AgentDef],
 ) -> Option<String> {
-    default_agent_id
-        .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
-        .or_else(|| {
-            seeded_agent_id
-                .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
-        })
-        .or_else(|| enabled_agents.first().map(|agent| agent.id))
-        .map(str::to_string)
+    match seeded_agent_id {
+        Some(seeded_agent_id) => enabled_agents
+            .iter()
+            .find(|agent| agent.id == seeded_agent_id)
+            .map(|agent| agent.id.to_string())
+            .or_else(|| {
+                default_agent_id
+                    .filter(|agent_id| enabled_agents.iter().any(|agent| agent.id == *agent_id))
+                    .map(str::to_string)
+            })
+            .or_else(|| enabled_agents.first().map(|agent| agent.id.to_string())),
+        None => None,
+    }
 }
 
 fn add_agent_option_count(enabled_agents: &[&'static AgentDef]) -> usize {
@@ -947,11 +957,21 @@ mod tests {
     }
 
     #[test]
-    fn preferred_default_agent_overrides_seeded_agent() {
+    fn terminal_seed_opens_as_terminal() {
         let enabled_agents = vec![&AGENTS[0], &AGENTS[1], &AGENTS[2]];
 
         assert_eq!(
-            initial_add_agent_selection(Some(AGENTS[0].id), Some(AGENTS[2].id), &enabled_agents)
+            initial_add_agent_selection(None, Some(AGENTS[2].id), &enabled_agents),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_seeded_agent_falls_back_to_default_agent() {
+        let enabled_agents = vec![&AGENTS[0], &AGENTS[1], &AGENTS[2]];
+
+        assert_eq!(
+            initial_add_agent_selection(Some("missing"), Some(AGENTS[2].id), &enabled_agents)
                 .as_deref(),
             Some(AGENTS[2].id)
         );
@@ -965,6 +985,16 @@ mod tests {
             resolved_add_agent_selection(Some(AGENTS[0].id), Some(AGENTS[2].id), &enabled_agents)
                 .as_deref(),
             Some(AGENTS[0].id)
+        );
+    }
+
+    #[test]
+    fn resolved_selection_preserves_terminal_choice() {
+        let enabled_agents = vec![&AGENTS[0], &AGENTS[1], &AGENTS[2]];
+
+        assert_eq!(
+            resolved_add_agent_selection(None, Some(AGENTS[2].id), &enabled_agents),
+            None
         );
     }
 }

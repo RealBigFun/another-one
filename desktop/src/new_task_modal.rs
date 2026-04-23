@@ -32,6 +32,8 @@ pub(crate) struct NewTaskModalState {
 }
 
 const CARD_BG: u32 = 0x2b2d31;
+const CLI_ONLY_ICON: &str = "assets/icons/icons__terminal.svg";
+const CLI_ONLY_LABEL: &str = "Terminal";
 const TITLE_COL: (f32, f32, f32, f32) = (0., 0., 0.92, 1.);
 const BODY_COL: (f32, f32, f32, f32) = (0., 0., 0.78, 1.);
 const MUTED_COL: (f32, f32, f32, f32) = (0., 0., 0.58, 1.);
@@ -165,19 +167,12 @@ impl AnotherOneApp {
             return;
         };
 
-        let enabled_agents = self.enabled_agents();
-        let Some(default_agent_id) =
-            default_new_task_agent_id(&enabled_agents, self.default_agent_id())
-        else {
-            self.show_error_toast(
-                "Enable at least one agent in Settings > Agents before creating a task.",
-                cx,
-            );
-            return;
-        };
-
         let mut selected_agents = HashSet::new();
-        selected_agents.insert(default_agent_id.to_string());
+        if let Some(default_agent_id) =
+            default_new_task_agent_id(&self.enabled_agents(), self.default_agent_id())
+        {
+            selected_agents.insert(default_agent_id.to_string());
+        }
 
         self.new_task_modal = Some(NewTaskModalState {
             project_id: project.id.clone(),
@@ -809,16 +804,16 @@ impl AnotherOneApp {
             .copied()
             .or_else(|| enabled_agents.first().copied());
 
-        let trigger_icon: SharedString = display_agent
-            .map(|agent| agent.icon)
-            .unwrap_or(AGENTS[0].icon)
-            .into();
+        let trigger_icon: SharedString = if selected.is_empty() {
+            CLI_ONLY_ICON.into()
+        } else {
+            display_agent
+                .map(|agent| agent.icon)
+                .unwrap_or(AGENTS[0].icon)
+                .into()
+        };
         let trigger_label: SharedString = if selected.is_empty() {
-            if enabled_agents.is_empty() {
-                "No enabled agents".into()
-            } else {
-                "No agents selected".into()
-            }
+            CLI_ONLY_LABEL.into()
         } else if selected.len() > 1 {
             format!("{} agents selected", selected.len()).into()
         } else {
@@ -839,7 +834,7 @@ impl AnotherOneApp {
                     .text_size(rems(12. / 16.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(title_col())
-                    .child("Agent"),
+                    .child("Agent / Terminal"),
             )
             .child(
                 div().relative().child(
@@ -859,7 +854,10 @@ impl AnotherOneApp {
                         .opacity(if submitting { 0.45 } else { 1.0 })
                         .hover(move |s| s.bg(hover_bg()))
                         .tooltip(move |_window, cx| {
-                            Self::action_tooltip_view("Choose the agents for this task", cx)
+                            Self::action_tooltip_view(
+                                "Choose the agent or terminal for this task",
+                                cx,
+                            )
                         })
                         .on_mouse_down(
                             MouseButton::Left,
@@ -914,7 +912,7 @@ impl AnotherOneApp {
         submitting: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let visible_rows = enabled_agents.len().min(6) as f32;
+        let visible_rows = (enabled_agents.len() + 1).min(6) as f32;
         let dropdown_height = px(visible_rows * 36. + 8.);
 
         let mut list = div()
@@ -928,6 +926,72 @@ impl AnotherOneApp {
             .shadow_md()
             .overflow_y_scroll()
             .py(px(4.));
+
+        list = list.child(
+            div()
+                .id("new-task-agent-cli-only")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(10.))
+                .h(px(36.))
+                .px(px(12.))
+                .cursor_pointer()
+                .opacity(if submitting { 0.45 } else { 1.0 })
+                .hover(move |s| s.bg(hover_bg()))
+                .tooltip(move |_window, cx| {
+                    Self::action_tooltip_view("Use a plain terminal for this task", cx)
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                        if let Some(state) = this.new_task_modal.as_mut() {
+                            if state.submitting {
+                                return;
+                            }
+                            state.selected_agents.clear();
+                        }
+                        this.sync_new_task_modal_prewarm(cx);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    div()
+                        .w(px(18.))
+                        .h(px(18.))
+                        .rounded(px(4.))
+                        .border_1()
+                        .border_color(if selected.is_empty() {
+                            hsla(220. / 360., 0.55, 0.55, 1.)
+                        } else {
+                            border_col()
+                        })
+                        .bg(if selected.is_empty() {
+                            hsla(220. / 360., 0.55, 0.55, 1.)
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when(selected.is_empty(), |container| {
+                            container.child(
+                                svg()
+                                    .path("assets/icons/icons__check.svg")
+                                    .size(px(12.))
+                                    .text_color(gpui::white()),
+                            )
+                        }),
+                )
+                .child(branded_icon(CLI_ONLY_ICON, 18., Some(title_col())))
+                .child(
+                    div()
+                        .text_size(rems(13. / 16.))
+                        .text_color(title_col())
+                        .child(CLI_ONLY_LABEL),
+                ),
+        );
 
         for agent in enabled_agents {
             let is_selected = selected.contains(agent.id);
@@ -957,7 +1021,9 @@ impl AnotherOneApp {
                                 if state.submitting {
                                     return;
                                 }
-                                if state.selected_agents.contains(&agent_id) {
+                                if state.selected_agents.is_empty() {
+                                    state.selected_agents.insert(agent_id.clone());
+                                } else if state.selected_agents.contains(&agent_id) {
                                     state.selected_agents.remove(&agent_id);
                                 } else {
                                     state.selected_agents.insert(agent_id.clone());
@@ -2008,6 +2074,14 @@ mod tests {
     #[test]
     fn default_selection_returns_none_when_no_agents_are_enabled() {
         assert_eq!(default_new_task_agent_id(&[], Some(DEFAULT_AGENT_ID)), None);
+    }
+
+    #[test]
+    fn sanitization_preserves_terminal_selection() {
+        assert_eq!(
+            sanitized_new_task_selected_agents(&HashSet::new(), &[]),
+            HashSet::new()
+        );
     }
 
     #[test]

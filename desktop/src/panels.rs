@@ -6,11 +6,33 @@ use gpui::{
     Window,
 };
 
+use crate::agent_icons::branded_icon;
+use crate::agents::AGENTS;
 use crate::app::{AnotherOneApp, TerminalSelectionRange, WorkspacePane};
 use crate::terminal_runtime::{
     TerminalCursorKind, TerminalRuntimeKey, TerminalSurfaceSnapshot, TERMINAL_CELL_WIDTH_RATIO,
     TERMINAL_LINE_HEIGHT_RATIO,
 };
+
+fn tab_icon_element(
+    provider: Option<crate::agents::AgentProviderKind>,
+    fallback_color: gpui::Hsla,
+) -> impl IntoElement {
+    provider
+        .and_then(|provider| {
+            AGENTS
+                .iter()
+                .find(|agent| agent.provider == Some(provider))
+                .map(|agent| branded_icon(agent.icon, 14., None))
+        })
+        .unwrap_or_else(|| {
+            svg()
+                .path("assets/icons/icons__terminal.svg")
+                .size(px(14.))
+                .text_color(fallback_color)
+                .into_any_element()
+        })
+}
 
 impl AnotherOneApp {
     /// Generic bordered panel with a title strip and body text.
@@ -155,16 +177,14 @@ impl WorkspacePane {
                                 this.activate_tab(&sid_click, tab_index, cx);
                             }),
                         )
-                        .child(
-                            svg()
-                                .path("assets/icons/icons__terminal.svg")
-                                .size(px(14.))
-                                .text_color(if is_active {
-                                    tab_text_active
-                                } else {
-                                    tab_text_inactive
-                                }),
-                        )
+                        .child(tab_icon_element(
+                            tab.launch_config.provider,
+                            if is_active {
+                                tab_text_active
+                            } else {
+                                tab_text_inactive
+                            },
+                        ))
                         .child(
                             div()
                                 .text_sm()
