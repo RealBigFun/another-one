@@ -11,6 +11,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 
 import 'src/rust/frb_generated.dart';
@@ -43,13 +45,14 @@ class TerminalPage extends StatefulWidget {
 }
 
 class _TerminalPageState extends State<TerminalPage> {
-  // Android emulator's host-loopback alias; swap for your LAN IP on a device.
-  //
-  // For Iroh, paste an `iroh://<endpoint_id>?direct=host:port[,host:port…]`
-  // URL. The daemon prints its EndpointAddr on startup; on the emulator the
-  // host is reachable at `10.0.2.2` and the daemon's UDP port is the number
-  // in the Ip(192.168.x.y:PORT) line of the online log.
+  // Initial placeholder used only on the very first launch before we've
+  // loaded anything from SharedPreferences. Once a user connects
+  // successfully via an `iroh://…` URL, we persist it under
+  // `_prefsEndpointKey` and reuse it on subsequent launches — so the phone
+  // only has to be paired once, even though this hardcoded string points
+  // at the emulator's loopback WebSocket sandbox.
   static const String _defaultEndpoint = 'ws://10.0.2.2:5617/pty';
+  static const String _prefsEndpointKey = 'last_endpoint';
 
   final TextEditingController _endpointCtrl =
       TextEditingController(text: _defaultEndpoint);
@@ -74,6 +77,29 @@ class _TerminalPageState extends State<TerminalPage> {
     _terminal.onResize = (width, height, _, _) {
       _transport?.sendResize(cols: width, rows: height);
     };
+    _restoreEndpoint();
+  }
+
+  /// Load the last-successful endpoint URL from SharedPreferences and
+  /// drop it into the text field. First-run will find nothing and leave
+  /// the compile-time default in place.
+  Future<void> _restoreEndpoint() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(_prefsEndpointKey);
+    if (saved != null && saved.trim().isNotEmpty && mounted) {
+      setState(() {
+        _endpointCtrl.text = saved;
+      });
+    }
+  }
+
+  /// Store `url` as the endpoint to prefer on next launch. Called the
+  /// first time a connection reaches the `connected` state — we only
+  /// persist URLs that actually work, so a bad paste doesn't poison the
+  /// next launch.
+  Future<void> _persistEndpoint(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsEndpointKey, url);
   }
 
   /// Factory for the active transport. Dispatches by URL scheme:
@@ -101,14 +127,20 @@ class _TerminalPageState extends State<TerminalPage> {
 
   Future<void> _connect() async {
     await _tearDownTransport();
-    final transport = _buildTransport(_endpointCtrl.text.trim());
+    final url = _endpointCtrl.text.trim();
+    final transport = _buildTransport(url);
     _transport = transport;
 
     _bytesSub = transport.incoming.listen((bytes) {
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
     });
+    bool savedOnce = false;
     _statusSub = transport.status.listen((s) {
       setState(() => _status = s);
+      if (!savedOnce && s.state == TransportState.connected) {
+        savedOnce = true;
+        unawaited(_persistEndpoint(url));
+      }
     });
 
     transport.connect();
@@ -119,6 +151,21 @@ class _TerminalPageState extends State<TerminalPage> {
   Future<void> _disconnect() async {
     await _tearDownTransport();
     setState(() => _status = const TransportStatus.disconnected());
+  }
+
+  /// Push the QR scanner, wait for a result, and drop the decoded URL
+  /// into the endpoint field. Does **not** auto-connect — the user sees
+  /// the parsed URL and hits Connect themselves, which also makes it
+  /// easy to spot a bad scan before wasting a round-trip.
+  Future<void> _scanQr() async {
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const _QrScanPage()),
+    );
+    if (result == null || result.trim().isEmpty) return;
+    if (!mounted) return;
+    setState(() {
+      _endpointCtrl.text = result.trim();
+    });
   }
 
   Future<void> _tearDownTransport() async {
@@ -171,6 +218,7 @@ class _TerminalPageState extends State<TerminalPage> {
               connected: _status.isConnected,
               onConnect: _connect,
               onDisconnect: _disconnect,
+              onScan: _scanQr,
             ),
             Expanded(
               child: GestureDetector(
@@ -208,12 +256,14 @@ class _EndpointRow extends StatelessWidget {
     required this.connected,
     required this.onConnect,
     required this.onDisconnect,
+    required this.onScan,
   });
 
   final TextEditingController controller;
   final bool connected;
   final VoidCallback onConnect;
   final VoidCallback onDisconnect;
+  final VoidCallback onScan;
 
   @override
   Widget build(BuildContext context) {
@@ -228,10 +278,15 @@ class _EndpointRow extends StatelessWidget {
             smartDashesType: SmartDashesType.disabled,
             smartQuotesType: SmartQuotesType.disabled,
             style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Endpoint',
-              border: OutlineInputBorder(),
+              border: const OutlineInputBorder(),
               isDense: true,
+              suffixIcon: IconButton(
+                tooltip: 'Scan pairing QR',
+                icon: const Icon(Icons.qr_code_scanner),
+                onPressed: onScan,
+              ),
             ),
           ),
         ),
@@ -293,6 +348,70 @@ class _ChordBar extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Full-screen camera QR scanner. Pops back with the first scanned
+/// barcode's raw text as the `Navigator.pop` result. Designed for the
+/// `iroh://…` pairing URL the daemon prints at startup, but doesn't
+/// validate the scheme — caller decides what to do with bad input.
+class _QrScanPage extends StatefulWidget {
+  const _QrScanPage();
+
+  @override
+  State<_QrScanPage> createState() => _QrScanPageState();
+}
+
+class _QrScanPageState extends State<_QrScanPage> {
+  final MobileScannerController _controller = MobileScannerController(
+    detectionSpeed: DetectionSpeed.normal,
+    formats: const [BarcodeFormat.qrCode],
+  );
+  bool _handed = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_handed) return;
+    for (final barcode in capture.barcodes) {
+      final raw = barcode.rawValue;
+      if (raw != null && raw.isNotEmpty) {
+        _handed = true;
+        Navigator.of(context).pop(raw);
+        return;
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Scan Pairing QR')),
+      body: Stack(
+        children: [
+          MobileScanner(controller: _controller, onDetect: _onDetect),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Point at the QR printed by the daemon.\n'
+                "The URL populates the endpoint field; tap Connect to dial.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

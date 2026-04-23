@@ -36,6 +36,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   web_socket_channel: ^3.0.3
   xterm: ^4.0.0
+  shared_preferences: ^2.2.0
+  mobile_scanner: ^5.2.0
   mobile_core:
     path: rust_builder
   flutter_rust_bridge: 2.12.0
