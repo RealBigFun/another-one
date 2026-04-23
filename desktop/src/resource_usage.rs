@@ -50,17 +50,11 @@ pub(crate) struct ResourceUsageSession {
     pub memory_bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TrackedProcess {
-    pub pid: u32,
-    pub key: String,
-    pub label: String,
-    pub project_key: String,
-    pub project_label: String,
-    pub task_key: String,
-    pub task_label: String,
-    pub icon_path: &'static str,
-}
+// Moved to core so the upcoming `TerminalManager` (and core in general)
+// can talk about tracked processes without having to reach into the
+// desktop crate. Re-exported here with the same path so the 50+ call
+// sites inside desktop still resolve via `crate::resource_usage::…`.
+pub(crate) use another_one_core::process::TrackedProcess;
 
 #[derive(Debug, Default)]
 pub(crate) struct ResourceUsageSampler {
@@ -73,13 +67,7 @@ struct CpuUsageSample {
     sampled_at: Instant,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RawProcessSample {
-    pub pid: u32,
-    pub ppid: u32,
-    pub total_cpu_time_ns: u64,
-    pub memory_bytes: u64,
-}
+pub(crate) use another_one_core::process::RawProcessSample;
 
 #[derive(Clone, Debug)]
 struct ProcessSample {

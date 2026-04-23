@@ -238,14 +238,18 @@ impl LiveTerminalRuntime {
     }
 
     pub fn snapshot(&mut self) -> TerminalSurfaceSnapshot {
-        if !self.dirty {
-            return self.cached_snapshot.clone();
+        if self.dirty {
+            self.cached_snapshot = build_surface_snapshot(&self.term, self.size);
+            self.dirty = false;
         }
-
-        let snapshot = build_surface_snapshot(&self.term, self.size);
-        self.cached_snapshot = snapshot;
-        self.dirty = false;
         self.cached_snapshot.clone()
+    }
+
+    /// Does this runtime have accumulated output the snapshot hasn't
+    /// caught up with yet? Used by the drain loop to decide whether a
+    /// focused-but-previously-backgrounded tab needs a rebuild this tick.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
     }
 
     pub fn scroll_display(&mut self, lines: i32) -> bool {
