@@ -2,7 +2,7 @@
 name = "daemon-sandbox"
 version = "0.1.0"
 edition = "2021"
-description = "Throwaway daemon for mobile-companion sandbox: raw PTY over WebSocket"
+description = "Throwaway daemon for mobile-companion sandbox: bridges a PTY over WebSocket and Iroh QUIC"
 publish = false
 
 [[bin]]
