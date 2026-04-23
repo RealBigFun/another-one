@@ -3,7 +3,6 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
@@ -11,81 +10,16 @@ use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
 use gpui::{font, px, rgb, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
-use portable_pty::{ChildKiller, MasterPty, PtySize};
+use portable_pty::{ChildKiller, MasterPty};
 
-use crate::app::SectionId;
-
-const MIN_TERMINAL_COLS: u16 = 20;
-const MIN_TERMINAL_ROWS: u16 = 4;
-pub(crate) const TERMINAL_CELL_WIDTH_RATIO: f32 = 0.62;
-pub(crate) const TERMINAL_LINE_HEIGHT_RATIO: f32 = 1.25;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct TerminalRuntimeKey {
-    pub section_id: SectionId,
-    pub tab_id: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct TerminalGridSize {
-    pub cols: u16,
-    pub rows: u16,
-    pub pixel_width: u16,
-    pub pixel_height: u16,
-}
-
-impl Default for TerminalGridSize {
-    fn default() -> Self {
-        Self {
-            cols: 80,
-            rows: 24,
-            pixel_width: 0,
-            pixel_height: 0,
-        }
-    }
-}
-
-impl TerminalGridSize {
-    pub fn from_panel_size(width_px: f32, height_px: f32, font_size: f32) -> Self {
-        let cell_width = (font_size * TERMINAL_CELL_WIDTH_RATIO).max(7.0);
-        let cell_height = (font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0);
-        let cols = (width_px / cell_width)
-            .floor()
-            .max(MIN_TERMINAL_COLS as f32) as u16;
-        let rows = (height_px / cell_height)
-            .floor()
-            .max(MIN_TERMINAL_ROWS as f32) as u16;
-        Self {
-            cols,
-            rows,
-            pixel_width: width_px.max(0.0).min(u16::MAX as f32) as u16,
-            pixel_height: height_px.max(0.0).min(u16::MAX as f32) as u16,
-        }
-    }
-
-    pub fn as_pty_size(self) -> PtySize {
-        PtySize {
-            rows: self.rows,
-            cols: self.cols,
-            pixel_width: self.pixel_width,
-            pixel_height: self.pixel_height,
-        }
-    }
-}
-
-impl Dimensions for TerminalGridSize {
-    fn total_lines(&self) -> usize {
-        self.rows as usize
-    }
-
-    fn screen_lines(&self) -> usize {
-        self.rows as usize
-    }
-
-    fn columns(&self) -> usize {
-        self.cols as usize
-    }
-}
+// Shared with `core/src/terminal_types.rs` — the launcher side also
+// produces `PreparedTerminalRuntime` / `TerminalGridSize` /
+// `TerminalRuntimeKey`, and both sides need the clamp constants and
+// cell/line ratios in lockstep.
+pub(crate) use another_one_core::terminal_types::{
+    PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey, TERMINAL_CELL_WIDTH_RATIO,
+    TERMINAL_LINE_HEIGHT_RATIO,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TerminalSurfaceSnapshot {
@@ -167,13 +101,6 @@ struct PendingPositionedRun {
     cell_count: usize,
     text: String,
     style: TextRun,
-}
-
-pub(crate) struct PreparedTerminalRuntime {
-    pub size: TerminalGridSize,
-    pub master: Box<dyn MasterPty + Send>,
-    pub writer: Box<dyn Write + Send>,
-    pub child_killer: Box<dyn ChildKiller + Send + Sync>,
 }
 
 #[derive(Default)]
