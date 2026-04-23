@@ -333,13 +333,26 @@ async fn iroh_connect_inner(
                     Ok(Some((TY_WORKER_REPLY, payload))) => {
                         match serde_json::from_slice::<WorkerReply>(&payload) {
                             Ok(reply) => {
-                                // Dropping the reply if no subscriber is
-                                // listening yet is fine: Dart is expected
-                                // to call `subscribe_worker_replies` right
-                                // after connect, and an unsubscribed queue
-                                // would otherwise grow unbounded.
-                                if worker_replies_tx.send(reply).await.is_err() {
-                                    tracing::debug!("worker_replies channel closed; dropping frame");
+                                // `try_send` instead of `send().await` on
+                                // purpose: this recv task also feeds the
+                                // PTY stream (`incoming_tx`, above), which
+                                // *does* want backpressure. If Dart never
+                                // calls `subscribe_worker_replies`, the
+                                // receiver sits idle inside the session
+                                // `Option<…>` — the channel is open but
+                                // never drained, so `send().await` would
+                                // block forever on the 65th reply and
+                                // stall PTY output with it. Drop the reply
+                                // on a full or closed channel instead.
+                                use tokio::sync::mpsc::error::TrySendError;
+                                match worker_replies_tx.try_send(reply) {
+                                    Ok(()) => {}
+                                    Err(TrySendError::Full(_)) => {
+                                        tracing::debug!("worker_replies channel full; dropping frame (no subscriber or slow consumer)");
+                                    }
+                                    Err(TrySendError::Closed(_)) => {
+                                        tracing::debug!("worker_replies channel closed; dropping frame");
+                                    }
                                 }
                             }
                             Err(e) => {
