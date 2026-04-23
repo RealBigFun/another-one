@@ -733,7 +733,8 @@ impl AnotherOneApp {
                                                 BORDER_SUBTLE()
                                             })
                                             .bg(button_bg)
-                                            .px(px(10.))
+                                            .pl(px(10.))
+                                            .pr(px(1.4))
                                             .cursor_pointer()
                                             .hover(move |style| style.bg(button_hover))
                                             .on_mouse_down(
@@ -1686,6 +1687,7 @@ fn visible_input_range(
     cursor: usize,
     selection: Option<&std::ops::Range<usize>>,
     max_chars: usize,
+    extra_reserved_chars: usize,
 ) -> std::ops::Range<usize> {
     let boundaries = text
         .char_indices()
@@ -1693,25 +1695,35 @@ fn visible_input_range(
         .chain(std::iter::once(text.len()))
         .collect::<Vec<_>>();
     let total_chars = boundaries.len().saturating_sub(1);
-    if total_chars <= max_chars {
+    if total_chars <= max_chars.saturating_sub(extra_reserved_chars) {
         return 0..text.len();
     }
 
     let cursor_char = text[..cursor.min(text.len())].chars().count();
-    let mut start_char = cursor_char.saturating_sub(max_chars / 2);
-    let mut end_char = (start_char + max_chars).min(total_chars);
-    start_char = end_char.saturating_sub(max_chars);
+    let selection_chars = selection.map(|selection| {
+        (
+            text[..selection.start.min(text.len())].chars().count(),
+            text[..selection.end.min(text.len())].chars().count(),
+        )
+    });
+    let visible_chars = max_chars.saturating_sub(extra_reserved_chars).max(1);
+    let mut start_char = cursor_char.saturating_sub(visible_chars / 2);
+    let mut end_char = (start_char + visible_chars).min(total_chars);
+    start_char = end_char.saturating_sub(visible_chars);
 
-    if let Some(selection) = selection {
-        let selection_start_char = text[..selection.start.min(text.len())].chars().count();
-        let selection_end_char = text[..selection.end.min(text.len())].chars().count();
+    if cursor_char >= total_chars.saturating_sub(visible_chars / 3) {
+        end_char = total_chars;
+        start_char = total_chars.saturating_sub(visible_chars);
+    }
+
+    if let Some((selection_start_char, selection_end_char)) = selection_chars {
         if selection_start_char < start_char {
             start_char = selection_start_char;
-            end_char = (start_char + max_chars).min(total_chars);
+            end_char = (start_char + visible_chars).min(total_chars);
         }
         if selection_end_char > end_char {
             end_char = selection_end_char.min(total_chars);
-            start_char = end_char.saturating_sub(max_chars);
+            start_char = end_char.saturating_sub(visible_chars);
         }
     }
 
@@ -1744,9 +1756,8 @@ fn render_settings_agent_input_content(
     }
 
     let selected = selection.filter(|range| range.start < range.end);
-    let visible_range = visible_input_range(text, cursor, selected.as_ref(), 20);
-    let leading_clipped = visible_range.start > 0;
-    let trailing_clipped = visible_range.end < text.len();
+    let visible_range =
+        visible_input_range(text, cursor, selected.as_ref(), 20, usize::from(focused));
     let visible_start = visible_range.start;
     let visible_text = text[visible_range.clone()].to_string();
     let local_cursor = cursor.saturating_sub(visible_start).min(visible_text.len());
@@ -1763,10 +1774,6 @@ fn render_settings_agent_input_content(
         .overflow_hidden()
         .text_size(rems(12. / 16.))
         .font_family("Lilex Nerd Font Mono");
-
-    if leading_clipped {
-        row = row.child(div().text_color(TEXT_SECONDARY()).child("..."));
-    }
 
     let (prefix_end, selected_end) = if let Some(range) = visible_selection.as_ref() {
         (
@@ -1814,10 +1821,6 @@ fn render_settings_agent_input_content(
         row = row.child(div().text_color(TEXT_PRIMARY()).child(trailing));
     }
 
-    if trailing_clipped {
-        row = row.child(div().text_color(TEXT_SECONDARY()).child("..."));
-    }
-
     row
 }
 
@@ -1825,6 +1828,7 @@ fn render_settings_agent_input_content(
 mod tests {
     use super::{
         insert_settings_input_text, settings_agent_input_selected_range, validate_agent_launch_arg,
+        visible_input_range,
     };
 
     #[test]
@@ -1883,5 +1887,16 @@ mod tests {
             settings_agent_input_selected_range(cursor, selection_anchor),
             None
         );
+    }
+
+    #[test]
+    fn visible_input_range_keeps_end_visible_when_clipped() {
+        let text = "--dangerously-skip-permissions";
+
+        let visible = visible_input_range(text, text.len(), None, 20, 1);
+
+        assert!(visible.start > 0);
+        assert_eq!(visible.end, text.len());
+        assert_eq!(text[visible].chars().count(), 19);
     }
 }
