@@ -457,6 +457,25 @@ pub(crate) struct SettingsAgentInputState {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct SettingsGitActionScriptInputState {
+    pub(crate) draft: String,
+    pub(crate) focused: bool,
+    pub(crate) cursor: usize,
+    pub(crate) selection_anchor: Option<usize>,
+}
+
+impl Default for SettingsGitActionScriptInputState {
+    fn default() -> Self {
+        Self {
+            draft: String::new(),
+            focused: false,
+            cursor: 0,
+            selection_anchor: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct SidebarTaskMenuState {
     pub(crate) project_id: String,
     pub(crate) root_project_id: String,
@@ -1125,6 +1144,8 @@ pub struct AnotherOneApp {
     pub(crate) shortcut_capture_action: Option<crate::shortcuts::ShortcutAction>,
     /// Local draft and selection state for per-agent launch arg editing in settings.
     pub(crate) settings_agent_input: SettingsAgentInputState,
+    /// Local draft and selection state for the git commit generation script editor.
+    pub(crate) settings_git_action_script_input: SettingsGitActionScriptInputState,
     /// Active right-sidebar mode for task views.
     pub(crate) right_sidebar_mode: RightSidebarMode,
     /// Session-scoped recent-commit page sizes keyed by project id.
@@ -1248,6 +1269,7 @@ enum TextInputTarget {
     NewTaskModal,
     SidebarTaskRename,
     SettingsAgentInput,
+    SettingsGitActionScript,
     Terminal,
     Blocked,
 }
@@ -1275,6 +1297,11 @@ impl EntityInputHandler for AnotherOneApp {
                 .as_ref()
                 .and_then(|agent_id| self.settings_agent_input.drafts.get(agent_id))
                 .map(|draft| text_for_utf16_range(draft, range, adjusted_range)),
+            TextInputTarget::SettingsGitActionScript => Some(text_for_utf16_range(
+                &self.settings_git_action_script_input.draft,
+                range,
+                adjusted_range,
+            )),
             TextInputTarget::Terminal => None,
             TextInputTarget::Blocked => None,
         }
@@ -1313,6 +1340,11 @@ impl EntityInputHandler for AnotherOneApp {
                         self.settings_agent_input.selection_anchor,
                     )
                 }),
+            TextInputTarget::SettingsGitActionScript => Some(utf16_selection_for_text(
+                &self.settings_git_action_script_input.draft,
+                self.settings_git_action_script_input.cursor,
+                self.settings_git_action_script_input.selection_anchor,
+            )),
             TextInputTarget::Terminal => None,
             TextInputTarget::Blocked => None,
         }
@@ -1382,6 +1414,19 @@ impl EntityInputHandler for AnotherOneApp {
                     cx.notify();
                 }
             }
+            TextInputTarget::SettingsGitActionScript => {
+                replace_custom_text(
+                    &mut self.settings_git_action_script_input.draft,
+                    &mut self.settings_git_action_script_input.cursor,
+                    &mut self.settings_git_action_script_input.selection_anchor,
+                    range,
+                    text,
+                );
+                let _ = self.project_store.set_git_commit_generation_script(
+                    self.settings_git_action_script_input.draft.clone(),
+                );
+                cx.notify();
+            }
             TextInputTarget::Terminal => {
                 if !text.is_empty() {
                     let _ = self.write_active_terminal_input(cx, text.as_bytes());
@@ -1402,7 +1447,8 @@ impl EntityInputHandler for AnotherOneApp {
         match self.text_input_target(cx) {
             TextInputTarget::NewTaskModal
             | TextInputTarget::SidebarTaskRename
-            | TextInputTarget::SettingsAgentInput => {
+            | TextInputTarget::SettingsAgentInput
+            | TextInputTarget::SettingsGitActionScript => {
                 self.replace_text_in_range(range, new_text, _window, cx);
                 self.marked_text = if new_text.is_empty() {
                     None
@@ -1759,6 +1805,11 @@ impl AnotherOneApp {
                 && self.settings_agent_input.focused_agent_id.is_some()
             {
                 return TextInputTarget::SettingsAgentInput;
+            }
+            if self.settings_section == crate::settings_page::SettingsSection::GitActions
+                && self.settings_git_action_script_input.focused
+            {
+                return TextInputTarget::SettingsGitActionScript;
             }
             return TextInputTarget::Blocked;
         }
@@ -2218,6 +2269,11 @@ impl AnotherOneApp {
         self.shortcut_capture_action = None;
         self.settings_agent_input.focused_agent_id = None;
         self.settings_agent_input.selection_anchor = None;
+        self.settings_git_action_script_input.focused = false;
+        self.settings_git_action_script_input.selection_anchor = None;
+        if section == crate::settings_page::SettingsSection::GitActions {
+            self.sync_settings_git_action_script_from_store();
+        }
         self.dismiss_titlebar_dropdowns();
         cx.stop_propagation();
         cx.notify();
@@ -2814,6 +2870,7 @@ impl AnotherOneApp {
         let initial_font_size = 13.0;
         let app_entity = cx.weak_entity();
         let available_open_in_apps = detect_available_open_in_apps();
+        let git_commit_generation_script = store.git_commit_generation_script().to_string();
         let workspace_pane = cx.new(|_| {
             WorkspacePane::new(
                 app_entity.clone(),
@@ -2914,6 +2971,10 @@ impl AnotherOneApp {
             project_page_config_dropdown: None,
             shortcut_capture_action: None,
             settings_agent_input: SettingsAgentInputState::default(),
+            settings_git_action_script_input: SettingsGitActionScriptInputState {
+                draft: git_commit_generation_script,
+                ..Default::default()
+            },
             right_sidebar_mode: RightSidebarMode::WorkingTree,
             commit_page_sizes: HashMap::new(),
             branch_commit_states: HashMap::new(),
@@ -3144,7 +3205,11 @@ impl AnotherOneApp {
 
     fn append_terminal_recent_output(&mut self, key: &TerminalRuntimeKey, bytes: &[u8]) {
         let text = String::from_utf8_lossy(bytes);
-        let buffer = self.terminal_manager.recent_output.entry(key.clone()).or_default();
+        let buffer = self
+            .terminal_manager
+            .recent_output
+            .entry(key.clone())
+            .or_default();
         buffer.push_str(&text);
         trim_to_recent_output_limit(buffer);
     }
@@ -3486,7 +3551,8 @@ impl AnotherOneApp {
                 }
                 Ok(false) => {}
                 Err(error) => {
-                    self.terminal_manager.errors
+                    self.terminal_manager
+                        .errors
                         .insert(request.key.clone(), error.to_string());
                     self.show_error_toast(error.to_string(), cx);
                 }
@@ -3494,11 +3560,17 @@ impl AnotherOneApp {
             return;
         }
 
-        if self.terminal_manager.pending_launches.contains(&request.key) {
+        if self
+            .terminal_manager
+            .pending_launches
+            .contains(&request.key)
+        {
             return;
         }
 
-        self.terminal_manager.pending_launches.insert(request.key.clone());
+        self.terminal_manager
+            .pending_launches
+            .insert(request.key.clone());
         self.update_terminal_tab(&request.key, cx, |tab| {
             tab.restore_status = TerminalRestoreStatus::Launching;
         });
@@ -3611,7 +3683,8 @@ impl AnotherOneApp {
                     self.terminal_manager.processes.remove(&key);
                     self.live_terminal_runtimes.remove(&key);
                     self.terminal_surface_snapshots.remove(&key);
-                    self.terminal_manager.errors
+                    self.terminal_manager
+                        .errors
                         .insert(key.clone(), message.clone());
                     self.clear_terminal_recent_output(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
@@ -3830,7 +3903,8 @@ impl AnotherOneApp {
                         self.terminal_manager.processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
                         self.terminal_surface_snapshots.remove(&key);
-                        self.terminal_manager.errors
+                        self.terminal_manager
+                            .errors
                             .insert(key.clone(), message.clone());
                         self.clear_terminal_recent_output(&key);
                         self.update_terminal_tab(&key, cx, |tab| {
@@ -5482,13 +5556,22 @@ impl AnotherOneApp {
             self.show_info_toast(start_message, cx);
         }
 
+        let git_action_settings = crate::git_actions::GitActionSettings {
+            commit_generation_script: self
+                .project_store
+                .git_commit_generation_script()
+                .to_string(),
+        };
         let (tx, rx) = mpsc::channel();
         self.git_actions_menu_open = false;
         self.active_git_action = Some(action.clone());
         self.git_action_receiver = Some(rx);
         std::thread::spawn(move || {
-            let reply = match crate::git_actions::execute_toolbar_git_action(&project_path, action)
-            {
+            let reply = match crate::git_actions::execute_toolbar_git_action(
+                &project_path,
+                action,
+                git_action_settings,
+            ) {
                 Ok(outcome) => GitActionReply {
                     project_id: project_id.clone(),
                     refresh_git_state: outcome.refresh_git_state,
@@ -6524,6 +6607,8 @@ impl AnotherOneApp {
     ) {
         self.settings_open = true;
         self.shortcut_capture_action = None;
+        self.settings_git_action_script_input.focused = false;
+        self.settings_git_action_script_input.selection_anchor = None;
         self.project_page_open_in_menu_project_id = None;
         cx.stop_propagation();
         cx.notify();
