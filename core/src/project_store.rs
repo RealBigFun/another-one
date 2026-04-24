@@ -2480,7 +2480,7 @@ pub fn create_task_worktree(
             (branch_name, output)
         }
         TaskWorktreeBranchMode::ExistingBranch { branch } => {
-            let branch_name = if branch.trim().is_empty() {
+            let requested_branch = if branch.trim().is_empty() {
                 current_branch(repo_path)
                     .or_else(|| git_default_branch(repo_path))
                     .ok_or_else(|| {
@@ -2489,13 +2489,17 @@ pub fn create_task_worktree(
             } else {
                 branch.trim().to_string()
             };
-            let output = git_command(repo_path)
-                .args([
-                    "worktree",
-                    "add",
-                    worktree_path.to_string_lossy().as_ref(),
-                    &branch_name,
-                ])
+            let (branch_name, start_point) =
+                existing_worktree_branch_start(repo_path, &requested_branch);
+            let worktree_path_arg = worktree_path.to_string_lossy();
+            let mut command = git_command(repo_path);
+            command.args(["worktree", "add"]);
+            if let Some(start_point) = start_point.as_deref() {
+                command.args(["-b", &branch_name, worktree_path_arg.as_ref(), start_point]);
+            } else {
+                command.args([worktree_path_arg.as_ref(), &branch_name]);
+            }
+            let output = command
                 .output()
                 .map_err(|error| format!("Failed to create worktree: {error}"))?;
             (branch_name, output)
@@ -2537,6 +2541,28 @@ fn git_worktree_checked_out_path(stderr: &str, stdout: &str) -> Option<String> {
         .trim_matches('"');
 
     (!path.is_empty()).then(|| path.to_string())
+}
+
+fn existing_worktree_branch_start(
+    repo_path: &Path,
+    requested_branch: &str,
+) -> (String, Option<String>) {
+    if local_branch_exists(repo_path, requested_branch) {
+        return (requested_branch.to_string(), None);
+    }
+
+    if remote_branch_exists(repo_path, requested_branch) {
+        if let Some((_, local_branch)) = requested_branch.split_once('/') {
+            return (local_branch.to_string(), Some(requested_branch.to_string()));
+        }
+    }
+
+    let origin_branch = format!("origin/{requested_branch}");
+    if remote_branch_exists(repo_path, &origin_branch) {
+        return (requested_branch.to_string(), Some(origin_branch));
+    }
+
+    (requested_branch.to_string(), None)
 }
 
 pub fn slugify_branch_name(name: &str) -> String {
@@ -3062,15 +3088,7 @@ fn unique_branch_name(repo_path: &Path, base_slug: &str) -> Result<String, Strin
 }
 
 fn branch_exists_anywhere(repo_path: &Path, branch_name: &str) -> Result<bool, String> {
-    if git_status_ok(
-        repo_path,
-        &[
-            "show-ref",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch_name}"),
-        ],
-    ) {
+    if local_branch_exists(repo_path, branch_name) {
         return Ok(true);
     }
 
@@ -3090,6 +3108,30 @@ fn branch_exists_anywhere(repo_path: &Path, branch_name: &str) -> Result<bool, S
     });
 
     Ok(exists)
+}
+
+fn local_branch_exists(repo_path: &Path, branch_name: &str) -> bool {
+    git_status_ok(
+        repo_path,
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch_name}"),
+        ],
+    )
+}
+
+fn remote_branch_exists(repo_path: &Path, branch_name: &str) -> bool {
+    git_status_ok(
+        repo_path,
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/remotes/{branch_name}"),
+        ],
+    )
 }
 
 fn app_worktrees_root(home_dir: &Path) -> PathBuf {
@@ -3599,6 +3641,57 @@ mod tests {
             )
             .is_some_and(|output| !output.is_empty()),
             "existing branch mode should not create a generated task branch"
+        );
+    }
+
+    #[test]
+    fn create_task_worktree_checks_out_remote_only_existing_branch() {
+        let repo = init_repo();
+        let origin = tempfile::tempdir().expect("origin dir should exist");
+        run_git(origin.path(), &["init", "--bare"]);
+        let origin_url = origin.path().to_string_lossy().to_string();
+        run_git(repo.path(), &["remote", "add", "origin", &origin_url]);
+
+        run_git(repo.path(), &["switch", "-c", "feature/remote-only"]);
+        fs::write(repo.path().join("file.txt"), "base\nremote\n").expect("file should write");
+        run_git(repo.path(), &["add", "."]);
+        run_git(repo.path(), &["commit", "-m", "remote feature"]);
+        let remote_head =
+            git_stdout(repo.path(), &["rev-parse", "HEAD"]).expect("remote head should resolve");
+        run_git(
+            repo.path(),
+            &["push", "-u", "origin", "feature/remote-only"],
+        );
+        run_git(repo.path(), &["switch", "main"]);
+        run_git(repo.path(), &["branch", "-D", "feature/remote-only"]);
+
+        let created = create_task_worktree(
+            repo.path(),
+            "Project",
+            "Remote Existing",
+            "Fallback",
+            TaskWorktreeBranchMode::ExistingBranch {
+                branch: "origin/feature/remote-only".to_string(),
+            },
+        )
+        .expect("worktree should be created from remote-only branch");
+
+        assert_eq!(created.branch_name, "feature/remote-only");
+        assert_eq!(
+            current_branch(&created.path).as_deref(),
+            Some("feature/remote-only")
+        );
+        assert_eq!(
+            git_stdout(&created.path, &["rev-parse", "HEAD"]).as_deref(),
+            Some(remote_head.as_str())
+        );
+        assert_eq!(
+            git_stdout(
+                &created.path,
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+            )
+            .as_deref(),
+            Some("origin/feature/remote-only")
         );
     }
 
