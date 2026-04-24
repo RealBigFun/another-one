@@ -9,6 +9,7 @@ mod custom_actions_modal;
 mod daemon_host;
 mod layout;
 mod left_sidebar;
+mod mcp_page;
 mod new_task_modal;
 mod open_in;
 mod pair_mobile;

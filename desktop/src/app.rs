@@ -1270,6 +1270,15 @@ pub struct AnotherOneApp {
     pub(crate) settings_open: bool,
     /// Which settings section is currently active.
     pub(crate) settings_section: crate::settings_page::SettingsSection,
+    /// Canonical MCP server registry — source of truth for which
+    /// MCP servers AnotherOne manages and which harnesses each is
+    /// enabled for. Synced into per-harness config files on toggle.
+    pub(crate) mcp_registry: another_one_core::mcp::registry::McpRegistry,
+    /// Last per-provider sync error set. Keyed by provider; the
+    /// value is the set of registry ids whose cell should render
+    /// with an error indicator. Cleared before each sync.
+    pub(crate) mcp_last_sync_errors:
+        std::collections::HashMap<another_one_core::agents::AgentProviderKind, std::collections::HashSet<String>>,
     /// Apps detected on this machine that support opening a project directory.
     pub(crate) available_open_in_apps: Vec<OpenInAppKind>,
     /// Project id whose header "Open In" menu is currently expanded.
@@ -3554,6 +3563,8 @@ impl AnotherOneApp {
             project_check_runs_checked_at: HashMap::new(),
             settings_open: false,
             settings_section: crate::settings_page::SettingsSection::Agents,
+            mcp_registry: another_one_core::mcp::registry::McpRegistry::load(),
+            mcp_last_sync_errors: std::collections::HashMap::new(),
             available_open_in_apps,
             project_page_open_in_menu_project_id: None,
             project_page_config_panel_expanded: true,
