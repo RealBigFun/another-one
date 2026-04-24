@@ -14,6 +14,7 @@
 //! UDP sockets and internal actor tasks require tokio specifically, and
 //! without this indirection `Endpoint::bind()` hangs forever on Android.
 
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::Context;
@@ -25,7 +26,23 @@ use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
 use iroh::endpoint::{RecvStream, SendStream};
-use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl};
+use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey};
+
+/// Where we persist this device's iroh secret key. Set by Dart on app
+/// start via [`set_data_dir`] — typically the application-support
+/// directory (`getApplicationSupportDirectory()` on Android/iOS).
+///
+/// Without a stable secret key, each app launch yields a fresh
+/// EndpointId, which breaks TOFU pairing — every restart would be
+/// treated as a new peer and get rejected by the daemon. Persisting
+/// the key keeps the phone's identity stable across app restarts,
+/// reinstalls-with-backup, etc.
+static DATA_DIR: std::sync::OnceLock<std::sync::Mutex<Option<PathBuf>>> =
+    std::sync::OnceLock::new();
+
+fn data_dir_slot() -> &'static std::sync::Mutex<Option<PathBuf>> {
+    DATA_DIR.get_or_init(|| std::sync::Mutex::new(None))
+}
 
 /// Must match the daemon's ALPN byte string.
 const ALPN: &[u8] = b"anotherone/pty/0";
@@ -85,6 +102,21 @@ enum Control {
         cols: u16,
         rows: u16,
     },
+    /// Ask the daemon to launch this tab's PTY if it's not already
+    /// running. No-op if already live. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::LaunchTab`.
+    LaunchTab {
+        section_id: String,
+        tab_id: String,
+    },
+    /// TOFU handshake — sent as the very first control frame after
+    /// connect when this client has never paired with this daemon
+    /// before. `pair_token` is the hex nonce parsed from the
+    /// `pair=<hex>` query param on the pairing URL. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::Hello`.
+    Hello {
+        pair_token: Option<String>,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -101,22 +133,6 @@ enum Control {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkerReply {
-    /// Projection of `core::git_service::GitRefreshReply`.
-    GitRefresh {
-        project_id: String,
-        current_branch: Option<String>,
-        changed_file_count: usize,
-        ahead: usize,
-        behind: usize,
-    },
-    /// Projection of `core::git_service::ProjectPullRequestReply`.
-    /// `pr = None` → checked, no PR found (distinct from "not yet
-    /// checked"). Mirror of `daemon-sandbox/src/frame.rs`.
-    PullRequestStatus {
-        project_id: String,
-        branch_name: String,
-        pr: Option<PullRequestInfo>,
-    },
     /// Response to [`Control::ListProjects`]. Order matches the
     /// desktop sidebar. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectList`.
@@ -150,6 +166,9 @@ pub struct TaskSummary {
     pub branch_name: String,
     pub active_tab_id: String,
     pub tabs: Vec<TabSummary>,
+    /// Mirrors desktop's `UiState::pinned_task_ids`. Pinned tasks
+    /// sort to the top of the mobile projects drawer.
+    pub pinned: bool,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
@@ -162,6 +181,12 @@ pub struct TabSummary {
     pub title: String,
     pub provider: Option<AgentProvider>,
     pub running: bool,
+    /// Matches `PersistedTerminalTab::pinned`. Pinned tabs show a
+    /// pin glyph on the mobile chip.
+    pub pinned: bool,
+    /// Matches `PersistedTerminalTab::fixed_title`. When `Some(_)`,
+    /// render this instead of [`TabSummary::title`].
+    pub fixed_title: Option<String>,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ProjectKind`.
@@ -191,23 +216,8 @@ pub enum AgentProvider {
     Shell,
 }
 
-/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestInfo`.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct PullRequestInfo {
-    pub number: u64,
-    pub url: String,
-    pub state: PullRequestState,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestState`.
-/// Wire form is lowercase: `"open"`, `"closed"`, `"merged"`.
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PullRequestState {
-    Open,
-    Closed,
-    Merged,
-}
+// `PullRequestInfo` + `PullRequestState` removed with the dead
+// `WorkerReply::PullRequestStatus` variant on the daemon side.
 
 /// Writes one frame to the Iroh send stream.
 async fn write_frame(send: &mut SendStream, ty: u8, payload: &[u8]) -> anyhow::Result<()> {
@@ -251,6 +261,74 @@ async fn read_frame(recv: &mut RecvStream) -> anyhow::Result<Option<(u8, Vec<u8>
     Ok(Some((ty, payload)))
 }
 
+/// Load the device's persistent iroh secret key from
+/// `{DATA_DIR}/iroh_secret_key`, or generate + write one on first
+/// run. Fails if Dart hasn't called [`set_data_dir`] yet (meaning
+/// we have nowhere safe to persist); in that case the caller is
+/// expected to surface a clear error rather than silently falling
+/// back to an ephemeral key that would break TOFU on restart.
+fn load_or_create_device_secret_key() -> anyhow::Result<SecretKey> {
+    let path = {
+        let slot = data_dir_slot().lock().expect("data_dir mutex poisoned");
+        slot.clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "set_data_dir must be called before iroh_connect — \
+                     the app needs a persistent path for the device secret key"
+                )
+            })?
+            .join("iroh_secret_key")
+    };
+    load_or_create_secret_key_at(&path)
+}
+
+fn load_or_create_secret_key_at(path: &Path) -> anyhow::Result<SecretKey> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create data dir {}", parent.display()))?;
+    }
+    if let Ok(content) = std::fs::read_to_string(path) {
+        let trimmed = content.trim();
+        let bytes = hex_decode_32(trimmed)
+            .with_context(|| format!("parse secret key at {}", path.display()))?;
+        return Ok(SecretKey::from_bytes(&bytes));
+    }
+    let sk = SecretKey::generate();
+    let hex = hex_encode_32(&sk.to_bytes());
+    std::fs::write(path, format!("{hex}\n"))
+        .with_context(|| format!("write secret key to {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    tracing::info!(path = %path.display(), "generated new device iroh secret key");
+    Ok(sk)
+}
+
+fn hex_encode_32(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
+    if s.len() != 64 {
+        anyhow::bail!("expected 64 hex chars, got {}", s.len());
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        let hi = u8::from_str_radix(&s[i * 2..i * 2 + 1], 16).context("bad hex")?;
+        let lo = u8::from_str_radix(&s[i * 2 + 1..i * 2 + 2], 16).context("bad hex")?;
+        *byte = (hi << 4) | lo;
+    }
+    Ok(out)
+}
+
 /// Dedicated tokio runtime for all iroh work. FRB's default async executor
 /// is not a tokio runtime, so iroh's network actors never get polled if we
 /// run them on the calling task. Everything below shuffles work onto here.
@@ -264,6 +342,16 @@ fn tokio_rt() -> &'static Runtime {
             .build()
             .expect("build tokio runtime")
     })
+}
+
+/// Record the application data directory Dart has chosen for us.
+/// Must be called before `iroh_connect` so the secret key can be
+/// loaded/created there. Safe to call multiple times — last write
+/// wins. On Android/iOS, pass
+/// `(await path_provider.getApplicationSupportDirectory()).path`.
+pub fn set_data_dir(path: String) {
+    let mut slot = data_dir_slot().lock().expect("data_dir mutex poisoned");
+    *slot = Some(PathBuf::from(path));
 }
 
 #[frb(init)]
@@ -328,9 +416,12 @@ pub async fn iroh_connect(
     endpoint_id: String,
     direct_addrs: Vec<String>,
     relay_urls: Vec<String>,
+    pair_token: Option<String>,
 ) -> anyhow::Result<IrohSession> {
     tokio_rt()
-        .spawn(async move { iroh_connect_inner(endpoint_id, direct_addrs, relay_urls).await })
+        .spawn(async move {
+            iroh_connect_inner(endpoint_id, direct_addrs, relay_urls, pair_token).await
+        })
         .await
         .map_err(|e| anyhow::anyhow!("connect task panicked: {e}"))?
 }
@@ -339,6 +430,7 @@ async fn iroh_connect_inner(
     endpoint_id: String,
     direct_addrs: Vec<String>,
     relay_urls: Vec<String>,
+    pair_token: Option<String>,
 ) -> anyhow::Result<IrohSession> {
     tracing::info!(
         "iroh_connect: id={} direct={:?} relays={:?}",
@@ -402,9 +494,15 @@ async fn iroh_connect_inner(
         .unwrap_or_else(|| "1.1.1.1:53".parse().expect("static ipv4 socket addr"));
     tracing::info!(%dns_addr, "iroh_connect: using configured DNS resolver");
     let dns = DnsResolver::with_nameserver(dns_addr);
+    // Persist the client's iroh identity so the EndpointId stays stable
+    // across app restarts. Without this, TOFU pairing breaks every
+    // time the user reopens the app.
+    let secret_key = load_or_create_device_secret_key()
+        .context("load/create device iroh secret key")?;
     let endpoint = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         Endpoint::builder(presets::Minimal)
+            .secret_key(secret_key)
             .relay_mode(relay_mode)
             .alpns(vec![])
             .dns_resolver(dns)
@@ -439,6 +537,17 @@ async fn iroh_connect_inner(
     // Channel items are already-framed (ty, payload) pairs so the writer
     // task doesn't need to know the protocol.
     let (send_tx, mut send_rx) = mpsc::channel::<(u8, Vec<u8>)>(64);
+    // First frame MUST be `Control::Hello` so the daemon can complete
+    // TOFU pairing before any other control / data frames arrive. The
+    // daemon ignores Hello from already-paired peers, so sending it
+    // unconditionally is safe. We send via the mpsc so ordering is
+    // preserved with whatever the Dart layer sends next.
+    let hello_payload = serde_json::to_vec(&Control::Hello { pair_token })
+        .context("encode hello")?;
+    send_tx
+        .send((TY_CONTROL, hello_payload))
+        .await
+        .map_err(|_| anyhow::anyhow!("send channel closed before hello"))?;
     tokio_rt().spawn(async move {
         while let Some((ty, payload)) = send_rx.recv().await {
             if let Err(e) = write_frame(&mut send, ty, &payload).await {
@@ -469,27 +578,49 @@ async fn iroh_connect_inner(
                         }
                     }
                     Ok(Some((TY_WORKER_REPLY, payload))) => {
-                        match serde_json::from_slice::<WorkerReply>(&payload) {
-                            Ok(reply) => {
-                                // `try_send` instead of `send().await` on
-                                // purpose: this recv task also feeds the
-                                // PTY stream (`incoming_tx`, above), which
-                                // *does* want backpressure. If Dart never
-                                // calls `subscribe_worker_replies`, the
-                                // receiver sits idle inside the session
-                                // `Option<…>` — the channel is open but
-                                // never drained, so `send().await` would
-                                // block forever on the 65th reply and
-                                // stall PTY output with it. Drop the reply
-                                // on a full or closed channel instead.
-                                use tokio::sync::mpsc::error::TrySendError;
-                                match worker_replies_tx.try_send(reply) {
-                                    Ok(()) => {}
-                                    Err(TrySendError::Full(_)) => {
-                                        tracing::debug!("worker_replies channel full; dropping frame (no subscriber or slow consumer)");
+                        // Two-stage decode for forwards-compat: parse
+                        // as a generic JSON value first so we can
+                        // peek at the `kind` discriminator. If the
+                        // kind is one the current build knows, do
+                        // the strict decode; otherwise log + drop so
+                        // a future daemon variant (TaskStateChanged
+                        // etc.) doesn't blow up an older client.
+                        match serde_json::from_slice::<serde_json::Value>(&payload) {
+                            Ok(value) => {
+                                // Clone the discriminator before the
+                                // strict decode moves `value` —
+                                // otherwise we'd have no way to log
+                                // the unknown variant name.
+                                let kind = value
+                                    .get("kind")
+                                    .and_then(|k| k.as_str())
+                                    .unwrap_or("<missing>")
+                                    .to_string();
+                                match serde_json::from_value::<WorkerReply>(value) {
+                                    Ok(reply) => {
+                                        // try_send, not send().await — this
+                                        // recv task also drives the PTY
+                                        // stream which *does* want
+                                        // backpressure; we can't let a
+                                        // stuck worker_replies consumer
+                                        // stall PTY bytes.
+                                        use tokio::sync::mpsc::error::TrySendError;
+                                        match worker_replies_tx.try_send(reply) {
+                                            Ok(()) => {}
+                                            Err(TrySendError::Full(_)) => {
+                                                tracing::debug!("worker_replies channel full; dropping frame");
+                                            }
+                                            Err(TrySendError::Closed(_)) => {
+                                                tracing::debug!("worker_replies channel closed; dropping frame");
+                                            }
+                                        }
                                     }
-                                    Err(TrySendError::Closed(_)) => {
-                                        tracing::debug!("worker_replies channel closed; dropping frame");
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            kind,
+                                            error = %e,
+                                            "unknown/unsupported worker_reply variant; dropping (daemon is newer than client?)"
+                                        );
                                     }
                                 }
                             }
@@ -497,7 +628,7 @@ async fn iroh_connect_inner(
                                 tracing::warn!(
                                     error = %e,
                                     payload_bytes = payload.len(),
-                                    "failed to decode worker_reply frame"
+                                    "failed to parse worker_reply frame as JSON"
                                 );
                             }
                         }
@@ -586,6 +717,15 @@ impl IrohSession {
     pub async fn tab_resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         let payload =
             serde_json::to_vec(&Control::TabResize { cols, rows }).context("encode tab_resize")?;
+        self.send_frame(TY_CONTROL, payload).await
+    }
+
+    /// Ask the daemon to launch the tab's PTY if it isn't already
+    /// live. No-op on the daemon side if the tab is already running.
+    /// After this, a subsequent `attach_tab` will receive bytes.
+    pub async fn launch_tab(&self, section_id: String, tab_id: String) -> anyhow::Result<()> {
+        let payload = serde_json::to_vec(&Control::LaunchTab { section_id, tab_id })
+            .context("encode launch_tab")?;
         self.send_frame(TY_CONTROL, payload).await
     }
 

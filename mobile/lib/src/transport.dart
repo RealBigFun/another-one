@@ -12,7 +12,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-enum TransportState { disconnected, connecting, connected, error }
+enum TransportState { disconnected, connecting, connected, error, unpaired }
 
 class TransportStatus {
   final TransportState state;
@@ -25,11 +25,19 @@ class TransportStatus {
   const TransportStatus.error(String message)
     : this(TransportState.error, detail: message);
 
+  /// Daemon rejected the connection with a "not paired" reason. UI
+  /// should bounce the user back to the pair screen — the saved
+  /// endpoint is still valid, but the daemon has forgotten (or
+  /// never knew about) this device.
+  const TransportStatus.unpaired([String? message])
+    : this(TransportState.unpaired, detail: message);
+
   String get label => switch (state) {
     TransportState.disconnected => 'disconnected',
     TransportState.connecting => 'connecting…',
     TransportState.connected => 'connected',
     TransportState.error => detail == null ? 'error' : 'error: $detail',
+    TransportState.unpaired => 'unpaired — re-scan the QR',
   };
 
   bool get isConnected => state == TransportState.connected;

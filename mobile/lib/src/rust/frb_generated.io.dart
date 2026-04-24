@@ -66,9 +66,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw);
 
   @protected
-  PullRequestInfo dco_decode_box_autoadd_pull_request_info(dynamic raw);
-
-  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -96,19 +93,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider? dco_decode_opt_box_autoadd_agent_provider(dynamic raw);
 
   @protected
-  PullRequestInfo? dco_decode_opt_box_autoadd_pull_request_info(dynamic raw);
-
-  @protected
   ProjectKind dco_decode_project_kind(dynamic raw);
 
   @protected
   ProjectSummary dco_decode_project_summary(dynamic raw);
-
-  @protected
-  PullRequestInfo dco_decode_pull_request_info(dynamic raw);
-
-  @protected
-  PullRequestState dco_decode_pull_request_state(dynamic raw);
 
   @protected
   TabSummary dco_decode_tab_summary(dynamic raw);
@@ -118,9 +106,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int dco_decode_u_16(dynamic raw);
-
-  @protected
-  BigInt dco_decode_u_64(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -180,11 +165,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  PullRequestInfo sse_decode_box_autoadd_pull_request_info(
-    SseDeserializer deserializer,
-  );
-
-  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
@@ -216,21 +196,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  PullRequestInfo? sse_decode_opt_box_autoadd_pull_request_info(
-    SseDeserializer deserializer,
-  );
-
-  @protected
   ProjectKind sse_decode_project_kind(SseDeserializer deserializer);
 
   @protected
   ProjectSummary sse_decode_project_summary(SseDeserializer deserializer);
-
-  @protected
-  PullRequestInfo sse_decode_pull_request_info(SseDeserializer deserializer);
-
-  @protected
-  PullRequestState sse_decode_pull_request_state(SseDeserializer deserializer);
 
   @protected
   TabSummary sse_decode_tab_summary(SseDeserializer deserializer);
@@ -240,9 +209,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
-
-  @protected
-  BigInt sse_decode_u_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -311,12 +277,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_box_autoadd_pull_request_info(
-    PullRequestInfo self,
-    SseSerializer serializer,
-  );
-
-  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
@@ -359,29 +319,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_opt_box_autoadd_pull_request_info(
-    PullRequestInfo? self,
-    SseSerializer serializer,
-  );
-
-  @protected
   void sse_encode_project_kind(ProjectKind self, SseSerializer serializer);
 
   @protected
   void sse_encode_project_summary(
     ProjectSummary self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_pull_request_info(
-    PullRequestInfo self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_pull_request_state(
-    PullRequestState self,
     SseSerializer serializer,
   );
 
@@ -393,9 +335,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);

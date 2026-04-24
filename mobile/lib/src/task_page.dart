@@ -16,6 +16,7 @@ import 'package:xterm/xterm.dart';
 
 import 'rust/api/iroh_client.dart';
 import 'tokens.dart';
+import 'transport.dart';
 import 'transport_iroh.dart';
 
 class TaskPage extends StatefulWidget {
@@ -45,7 +46,30 @@ class _TaskPageState extends State<TaskPage> {
   final FocusNode _terminalFocus = FocusNode();
 
   StreamSubscription<Uint8List>? _bytesSub;
+  StreamSubscription<TransportStatus>? _statusSub;
   int _instanceKey = 0;
+
+  /// `true` until the first byte of the attached tab's PTY has
+  /// arrived *or* [_spinnerTimeout] fires — whichever is first.
+  /// Without the timeout, an idle shell (already at a prompt with
+  /// no pending output) would leave the spinner up indefinitely
+  /// since there are no new bytes to prove the attach succeeded.
+  bool _awaitingFirstByte = true;
+  Timer? _spinnerTimeout;
+  /// The "did the daemon actually spawn yet?" retry, fired 400ms
+  /// after the initial AttachTab. Kept as a Timer (not Future.delayed)
+  /// so the first inbound byte can cancel it — otherwise the delayed
+  /// closure would fire a redundant second AttachTab that the daemon
+  /// processes fine but wastes a round-trip.
+  Timer? _attachRetry;
+  /// Set when the user triggers a tab switch or first open. The
+  /// inbound-bytes listener clears this on first byte, which lets
+  /// [_attachRetry] cancel itself.
+  bool _gotFirstByte = false;
+  /// Any in-flight transport error surfaced via [TransportStatus].
+  /// Drives a banner above the terminal; null means "no error to
+  /// show". Cleared on any subsequent connected status.
+  String? _errorDetail;
 
   @override
   void initState() {
@@ -53,21 +77,98 @@ class _TaskPageState extends State<TaskPage> {
     _activeTabId = widget.task.activeTabId;
     _wireTerminal();
     _bytesSub = widget.transport.incoming.listen((bytes) {
+      _gotFirstByte = true;
+      _attachRetry?.cancel();
+      _attachRetry = null;
+      _clearSpinner();
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
     });
-    // Initial attach + size sync.
+    _statusSub = widget.transport.status.listen(_onStatus);
+    // Seed with the current status — the stream only fires on changes,
+    // so if we arrived already in `.error` state we'd show nothing.
+    _onStatus(widget.transport.currentStatus);
+    _armSpinnerTimeout();
+    // Defer the initial attach by one frame so `_terminal.viewWidth /
+    // viewHeight` reflect the real TerminalView layout instead of
+    // xterm's defaults (80×25). Without this, the first TabResize we
+    // send carries stale numbers and the desktop clamps the PTY to
+    // those until the first real onResize fires.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_openTab(_activeTabId));
+    });
+  }
+
+  void _onStatus(TransportStatus status) {
+    if (!mounted) return;
+    switch (status.state) {
+      case TransportState.connected:
+        if (_errorDetail != null) {
+          setState(() => _errorDetail = null);
+        }
+      case TransportState.error:
+      case TransportState.unpaired:
+        setState(() => _errorDetail = status.toString());
+      case TransportState.connecting:
+      case TransportState.disconnected:
+        // Transient — don't surface as an error banner; the spinner
+        // + retry already communicate "working on it" clearly enough.
+        break;
+    }
+  }
+
+  void _clearSpinner() {
+    if (_awaitingFirstByte) {
+      setState(() => _awaitingFirstByte = false);
+    }
+    _spinnerTimeout?.cancel();
+    _spinnerTimeout = null;
+  }
+
+  /// Failsafe: if no bytes arrive within 1.5s, hide the spinner
+  /// anyway. Idle agents (sitting at a prompt with no pending
+  /// output) legitimately emit nothing after attach; the spinner
+  /// would stay up forever without this.
+  void _armSpinnerTimeout() {
+    _spinnerTimeout?.cancel();
+    _spinnerTimeout = Timer(const Duration(milliseconds: 1500), () {
+      if (!mounted || !_awaitingFirstByte) return;
+      setState(() => _awaitingFirstByte = false);
+    });
+  }
+
+  /// LaunchTab + AttachTab + TabResize in that order. LaunchTab is a
+  /// no-op on the daemon if the tab's already running, so it's cheap
+  /// to send unconditionally. We AttachTab immediately and arm a
+  /// Timer-based retry — if the first AttachTab landed before the
+  /// daemon's LaunchTab had populated a broadcast, the retry catches
+  /// up. The retry cancels itself the instant any byte arrives (see
+  /// the `_bytesSub` listener) so the common case doesn't pay a
+  /// redundant second AttachTab round-trip.
+  Future<void> _openTab(String tabId) async {
+    _gotFirstByte = false;
     unawaited(
-      widget.transport.attachTab(
+      widget.transport.launchTab(
         sectionId: widget.task.sectionId,
-        tabId: _activeTabId,
+        tabId: tabId,
       ),
     );
-    unawaited(
-      widget.transport.tabResize(
-        cols: _terminal.viewWidth,
-        rows: _terminal.viewHeight,
-      ),
+    await widget.transport.attachTab(
+      sectionId: widget.task.sectionId,
+      tabId: tabId,
     );
+    await widget.transport.tabResize(
+      cols: _terminal.viewWidth,
+      rows: _terminal.viewHeight,
+    );
+    _attachRetry?.cancel();
+    _attachRetry = Timer(const Duration(milliseconds: 400), () async {
+      if (!mounted || tabId != _activeTabId || _gotFirstByte) return;
+      await widget.transport.attachTab(
+        sectionId: widget.task.sectionId,
+        tabId: tabId,
+      );
+    });
   }
 
   void _wireTerminal() {
@@ -91,26 +192,28 @@ class _TaskPageState extends State<TaskPage> {
       _instanceKey++;
       _terminal = Terminal(maxLines: 10000);
       _wireTerminal();
+      _awaitingFirstByte = true;
     });
 
     _bytesSub = widget.transport.incoming.listen((bytes) {
+      _gotFirstByte = true;
+      _attachRetry?.cancel();
+      _attachRetry = null;
+      _clearSpinner();
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
     });
+    _armSpinnerTimeout();
 
-    await widget.transport.attachTab(
-      sectionId: widget.task.sectionId,
-      tabId: tab.id,
-    );
-    await widget.transport.tabResize(
-      cols: _terminal.viewWidth,
-      rows: _terminal.viewHeight,
-    );
+    await _openTab(tab.id);
     _terminalFocus.requestFocus();
   }
 
   @override
   void dispose() {
+    _spinnerTimeout?.cancel();
+    _attachRetry?.cancel();
     _bytesSub?.cancel();
+    _statusSub?.cancel();
     // Best-effort detach — if the session's already closed this is a
     // no-op on the daemon side.
     unawaited(widget.transport.detachTab());
@@ -133,14 +236,31 @@ class _TaskPageState extends State<TaskPage> {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            Text(
-              '⎇ ${widget.task.branchName}',
-              style: const TextStyle(
-                fontSize: AppTokens.fontSmall,
-                fontFamily: AppTokens.fontFamilyMono,
-                color: AppTokens.textMuted,
-              ),
-              overflow: TextOverflow.ellipsis,
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // `Icons.call_split` substitutes for the `⎇` glyph
+                // (U+2387) used on desktop — that codepoint isn't in
+                // Android's default monospace fallback and renders
+                // as tofu.
+                const Icon(
+                  Icons.call_split,
+                  size: AppTokens.iconSizeSm,
+                  color: AppTokens.textMuted,
+                ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    widget.task.branchName,
+                    style: const TextStyle(
+                      fontSize: AppTokens.fontSmall,
+                      fontFamily: AppTokens.fontFamilyMono,
+                      color: AppTokens.textMuted,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -148,6 +268,7 @@ class _TaskPageState extends State<TaskPage> {
       body: SafeArea(
         child: Column(
           children: [
+            if (_errorDetail != null) _ErrorBanner(message: _errorDetail!),
             _TabStrip(
               tabs: widget.task.tabs,
               activeTabId: _activeTabId,
@@ -156,21 +277,27 @@ class _TaskPageState extends State<TaskPage> {
             Expanded(
               child: Container(
                 color: AppTokens.terminalBg,
-                child: GestureDetector(
-                  onTap: _terminalFocus.requestFocus,
-                  child: TerminalView(
-                    _terminal,
-                    key: ValueKey(_instanceKey),
-                    controller: _terminalController,
-                    focusNode: _terminalFocus,
-                    autofocus: true,
-                    backgroundOpacity: 1.0,
-                    padding: const EdgeInsets.all(AppTokens.space2),
-                    textStyle: const TerminalStyle(
-                      fontFamily: AppTokens.fontFamilyMono,
-                      fontSize: AppTokens.fontBody,
+                child: Stack(
+                  children: [
+                    GestureDetector(
+                      onTap: _terminalFocus.requestFocus,
+                      child: TerminalView(
+                        _terminal,
+                        key: ValueKey(_instanceKey),
+                        controller: _terminalController,
+                        focusNode: _terminalFocus,
+                        autofocus: true,
+                        backgroundOpacity: 1.0,
+                        padding: const EdgeInsets.all(AppTokens.space2),
+                        textStyle: const TerminalStyle(
+                          fontFamily: AppTokens.fontFamilyMono,
+                          fontSize: AppTokens.fontBody,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_awaitingFirstByte)
+                      const Positioned.fill(child: _TabLoadingOverlay()),
+                  ],
                 ),
               ),
             ),
@@ -252,9 +379,13 @@ class _TabChip extends StatelessWidget {
     final textColor =
         active ? AppTokens.textPrimary : AppTokens.textMuted;
 
-    // When there's more than one tab, desktop suffixes the index (e.g.
-    // "claude 1"); mirror that here.
-    final title = total > 1 ? '${tab.title} ${index + 1}' : tab.title;
+    // Prefer the user-set `fixed_title` (mirrors desktop: `fixed_title`
+    // on `PersistedTerminalTab` overrides the agent-provided label).
+    // Otherwise: when there's more than one tab, desktop suffixes the
+    // index — mirror that here.
+    final baseTitle = tab.fixedTitle ?? tab.title;
+    final title =
+        (tab.fixedTitle == null && total > 1) ? '$baseTitle ${index + 1}' : baseTitle;
 
     return InkWell(
       onTap: onTap,
@@ -280,6 +411,14 @@ class _TabChip extends StatelessWidget {
                 fontWeight: active ? FontWeight.w600 : FontWeight.w400,
               ),
             ),
+            if (tab.pinned) ...[
+              const SizedBox(width: AppTokens.space2),
+              const Icon(
+                Icons.push_pin,
+                size: AppTokens.iconSizeXs,
+                color: AppTokens.accent,
+              ),
+            ],
           ],
         ),
       ),
@@ -290,6 +429,80 @@ class _TabChip extends StatelessWidget {
 /// Ported verbatim from the deleted `project_detail_page.dart` — a
 /// row of on-screen chord buttons for keys that don't fit on a mobile
 /// keyboard (Esc, Ctrl-*, arrows).
+/// Shown over the terminal while we're waiting for the first PTY
+/// byte after an attach. Cold launches (spawning Claude Code, etc.)
+/// can take 1–2s; without this the user stares at a black rectangle.
+/// Drawn as a semi-transparent scrim so any output that started
+/// streaming during the transition fades through.
+class _TabLoadingOverlay extends StatelessWidget {
+  const _TabLoadingOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppTokens.terminalBg.withValues(alpha: 0.85),
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: AppTokens.accent,
+              ),
+            ),
+            SizedBox(height: AppTokens.space4),
+            Text(
+              'attaching…',
+              style: TextStyle(
+                fontSize: AppTokens.fontSmall,
+                fontFamily: AppTokens.fontFamilyMono,
+                color: AppTokens.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One-line banner surfaced above the terminal when the transport
+/// reports `.error` or `.unpaired`. Previously we swallowed these
+/// silently, so a dropped session (or a reset-pairings flow on the
+/// desktop) showed up only as "the spinner eventually disappears
+/// and nothing ever arrives." Keep it terse — the AppBar is the
+/// only other place for truncation.
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: AppTokens.errorBg,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTokens.space4,
+        vertical: AppTokens.space2,
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(
+          color: AppTokens.errorText,
+          fontSize: AppTokens.fontSmall,
+          fontFamily: AppTokens.fontFamilyMono,
+        ),
+        overflow: TextOverflow.ellipsis,
+        maxLines: 2,
+      ),
+    );
+  }
+}
+
 class _ChordBar extends StatelessWidget {
   const _ChordBar({required this.onSend});
 
@@ -326,21 +539,30 @@ class _ChordBar extends StatelessWidget {
             for (final (label, bytes) in _chords)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: OutlinedButton(
-                  onPressed: () => onSend(bytes),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppTokens.space4,
-                      vertical: AppTokens.space1,
+                // Chord keys are the most-tapped interactive element
+                // in the app (Esc / Ctrl-C / arrow keys on the agent
+                // terminal). Previous sizing was ~22×24 — well below
+                // Material's 48×48 recommendation and Apple's 44×44.
+                // Bumped to 44×40 with a wider tap zone via
+                // `tapTargetSize: padded`.
+                child: SizedBox(
+                  height: 40,
+                  child: OutlinedButton(
+                    onPressed: () => onSend(bytes),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppTokens.space5,
+                        vertical: AppTokens.space2,
+                      ),
+                      minimumSize: const Size(44, 40),
+                      tapTargetSize: MaterialTapTargetSize.padded,
                     ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: AppTokens.fontBody,
-                      fontFamily: AppTokens.fontFamilyMono,
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: AppTokens.fontBodyLg,
+                        fontFamily: AppTokens.fontFamilyMono,
+                      ),
                     ),
                   ),
                 ),

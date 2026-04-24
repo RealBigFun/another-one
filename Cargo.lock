@@ -1833,6 +1833,7 @@ dependencies = [
  "iroh",
  "portable-pty",
  "qrcode",
+ "rand 0.9.2",
  "serde",
  "serde_json",
  "tokio",

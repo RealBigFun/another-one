@@ -50,10 +50,20 @@ class AppTokens {
   /// Cool periwinkle focus ring.
   static Color focusRing = HSLColor.fromAHSL(1.0, 220, 0.55, 0.60).toColor();
 
+  /// Primary accent — used by pin glyphs, selected-chip outlines, etc.
+  /// Mirrors the periwinkle used on the desktop sidebar's active row.
+  /// `const` so widgets can inline it.
+  static const Color accent = Color(0xFF7B8FD9);
+
   // ── Semantic chrome (subset used by mobile) ────────────────────────
   static Color successIcon =
       HSLColor.fromAHSL(1.0, 138, 0.52, 0.66).toColor();
   static Color errorIcon = HSLColor.fromAHSL(1.0, 0, 0.68, 0.72).toColor();
+  /// Background + text for the TaskPage error banner. Muted so it
+  /// doesn't clash with terminal output below but distinct enough
+  /// that a dropped connection is obvious at a glance.
+  static const Color errorBg = Color(0xFF5A2A2E);
+  static const Color errorText = Color(0xFFFFD6DC);
   static Color warningIcon =
       HSLColor.fromAHSL(1.0, 42, 0.70, 0.68).toColor();
   static Color infoIcon = HSLColor.fromAHSL(1.0, 208, 0.62, 0.72).toColor();
@@ -99,6 +109,7 @@ class AppTokens {
   static const double radiusPill = 999;
 
   // ── Component scales ───────────────────────────────────────────────
+  static const double iconSizeXs = 9;
   static const double iconSizeSm = 11;
   static const double iconSizeDefault = 16;
   static const double iconSizeLg = 26;

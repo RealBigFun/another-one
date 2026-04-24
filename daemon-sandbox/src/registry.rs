@@ -5,24 +5,68 @@
 //! task + tab mapped to a throwaway shell) and by the desktop crate
 //! (where the impl wraps `AnotherOneApp`'s real terminal runtimes).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
 use crate::frame::ProjectSummary;
+
+/// Shared pairing state: the one-shot TOFU nonce the daemon expects
+/// in the first `Control::Hello` from any new peer, plus the current
+/// pairing URL + QR PNG that encode it. Lives behind an `Arc<Mutex>`
+/// so the authorisation path can read (and consume) the nonce while
+/// the UI layer reads the URL/QR by snapshot.
+///
+/// `nonce == None` means "no outstanding pair slot" — either the
+/// nonce was already consumed or the daemon hasn't rolled one yet.
+/// An unknown peer that arrives in that state is rejected.
+pub(crate) struct PairState {
+    pub nonce: Option<String>,
+    pub addr: EndpointAddr,
+    pub pairing_url: String,
+    pub qr_png_bytes: Vec<u8>,
+}
 
 /// A handle the embedder holds to keep the iroh endpoint alive. Drop
 /// to shut down. Exposes the pairing material so the desktop's
 /// "Pair mobile" modal can render a live QR without touching /tmp.
 pub struct EndpointHandle {
     pub endpoint_id: String,
-    pub pairing_url: String,
-    /// Pre-rendered PNG bytes of the pairing QR — ready to hand to
-    /// `gpui::Image::from_bytes(ImageFormat::Png, bytes)`.
-    pub qr_png_bytes: Vec<u8>,
+    pub(crate) pair_state: Arc<Mutex<PairState>>,
     /// Dropped when the handle drops; aborts the endpoint's root
     /// task and all per-connection tasks it spawned.
     pub(crate) _root_task: tokio::task::AbortHandle,
+}
+
+impl EndpointHandle {
+    /// Snapshot of the currently-published pairing URL. Changes after
+    /// [`Self::regenerate_pairing`].
+    pub fn pairing_url(&self) -> String {
+        self.pair_state.lock().unwrap().pairing_url.clone()
+    }
+
+    /// Snapshot of the currently-published pairing QR PNG bytes.
+    /// Changes after [`Self::regenerate_pairing`].
+    pub fn qr_png_bytes(&self) -> Vec<u8> {
+        self.pair_state.lock().unwrap().qr_png_bytes.clone()
+    }
+
+    /// Roll a fresh TOFU nonce and rebuild the pairing URL + QR. Call
+    /// this after the user clicks "Reset pairings" so the previously
+    /// scanned QR can no longer pair (even if the attacker captured
+    /// it). Cheap — no new endpoint / socket work.
+    pub fn regenerate_pairing(&self) -> anyhow::Result<()> {
+        let mut state = self.pair_state.lock().unwrap();
+        let new_nonce = crate::transport_iroh::generate_pair_nonce();
+        let new_url =
+            crate::transport_iroh::build_pairing_url_with_token(&state.addr, &new_nonce);
+        let new_qr = crate::transport_iroh::render_qr_png_bytes(&new_url)?;
+        state.nonce = Some(new_nonce);
+        state.pairing_url = new_url;
+        state.qr_png_bytes = new_qr;
+        Ok(())
+    }
 }
 
 impl Drop for EndpointHandle {
@@ -56,9 +100,38 @@ pub trait TerminalRegistry: Send + Sync + 'static {
     /// at the syscall level.
     fn tab_input(&self, section_id: &str, tab_id: &str, bytes: &[u8]);
 
-    /// Resize the tab's PTY. Mirror of `Terminal::onResize` from the
-    /// xterm.dart widget on mobile.
-    fn tab_resize(&self, section_id: &str, tab_id: &str, cols: u16, rows: u16);
+    /// Announce that `viewer_id`'s viewport for this tab is
+    /// `cols × rows`. The registry tracks every active viewer's
+    /// preferred size and resizes the actual PTY to the **minimum**
+    /// across them — a wide desktop window can't force the PTY into
+    /// a column count the phone can't fit.
+    ///
+    /// `viewer_id` must be stable for the life of a single attached
+    /// session (typical: remote EndpointId for iroh clients, a
+    /// constant like `"desktop-local"` for in-process views).
+    /// Clear stale entries with [`viewer_disconnected`] when a
+    /// session ends.
+    fn tab_resize(
+        &self,
+        viewer_id: &str,
+        section_id: &str,
+        tab_id: &str,
+        cols: u16,
+        rows: u16,
+    );
+
+    /// Forget every size announcement this viewer made. Called when
+    /// the viewer's session ends so its stale viewport doesn't keep
+    /// clamping the PTY down forever.
+    fn viewer_disconnected(&self, _viewer_id: &str) {}
+
+    /// Launch the tab's PTY if it isn't already running. No-op if
+    /// the tab is already live. After this returns, subsequent
+    /// [`attach_tab`] calls for the same key should succeed (the
+    /// actual launch may be async — clients may need to retry
+    /// attach briefly). Default impl is a no-op for registries that
+    /// can't launch (e.g. the sandbox binary's single-shell faker).
+    fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
 }
 
 /// A registry implementation suitable for the standalone sandbox

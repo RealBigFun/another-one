@@ -33,6 +33,12 @@ class _AppRootState extends State<AppRoot> {
 
   String _endpoint = '';
   bool _prefsLoaded = false;
+  /// Re-entrancy guard for [_unlink]. Two triggers can fire nearly
+  /// simultaneously — the user tapping "Unlink" in settings and the
+  /// transport reporting `.unpaired` — and both would otherwise race
+  /// through `popUntil` + `setState`. First caller wins; subsequent
+  /// calls short-circuit.
+  bool _unlinking = false;
 
   IrohTransport? _transport;
   StreamSubscription<TransportStatus>? _statusSub;
@@ -89,6 +95,11 @@ class _AppRootState extends State<AppRoot> {
       if (s.state == TransportState.connected) {
         // First successful connect → refresh project list.
         unawaited(transport.listProjects().catchError((_) {}));
+      } else if (s.state == TransportState.unpaired) {
+        // Daemon rejected us — stale pair state on the desktop side.
+        // Wipe the saved endpoint so AppRoot re-renders the pair
+        // screen, and tear the transport down so we don't loop.
+        unawaited(_unlink());
       }
     });
 
@@ -117,7 +128,19 @@ class _AppRootState extends State<AppRoot> {
         .toList();
     final addrs = splitCsv(uri.queryParameters['direct']);
     final relays = splitCsv(uri.queryParameters['relay']);
-    return IrohTransport(id, directAddrs: addrs, relayUrls: relays);
+    // `pair=<hex>` is the TOFU nonce the daemon puts in its pairing
+    // URL. The mobile client echoes it back in the first `Hello`
+    // control frame so the daemon can confirm this peer scanned the
+    // *current* QR (not a stale one). Persisted endpoints saved
+    // before TOFU existed won't have this — send null and let the
+    // daemon's already-paired path accept us.
+    final pairToken = uri.queryParameters['pair'];
+    return IrohTransport(
+      id,
+      directAddrs: addrs,
+      relayUrls: relays,
+      pairToken: (pairToken != null && pairToken.isNotEmpty) ? pairToken : null,
+    );
   }
 
   void _tearDownTransport() {
@@ -146,16 +169,26 @@ class _AppRootState extends State<AppRoot> {
   }
 
   Future<void> _unlink() async {
+    if (_unlinking) return;
+    _unlinking = true;
     _tearDownTransport();
+    // Pop *before* the async so any nested routes (settings,
+    // task page) tear down while the root context is still valid.
+    // If we awaited first, a rebuild triggered by the async
+    // completing could run popUntil against a half-disposed tree.
+    if (mounted) {
+      Navigator.of(context).popUntil((r) => r.isFirst);
+    }
     await _clearEndpoint();
-    if (!mounted) return;
-    // Pop settings page if it's on top so the user lands back on the
-    // pair screen.
-    Navigator.of(context).popUntil((r) => r.isFirst);
+    if (!mounted) {
+      _unlinking = false;
+      return;
+    }
     setState(() {
       _endpoint = '';
       _projects = const [];
     });
+    _unlinking = false;
   }
 
   Future<void> _replaceEndpoint(String url) async {

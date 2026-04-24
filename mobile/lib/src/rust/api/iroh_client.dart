@@ -8,9 +8,17 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `iroh_connect_inner`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+
+/// Record the application data directory Dart has chosen for us.
+/// Must be called before `iroh_connect` so the secret key can be
+/// loaded/created there. Safe to call multiple times — last write
+/// wins. On Android/iOS, pass
+/// `(await path_provider.getApplicationSupportDirectory()).path`.
+Future<void> setDataDir({required String path}) =>
+    RustLib.instance.api.crateApiIrohClientSetDataDir(path: path);
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`.
 ///
@@ -24,10 +32,12 @@ Future<IrohSession> irohConnect({
   required String endpointId,
   required List<String> directAddrs,
   required List<String> relayUrls,
+  String? pairToken,
 }) => RustLib.instance.api.crateApiIrohClientIrohConnect(
   endpointId: endpointId,
   directAddrs: directAddrs,
   relayUrls: relayUrls,
+  pairToken: pairToken,
 );
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
@@ -47,6 +57,11 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab();
+
+  /// Ask the daemon to launch the tab's PTY if it isn't already
+  /// live. No-op on the daemon side if the tab is already running.
+  /// After this, a subsequent `attach_tab` will receive bytes.
+  Future<void> launchTab({required String sectionId, required String tabId});
 
   /// Ask the daemon to send back its current project list as a
   /// [`WorkerReply::ProjectList`] frame.
@@ -144,35 +159,6 @@ class ProjectSummary {
           tasks == other.tasks;
 }
 
-/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestInfo`.
-class PullRequestInfo {
-  final BigInt number;
-  final String url;
-  final PullRequestState state;
-
-  const PullRequestInfo({
-    required this.number,
-    required this.url,
-    required this.state,
-  });
-
-  @override
-  int get hashCode => number.hashCode ^ url.hashCode ^ state.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is PullRequestInfo &&
-          runtimeType == other.runtimeType &&
-          number == other.number &&
-          url == other.url &&
-          state == other.state;
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestState`.
-/// Wire form is lowercase: `"open"`, `"closed"`, `"merged"`.
-enum PullRequestState { open, closed, merged }
-
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
 /// reflects whether the desktop has a live `LiveTerminalRuntime` for
 /// this tab right now; `AttachTab` on a non-running tab yields no
@@ -183,16 +169,31 @@ class TabSummary {
   final AgentProvider? provider;
   final bool running;
 
+  /// Matches `PersistedTerminalTab::pinned`. Pinned tabs show a
+  /// pin glyph on the mobile chip.
+  final bool pinned;
+
+  /// Matches `PersistedTerminalTab::fixed_title`. When `Some(_)`,
+  /// render this instead of [`TabSummary::title`].
+  final String? fixedTitle;
+
   const TabSummary({
     required this.id,
     required this.title,
     this.provider,
     required this.running,
+    required this.pinned,
+    this.fixedTitle,
   });
 
   @override
   int get hashCode =>
-      id.hashCode ^ title.hashCode ^ provider.hashCode ^ running.hashCode;
+      id.hashCode ^
+      title.hashCode ^
+      provider.hashCode ^
+      running.hashCode ^
+      pinned.hashCode ^
+      fixedTitle.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -202,7 +203,9 @@ class TabSummary {
           id == other.id &&
           title == other.title &&
           provider == other.provider &&
-          running == other.running;
+          running == other.running &&
+          pinned == other.pinned &&
+          fixedTitle == other.fixedTitle;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TaskSummary`. Carries the
@@ -216,6 +219,10 @@ class TaskSummary {
   final String activeTabId;
   final List<TabSummary> tabs;
 
+  /// Mirrors desktop's `UiState::pinned_task_ids`. Pinned tasks
+  /// sort to the top of the mobile projects drawer.
+  final bool pinned;
+
   const TaskSummary({
     required this.id,
     required this.name,
@@ -223,6 +230,7 @@ class TaskSummary {
     required this.branchName,
     required this.activeTabId,
     required this.tabs,
+    required this.pinned,
   });
 
   @override
@@ -232,7 +240,8 @@ class TaskSummary {
       sectionId.hashCode ^
       branchName.hashCode ^
       activeTabId.hashCode ^
-      tabs.hashCode;
+      tabs.hashCode ^
+      pinned.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -244,30 +253,13 @@ class TaskSummary {
           sectionId == other.sectionId &&
           branchName == other.branchName &&
           activeTabId == other.activeTabId &&
-          tabs == other.tabs;
+          tabs == other.tabs &&
+          pinned == other.pinned;
 }
 
 @freezed
 sealed class WorkerReply with _$WorkerReply {
   const WorkerReply._();
-
-  /// Projection of `core::git_service::GitRefreshReply`.
-  const factory WorkerReply.gitRefresh({
-    required String projectId,
-    String? currentBranch,
-    required BigInt changedFileCount,
-    required BigInt ahead,
-    required BigInt behind,
-  }) = WorkerReply_GitRefresh;
-
-  /// Projection of `core::git_service::ProjectPullRequestReply`.
-  /// `pr = None` → checked, no PR found (distinct from "not yet
-  /// checked"). Mirror of `daemon-sandbox/src/frame.rs`.
-  const factory WorkerReply.pullRequestStatus({
-    required String projectId,
-    required String branchName,
-    PullRequestInfo? pr,
-  }) = WorkerReply_PullRequestStatus;
 
   /// Response to [`Control::ListProjects`]. Order matches the
   /// desktop sidebar. Mirror of

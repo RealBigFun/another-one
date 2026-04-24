@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1030758759;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1176474488;
 
 // Section: executor
 
@@ -215,6 +215,68 @@ fn wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
                         let output_ok =
                             crate::api::iroh_client::IrohSession::detach_tab(&*api_that_guard)
                                 .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_launch_tab_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_launch_tab",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_section_id = <String>::sse_decode(&mut deserializer);
+            let api_tab_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::launch_tab(
+                            &*api_that_guard,
+                            api_section_id,
+                            api_tab_id,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -708,6 +770,7 @@ fn wire__crate__api__iroh_client__iroh_connect_impl(
             let api_endpoint_id = <String>::sse_decode(&mut deserializer);
             let api_direct_addrs = <Vec<String>>::sse_decode(&mut deserializer);
             let api_relay_urls = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_pair_token = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -716,12 +779,48 @@ fn wire__crate__api__iroh_client__iroh_connect_impl(
                             api_endpoint_id,
                             api_direct_addrs,
                             api_relay_urls,
+                            api_pair_token,
                         )
                         .await?;
                         Ok(output_ok)
                     })()
                     .await,
                 )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__set_data_dir_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "set_data_dir",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok({
+                        crate::api::iroh_client::set_data_dir(api_path);
+                    })?;
+                    Ok(output_ok)
+                })())
             }
         },
     )
@@ -916,19 +1015,6 @@ impl SseDecode for Option<crate::api::iroh_client::AgentProvider> {
     }
 }
 
-impl SseDecode for Option<crate::api::iroh_client::PullRequestInfo> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        if (<bool>::sse_decode(deserializer)) {
-            return Some(<crate::api::iroh_client::PullRequestInfo>::sse_decode(
-                deserializer,
-            ));
-        } else {
-            return None;
-        }
-    }
-}
-
 impl SseDecode for crate::api::iroh_client::ProjectKind {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -961,33 +1047,6 @@ impl SseDecode for crate::api::iroh_client::ProjectSummary {
     }
 }
 
-impl SseDecode for crate::api::iroh_client::PullRequestInfo {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_number = <u64>::sse_decode(deserializer);
-        let mut var_url = <String>::sse_decode(deserializer);
-        let mut var_state = <crate::api::iroh_client::PullRequestState>::sse_decode(deserializer);
-        return crate::api::iroh_client::PullRequestInfo {
-            number: var_number,
-            url: var_url,
-            state: var_state,
-        };
-    }
-}
-
-impl SseDecode for crate::api::iroh_client::PullRequestState {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <i32>::sse_decode(deserializer);
-        return match inner {
-            0 => crate::api::iroh_client::PullRequestState::Open,
-            1 => crate::api::iroh_client::PullRequestState::Closed,
-            2 => crate::api::iroh_client::PullRequestState::Merged,
-            _ => unreachable!("Invalid variant for PullRequestState: {}", inner),
-        };
-    }
-}
-
 impl SseDecode for crate::api::iroh_client::TabSummary {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -996,11 +1055,15 @@ impl SseDecode for crate::api::iroh_client::TabSummary {
         let mut var_provider =
             <Option<crate::api::iroh_client::AgentProvider>>::sse_decode(deserializer);
         let mut var_running = <bool>::sse_decode(deserializer);
+        let mut var_pinned = <bool>::sse_decode(deserializer);
+        let mut var_fixedTitle = <Option<String>>::sse_decode(deserializer);
         return crate::api::iroh_client::TabSummary {
             id: var_id,
             title: var_title,
             provider: var_provider,
             running: var_running,
+            pinned: var_pinned,
+            fixed_title: var_fixedTitle,
         };
     }
 }
@@ -1014,6 +1077,7 @@ impl SseDecode for crate::api::iroh_client::TaskSummary {
         let mut var_branchName = <String>::sse_decode(deserializer);
         let mut var_activeTabId = <String>::sse_decode(deserializer);
         let mut var_tabs = <Vec<crate::api::iroh_client::TabSummary>>::sse_decode(deserializer);
+        let mut var_pinned = <bool>::sse_decode(deserializer);
         return crate::api::iroh_client::TaskSummary {
             id: var_id,
             name: var_name,
@@ -1021,6 +1085,7 @@ impl SseDecode for crate::api::iroh_client::TaskSummary {
             branch_name: var_branchName,
             active_tab_id: var_activeTabId,
             tabs: var_tabs,
+            pinned: var_pinned,
         };
     }
 }
@@ -1029,13 +1094,6 @@ impl SseDecode for u16 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u16::<NativeEndian>().unwrap()
-    }
-}
-
-impl SseDecode for u64 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        deserializer.cursor.read_u64::<NativeEndian>().unwrap()
     }
 }
 
@@ -1064,31 +1122,6 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
         let mut tag_ = <i32>::sse_decode(deserializer);
         match tag_ {
             0 => {
-                let mut var_projectId = <String>::sse_decode(deserializer);
-                let mut var_currentBranch = <Option<String>>::sse_decode(deserializer);
-                let mut var_changedFileCount = <usize>::sse_decode(deserializer);
-                let mut var_ahead = <usize>::sse_decode(deserializer);
-                let mut var_behind = <usize>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::GitRefresh {
-                    project_id: var_projectId,
-                    current_branch: var_currentBranch,
-                    changed_file_count: var_changedFileCount,
-                    ahead: var_ahead,
-                    behind: var_behind,
-                };
-            }
-            1 => {
-                let mut var_projectId = <String>::sse_decode(deserializer);
-                let mut var_branchName = <String>::sse_decode(deserializer);
-                let mut var_pr =
-                    <Option<crate::api::iroh_client::PullRequestInfo>>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::PullRequestStatus {
-                    project_id: var_projectId,
-                    branch_name: var_branchName,
-                    pr: var_pr,
-                };
-            }
-            2 => {
                 let mut var_projects =
                     <Vec<crate::api::iroh_client::ProjectSummary>>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::ProjectList {
@@ -1126,47 +1159,54 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        4 => wire__crate__api__iroh_client__IrohSession_list_projects_impl(
+        4 => wire__crate__api__iroh_client__IrohSession_launch_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        5 => wire__crate__api__iroh_client__IrohSession_resize_impl(
+        5 => wire__crate__api__iroh_client__IrohSession_list_projects_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        6 => {
+        6 => wire__crate__api__iroh_client__IrohSession_resize_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        7 => {
             wire__crate__api__iroh_client__IrohSession_send_impl(port, ptr, rust_vec_len, data_len)
         }
-        7 => wire__crate__api__iroh_client__IrohSession_subscribe_impl(
+        8 => wire__crate__api__iroh_client__IrohSession_subscribe_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        8 => wire__crate__api__iroh_client__IrohSession_subscribe_worker_replies_impl(
+        9 => wire__crate__api__iroh_client__IrohSession_subscribe_worker_replies_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        9 => wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
+        10 => wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        10 => wire__crate__api__iroh_client__IrohSession_watch_project_impl(
+        11 => wire__crate__api__iroh_client__IrohSession_watch_project_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        11 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1276,50 +1316,6 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::ProjectSummary>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::PullRequestInfo {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [
-            self.number.into_into_dart().into_dart(),
-            self.url.into_into_dart().into_dart(),
-            self.state.into_into_dart().into_dart(),
-        ]
-        .into_dart()
-    }
-}
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::iroh_client::PullRequestInfo
-{
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::PullRequestInfo>
-    for crate::api::iroh_client::PullRequestInfo
-{
-    fn into_into_dart(self) -> crate::api::iroh_client::PullRequestInfo {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::PullRequestState {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        match self {
-            Self::Open => 0.into_dart(),
-            Self::Closed => 1.into_dart(),
-            Self::Merged => 2.into_dart(),
-            _ => unreachable!(),
-        }
-    }
-}
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::iroh_client::PullRequestState
-{
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::PullRequestState>
-    for crate::api::iroh_client::PullRequestState
-{
-    fn into_into_dart(self) -> crate::api::iroh_client::PullRequestState {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::TabSummary {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -1327,6 +1323,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::TabSummary {
             self.title.into_into_dart().into_dart(),
             self.provider.into_into_dart().into_dart(),
             self.running.into_into_dart().into_dart(),
+            self.pinned.into_into_dart().into_dart(),
+            self.fixed_title.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1352,6 +1350,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::TaskSummary {
             self.branch_name.into_into_dart().into_dart(),
             self.active_tab_id.into_into_dart().into_dart(),
             self.tabs.into_into_dart().into_dart(),
+            self.pinned.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1371,34 +1370,8 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::TaskSummary>
 impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::WorkerReply {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
-            crate::api::iroh_client::WorkerReply::GitRefresh {
-                project_id,
-                current_branch,
-                changed_file_count,
-                ahead,
-                behind,
-            } => [
-                0.into_dart(),
-                project_id.into_into_dart().into_dart(),
-                current_branch.into_into_dart().into_dart(),
-                changed_file_count.into_into_dart().into_dart(),
-                ahead.into_into_dart().into_dart(),
-                behind.into_into_dart().into_dart(),
-            ]
-            .into_dart(),
-            crate::api::iroh_client::WorkerReply::PullRequestStatus {
-                project_id,
-                branch_name,
-                pr,
-            } => [
-                1.into_dart(),
-                project_id.into_into_dart().into_dart(),
-                branch_name.into_into_dart().into_dart(),
-                pr.into_into_dart().into_dart(),
-            ]
-            .into_dart(),
             crate::api::iroh_client::WorkerReply::ProjectList { projects } => {
-                [2.into_dart(), projects.into_into_dart().into_dart()].into_dart()
+                [0.into_dart(), projects.into_into_dart().into_dart()].into_dart()
             }
             _ => {
                 unimplemented!("");
@@ -1577,16 +1550,6 @@ impl SseEncode for Option<crate::api::iroh_client::AgentProvider> {
     }
 }
 
-impl SseEncode for Option<crate::api::iroh_client::PullRequestInfo> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <bool>::sse_encode(self.is_some(), serializer);
-        if let Some(value) = self {
-            <crate::api::iroh_client::PullRequestInfo>::sse_encode(value, serializer);
-        }
-    }
-}
-
 impl SseEncode for crate::api::iroh_client::ProjectKind {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1615,32 +1578,6 @@ impl SseEncode for crate::api::iroh_client::ProjectSummary {
     }
 }
 
-impl SseEncode for crate::api::iroh_client::PullRequestInfo {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <u64>::sse_encode(self.number, serializer);
-        <String>::sse_encode(self.url, serializer);
-        <crate::api::iroh_client::PullRequestState>::sse_encode(self.state, serializer);
-    }
-}
-
-impl SseEncode for crate::api::iroh_client::PullRequestState {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <i32>::sse_encode(
-            match self {
-                crate::api::iroh_client::PullRequestState::Open => 0,
-                crate::api::iroh_client::PullRequestState::Closed => 1,
-                crate::api::iroh_client::PullRequestState::Merged => 2,
-                _ => {
-                    unimplemented!("");
-                }
-            },
-            serializer,
-        );
-    }
-}
-
 impl SseEncode for crate::api::iroh_client::TabSummary {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1648,6 +1585,8 @@ impl SseEncode for crate::api::iroh_client::TabSummary {
         <String>::sse_encode(self.title, serializer);
         <Option<crate::api::iroh_client::AgentProvider>>::sse_encode(self.provider, serializer);
         <bool>::sse_encode(self.running, serializer);
+        <bool>::sse_encode(self.pinned, serializer);
+        <Option<String>>::sse_encode(self.fixed_title, serializer);
     }
 }
 
@@ -1660,6 +1599,7 @@ impl SseEncode for crate::api::iroh_client::TaskSummary {
         <String>::sse_encode(self.branch_name, serializer);
         <String>::sse_encode(self.active_tab_id, serializer);
         <Vec<crate::api::iroh_client::TabSummary>>::sse_encode(self.tabs, serializer);
+        <bool>::sse_encode(self.pinned, serializer);
     }
 }
 
@@ -1667,13 +1607,6 @@ impl SseEncode for u16 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u16::<NativeEndian>(self).unwrap();
-    }
-}
-
-impl SseEncode for u64 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        serializer.cursor.write_u64::<NativeEndian>(self).unwrap();
     }
 }
 
@@ -1703,32 +1636,8 @@ impl SseEncode for crate::api::iroh_client::WorkerReply {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         match self {
-            crate::api::iroh_client::WorkerReply::GitRefresh {
-                project_id,
-                current_branch,
-                changed_file_count,
-                ahead,
-                behind,
-            } => {
-                <i32>::sse_encode(0, serializer);
-                <String>::sse_encode(project_id, serializer);
-                <Option<String>>::sse_encode(current_branch, serializer);
-                <usize>::sse_encode(changed_file_count, serializer);
-                <usize>::sse_encode(ahead, serializer);
-                <usize>::sse_encode(behind, serializer);
-            }
-            crate::api::iroh_client::WorkerReply::PullRequestStatus {
-                project_id,
-                branch_name,
-                pr,
-            } => {
-                <i32>::sse_encode(1, serializer);
-                <String>::sse_encode(project_id, serializer);
-                <String>::sse_encode(branch_name, serializer);
-                <Option<crate::api::iroh_client::PullRequestInfo>>::sse_encode(pr, serializer);
-            }
             crate::api::iroh_client::WorkerReply::ProjectList { projects } => {
-                <i32>::sse_encode(2, serializer);
+                <i32>::sse_encode(0, serializer);
                 <Vec<crate::api::iroh_client::ProjectSummary>>::sse_encode(projects, serializer);
             }
             _ => {

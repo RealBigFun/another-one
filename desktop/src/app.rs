@@ -1154,6 +1154,12 @@ pub struct AnotherOneApp {
     /// The modal now reads pairing material from
     /// `Self::daemon_handle`; nothing on disk is consulted.
     pub(crate) pair_mobile_modal_open: bool,
+    /// Two-click confirmation for the "Reset pairings" action — the
+    /// first click arms this flag and repaints the button in a
+    /// danger state; the second click actually wipes the allowlist.
+    /// Cleared on modal close so an accidental re-open doesn't
+    /// carry the armed state over.
+    pub(crate) pair_mobile_reset_pending: bool,
     /// Shared registry state read by the embedded daemon's tokio
     /// tasks. Owns the live PTY broadcast senders + writer handles so
     /// a mobile client's `AttachTab` can subscribe to the same
@@ -3125,6 +3131,7 @@ impl AnotherOneApp {
             last_git_metadata_refresh: Instant::now() - ACTIVE_GIT_METADATA_REFRESH_INTERVAL,
             resource_indicator_open: false,
             pair_mobile_modal_open: false,
+            pair_mobile_reset_pending: false,
             registry_state,
             daemon_handle_rx: Some(daemon_handle_rx),
             daemon_handle: None,
@@ -3690,27 +3697,46 @@ impl AnotherOneApp {
             return;
         };
 
-        if let Some(runtime) = self.live_terminal_runtimes.get_mut(&request.key) {
-            match runtime.resize(request.size) {
-                Ok(true) => {
-                    let redraw_error = (request.launch_config.provider.is_some()
-                        && runtime.is_alternate_screen())
-                    .then(|| runtime.request_soft_redraw().err())
-                    .flatten();
-                    self.terminal_surface_snapshots
-                        .insert(request.key.clone(), runtime.snapshot());
-                    if let Some(error) = redraw_error {
-                        self.show_error_toast(error.to_string(), cx);
+        if self.live_terminal_runtimes.contains_key(&request.key) {
+            // Don't resize directly — announce the desktop's viewport
+            // size to the registry and let
+            // `drain_pending_tab_resizes` apply the effective min
+            // across all current viewers. When a phone attaches at
+            // a smaller viewport, the PTY + local grid both follow
+            // the phone's size so lines wrap consistently.
+            use crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID;
+            if let Ok(mut state) = self.registry_state.lock() {
+                // Switching focused tabs on desktop: drop the prior
+                // tab's desktop-local entry (same semantics as a
+                // mobile detach/reattach).
+                if let Some(old_key) = state
+                    .viewer_focus
+                    .get(DESKTOP_LOCAL_VIEWER_ID)
+                    .cloned()
+                {
+                    if old_key != request.key {
+                        if let Some(map) = state.active_viewers.get_mut(&old_key) {
+                            map.remove(DESKTOP_LOCAL_VIEWER_ID);
+                            if map.is_empty() {
+                                state.active_viewers.remove(&old_key);
+                                state.effective_sizes.remove(&old_key);
+                            }
+                        }
+                        state.recompute_effective_size(&old_key);
                     }
-                    cx.notify();
                 }
-                Ok(false) => {}
-                Err(error) => {
-                    self.terminal_manager
-                        .errors
-                        .insert(request.key.clone(), error.to_string());
-                    self.show_error_toast(error.to_string(), cx);
-                }
+                state
+                    .active_viewers
+                    .entry(request.key.clone())
+                    .or_default()
+                    .insert(
+                        DESKTOP_LOCAL_VIEWER_ID.to_string(),
+                        (request.size.cols, request.size.rows),
+                    );
+                state
+                    .viewer_focus
+                    .insert(DESKTOP_LOCAL_VIEWER_ID.to_string(), request.key.clone());
+                state.recompute_effective_size(&request.key);
             }
             return;
         }
@@ -3726,6 +3752,14 @@ impl AnotherOneApp {
         self.terminal_manager
             .pending_launches
             .insert(request.key.clone());
+        // Same in-flight guard as `drain_pending_tab_launches`:
+        // populate the shared set so a mobile LaunchTab arriving
+        // between this spawn + its Launched reply doesn't queue a
+        // duplicate. Both paths (desktop click + mobile LaunchTab)
+        // must write to the same set for the dedupe to hold.
+        if let Ok(mut state) = self.registry_state.lock() {
+            state.in_flight_launches.insert(request.key.clone());
+        }
         self.update_terminal_tab(&request.key, cx, |tab| {
             tab.restore_status = TerminalRestoreStatus::Launching;
         });
@@ -4110,6 +4144,10 @@ impl AnotherOneApp {
         if let Ok(mut state) = self.registry_state.lock() {
             state.broadcasts.insert(key.clone(), broadcast_sender);
             state.writers.insert(key.clone(), writer);
+            // Launch completed — clear the "in flight" guard so a
+            // follow-up LaunchTab that arrives after a tab exits
+            // isn't silently dropped as "already being spawned".
+            state.in_flight_launches.remove(key);
         }
     }
 
@@ -4117,10 +4155,25 @@ impl AnotherOneApp {
     /// associated runtime exits, fails, or its tab is closed — a
     /// mobile client's future `AttachTab` for this key will report
     /// the tab as not running.
+    ///
+    /// Also cleans up viewport bookkeeping (active_viewers /
+    /// effective_sizes) and evicts any viewer_focus pointer still
+    /// aimed at this key. Without this, killed-tab keys linger in
+    /// the viewport registry and recompute_effective_size enqueues
+    /// no-op TabResize requests against a runtime that no longer
+    /// exists.
     pub(crate) fn unregister_tab_from_registry(&self, key: &TerminalRuntimeKey) {
         if let Ok(mut state) = self.registry_state.lock() {
             state.broadcasts.remove(key);
             state.writers.remove(key);
+            state.active_viewers.remove(key);
+            state.effective_sizes.remove(key);
+            state.in_flight_launches.remove(key);
+            // Any viewer still focused on this key has a dangling
+            // pointer — clear it so the next TabResize from that
+            // viewer doesn't take the "drop old focus" branch
+            // against a ghost key.
+            state.viewer_focus.retain(|_, focus_key| focus_key != key);
         }
     }
 
@@ -4168,6 +4221,90 @@ impl AnotherOneApp {
     /// `DesktopTerminalRegistry::tab_resize` and apply them through
     /// the existing `LiveTerminalRuntime::resize` path. Runs on the
     /// GPUI tick, where mutable runtime access is safe.
+    /// Drain `RegistryState.pending_tab_launches` and call the same
+    /// `spawn_terminal_launch` path a sidebar click would trigger.
+    /// This makes mobile's `Control::LaunchTab` a first-class launch
+    /// initiator — the desktop GUI no longer has to be the "master"
+    /// that clicks a task before mobile can see its terminal.
+    pub(crate) fn drain_pending_tab_launches(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::TabLaunchRequest> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_tab_launches.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_tab_launches)
+        };
+        let mut changed = false;
+        for request in pending {
+            if self.live_terminal_runtimes.contains_key(&request.key)
+                || self
+                    .terminal_manager
+                    .pending_launches
+                    .contains(&request.key)
+            {
+                continue;
+            }
+
+            // Find the Task + PersistedTerminalTab carrying this key.
+            let section_store_key = request.key.section_id.store_key();
+            let Some((task, tab)) = self.project_store.tasks.values().flatten().find_map(|t| {
+                if t.section_id != section_store_key {
+                    return None;
+                }
+                t.tabs
+                    .iter()
+                    .find(|pt| pt.id == request.key.tab_id)
+                    .map(|pt| (t, pt))
+            }) else {
+                continue;
+            };
+            let Some(launch_config) = tab.launch_config.clone() else {
+                continue;
+            };
+
+            let cwd = task
+                .cwd
+                .clone()
+                .or_else(|| self.project_path(&task.target_project_id));
+            // Default grid; mobile will send TabResize after attach
+            // and the desktop's own active-tab path will refine it.
+            let size = TerminalGridSize {
+                cols: 100,
+                rows: 30,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+
+            self.terminal_manager
+                .pending_launches
+                .insert(request.key.clone());
+            // Mark in-flight in the daemon-visible registry so a
+            // mobile retry during the "spawn dispatched, Launched
+            // not yet observed" window doesn't queue a duplicate.
+            if let Ok(mut state) = self.registry_state.lock() {
+                state.in_flight_launches.insert(request.key.clone());
+            }
+            self.update_terminal_tab(&request.key, cx, |tab| {
+                tab.restore_status = TerminalRestoreStatus::Launching;
+            });
+            spawn_terminal_launch(
+                self.terminal_launch_sender.clone(),
+                request.key.clone(),
+                cwd,
+                launch_config,
+                Vec::new(),
+                size,
+            );
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
     pub(crate) fn drain_pending_tab_resizes(&mut self, cx: &mut Context<Self>) -> bool {
         let pending: Vec<crate::daemon_host::TabResizeRequest> = {
             let Ok(mut state) = self.registry_state.lock() else {
@@ -4191,6 +4328,15 @@ impl AnotherOneApp {
             };
             match runtime.resize(size) {
                 Ok(true) => {
+                    // Agents that paint via the alternate screen
+                    // buffer (Claude, Codex, etc.) don't repaint on
+                    // their own after a SIGWINCH — nudge them with
+                    // a soft form-feed so the reshaped grid fills
+                    // with content rather than tearing the last
+                    // paint.
+                    if runtime.is_alternate_screen() {
+                        let _ = runtime.request_soft_redraw();
+                    }
                     self.terminal_surface_snapshots
                         .insert(request.key.clone(), runtime.snapshot());
                     changed = true;
@@ -9324,6 +9470,7 @@ impl Render for AnotherOneApp {
                                 this.sync_registry_project_store();
                             }
                             should_notify |= this.drain_daemon_handle(cx);
+                            should_notify |= this.drain_pending_tab_launches(cx);
                             should_notify |= this.drain_pending_tab_resizes(cx);
                             should_notify |= this.tick_toasts();
                             should_notify |= this.tick_resource_usage();

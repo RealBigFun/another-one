@@ -64,6 +64,10 @@ impl AnotherOneApp {
                 MouseButton::Left,
                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                     this.pair_mobile_modal_open = !this.pair_mobile_modal_open;
+                    // Whichever way we toggle, cancel any armed
+                    // reset — re-opening should not inherit armed
+                    // state from a prior session.
+                    this.pair_mobile_reset_pending = false;
                     cx.notify();
                 }),
             )
@@ -74,6 +78,25 @@ impl AnotherOneApp {
                     .text_color(gpui::white().opacity(0.92)),
             )
             .into_any_element()
+    }
+
+    /// Delete the daemon's `paired_peers` allowlist on disk AND
+    /// rotate the in-memory TOFU nonce (which also rebuilds the
+    /// pairing URL + QR PNG). Rotating the nonce is essential — if
+    /// we only deleted the allowlist, a stale QR a previously paired
+    /// phone still had on-screen could walk right back in. After this
+    /// returns, the next `pair_mobile_overlay` paint snapshots the
+    /// new QR from the handle. No-ops on any step that can't proceed
+    /// (missing config dir, handle not yet booted).
+    pub fn reset_paired_peers(&self) {
+        if let Ok(path) = crate::daemon_host::paired_peers_path() {
+            let _ = std::fs::remove_file(&path);
+        }
+        if let Some(handle) = self.daemon_handle.as_ref() {
+            if let Err(e) = handle.regenerate_pairing() {
+                log::warn!("regenerate_pairing failed: {e:?}");
+            }
+        }
     }
 
     /// Full-window overlay — rendered conditionally by the top-level
@@ -91,9 +114,9 @@ impl AnotherOneApp {
             Some(handle) => modal_body_ready(
                 std::sync::Arc::new(Image::from_bytes(
                     ImageFormat::Png,
-                    handle.qr_png_bytes.clone(),
+                    handle.qr_png_bytes(),
                 )),
-                handle.pairing_url.clone(),
+                handle.pairing_url(),
             ),
             None => modal_body_daemon_not_ready(),
         };
@@ -145,25 +168,81 @@ impl AnotherOneApp {
                     .child(body)
                     .child(
                         div()
-                            .id("pair-mobile-close")
-                            .px(px(16.))
-                            .py(px(6.))
-                            .rounded(px(8.))
-                            .bg(gpui::white().opacity(0.08))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(gpui::white().opacity(0.12)))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
-                                    this.pair_mobile_modal_open = false;
-                                    cx.notify();
-                                }),
-                            )
+                            .flex()
+                            .flex_row()
+                            .gap(px(8.))
+                            .child({
+                                // Two-click guard: first click arms
+                                // `pair_mobile_reset_pending` and the
+                                // button repaints as a stronger red
+                                // with a "Confirm reset?" label.
+                                // Second click actually deletes the
+                                // allowlist. Prevents a stray modal
+                                // click from nuking pair state.
+                                let pending = self.pair_mobile_reset_pending;
+                                let (label, bg_color, hover_color) = if pending {
+                                    (
+                                        "Confirm reset?",
+                                        gpui::rgb(0x8a2a2a),
+                                        gpui::rgb(0xa03a3a),
+                                    )
+                                } else {
+                                    (
+                                        "Reset pairings",
+                                        gpui::rgb(0x4a2a2a),
+                                        gpui::rgb(0x5a3636),
+                                    )
+                                };
+                                div()
+                                    .id("pair-mobile-reset")
+                                    .px(px(14.))
+                                    .py(px(6.))
+                                    .rounded(px(8.))
+                                    .bg(bg_color)
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(hover_color))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            if this.pair_mobile_reset_pending {
+                                                this.reset_paired_peers();
+                                                this.pair_mobile_reset_pending = false;
+                                            } else {
+                                                this.pair_mobile_reset_pending = true;
+                                            }
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(rems(12. / 16.))
+                                            .text_color(gpui::white().opacity(0.90))
+                                            .child(label),
+                                    )
+                            })
                             .child(
                                 div()
-                                    .text_size(rems(12. / 16.))
-                                    .text_color(gpui::white().opacity(0.86))
-                                    .child("Close"),
+                                    .id("pair-mobile-close")
+                                    .px(px(16.))
+                                    .py(px(6.))
+                                    .rounded(px(8.))
+                                    .bg(gpui::white().opacity(0.08))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(gpui::white().opacity(0.12)))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            this.pair_mobile_modal_open = false;
+                                            this.pair_mobile_reset_pending = false;
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(rems(12. / 16.))
+                                            .text_color(gpui::white().opacity(0.86))
+                                            .child("Close"),
+                                    ),
                             ),
                     ),
             )

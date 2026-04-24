@@ -26,6 +26,15 @@ class IrohTransport implements TerminalTransport {
   /// won't succeed.
   final List<String> relayUrls;
 
+  /// TOFU pair token from the QR's `pair=<hex>` query param. Sent to
+  /// the daemon in the first `Hello` control frame so an unpaired
+  /// daemon can verify this peer scanned the current QR. Null for
+  /// endpoints persisted from an older app version (or entered by
+  /// hand) — the daemon will accept them iff they were already paired
+  /// from a prior session; a brand-new device with null here will be
+  /// rejected, which matches the security contract.
+  final String? pairToken;
+
   final StreamController<Uint8List> _incoming =
       StreamController<Uint8List>.broadcast();
   final StreamController<TransportStatus> _status =
@@ -48,6 +57,7 @@ class IrohTransport implements TerminalTransport {
     this.endpointId, {
     this.directAddrs = const [],
     this.relayUrls = const [],
+    this.pairToken,
   });
 
   @override
@@ -77,6 +87,7 @@ class IrohTransport implements TerminalTransport {
         endpointId: endpointId,
         directAddrs: directAddrs,
         relayUrls: relayUrls,
+        pairToken: pairToken,
       );
       if (_closed) {
         await session.close();
@@ -90,7 +101,7 @@ class IrohTransport implements TerminalTransport {
             _publish(const TransportStatus.connected());
           }
         },
-        onError: (err) => _publish(TransportStatus.error(err.toString())),
+        onError: (err) => _publish(_statusForError(err)),
         onDone: () => _publish(const TransportStatus.disconnected()),
         cancelOnError: true,
       );
@@ -102,8 +113,21 @@ class IrohTransport implements TerminalTransport {
       );
       _publish(const TransportStatus.connected());
     } catch (e) {
-      _publish(TransportStatus.error(e.toString()));
+      _publish(_statusForError(e));
     }
+  }
+
+  /// Map an error thrown by the iroh layer to the best-fitting
+  /// TransportStatus. The daemon closes the connection with the
+  /// ASCII reason `anotherone/unpaired: …` when the peer isn't in
+  /// its allowlist; iroh surfaces that reason inside the close
+  /// error string, so a substring match is good enough.
+  TransportStatus _statusForError(Object err) {
+    final msg = err.toString();
+    if (msg.contains('anotherone/unpaired')) {
+      return const TransportStatus.unpaired('pairing expired or cleared');
+    }
+    return TransportStatus.error(msg);
   }
 
   /// Ask the daemon to start forwarding git state (and later, more
@@ -158,6 +182,18 @@ class IrohTransport implements TerminalTransport {
     final session = _session;
     if (session == null) return;
     await session.tabResize(cols: cols, rows: rows);
+  }
+
+  /// Ask the daemon to launch this tab's PTY if it isn't already live.
+  /// Safe to call unconditionally before [attachTab] — it's a no-op on
+  /// the daemon side when the tab is already running.
+  Future<void> launchTab({
+    required String sectionId,
+    required String tabId,
+  }) async {
+    final session = _session;
+    if (session == null) return;
+    await session.launchTab(sectionId: sectionId, tabId: tabId);
   }
 
   @override

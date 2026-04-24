@@ -152,12 +152,20 @@ fn launch_terminal(
     let child_killer = child.clone_killer();
 
     // Broadcast tee — see `PreparedTerminalRuntime::output_broadcast`.
-    // Capacity 64 absorbs a burst of chunks while a mobile
-    // subscriber is slow to drain; beyond that, the subscriber
-    // skips ahead via the broadcast RecvError::Lagged path.
+    // Capacity 512 absorbs a burst of ~4 MB (8 KiB reads × 512) —
+    // roughly one full alt-screen repaint from Claude Code's
+    // status-panel rewrite storms without the subscriber hitting
+    // `RecvError::Lagged` and skipping rows.
     let (output_broadcast, _initial_rx) =
-        tokio::sync::broadcast::channel::<Vec<u8>>(64);
+        tokio::sync::broadcast::channel::<Vec<u8>>(512);
     let broadcast_for_reader = output_broadcast.clone();
+
+    // Only clone the 8 KiB chunk when there's actually a subscriber —
+    // zero-subscriber `send()` returns Err and we were cloning for
+    // nothing before. `receiver_count()` is atomic, so this is cheap.
+    let has_subscribers =
+        move || broadcast_for_reader.receiver_count() > 0;
+    let broadcast_for_reader_send = output_broadcast.clone();
 
     sender
         .send(TerminalLaunchReply::Launched {
@@ -183,11 +191,14 @@ fn launch_terminal(
                 Ok(0) => break,
                 Ok(count) => {
                     let bytes = buf[..count].to_vec();
-                    // Broadcast first: cheap, non-blocking, lossy
-                    // under backpressure. Returns Err when there
-                    // are no subscribers, which is the common
-                    // case; ignore.
-                    let _ = broadcast_for_reader.send(bytes.clone());
+                    // Only clone + broadcast when a mobile viewer is
+                    // actually subscribed. Zero-subscriber send()
+                    // would return Err, but the `.clone()` of the
+                    // Vec runs unconditionally — wasted at ~hundreds
+                    // of chunks/sec under chatty agents.
+                    if has_subscribers() {
+                        let _ = broadcast_for_reader_send.send(bytes.clone());
+                    }
                     let _ = output_sender.send(TerminalLaunchReply::Output {
                         key: output_key.clone(),
                         bytes,
@@ -265,7 +276,7 @@ fn launch_warm_terminal(
     // but constructing the sender here keeps `PreparedTerminalRuntime`
     // non-optional and lets future code subscribe without a branch.
     let (output_broadcast, _initial_rx) =
-        tokio::sync::broadcast::channel::<Vec<u8>>(64);
+        tokio::sync::broadcast::channel::<Vec<u8>>(512);
     let broadcast_for_reader = output_broadcast.clone();
 
     sender

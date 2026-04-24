@@ -165,7 +165,13 @@ class ProjectDrawerRow extends StatelessWidget {
           child: expanded && hasTasks
               ? Column(
                   children: [
-                    for (final task in project.tasks)
+                    // Pinned tasks sort to the top, preserving relative
+                    // order within each group — mirrors the desktop
+                    // sidebar's `pinned_task_ids` ordering.
+                    for (final task in [
+                      ...project.tasks.where((t) => t.pinned),
+                      ...project.tasks.where((t) => !t.pinned),
+                    ])
                       TaskRow(
                         task: task,
                         onTap: () => onTaskTap(task),
@@ -247,14 +253,27 @@ class _ProjectHeader extends StatelessWidget {
                     ),
                   ),
                   if (branch != null && branch.isNotEmpty)
-                    Text(
-                      '⎇ $branch',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppTokens.textMuted,
-                        fontSize: AppTokens.fontSmall,
-                        fontFamily: AppTokens.fontFamilyMono,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.call_split,
+                          size: AppTokens.iconSizeSm,
+                          color: AppTokens.textMuted,
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            branch,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTokens.textMuted,
+                              fontSize: AppTokens.fontSmall,
+                              fontFamily: AppTokens.fontFamilyMono,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                 ],
               ),
@@ -339,10 +358,12 @@ class TaskRow extends StatelessWidget {
         ),
         child: Row(
           children: [
-            const Icon(
-              Icons.subdirectory_arrow_right,
+            Icon(
+              task.pinned
+                  ? Icons.push_pin
+                  : Icons.subdirectory_arrow_right,
               size: AppTokens.iconSizeSm,
-              color: AppTokens.textMuted,
+              color: task.pinned ? AppTokens.accent : AppTokens.textMuted,
             ),
             const SizedBox(width: AppTokens.space3),
             Expanded(
@@ -359,14 +380,27 @@ class TaskRow extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  Text(
-                    '⎇ ${task.branchName}',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTokens.textMuted,
-                      fontSize: AppTokens.fontCaption,
-                      fontFamily: AppTokens.fontFamilyMono,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.call_split,
+                        size: AppTokens.iconSizeXs,
+                        color: AppTokens.textMuted,
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          task.branchName,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppTokens.textMuted,
+                            fontSize: AppTokens.fontCaption,
+                            fontFamily: AppTokens.fontFamilyMono,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

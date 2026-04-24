@@ -96,7 +96,10 @@ impl TerminalRegistry for SandboxRegistry {
                     title: "bash".to_string(),
                     provider: Some(AgentProvider::Shell),
                     running: true,
+                    pinned: false,
+                    fixed_title: None,
                 }],
+                pinned: false,
             }],
         }]
     }
@@ -130,7 +133,16 @@ impl TerminalRegistry for SandboxRegistry {
         let _ = writer.flush();
     }
 
-    fn tab_resize(&self, section_id: &str, tab_id: &str, cols: u16, rows: u16) {
+    fn tab_resize(
+        &self,
+        _viewer_id: &str,
+        section_id: &str,
+        tab_id: &str,
+        cols: u16,
+        rows: u16,
+    ) {
+        // Sandbox has a single shell and a single viewer in practice;
+        // min-across-viewers collapses to "whatever arrived last".
         if section_id != SANDBOX_SECTION_ID || tab_id != SANDBOX_TAB_ID {
             return;
         }

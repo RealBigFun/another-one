@@ -86,10 +86,11 @@ fn sandbox_data_dir() -> anyhow::Result<PathBuf> {
 /// sandbox binary re-publishes its EndpointHandle here explicitly.
 fn publish_sandbox_artifacts(handle: &EndpointHandle) {
     info!("iroh EndpointId: {}", handle.endpoint_id);
-    println!("\nPairing URL:\n  {}", handle.pairing_url);
+    let pairing_url = handle.pairing_url();
+    println!("\nPairing URL:\n  {}", pairing_url);
 
     let ticket_path = std::env::temp_dir().join("daemon-sandbox.ticket");
-    let ticket_body = ticket_body_from_url(&handle.pairing_url);
+    let ticket_body = ticket_body_from_url(&pairing_url);
     if let Err(e) = std::fs::write(&ticket_path, ticket_body) {
         warn!(error = %e, "failed to write ticket file");
     } else {
@@ -97,7 +98,7 @@ fn publish_sandbox_artifacts(handle: &EndpointHandle) {
     }
 
     let png_path = std::env::temp_dir().join("daemon-sandbox.pairing.png");
-    if let Err(e) = std::fs::write(&png_path, &handle.qr_png_bytes) {
+    if let Err(e) = std::fs::write(&png_path, &handle.qr_png_bytes()) {
         warn!(error = %e, "failed to write pairing PNG");
     } else {
         println!("Pairing QR also written to {}", png_path.display());

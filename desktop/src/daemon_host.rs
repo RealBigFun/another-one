@@ -22,7 +22,7 @@
 //! thread. Instead, `tab_resize` enqueues a
 //! [`TabResizeRequest`] on an `mpsc` the GPUI render tick drains.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex, Weak};
@@ -40,6 +40,10 @@ use another_one_core::project_store::{ProjectKind as CoreProjectKind, ProjectSto
 use another_one_core::section::SectionId;
 
 use crate::terminal_runtime::TerminalRuntimeKey;
+
+/// viewer_id used for the in-process desktop view. Stable across the
+/// app's lifetime; the app exits before it would ever need to disconnect.
+pub(crate) const DESKTOP_LOCAL_VIEWER_ID: &str = "desktop-local";
 
 /// Shared state the GPUI thread writes and the daemon's tokio tasks
 /// read. Everything behind one `Mutex` because contention is
@@ -65,6 +69,37 @@ pub(crate) struct RegistryState {
     /// GPUI render tick where `LiveTerminalRuntime::resize` is safe to
     /// call.
     pub(crate) pending_resizes: Vec<TabResizeRequest>,
+    /// Per-tab set of currently-attached viewers and the viewport
+    /// size each wants. The PTY for a tab is resized to the **min**
+    /// across the viewer entries here so a wide desktop window can't
+    /// make the PTY too wide for a phone to render. A viewer
+    /// appears in at most one tab's map at a time (switching
+    /// focused tabs clears the prior entry); leaving the session
+    /// clears every entry for that viewer.
+    pub(crate) active_viewers:
+        HashMap<TerminalRuntimeKey, HashMap<String, (u16, u16)>>,
+    /// Tracks which tab each viewer currently has in focus — used to
+    /// clear their prior entry when they switch or detach.
+    pub(crate) viewer_focus: HashMap<String, TerminalRuntimeKey>,
+    /// Last effective size applied to each tab's PTY; avoids
+    /// re-enqueueing identical resize requests on every keystroke.
+    pub(crate) effective_sizes: HashMap<TerminalRuntimeKey, (u16, u16)>,
+    /// Tab-launch requests from any client (mobile). Drained on the
+    /// GPUI render tick, where the task's persisted `launch_config`
+    /// is resolved from the project store and the PTY is spawned via
+    /// `spawn_terminal_launch`. Desktop sidebar clicks go through a
+    /// different path today for legacy reasons; both produce the same
+    /// end state (a live entry in `broadcasts` + `writers`).
+    pub(crate) pending_tab_launches: Vec<TabLaunchRequest>,
+    /// Keys currently mid-spawn. Populated when either path
+    /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
+    /// kicks off a `spawn_terminal_launch`; cleared on
+    /// `TerminalLaunchReply::Launched` / `Failed` / tab close. The
+    /// daemon checks this to dedupe — earlier builds only checked
+    /// `pending_tab_launches` + `broadcasts`, which left a window
+    /// between "spawn kicked off" and "Launched reply observed"
+    /// where a second LaunchTab would spawn a duplicate PTY.
+    pub(crate) in_flight_launches: HashSet<TerminalRuntimeKey>,
 }
 
 impl RegistryState {
@@ -74,8 +109,49 @@ impl RegistryState {
             broadcasts: HashMap::new(),
             writers: HashMap::new(),
             pending_resizes: Vec::new(),
+            pending_tab_launches: Vec::new(),
+            in_flight_launches: HashSet::new(),
+            active_viewers: HashMap::new(),
+            viewer_focus: HashMap::new(),
+            effective_sizes: HashMap::new(),
         }
     }
+
+    /// Recompute the min-across-viewers size for `key` and, if it
+    /// changed since the last effective size, enqueue a resize for
+    /// the GPUI render tick to apply. Returns the effective size so
+    /// callers can log / debug — not otherwise used.
+    pub(crate) fn recompute_effective_size(
+        &mut self,
+        key: &TerminalRuntimeKey,
+    ) -> Option<(u16, u16)> {
+        let viewers = self.active_viewers.get(key)?;
+        if viewers.is_empty() {
+            return None;
+        }
+        let (cols, rows) = viewers.values().fold((u16::MAX, u16::MAX), |(c, r), (vc, vr)| {
+            (c.min(*vc), r.min(*vr))
+        });
+        let effective = (cols.max(1), rows.max(1));
+        if self.effective_sizes.get(key).copied() == Some(effective) {
+            return Some(effective);
+        }
+        self.effective_sizes.insert(key.clone(), effective);
+        self.pending_resizes.push(TabResizeRequest {
+            key: key.clone(),
+            cols: effective.0,
+            rows: effective.1,
+        });
+        Some(effective)
+    }
+}
+
+/// A "please launch this tab" ask from a remote client. Same shape
+/// as the sidebar-click path on the desktop would produce, minus the
+/// GUI-level affordances (active-page toggling, etc.).
+#[derive(Clone, Debug)]
+pub(crate) struct TabLaunchRequest {
+    pub key: TerminalRuntimeKey,
 }
 
 /// A pending tab resize request from a mobile client. The daemon's
@@ -128,26 +204,109 @@ impl TerminalRegistry for DesktopTerminalRegistry {
         let Some(key) = key_from_wire(section_id, tab_id) else {
             return;
         };
-        self.with_state(|state| {
-            if let Some(writer) = state.writers.get(&key).cloned() {
-                if let Ok(mut guard) = writer.lock() {
-                    let _ = guard.write_all(bytes);
-                    let _ = guard.flush();
-                }
-            }
-        });
+        // Clone the writer Arc out of RegistryState *first*, drop
+        // the outer state lock, THEN do the blocking PTY write.
+        // Holding the state lock across `write_all` + `flush`
+        // serialises every daemon task on the tokio worker pool
+        // while one mobile keystroke is in flight — if the PTY
+        // pipe blocks, the whole daemon stalls.
+        let writer = self.with_state(|state| state.writers.get(&key).cloned()).flatten();
+        let Some(writer) = writer else { return };
+        if let Ok(mut guard) = writer.lock() {
+            let _ = guard.write_all(bytes);
+            let _ = guard.flush();
+        };
     }
 
-    fn tab_resize(&self, section_id: &str, tab_id: &str, cols: u16, rows: u16) {
+    fn tab_resize(
+        &self,
+        viewer_id: &str,
+        section_id: &str,
+        tab_id: &str,
+        cols: u16,
+        rows: u16,
+    ) {
         let Some(key) = key_from_wire(section_id, tab_id) else {
             return;
         };
         self.with_state(|state| {
-            state.pending_resizes.push(TabResizeRequest {
-                key: key.clone(),
-                cols,
-                rows,
-            });
+            // If this viewer was focused on a different tab, drop
+            // its size entry there first — a viewer can only claim
+            // one tab at a time.
+            if let Some(old_key) = state.viewer_focus.get(viewer_id).cloned() {
+                if old_key != key {
+                    if let Some(map) = state.active_viewers.get_mut(&old_key) {
+                        map.remove(viewer_id);
+                        if map.is_empty() {
+                            state.active_viewers.remove(&old_key);
+                            state.effective_sizes.remove(&old_key);
+                        }
+                    }
+                    state.recompute_effective_size(&old_key);
+                }
+            }
+            state
+                .active_viewers
+                .entry(key.clone())
+                .or_default()
+                .insert(viewer_id.to_string(), (cols, rows));
+            state.viewer_focus.insert(viewer_id.to_string(), key.clone());
+            state.recompute_effective_size(&key);
+        });
+    }
+
+    fn viewer_disconnected(&self, viewer_id: &str) {
+        self.with_state(|state| {
+            let Some(key) = state.viewer_focus.remove(viewer_id) else {
+                return;
+            };
+            let empty = state
+                .active_viewers
+                .get_mut(&key)
+                .map(|map| {
+                    map.remove(viewer_id);
+                    map.is_empty()
+                })
+                .unwrap_or(true);
+            if empty {
+                state.active_viewers.remove(&key);
+                state.effective_sizes.remove(&key);
+            } else {
+                state.recompute_effective_size(&key);
+            }
+        });
+    }
+
+    fn launch_tab(&self, section_id: &str, tab_id: &str) {
+        let Some(key) = key_from_wire(section_id, tab_id) else {
+            return;
+        };
+        self.with_state(|state| {
+            // Skip if already live — no point re-queuing a spawn
+            // for a tab that's broadcasting.
+            if state.broadcasts.contains_key(&key) {
+                return;
+            }
+            // Skip if a spawn is already in flight — either queued
+            // for the GPUI tick (`pending_tab_launches`) or already
+            // kicked off but awaiting `Launched`
+            // (`in_flight_launches`). Both desktop-click and
+            // daemon-dispatched spawns populate the latter, so the
+            // race window where only one of them saw each other's
+            // progress is closed.
+            if state.in_flight_launches.contains(&key) {
+                return;
+            }
+            if state
+                .pending_tab_launches
+                .iter()
+                .any(|r| r.key == key)
+            {
+                return;
+            }
+            state
+                .pending_tab_launches
+                .push(TabLaunchRequest { key });
         });
     }
 }
@@ -172,6 +331,11 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
     store
         .projects
         .iter()
+        // Mobile drawer mirrors the desktop sidebar's *root* project
+        // list — worktree-kind projects are nested under their root
+        // (via `task.worktree_project_id`) and should never appear at
+        // the top level. Filter them out here.
+        .filter(|project| matches!(project.kind, CoreProjectKind::Root))
         .map(|project| {
             let tasks = store
                 .tasks
@@ -182,6 +346,8 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                 .map(|task| {
                     let section_key = task.section_id.clone();
                     let parsed_section = SectionId::from_store_key(&section_key);
+                    let task_pinned =
+                        store.ui.pinned_task_ids.contains(&task.id);
                     let tabs = task
                         .tabs
                         .into_iter()
@@ -199,6 +365,8 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                                 title: tab.title,
                                 provider: tab.provider.map(map_agent_provider),
                                 running,
+                                pinned: tab.pinned,
+                                fixed_title: tab.fixed_title,
                             }
                         })
                         .collect();
@@ -209,6 +377,7 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                         branch_name: task.branch_name,
                         active_tab_id: task.active_tab_id,
                         tabs,
+                        pinned: task_pinned,
                     }
                 })
                 .collect();
@@ -324,6 +493,13 @@ fn run(
 struct DaemonPaths {
     secret_key: PathBuf,
     paired_peers: PathBuf,
+}
+
+/// Public accessor for the allowlist path so the "Pair mobile" modal's
+/// reset button can unlink it. Thin wrapper; same resolution as the
+/// daemon uses at boot.
+pub(crate) fn paired_peers_path() -> anyhow::Result<PathBuf> {
+    Ok(daemon_paths()?.paired_peers)
 }
 
 /// Resolve the on-disk paths for the daemon's identity + TOFU
