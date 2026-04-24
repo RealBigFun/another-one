@@ -252,6 +252,66 @@ impl AnotherOneApp {
             .or_else(|| actions.into_iter().next())
     }
 
+    /// Small build-identity chip rendered in the titlebar.
+    ///
+    /// * Debug + dirty: red background — uncommitted changes are
+    ///   live in this binary; whatever you see is unique to this
+    ///   build and can't be reproduced from a SHA alone.
+    /// * Debug + clean: amber background — debug profile, but at
+    ///   least the working tree was clean at build time.
+    /// * Release: subtle white-on-dark; informative but not noisy.
+    ///
+    /// The chip exists primarily to make it impossible to confuse a
+    /// debug binary for a release one — that's the one mistake the
+    /// updater will need not to silently propagate.
+    pub fn titlebar_build_chip(&self, _cx: &mut Context<Self>) -> AnyElement {
+        let label = SharedString::from(crate::build_info::chip_label());
+        let dev = crate::build_info::is_dev_build();
+        let dirty = crate::build_info::is_dirty();
+
+        let (bg, border, text) = if dev && dirty {
+            (
+                hsla(0.0, 0.65, 0.42, 0.55),
+                hsla(0.0, 0.85, 0.62, 0.85),
+                hsla(0.0, 0.30, 0.97, 1.0),
+            )
+        } else if dev {
+            (
+                hsla(35.0 / 360.0, 0.85, 0.50, 0.45),
+                hsla(35.0 / 360.0, 0.95, 0.62, 0.75),
+                hsla(35.0 / 360.0, 0.30, 0.97, 1.0),
+            )
+        } else {
+            (
+                gpui::white().opacity(0.05),
+                gpui::white().opacity(0.10),
+                gpui::white().opacity(0.55),
+            )
+        };
+
+        div()
+            .id("titlebar-build-chip")
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .h(px(20.))
+            .px(px(8.))
+            .mr(px(6.))
+            .rounded(px(10.))
+            .bg(bg)
+            .border_1()
+            .border_color(border)
+            .text_size(px(11.))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(text)
+            .tooltip(|_window, cx| {
+                Self::action_tooltip_view(crate::build_info::tooltip_text(), cx)
+            })
+            .child(label)
+            .into_any_element()
+    }
+
     pub fn titlebar_custom_actions_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let has_project = self.active_open_in_project_id(cx).is_some();
         if !has_project {
@@ -1559,6 +1619,7 @@ impl AnotherOneApp {
                     )
                     .on_mouse_move(cx.listener(Self::titlebar_background_mouse_move)),
             )
+            .child(self.titlebar_build_chip(cx))
             .child(self.titlebar_custom_actions_button(cx))
             .child(self.titlebar_open_in_button(cx))
             .child(self.titlebar_github_button(cx))
