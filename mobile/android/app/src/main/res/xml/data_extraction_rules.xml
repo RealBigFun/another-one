@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Disallow both cloud backup and device-transfer ADB/OEM extraction
+     of this app's data. The iroh_secret_key stored in the app's
+     ApplicationSupportDirectory is a long-lived credential that
+     identifies this phone to paired daemons; an `adb backup` leak
+     would let an attacker impersonate the device from any machine
+     until the user manually resets pairings on the daemon side. -->
+<data-extraction-rules>
+  <cloud-backup>
+    <exclude domain="root" />
+    <exclude domain="file" />
+    <exclude domain="database" />
+    <exclude domain="sharedpref" />
+    <exclude domain="external" />
+  </cloud-backup>
+  <device-transfer>
+    <exclude domain="root" />
+    <exclude domain="file" />
+    <exclude domain="database" />
+    <exclude domain="sharedpref" />
+    <exclude domain="external" />
+  </device-transfer>
+</data-extraction-rules>

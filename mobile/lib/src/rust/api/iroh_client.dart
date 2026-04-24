@@ -8,9 +8,17 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `iroh_connect_inner`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+
+/// Record the application data directory Dart has chosen for us.
+/// Must be called before `iroh_connect` so the secret key can be
+/// loaded/created there. Safe to call multiple times — last write
+/// wins. On Android/iOS, pass
+/// `(await path_provider.getApplicationSupportDirectory()).path`.
+Future<void> setDataDir({required String path}) =>
+    RustLib.instance.api.crateApiIrohClientSetDataDir(path: path);
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`.
 ///
@@ -24,16 +32,40 @@ Future<IrohSession> irohConnect({
   required String endpointId,
   required List<String> directAddrs,
   required List<String> relayUrls,
+  String? pairToken,
 }) => RustLib.instance.api.crateApiIrohClientIrohConnect(
   endpointId: endpointId,
   directAddrs: directAddrs,
   relayUrls: relayUrls,
+  pairToken: pairToken,
 );
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
 abstract class IrohSession implements RustOpaqueInterface {
+  /// Subscribe this session to the live PTY byte stream for
+  /// `(section_id, tab_id)`. The daemon will forward the attached
+  /// tab's output as [`TY_DATA`] frames on the existing `subscribe`
+  /// sink. At most one attachment per session — re-issuing replaces
+  /// the previous one. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::AttachTab`.
+  Future<void> attachTab({required String sectionId, required String tabId});
+
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
+
+  /// Stop forwarding PTY bytes for the currently-attached tab.
+  /// Idempotent if nothing is attached. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
+  Future<void> detachTab();
+
+  /// Ask the daemon to launch the tab's PTY if it isn't already
+  /// live. No-op on the daemon side if the tab is already running.
+  /// After this, a subsequent `attach_tab` will receive bytes.
+  Future<void> launchTab({required String sectionId, required String tabId});
+
+  /// Ask the daemon to send back its current project list as a
+  /// [`WorkerReply::ProjectList`] frame.
+  Future<void> listProjects();
 
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type.
@@ -51,62 +83,181 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// returns an error. Replies arrive in the order the daemon sent them.
   Stream<WorkerReply> subscribeWorkerReplies();
 
-  /// Ask the daemon to watch `project_path` and start forwarding
-  /// [`WorkerReply::GitRefresh`] frames for it. See
-  /// `daemon-sandbox/src/frame.rs::Control::WatchProject` for the
-  /// daemon-side semantics. Reissuing replaces the previous
-  /// subscription.
-  Future<void> watchProject({required String projectPath});
+  /// Resize the currently-attached tab's PTY. Silently no-ops on
+  /// the daemon when nothing is attached. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
+  Future<void> tabResize({required int cols, required int rows});
 }
 
-/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestInfo`.
-class PullRequestInfo {
-  final BigInt number;
-  final String url;
-  final PullRequestState state;
+/// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form
+/// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
+/// `Shell` is the catch-all for plain-PTY tabs with no agent
+/// provider set.
+enum AgentProvider {
+  claudeCode,
+  cursorAgent,
+  codex,
+  pi,
+  gemini,
+  openCode,
+  amp,
+  rovoDev,
+  forge,
+  shell,
+}
 
-  const PullRequestInfo({
-    required this.number,
-    required this.url,
-    required this.state,
+/// Mirror of `daemon-sandbox/src/frame.rs::ProjectKind`.
+enum ProjectKind { root, worktree }
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ProjectSummary`. Contains
+/// the nested task + tab tree so one `ListProjects` response is enough
+/// for the mobile drawer + task page to render without follow-up
+/// round-trips.
+class ProjectSummary {
+  final String id;
+  final String name;
+  final String path;
+  final ProjectKind kind;
+  final String? currentBranch;
+  final List<TaskSummary> tasks;
+
+  const ProjectSummary({
+    required this.id,
+    required this.name,
+    required this.path,
+    required this.kind,
+    this.currentBranch,
+    required this.tasks,
   });
 
   @override
-  int get hashCode => number.hashCode ^ url.hashCode ^ state.hashCode;
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      path.hashCode ^
+      kind.hashCode ^
+      currentBranch.hashCode ^
+      tasks.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is PullRequestInfo &&
+      other is ProjectSummary &&
           runtimeType == other.runtimeType &&
-          number == other.number &&
-          url == other.url &&
-          state == other.state;
+          id == other.id &&
+          name == other.name &&
+          path == other.path &&
+          kind == other.kind &&
+          currentBranch == other.currentBranch &&
+          tasks == other.tasks;
 }
 
-/// Mirror of `daemon-sandbox/src/frame.rs::PullRequestState`.
-/// Wire form is lowercase: `"open"`, `"closed"`, `"merged"`.
-enum PullRequestState { open, closed, merged }
+/// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
+/// reflects whether the desktop has a live `LiveTerminalRuntime` for
+/// this tab right now; `AttachTab` on a non-running tab yields no
+/// data.
+class TabSummary {
+  final String id;
+  final String title;
+  final AgentProvider? provider;
+  final bool running;
+
+  /// Matches `PersistedTerminalTab::pinned`. Pinned tabs show a
+  /// pin glyph on the mobile chip.
+  final bool pinned;
+
+  /// Matches `PersistedTerminalTab::fixed_title`. When `Some(_)`,
+  /// render this instead of [`TabSummary::title`].
+  final String? fixedTitle;
+
+  const TabSummary({
+    required this.id,
+    required this.title,
+    this.provider,
+    required this.running,
+    required this.pinned,
+    this.fixedTitle,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      title.hashCode ^
+      provider.hashCode ^
+      running.hashCode ^
+      pinned.hashCode ^
+      fixedTitle.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TabSummary &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          title == other.title &&
+          provider == other.provider &&
+          running == other.running &&
+          pinned == other.pinned &&
+          fixedTitle == other.fixedTitle;
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::TaskSummary`. Carries the
+/// `section_id` half of the compound `TerminalRuntimeKey` used by
+/// [`Control::AttachTab`].
+class TaskSummary {
+  final String id;
+  final String name;
+  final String sectionId;
+  final String branchName;
+  final String activeTabId;
+  final List<TabSummary> tabs;
+
+  /// Mirrors desktop's `UiState::pinned_task_ids`. Pinned tasks
+  /// sort to the top of the mobile projects drawer.
+  final bool pinned;
+
+  const TaskSummary({
+    required this.id,
+    required this.name,
+    required this.sectionId,
+    required this.branchName,
+    required this.activeTabId,
+    required this.tabs,
+    required this.pinned,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      sectionId.hashCode ^
+      branchName.hashCode ^
+      activeTabId.hashCode ^
+      tabs.hashCode ^
+      pinned.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TaskSummary &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          sectionId == other.sectionId &&
+          branchName == other.branchName &&
+          activeTabId == other.activeTabId &&
+          tabs == other.tabs &&
+          pinned == other.pinned;
+}
 
 @freezed
 sealed class WorkerReply with _$WorkerReply {
   const WorkerReply._();
 
-  /// Projection of `core::git_service::GitRefreshReply`.
-  const factory WorkerReply.gitRefresh({
-    required String projectId,
-    String? currentBranch,
-    required BigInt changedFileCount,
-    required BigInt ahead,
-    required BigInt behind,
-  }) = WorkerReply_GitRefresh;
-
-  /// Projection of `core::git_service::ProjectPullRequestReply`.
-  /// `pr = None` → checked, no PR found (distinct from "not yet
-  /// checked"). Mirror of `daemon-sandbox/src/frame.rs`.
-  const factory WorkerReply.pullRequestStatus({
-    required String projectId,
-    required String branchName,
-    PullRequestInfo? pr,
-  }) = WorkerReply_PullRequestStatus;
+  /// Response to [`Control::ListProjects`]. Order matches the
+  /// desktop sidebar. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectList`.
+  const factory WorkerReply.projectList({
+    required List<ProjectSummary> projects,
+  }) = WorkerReply_ProjectList;
 }

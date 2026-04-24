@@ -1,50 +1,497 @@
-//! Iroh QUIC transport for the sandbox daemon.
+//! Iroh QUIC transport + connection state machine.
 //!
-//! Wire format: one bidirectional QUIC stream per connection, each message
-//! framed as `[1 byte type][4 bytes BE length][N bytes payload]` (see
-//! [`crate::frame`]). `0x00` frames carry PTY bytes in either direction,
-//! `0x01` frames carry JSON control messages (currently `resize`).
+//! Endpoint identity + pairing material (secret key, TOFU allowlist,
+//! pairing URL / QR PNG) are loaded from paths supplied by the caller
+//! so the same code backs two embedders:
+//!
+//!   - `daemon-sandbox` binary — persists under
+//!     `$XDG_DATA_HOME/another-one-sandbox/`.
+//!   - Desktop `AnotherOneApp` — persists alongside the desktop's
+//!     own config under `$XDG_CONFIG_HOME/another-one/daemon/`.
+//!
+//! Wire format: one bidi QUIC stream per connection, length-prefixed
+//! framing (see [`crate::frame`]). Per-connection state machine:
+//! zero or one attached tab at a time; on `AttachTab` the daemon
+//! subscribes to that tab's live PTY broadcast and forwards bytes
+//! as `TY_DATA` frames. Inbound `TY_DATA` is routed to the attached
+//! tab's PTY input.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use iroh::endpoint::{presets, Connection, Incoming};
-use iroh::{Endpoint, SecretKey};
-use tokio::sync::mpsc;
+use iroh::{Endpoint, EndpointAddr, SecretKey};
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, PullRequestInfo, PullRequestState, WorkerReply};
-use crate::pty::PtySession;
+use crate::frame::{self, Control, WorkerReply};
+use crate::registry::{EndpointHandle, PairState, TerminalRegistry};
 
-/// ALPN advertised by the sandbox. Version-suffixed so future protocol breaks
-/// can be versioned cleanly (`/1`, `/2`, …).
+/// ALPN advertised by the daemon. Version-suffixed so future protocol
+/// breaks can be versioned cleanly (`/1`, `/2`, …).
 pub const ALPN: &[u8] = b"anotherone/pty/0";
 
-/// Returns the XDG-ish data directory for the sandbox daemon, creating it
-/// if missing. Resolution order matches the XDG Base Directory spec enough
-/// for our purposes: `$XDG_DATA_HOME/another-one-sandbox` if set, otherwise
-/// `$HOME/.local/share/another-one-sandbox`. No external `dirs` dep — keeps
-/// the daemon binary lean.
-fn data_dir() -> anyhow::Result<PathBuf> {
-    let base = if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        PathBuf::from(xdg)
-    } else {
-        let home = std::env::var("HOME").context("HOME is unset — can't locate data dir")?;
-        PathBuf::from(home).join(".local").join("share")
-    };
-    let dir = base.join("another-one-sandbox");
-    std::fs::create_dir_all(&dir).with_context(|| format!("create data dir {}", dir.display()))?;
-    Ok(dir)
+/// QUIC close reason emitted to unauthorised peers. Short on purpose:
+/// the CONNECTION_CLOSE frame is observable on the wire, so long
+/// user-facing copy here would leak product UX text to an on-path
+/// observer. Clients match on this byte string and expand it into
+/// localisable copy ("Pairing expired — please re-scan the QR")
+/// in the UI. Keep in lockstep with the substring match in
+/// `mobile/lib/src/transport_iroh.dart::_statusForError`.
+pub const CLOSE_REASON_UNPAIRED: &[u8] = b"anotherone/unpaired";
+
+/// Bring up an iroh endpoint backed by `registry`. Returns once the
+/// endpoint is online + the pairing QR has been rendered; the accept
+/// loop runs on a detached task owned by the returned handle (drop
+/// or `abort()` the handle to shut it down).
+pub async fn run_embedded(
+    registry: Arc<dyn TerminalRegistry>,
+    secret_key_path: PathBuf,
+    paired_peers_path: PathBuf,
+) -> anyhow::Result<EndpointHandle> {
+    let secret_key = load_or_create_secret_key(&secret_key_path)?;
+    let endpoint = Endpoint::builder(presets::N0)
+        .secret_key(secret_key)
+        .alpns(vec![ALPN.to_vec()])
+        .bind()
+        .await
+        .context("bind iroh endpoint")?;
+
+    let endpoint_id = endpoint.id().to_string();
+    info!("iroh EndpointId: {endpoint_id}");
+    info!("iroh ALPN: {}", String::from_utf8_lossy(ALPN));
+
+    endpoint.online().await;
+    let addr = endpoint.addr();
+    info!("iroh endpoint online: {addr:?}");
+
+    let nonce = generate_pair_nonce();
+    let pairing_url = build_pairing_url_with_token(&addr, &nonce);
+    let qr_png_bytes =
+        render_qr_png_bytes(&pairing_url).context("render pairing QR PNG")?;
+    let pair_state = Arc::new(Mutex::new(PairState {
+        nonce: Some(nonce),
+        addr: addr.clone(),
+        pairing_url,
+        qr_png_bytes,
+    }));
+
+    // Spawn the accept loop. The root task owns the endpoint; each
+    // incoming connection spawns its own task so slow clients can't
+    // starve the accept loop.
+    let registry_cloned = registry.clone();
+    let pair_state_cloned = pair_state.clone();
+    let root_handle = tokio::spawn(async move {
+        while let Some(incoming) = endpoint.accept().await {
+            let registry = registry_cloned.clone();
+            let paired_path = paired_peers_path.clone();
+            let pair_state = pair_state_cloned.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    handle_incoming(incoming, registry, &paired_path, pair_state).await
+                {
+                    warn!(error = %e, "iroh connection error");
+                }
+            });
+        }
+    });
+
+    Ok(EndpointHandle {
+        endpoint_id,
+        pair_state,
+        _root_task: root_handle.abort_handle(),
+    })
 }
 
-/// Loads the daemon's persistent Ed25519 secret key from
-/// `<data_dir>/secret_key` (32 hex-encoded bytes). Generates a fresh one
-/// and writes it to disk the first time. Giving the daemon a stable
-/// identity across restarts means paired clients don't have to re-discover
-/// its `EndpointId` every time the process starts.
-fn load_or_create_secret_key() -> anyhow::Result<SecretKey> {
-    let path = data_dir()?.join("secret_key");
-    if let Ok(content) = std::fs::read_to_string(&path) {
+// ---- connection state machine ----------------------------------
+
+/// State of the one-at-a-time PTY attachment on this connection.
+struct Attached {
+    section_id: String,
+    tab_id: String,
+    /// Abort handle for the forwarder task draining the per-tab
+    /// broadcast into this connection's outbound mpsc. Dropped /
+    /// aborted when the client detaches or attaches elsewhere.
+    forwarder: AbortHandle,
+}
+
+async fn handle_incoming(
+    incoming: Incoming,
+    registry: Arc<dyn TerminalRegistry>,
+    paired_peers_path: &Path,
+    pair_state: Arc<Mutex<PairState>>,
+) -> anyhow::Result<()> {
+    let conn = incoming
+        .accept()
+        .context("accept")?
+        .await
+        .context("handshake")?;
+    let remote = conn.remote_id();
+    let viewer_id = remote.to_string();
+
+    let authz = match peer_status(&viewer_id, paired_peers_path) {
+        Ok(PeerStatus::Paired) => {
+            info!(%remote, "iroh client connected (paired)");
+            PostAuth::AlreadyPaired
+        }
+        Ok(PeerStatus::Unknown) => {
+            // Paired-peer list is empty OR this peer isn't in it. We
+            // accept the connection but defer authorisation until the
+            // peer sends `Control::Hello` with a matching nonce over
+            // the bidi stream — that's handled in `handle_connection`.
+            info!(%remote, "iroh client connected (unknown — awaiting Hello)");
+            PostAuth::AwaitHello
+        }
+        Err(e) => {
+            warn!(%remote, error = %e, "rejecting peer");
+            conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
+            return Ok(());
+        }
+    };
+
+    let result =
+        handle_connection(conn, registry.clone(), &viewer_id, authz, paired_peers_path, pair_state)
+            .await;
+    // Clear this viewer's size entries so a stale small viewport
+    // doesn't keep the PTY cramped after the session ends.
+    registry.viewer_disconnected(&viewer_id);
+    result
+}
+
+#[derive(Clone, Copy)]
+enum PostAuth {
+    AlreadyPaired,
+    AwaitHello,
+}
+
+async fn handle_connection(
+    conn: Connection,
+    registry: Arc<dyn TerminalRegistry>,
+    viewer_id: &str,
+    mut authz: PostAuth,
+    paired_peers_path: &Path,
+    pair_state: Arc<Mutex<PairState>>,
+) -> anyhow::Result<()> {
+    let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
+
+    // Outbound mpsc: all producers (worker-reply replies + the PTY
+    // forwarder task) push (type, payload) tuples; the writer task
+    // owns `send` and serialises writes.
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<(u8, Vec<u8>)>(64);
+    let writer_task = tokio::spawn(async move {
+        while let Some((ty, payload)) = outbound_rx.recv().await {
+            if let Err(e) = frame::write_frame(&mut send, ty, &payload).await {
+                debug!(error = %e, "iroh frame write failed");
+                break;
+            }
+        }
+        let _ = send.finish();
+    });
+
+    let mut attached: Option<Attached> = None;
+
+    loop {
+        match frame::read_frame(&mut recv).await {
+            Ok(Some((frame::TY_DATA, payload))) => {
+                if matches!(authz, PostAuth::AwaitHello) {
+                    warn!(viewer_id, "pre-Hello data from unpaired peer; rejecting");
+                    conn.close(
+                        1u8.into(),
+                        CLOSE_REASON_UNPAIRED,
+                    );
+                    break;
+                }
+                if let Some(att) = &attached {
+                    registry.tab_input(&att.section_id, &att.tab_id, &payload);
+                }
+                // No attachment → silently drop. Not an error:
+                // clients may type during the race between AttachTab
+                // going out and the first reply coming back.
+            }
+            Ok(Some((frame::TY_CONTROL, payload))) => {
+                match serde_json::from_slice::<Control>(&payload) {
+                    Ok(ctrl) => {
+                        if matches!(authz, PostAuth::AwaitHello) {
+                            match consume_hello(ctrl, viewer_id, &pair_state, paired_peers_path)
+                            {
+                                Ok(()) => {
+                                    authz = PostAuth::AlreadyPaired;
+                                    info!(viewer_id, "TOFU pair complete");
+                                    continue;
+                                }
+                                Err(e) => {
+                                    warn!(viewer_id, error = %e, "rejecting unpaired peer");
+                                    conn.close(
+                                        1u8.into(),
+                                        CLOSE_REASON_UNPAIRED,
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                        handle_control(
+                            ctrl,
+                            &registry,
+                            &outbound_tx,
+                            &mut attached,
+                            viewer_id,
+                        )
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!(error = %e, "control dispatch failed");
+                        });
+                    }
+                    Err(e) => warn!(error = %e, "bad iroh control frame"),
+                }
+            }
+            Ok(Some((ty, _))) => warn!(frame_type = ty, "unknown iroh frame type"),
+            Ok(None) => {
+                debug!("iroh peer closed send");
+                break;
+            }
+            Err(e) => {
+                warn!(error = %e, "iroh frame read failed");
+                break;
+            }
+        }
+    }
+
+    if let Some(att) = attached.take() {
+        att.forwarder.abort();
+    }
+    drop(outbound_tx);
+    writer_task.abort();
+    info!("iroh session ended");
+    Ok(())
+}
+
+/// Validate a `Control::Hello` from an unpaired peer. On match, consume
+/// the nonce (so a second reader of the same QR can't re-pair) and
+/// append the peer's `NodeId` to the allowlist. Any other control
+/// frame, missing token, mismatched token, or no outstanding nonce is
+/// rejected.
+fn consume_hello(
+    ctrl: Control,
+    viewer_id: &str,
+    pair_state: &Arc<Mutex<PairState>>,
+    paired_peers_path: &Path,
+) -> anyhow::Result<()> {
+    let Control::Hello { pair_token } = ctrl else {
+        anyhow::bail!("first frame from unpaired peer must be Control::Hello");
+    };
+    let presented = pair_token.ok_or_else(|| {
+        anyhow::anyhow!("Hello from unpaired peer missing pair_token")
+    })?;
+
+    // Validate-under-lock but do NOT consume yet — we need to know the
+    // allowlist write succeeded before clearing the nonce. If we
+    // consumed first and `persist_pairing` failed (disk full, perms),
+    // the peer would be in limbo: rejected for the rest of this
+    // session and unable to pair via Hello ever again until the user
+    // clicks "Reset pairings" to roll a fresh nonce. The trade-off is
+    // the short window where two concurrent Hellos could both pass
+    // validation if they squeak past the lock boundary — bounded by
+    // the time between dropping the guard here and re-acquiring it
+    // below. Acceptable because only whichever peer wins the
+    // allowlist `append` race ends up paired; the loser's nonce-clear
+    // attempt is still under lock and the nonce is already `None`, so
+    // the loser's `persist_pairing` still runs (idempotent append of
+    // the same NodeId), double-adding the *same* peer. Not a security
+    // issue.
+    {
+        let state = pair_state.lock().unwrap_or_else(|p| p.into_inner());
+        let expected = state
+            .nonce
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no outstanding pair nonce (consumed or not rolled)"))?;
+        if !constant_time_eq(expected.as_bytes(), presented.as_bytes()) {
+            anyhow::bail!("pair_token mismatch");
+        }
+    }
+
+    persist_pairing(viewer_id, paired_peers_path)?;
+
+    // Only clear after persist succeeded. A second peer that presents
+    // the same token between the two locks will also pass validation
+    // and persist — which is fine; both end up in the allowlist, the
+    // nonce ends up None either way, and the typical case (one phone
+    // scanning one QR) is unchanged.
+    pair_state.lock().unwrap_or_else(|p| p.into_inner()).nonce = None;
+    Ok(())
+}
+
+async fn handle_control(
+    ctrl: Control,
+    registry: &Arc<dyn TerminalRegistry>,
+    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    attached: &mut Option<Attached>,
+    viewer_id: &str,
+) -> anyhow::Result<()> {
+    match ctrl {
+        Control::Resize { cols, rows } | Control::TabResize { cols, rows } => {
+            if let Some(att) = attached.as_ref() {
+                registry.tab_resize(
+                    viewer_id,
+                    &att.section_id,
+                    &att.tab_id,
+                    cols,
+                    rows,
+                );
+            }
+        }
+        Control::ListProjects => {
+            let projects = registry.list_projects();
+            let wire = WorkerReply::ProjectList { projects };
+            send_worker_reply(outbound_tx, &wire).await?;
+        }
+        Control::AttachTab {
+            section_id,
+            tab_id,
+        } => {
+            // Drop any prior attachment on this connection.
+            if let Some(prev) = attached.take() {
+                prev.forwarder.abort();
+            }
+            // Clear this viewer's viewport claim from the prior tab
+            // before installing a new one. Without this, switching
+            // attach targets leaves the old tab's `active_viewers`
+            // entry stale until the first TabResize arrives — which
+            // often doesn't fire on cold attach, leaving the old
+            // tab's PTY clamped to this phone's viewport despite
+            // the phone having moved on.
+            registry.viewer_disconnected(viewer_id);
+
+            let Some(mut rx) = registry.attach_tab(&section_id, &tab_id) else {
+                warn!(section_id, tab_id, "attach_tab: no such live runtime");
+                return Ok(());
+            };
+
+            let out = outbound_tx.clone();
+            let forwarder = tokio::spawn(async move {
+                loop {
+                    match rx.recv().await {
+                        Ok(bytes) => {
+                            if out.send((frame::TY_DATA, bytes)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            // Slow mobile consumer lost `n` chunks.
+                            // Silently resuming from the new tail
+                            // would leave the client's terminal
+                            // state machine stranded — mid-CSI or
+                            // mid-alt-screen, cursor at wrong row —
+                            // because the skipped bytes carried the
+                            // closing escape sequences. There's no
+                            // in-band resync we can perform; the
+                            // only correct recovery is to tear down
+                            // the attachment and let the client
+                            // reconnect, where it'll get a fresh
+                            // scrollback replay + a clean VT state.
+                            warn!(lagged = n, "attach forwarder lagged; dropping attachment to force reattach");
+                            break;
+                        }
+                    }
+                }
+            });
+
+            *attached = Some(Attached {
+                section_id,
+                tab_id,
+                forwarder: forwarder.abort_handle(),
+            });
+        }
+        Control::DetachTab => {
+            if let Some(prev) = attached.take() {
+                prev.forwarder.abort();
+            }
+            // A detached viewer has no focused tab, so their
+            // viewport claim is stale — clear it so the PTY
+            // re-aggregates to the remaining viewers' min (or lifts
+            // the clamp entirely if this was the last viewer).
+            // Same semantics as viewer_disconnected on session end,
+            // just without closing the control stream.
+            registry.viewer_disconnected(viewer_id);
+        }
+        Control::WatchProject { project_path: _ } => {
+            // Legacy no-op. Kept in the enum for serde-compat with
+            // any lingering clients; new clients use
+            // ListProjects + AttachTab.
+            debug!("legacy Control::WatchProject ignored");
+        }
+        Control::LaunchTab {
+            section_id,
+            tab_id,
+        } => {
+            registry.launch_tab(&section_id, &tab_id);
+        }
+        Control::Hello { .. } => {
+            // Hello is only meaningful as the *first* control frame
+            // from an unpaired peer — see `consume_hello`. A paired
+            // peer that sends it mid-session is harmless but pointless;
+            // drop it rather than error.
+            debug!("stray Control::Hello from already-paired peer; ignored");
+        }
+    }
+    Ok(())
+}
+
+async fn send_worker_reply(
+    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    reply: &WorkerReply,
+) -> anyhow::Result<()> {
+    let payload = serde_json::to_vec(reply).context("serialize worker reply")?;
+    outbound_tx
+        .send((frame::TY_WORKER_REPLY, payload))
+        .await
+        .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))
+}
+
+// ---- pairing / identity plumbing -------------------------------
+
+enum PeerStatus {
+    Paired,
+    Unknown,
+}
+
+/// Generate a 128-bit random nonce as a 32-char hex string. Fits
+/// cleanly in a URL query param and is long enough that brute-forcing
+/// it over the network is infeasible on the timescale of a pairing
+/// session.
+pub(crate) fn generate_pair_nonce() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::rng().fill_bytes(&mut bytes);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(32);
+    for &b in &bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
+}
+
+/// Constant-time byte comparison. Returns false on length mismatch.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut acc = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        acc |= x ^ y;
+    }
+    acc == 0
+}
+
+fn load_or_create_secret_key(path: &Path) -> anyhow::Result<SecretKey> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create secret key dir {}", parent.display()))?;
+    }
+    if let Ok(content) = std::fs::read_to_string(path) {
         let trimmed = content.trim();
         let bytes = hex_decode_32(trimmed)
             .with_context(|| format!("parse secret key at {}", path.display()))?;
@@ -52,17 +499,124 @@ fn load_or_create_secret_key() -> anyhow::Result<SecretKey> {
     } else {
         let sk = SecretKey::generate();
         let hex = hex_encode_32(&sk.to_bytes());
-        std::fs::write(&path, format!("{hex}\n"))
+        std::fs::write(path, format!("{hex}\n"))
             .with_context(|| format!("write secret key to {}", path.display()))?;
-        // Tighten perms on unix — 0600 so other users on the box can't read.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
         }
         info!("generated new persistent secret key at {}", path.display());
         Ok(sk)
     }
+}
+
+/// Classify a remote `NodeId` against the allowlist. `Paired` means
+/// the peer is on the list and can proceed without a Hello frame;
+/// `Unknown` means the peer must prove fresh pairing via
+/// [`consume_hello`] before the daemon honours any control or data
+/// frames. This function never mutates the allowlist — call
+/// [`persist_pairing`] on successful Hello.
+fn peer_status(remote_id: &str, path: &Path) -> anyhow::Result<PeerStatus> {
+    use std::io::ErrorKind;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create allowlist dir {}", parent.display()))?;
+    }
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(anyhow::Error::from(e))
+                .with_context(|| format!("read allowlist {}", path.display()));
+        }
+    };
+    let paired = existing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .any(|peer| peer == remote_id);
+    if paired {
+        Ok(PeerStatus::Paired)
+    } else {
+        Ok(PeerStatus::Unknown)
+    }
+}
+
+/// Append `remote_id` to the allowlist, creating the file with 0600
+/// perms if needed. Called after a successful TOFU Hello.
+fn persist_pairing(remote_id: &str, path: &Path) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create allowlist dir {}", parent.display()))?;
+    }
+    let line = format!("{remote_id}\n");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.append(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts
+        .open(path)
+        .with_context(|| format!("open allowlist {}", path.display()))?;
+    f.write_all(line.as_bytes())
+        .with_context(|| format!("write allowlist {}", path.display()))?;
+    Ok(())
+}
+
+/// Build the `iroh://…?direct=…&relay=…&pair=…` URL the mobile
+/// client dials. The trailing `pair=<hex>` encodes the current TOFU
+/// nonce; the mobile client echoes it back as the `pair_token` field
+/// of [`Control::Hello`] on its first control frame.
+pub(crate) fn build_pairing_url_with_token(
+    addr: &EndpointAddr,
+    pair_token: &str,
+) -> String {
+    let direct = addr
+        .ip_addrs()
+        .map(|a| a.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let relay = addr
+        .relay_urls()
+        .next()
+        .map(|r| r.to_string())
+        .map(|r| urlencoding::encode(&r).into_owned());
+    let mut url = format!("iroh://{}", addr.id);
+    let mut have_query = false;
+    if !direct.is_empty() {
+        url.push_str(&format!("?direct={direct}"));
+        have_query = true;
+    }
+    if let Some(relay) = relay {
+        let sep = if have_query { '&' } else { '?' };
+        url.push_str(&format!("{sep}relay={relay}"));
+        have_query = true;
+    }
+    let sep = if have_query { '&' } else { '?' };
+    url.push_str(&format!("{sep}pair={pair_token}"));
+    url
+}
+
+/// Render a PNG of the pairing QR into a byte vec. No filesystem —
+/// embedders hand the bytes straight to their UI (GPUI image,
+/// Flutter image, terminal PNG dumper, etc.).
+pub(crate) fn render_qr_png_bytes(text: &str) -> anyhow::Result<Vec<u8>> {
+    use image::{ImageFormat, Luma};
+    use qrcode::QrCode;
+
+    let code = QrCode::new(text.as_bytes()).context("QR encode")?;
+    let image = code.render::<Luma<u8>>().min_dimensions(256, 256).build();
+    let mut bytes: Vec<u8> = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)
+        .context("encode PNG")?;
+    Ok(bytes)
 }
 
 fn hex_encode_32(bytes: &[u8; 32]) -> String {
@@ -88,494 +642,26 @@ fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
     Ok(out)
 }
 
-/// Runs the Iroh endpoint loop until its `accept()` stream ends.
-pub async fn serve() -> anyhow::Result<()> {
-    let secret_key = load_or_create_secret_key()?;
-    let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(secret_key)
-        .alpns(vec![ALPN.to_vec()])
-        .bind()
-        .await
-        .context("bind iroh endpoint")?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let endpoint_id = endpoint.id();
-    info!("iroh EndpointId: {}", endpoint_id);
-    info!("iroh ALPN: {}", String::from_utf8_lossy(ALPN));
-
-    // Sandbox convenience: stash the EndpointId in /tmp so `iroh-client`
-    // can pick it up without copy/paste. Production daemons should persist
-    // their secret key and publish identity through a pairing flow instead.
-    let id_path = std::env::temp_dir().join("daemon-sandbox.nodeid");
-    if let Err(e) = std::fs::write(&id_path, endpoint_id.to_string()) {
-        warn!(error = %e, "failed to write NodeId hint file");
-    } else {
-        info!("EndpointId written to {}", id_path.display());
+    #[test]
+    fn hex_roundtrips() {
+        let bytes = [
+            0xde, 0xad, 0xbe, 0xef, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+            18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+        ];
+        let s = hex_encode_32(&bytes);
+        assert_eq!(s.len(), 64);
+        let back = hex_decode_32(&s).unwrap();
+        assert_eq!(back, bytes);
     }
 
-    endpoint.online().await;
-    info!("iroh endpoint online: {:?}", endpoint.addr());
-
-    // After going online, also stash the full EndpointAddr (id + direct
-    // socket addrs + relay URLs) as a newline-delimited text file so
-    // iroh-client and the mobile sandbox can dial without depending on DNS
-    // address lookup. Relay entries let off-LAN clients (CGNAT'd mobile on
-    // cellular, different networks) reach the daemon through the dev relay
-    // mesh when direct hole-punching fails.
-    // Format:
-    //   id=<hex>
-    //   addr=<ip:port>
-    //   …
-    //   relay=<url>
-    //   …
-    let addr = endpoint.addr();
-    let mut ticket = format!("id={}\n", addr.id);
-    for ip in addr.ip_addrs() {
-        ticket.push_str(&format!("addr={ip}\n"));
+    #[test]
+    fn render_qr_png_produces_png_magic_bytes() {
+        let png = render_qr_png_bytes("iroh://test").unwrap();
+        assert!(png.len() > 100);
+        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']);
     }
-    for relay in addr.relay_urls() {
-        ticket.push_str(&format!("relay={relay}\n"));
-    }
-    let ticket_path = std::env::temp_dir().join("daemon-sandbox.ticket");
-    if let Err(e) = std::fs::write(&ticket_path, ticket) {
-        warn!(error = %e, "failed to write ticket file");
-    } else {
-        info!("Ticket written to {}", ticket_path.display());
-    }
-
-    // Print a single-line pairing URL and ASCII QR on stdout — the phone
-    // can scan the QR with its default camera app, copy the URL, and paste
-    // it into the endpoint field. Also write a PNG next to the ticket so
-    // you can open it in any image viewer if your terminal's font/contrast
-    // isn't scannable. Direct addrs are included so on-LAN devices can use
-    // the fast path; relay is included so cellular/off-LAN falls back.
-    let pairing_url = build_pairing_url(&addr);
-    println!();
-    println!("Pairing URL:\n  {pairing_url}");
-    match render_qr_ascii(&pairing_url) {
-        Ok(qr) => {
-            println!();
-            print!("{qr}");
-        }
-        Err(e) => warn!(error = %e, "failed to render ASCII pairing QR"),
-    }
-    let png_path = std::env::temp_dir().join("daemon-sandbox.pairing.png");
-    match write_qr_png(&pairing_url, &png_path) {
-        Ok(()) => {
-            println!();
-            println!("Pairing QR also written to {}", png_path.display());
-        }
-        Err(e) => warn!(error = %e, "failed to write pairing PNG"),
-    }
-
-    while let Some(incoming) = endpoint.accept().await {
-        tokio::spawn(async move {
-            if let Err(e) = handle_incoming(incoming).await {
-                warn!(error = %e, "iroh connection error");
-            }
-        });
-    }
-    Ok(())
-}
-
-async fn handle_incoming(incoming: Incoming) -> anyhow::Result<()> {
-    let conn = incoming
-        .accept()
-        .context("accept")?
-        .await
-        .context("handshake")?;
-    let remote = conn.remote_id();
-
-    // Authorize via a trust-on-first-use allowlist. The first client to
-    // connect gets saved as the owning device; subsequent unknown
-    // EndpointIds are rejected immediately. Delete the allowlist file to
-    // re-pair. This is the sandbox's stand-in for a real pairing token
-    // flow — quick, zero-UX, good enough to keep random iroh peers who
-    // learn the NodeId out.
-    match authorize_remote(&remote.to_string()) {
-        Ok(Authorization::Paired) => {
-            info!(%remote, "iroh client connected (paired)");
-        }
-        Ok(Authorization::FirstPair) => {
-            info!(%remote, "iroh client connected (first-pair, added to allowlist)");
-        }
-        Err(e) => {
-            warn!(%remote, error = %e, "rejecting unknown peer");
-            conn.close(1u8.into(), b"not paired");
-            return Ok(());
-        }
-    }
-    handle_connection(conn).await
-}
-
-enum Authorization {
-    /// The remote's EndpointId was already in the allowlist.
-    Paired,
-    /// Allowlist was empty; we just added this remote.
-    FirstPair,
-}
-
-/// Check the allowlist at `<data_dir>/paired_peers` against `remote_id`.
-/// Adds the remote on the first-ever call (TOFU). Returns `Err` on any
-/// other mismatch — the caller closes the connection without starting a
-/// PTY.
-///
-/// Read failures other than `NotFound` bail out rather than TOFU-pair
-/// the connecting peer: a transient `EACCES`/`EIO` or a manually-edited
-/// permissions botch used to look exactly like "file empty" and would
-/// silently accept the next incoming EndpointId, overwriting a real
-/// pairing.
-///
-/// The first-pair write uses `create_new(true)` so two clients racing to
-/// be the first-ever connection can't both win: exactly one CREATE
-/// syscall succeeds; the other collides with `AlreadyExists` and falls
-/// through to a normal allowlist check. Non-atomic read-then-write
-/// would otherwise happily let both through.
-fn authorize_remote(remote_id: &str) -> anyhow::Result<Authorization> {
-    use std::io::{ErrorKind, Write};
-
-    let path = data_dir()?.join("paired_peers");
-    let existing = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
-        Err(e) => {
-            return Err(anyhow::Error::from(e))
-                .with_context(|| format!("read allowlist {}", path.display()));
-        }
-    };
-    let peers: Vec<&str> = existing
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .collect();
-    if peers.contains(&remote_id) {
-        return Ok(Authorization::Paired);
-    }
-    if !peers.is_empty() {
-        anyhow::bail!(
-            "remote {remote_id} is not in {} (delete the file to re-pair)",
-            path.display()
-        )
-    }
-
-    // First-pair path. Atomic create so a concurrent first connect can't
-    // both pair; losers get `AlreadyExists` and must re-enter through
-    // the normal allowlist check above on their next dial.
-    let line = format!("{remote_id}\n");
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    match opts.open(&path) {
-        Ok(mut f) => {
-            f.write_all(line.as_bytes())
-                .with_context(|| format!("write allowlist {}", path.display()))?;
-            Ok(Authorization::FirstPair)
-        }
-        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-            anyhow::bail!(
-                "lost first-pair race for {remote_id}; \
-                 re-dial after inspecting {}",
-                path.display()
-            )
-        }
-        Err(e) => Err(anyhow::Error::from(e))
-            .with_context(|| format!("create allowlist {}", path.display())),
-    }
-}
-
-async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
-    let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
-
-    let session = PtySession::spawn(80, 24).context("pty session")?;
-    let mut output_rx = session.output_rx;
-    let mut writer = session.master_writer;
-
-    // The recv loop needs to send resize commands to the master, which is
-    // held by `session`. Use a channel so the loop doesn't need a direct
-    // handle across the split.
-    let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(8);
-    let master = session.master;
-    let resize_task = tokio::spawn(async move {
-        while let Some((cols, rows)) = resize_rx.recv().await {
-            if let Err(e) = master.resize(iroh_pty_size(cols, rows)) {
-                warn!(error = %e, "pty resize failed");
-            } else {
-                debug!(cols, rows, "iroh resized");
-            }
-        }
-        // Drop the master when the channel closes so the PTY frees.
-        drop(master);
-    });
-
-    // Multiplexed outbound frames. Anything the daemon wants to send
-    // the client (PTY bytes, worker replies, future push
-    // notifications) goes through this channel so a single task owns
-    // `send` and serialises writes — concurrent writers on a QUIC
-    // send stream would either race or require an async mutex.
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<(u8, Vec<u8>)>(16);
-
-    // PTY output → outbound queue as TY_DATA frames.
-    let pty_outbound_tx = outbound_tx.clone();
-    let pty_relay_task = tokio::spawn(async move {
-        while let Some(bytes) = output_rx.recv().await {
-            if pty_outbound_tx.send((frame::TY_DATA, bytes)).await.is_err() {
-                // writer task exited; stop pumping.
-                break;
-            }
-        }
-    });
-
-    // Single writer: drains the outbound queue into the QUIC stream.
-    // Keeps running as long as any producer (pty_relay_task or a
-    // worker forwarder spawned from the Control::WatchProject dispatch
-    // below) still holds a clone of `outbound_tx`. We drop our own
-    // clone after the recv loop exits so the writer terminates
-    // cleanly during teardown.
-    let send_task = tokio::spawn(async move {
-        while let Some((ty, payload)) = outbound_rx.recv().await {
-            if let Err(e) = frame::write_frame(&mut send, ty, &payload).await {
-                debug!(error = %e, "iroh frame write failed");
-                break;
-            }
-        }
-        let _ = send.finish();
-    });
-
-    // Iroh recv stream → dispatch by frame type.
-    loop {
-        match frame::read_frame(&mut recv).await {
-            Ok(Some((frame::TY_DATA, payload))) => {
-                if let Err(e) = std::io::Write::write_all(&mut writer, &payload) {
-                    warn!(error = %e, "iroh→pty write failed");
-                    break;
-                }
-                let _ = std::io::Write::flush(&mut writer);
-            }
-            Ok(Some((frame::TY_CONTROL, payload))) => {
-                match serde_json::from_slice::<Control>(&payload) {
-                    Ok(Control::Resize { cols, rows }) => {
-                        if resize_tx.send((cols, rows)).await.is_err() {
-                            debug!("resize channel closed");
-                            break;
-                        }
-                    }
-                    Ok(Control::WatchProject { project_path }) => {
-                        let path = PathBuf::from(&project_path);
-                        if !path.is_dir() {
-                            warn!(
-                                project_path = %project_path,
-                                "WatchProject ignored: path does not exist or is not a directory"
-                            );
-                        } else {
-                            let worker_tx = outbound_tx.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = forward_project_state(worker_tx, path).await {
-                                    warn!(error = %e, "project state forward failed");
-                                }
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "bad iroh control frame");
-                    }
-                }
-            }
-            Ok(Some((ty, _))) => {
-                warn!(frame_type = ty, "unknown iroh frame type");
-            }
-            Ok(None) => {
-                debug!("iroh peer closed send");
-                break;
-            }
-            Err(e) => {
-                warn!(error = %e, "iroh frame read failed");
-                break;
-            }
-        }
-    }
-
-    // Teardown. Dropping resize_tx closes the resize channel →
-    // resize_task drops the master → PTY frees. Dropping outbound_tx
-    // lets send_task finish once all worker forwarders die off —
-    // spawn_refresh workers are one-shot and self-terminate, so this
-    // naturally converges.
-    drop(resize_tx);
-    drop(outbound_tx);
-    pty_relay_task.abort();
-    send_task.abort();
-    resize_task.abort();
-    let mut child = session.child;
-    let _ = child.kill();
-    let _ = child.wait();
-    info!("iroh session ended");
-    Ok(())
-}
-
-/// Run the full watched-project pipeline once: subscribe to
-/// `spawn_refresh`, forward the `GitRefreshReply` as a wire frame,
-/// and — if the refresh returned a current branch — chain a
-/// `spawn_pull_request_lookup` for that branch and forward the
-/// resulting status as a second frame.
-///
-/// Errors here are never fatal to the session — they drop this task
-/// silently; PTY bridging keeps working. Each stage fails
-/// independently: a failed PR lookup doesn't retroactively invalidate
-/// the refresh that already shipped.
-async fn forward_project_state(
-    outbound_tx: mpsc::Sender<(u8, Vec<u8>)>,
-    project_path: PathBuf,
-) -> anyhow::Result<()> {
-    let project_id = project_path.display().to_string();
-
-    // Stage 1: git refresh.
-    let mut refresh_rx = another_one_core::git_service::spawn_refresh(
-        project_id.clone(),
-        project_path.clone(),
-        /* include_metadata */ true,
-        /* commit_limit      */ None,
-        /* compare_target    */ None,
-    );
-    let refresh = refresh_rx
-        .recv()
-        .await
-        .context("git_refresh sender dropped before sending a reply")?;
-
-    let current_branch = refresh.state.current_branch.clone();
-    let refresh_wire = WorkerReply::GitRefresh {
-        project_id: refresh.project_id.clone(),
-        current_branch: refresh.state.current_branch,
-        changed_file_count: refresh.state.changed_files.len(),
-        ahead: refresh.state.ahead_count,
-        behind: refresh.state.behind_count,
-    };
-    send_worker_reply(&outbound_tx, &refresh_wire)
-        .await
-        .context("forward git_refresh reply")?;
-
-    // Stage 2: PR lookup (only if we know the branch name).
-    let Some(branch_name) = current_branch else {
-        return Ok(());
-    };
-
-    // `spawn_pull_request_lookup` is queue-shaped — it takes a
-    // broadcast::Sender (so desktop can share one receiver across
-    // many lookups). For the daemon's one-shot use we allocate a
-    // throwaway channel per call, capacity 1.
-    let (pr_tx, mut pr_rx) = tokio::sync::broadcast::channel(1);
-    another_one_core::git_service::spawn_pull_request_lookup(
-        pr_tx,
-        /* lookup_key */ format!("{project_id}:{branch_name}"),
-        project_path,
-        branch_name.clone(),
-    );
-    let pr_reply = pr_rx
-        .recv()
-        .await
-        .context("pull_request_lookup sender dropped before sending a reply")?;
-
-    let pr_wire = WorkerReply::PullRequestStatus {
-        project_id,
-        branch_name,
-        pr: pr_reply.pull_request.map(|status| PullRequestInfo {
-            number: status.number,
-            url: status.url,
-            state: map_pr_state(status.state),
-        }),
-    };
-    send_worker_reply(&outbound_tx, &pr_wire)
-        .await
-        .context("forward pull_request reply")?;
-
-    Ok(())
-}
-
-async fn send_worker_reply(
-    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
-    reply: &WorkerReply,
-) -> anyhow::Result<()> {
-    let payload = serde_json::to_vec(reply).context("serialize worker reply")?;
-    outbound_tx
-        .send((frame::TY_WORKER_REPLY, payload))
-        .await
-        .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))
-}
-
-fn map_pr_state(state: another_one_core::git_actions::PullRequestState) -> PullRequestState {
-    use another_one_core::git_actions::PullRequestState as Core;
-    match state {
-        Core::Open => PullRequestState::Open,
-        Core::Closed => PullRequestState::Closed,
-        Core::Merged => PullRequestState::Merged,
-    }
-}
-
-fn iroh_pty_size(cols: u16, rows: u16) -> portable_pty::PtySize {
-    portable_pty::PtySize {
-        cols,
-        rows,
-        pixel_width: 0,
-        pixel_height: 0,
-    }
-}
-
-/// Builds the `iroh://…?direct=…&relay=…` pairing URL the mobile app
-/// understands. Direct addrs are comma-separated; relay URLs are
-/// percent-encoded so the `://` inside each relay URL doesn't confuse
-/// Dart's `Uri.parse`.
-fn build_pairing_url(addr: &iroh::EndpointAddr) -> String {
-    let directs = addr
-        .ip_addrs()
-        .map(|ip| ip.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let relays = addr
-        .relay_urls()
-        .map(|u| urlencoding::encode(u.as_str()).into_owned())
-        .collect::<Vec<_>>()
-        .join(",");
-    let mut url = format!("iroh://{}", addr.id);
-    let mut params: Vec<String> = Vec::new();
-    if !directs.is_empty() {
-        params.push(format!("direct={directs}"));
-    }
-    if !relays.is_empty() {
-        params.push(format!("relay={relays}"));
-    }
-    if !params.is_empty() {
-        url.push('?');
-        url.push_str(&params.join("&"));
-    }
-    url
-}
-
-/// Renders `input` as an ASCII QR code (two chars per pixel, quiet zone
-/// included) suitable for pasting into a terminal window. Returns a
-/// string that ends with a newline.
-fn render_qr_ascii(input: &str) -> anyhow::Result<String> {
-    use qrcode::{render::unicode::Dense1x2, QrCode};
-    let code = QrCode::new(input.as_bytes()).context("encode QR")?;
-    Ok(code
-        .render::<Dense1x2>()
-        .dark_color(Dense1x2::Light)
-        .light_color(Dense1x2::Dark)
-        .build())
-}
-
-/// Renders `input` as a PNG and writes it to `path`. We scale modules up
-/// to 12 px with an 8-module quiet zone so phone cameras can focus on it
-/// at typical laptop-viewing distance without hunting.
-fn write_qr_png(input: &str, path: &std::path::Path) -> anyhow::Result<()> {
-    use qrcode::QrCode;
-    let code = QrCode::new(input.as_bytes()).context("encode QR")?;
-    let buf = code
-        .render::<image::Luma<u8>>()
-        .min_dimensions(480, 480)
-        .quiet_zone(true)
-        .build();
-    buf.save_with_format(path, image::ImageFormat::Png)
-        .with_context(|| format!("write {}", path.display()))?;
-    Ok(())
 }

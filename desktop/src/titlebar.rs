@@ -1534,6 +1534,7 @@ impl AnotherOneApp {
             .child(self.titlebar_github_button(cx))
             .child(self.titlebar_pull_request_button(cx))
             .child(self.titlebar_git_actions_button(cx))
+            .child(self.titlebar_pair_mobile_button(cx))
             .child(self.resource_indicator_button(window, cx))
             .child(
                 div()

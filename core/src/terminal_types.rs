@@ -116,4 +116,13 @@ pub struct PreparedTerminalRuntime {
     pub master: Box<dyn MasterPty + Send>,
     pub writer: Box<dyn Write + Send>,
     pub child_killer: Box<dyn ChildKiller + Send + Sync>,
+    /// Broadcast tee of every byte read from the master PTY. The
+    /// existing mpsc `TerminalLaunchReply::Output` path stays as-is
+    /// (desktop's `LiveTerminalRuntime` consumes it); this second
+    /// sink is what the embedded daemon subscribes to so a mobile
+    /// client can see the same stream the desktop renders.
+    /// `send()` is non-blocking and returns Ok(subscriber_count) or
+    /// Err when there are no receivers — lagged mobile subscribers
+    /// just drop chunks rather than stalling the reader.
+    pub output_broadcast: tokio::sync::broadcast::Sender<Vec<u8>>,
 }

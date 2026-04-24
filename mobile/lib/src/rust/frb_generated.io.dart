@@ -57,7 +57,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
-  PullRequestInfo dco_decode_box_autoadd_pull_request_info(dynamic raw);
+  AgentProvider dco_decode_agent_provider(dynamic raw);
+
+  @protected
+  bool dco_decode_bool(dynamic raw);
+
+  @protected
+  AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw);
 
   @protected
   int dco_decode_i_32(dynamic raw);
@@ -72,22 +78,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<ProjectSummary> dco_decode_list_project_summary(dynamic raw);
+
+  @protected
+  List<TabSummary> dco_decode_list_tab_summary(dynamic raw);
+
+  @protected
+  List<TaskSummary> dco_decode_list_task_summary(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
-  PullRequestInfo? dco_decode_opt_box_autoadd_pull_request_info(dynamic raw);
+  AgentProvider? dco_decode_opt_box_autoadd_agent_provider(dynamic raw);
 
   @protected
-  PullRequestInfo dco_decode_pull_request_info(dynamic raw);
+  ProjectKind dco_decode_project_kind(dynamic raw);
 
   @protected
-  PullRequestState dco_decode_pull_request_state(dynamic raw);
+  ProjectSummary dco_decode_project_summary(dynamic raw);
+
+  @protected
+  TabSummary dco_decode_tab_summary(dynamic raw);
+
+  @protected
+  TaskSummary dco_decode_task_summary(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
-
-  @protected
-  BigInt dco_decode_u_64(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -136,7 +154,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
-  PullRequestInfo sse_decode_box_autoadd_pull_request_info(
+  AgentProvider sse_decode_agent_provider(SseDeserializer deserializer);
+
+  @protected
+  bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  AgentProvider sse_decode_box_autoadd_agent_provider(
     SseDeserializer deserializer,
   );
 
@@ -153,24 +177,38 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
-  String? sse_decode_opt_String(SseDeserializer deserializer);
-
-  @protected
-  PullRequestInfo? sse_decode_opt_box_autoadd_pull_request_info(
+  List<ProjectSummary> sse_decode_list_project_summary(
     SseDeserializer deserializer,
   );
 
   @protected
-  PullRequestInfo sse_decode_pull_request_info(SseDeserializer deserializer);
+  List<TabSummary> sse_decode_list_tab_summary(SseDeserializer deserializer);
 
   @protected
-  PullRequestState sse_decode_pull_request_state(SseDeserializer deserializer);
+  List<TaskSummary> sse_decode_list_task_summary(SseDeserializer deserializer);
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  AgentProvider? sse_decode_opt_box_autoadd_agent_provider(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ProjectKind sse_decode_project_kind(SseDeserializer deserializer);
+
+  @protected
+  ProjectSummary sse_decode_project_summary(SseDeserializer deserializer);
+
+  @protected
+  TabSummary sse_decode_tab_summary(SseDeserializer deserializer);
+
+  @protected
+  TaskSummary sse_decode_task_summary(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
-
-  @protected
-  BigInt sse_decode_u_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -183,9 +221,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   WorkerReply sse_decode_worker_reply(SseDeserializer deserializer);
-
-  @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -230,8 +265,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_pull_request_info(
-    PullRequestInfo self,
+  void sse_encode_agent_provider(AgentProvider self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_agent_provider(
+    AgentProvider self,
     SseSerializer serializer,
   );
 
@@ -251,31 +292,49 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_project_summary(
+    List<ProjectSummary> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_tab_summary(
+    List<TabSummary> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_task_summary(
+    List<TaskSummary> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_pull_request_info(
-    PullRequestInfo? self,
+  void sse_encode_opt_box_autoadd_agent_provider(
+    AgentProvider? self,
     SseSerializer serializer,
   );
 
   @protected
-  void sse_encode_pull_request_info(
-    PullRequestInfo self,
+  void sse_encode_project_kind(ProjectKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_project_summary(
+    ProjectSummary self,
     SseSerializer serializer,
   );
 
   @protected
-  void sse_encode_pull_request_state(
-    PullRequestState self,
-    SseSerializer serializer,
-  );
+  void sse_encode_tab_summary(TabSummary self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_task_summary(TaskSummary self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
@@ -288,9 +347,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_worker_reply(WorkerReply self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
 }
 
 // Section: wire_class

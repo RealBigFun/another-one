@@ -157,6 +157,22 @@ fn launch_terminal(
     let process_id = child.process_id();
     let child_killer = child.clone_killer();
 
+    // Broadcast tee — see `PreparedTerminalRuntime::output_broadcast`.
+    // Capacity 512 absorbs a burst of ~4 MB (8 KiB reads × 512) —
+    // roughly one full alt-screen repaint from Claude Code's
+    // status-panel rewrite storms without the subscriber hitting
+    // `RecvError::Lagged` and skipping rows.
+    let (output_broadcast, _initial_rx) =
+        tokio::sync::broadcast::channel::<Vec<u8>>(512);
+    let broadcast_for_reader = output_broadcast.clone();
+
+    // Only clone the 8 KiB chunk when there's actually a subscriber —
+    // zero-subscriber `send()` returns Err and we were cloning for
+    // nothing before. `receiver_count()` is atomic, so this is cheap.
+    let has_subscribers =
+        move || broadcast_for_reader.receiver_count() > 0;
+    let broadcast_for_reader_send = output_broadcast.clone();
+
     sender
         .send(TerminalLaunchReply::Launched {
             key: key.clone(),
@@ -165,6 +181,7 @@ fn launch_terminal(
                 master: pair.master,
                 writer,
                 child_killer,
+                output_broadcast,
             },
             launch_config,
             process_id,
@@ -179,9 +196,18 @@ fn launch_terminal(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(count) => {
+                    let bytes = buf[..count].to_vec();
+                    // Only clone + broadcast when a mobile viewer is
+                    // actually subscribed. Zero-subscriber send()
+                    // would return Err, but the `.clone()` of the
+                    // Vec runs unconditionally — wasted at ~hundreds
+                    // of chunks/sec under chatty agents.
+                    if has_subscribers() {
+                        let _ = broadcast_for_reader_send.send(bytes.clone());
+                    }
                     let _ = output_sender.send(TerminalLaunchReply::Output {
                         key: output_key.clone(),
-                        bytes: buf[..count].to_vec(),
+                        bytes,
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -251,6 +277,15 @@ fn launch_warm_terminal(
     let process_id = child.process_id();
     let child_killer = child.clone_killer();
 
+    // Warm launches get a broadcast tee too. Today the warm-launch
+    // flow is desktop-only (it never reaches mobile because warm
+    // tabs aren't promoted onto a task's tab row until committed),
+    // but constructing the sender here keeps `PreparedTerminalRuntime`
+    // non-optional and lets future code subscribe without a branch.
+    let (output_broadcast, _initial_rx) =
+        tokio::sync::broadcast::channel::<Vec<u8>>(512);
+    let broadcast_for_reader = output_broadcast.clone();
+
     sender
         .send(WarmTerminalLaunchReply::Launched {
             launch_id,
@@ -259,6 +294,7 @@ fn launch_warm_terminal(
                 master: pair.master,
                 writer,
                 child_killer,
+                output_broadcast,
             },
             launch_config,
             process_id,
@@ -272,9 +308,11 @@ fn launch_warm_terminal(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(count) => {
+                    let bytes = buf[..count].to_vec();
+                    let _ = broadcast_for_reader.send(bytes.clone());
                     let _ = output_sender.send(WarmTerminalLaunchReply::Output {
                         launch_id,
-                        bytes: buf[..count].to_vec(),
+                        bytes,
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,

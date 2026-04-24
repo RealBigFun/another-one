@@ -26,6 +26,15 @@ class IrohTransport implements TerminalTransport {
   /// won't succeed.
   final List<String> relayUrls;
 
+  /// TOFU pair token from the QR's `pair=<hex>` query param. Sent to
+  /// the daemon in the first `Hello` control frame so an unpaired
+  /// daemon can verify this peer scanned the current QR. Null for
+  /// endpoints persisted from an older app version (or entered by
+  /// hand) — the daemon will accept them iff they were already paired
+  /// from a prior session; a brand-new device with null here will be
+  /// rejected, which matches the security contract.
+  final String? pairToken;
+
   final StreamController<Uint8List> _incoming =
       StreamController<Uint8List>.broadcast();
   final StreamController<TransportStatus> _status =
@@ -48,6 +57,7 @@ class IrohTransport implements TerminalTransport {
     this.endpointId, {
     this.directAddrs = const [],
     this.relayUrls = const [],
+    this.pairToken,
   });
 
   @override
@@ -59,9 +69,8 @@ class IrohTransport implements TerminalTransport {
   @override
   TransportStatus get currentStatus => _current;
 
-  /// Daemon-pushed worker replies (git state etc.) for the currently
-  /// watched project. Call [watchProject] first; nothing arrives on
-  /// this stream until the daemon has a subscription to forward.
+  /// Daemon-pushed worker replies. Today the only variant is
+  /// `ProjectList`, pushed in response to [listProjects].
   Stream<WorkerReply> get workerReplies => _workerReplies.stream;
 
   @override
@@ -77,6 +86,7 @@ class IrohTransport implements TerminalTransport {
         endpointId: endpointId,
         directAddrs: directAddrs,
         relayUrls: relayUrls,
+        pairToken: pairToken,
       );
       if (_closed) {
         await session.close();
@@ -90,7 +100,7 @@ class IrohTransport implements TerminalTransport {
             _publish(const TransportStatus.connected());
           }
         },
-        onError: (err) => _publish(TransportStatus.error(err.toString())),
+        onError: (err) => _publish(_statusForError(err)),
         onDone: () => _publish(const TransportStatus.disconnected()),
         cancelOnError: true,
       );
@@ -102,18 +112,78 @@ class IrohTransport implements TerminalTransport {
       );
       _publish(const TransportStatus.connected());
     } catch (e) {
-      _publish(TransportStatus.error(e.toString()));
+      _publish(_statusForError(e));
     }
   }
 
-  /// Ask the daemon to start forwarding git state (and later, more
-  /// worker replies) for [projectPath]. Safe to call multiple times —
-  /// the daemon treats each call as a fresh subscription, replacing
-  /// any prior one for this session.
-  void watchProject(String projectPath) {
+  /// Map an error thrown by the iroh layer to the best-fitting
+  /// TransportStatus. The daemon closes the connection with the
+  /// ASCII reason `anotherone/unpaired` when the peer isn't in its
+  /// allowlist or fails TOFU validation; iroh surfaces that reason
+  /// inside the close error string, so a substring match is good
+  /// enough. Kept short to avoid leaking UI copy onto the wire.
+  TransportStatus _statusForError(Object err) {
+    final msg = err.toString();
+    if (msg.contains('anotherone/unpaired')) {
+      return const TransportStatus.unpaired('pairing expired or cleared');
+    }
+    return TransportStatus.error(msg);
+  }
+
+  /// Ask the daemon to send its project list. The response arrives on
+  /// [workerReplies] as a `WorkerReply_ProjectList`. Returns a
+  /// future for callers that want to surface send errors; most call
+  /// sites can ignore it (the list will simply not arrive).
+  Future<void> listProjects() async {
     final session = _session;
     if (session == null) return;
-    unawaited(session.watchProject(projectPath: projectPath));
+    await session.listProjects();
+  }
+
+  /// Attach this session's PTY-byte stream to a specific live tab on
+  /// the daemon. Replaces any previous attachment; daemon begins
+  /// forwarding TY_DATA frames for `tabId` under section `sectionId`.
+  ///
+  /// After calling, subscribe to [incoming] to receive bytes for the
+  /// attached tab. Calling [attachTab] again with a different tab
+  /// implicitly detaches the previous one.
+  Future<void> attachTab({
+    required String sectionId,
+    required String tabId,
+  }) async {
+    final session = _session;
+    if (session == null) return;
+    await session.attachTab(sectionId: sectionId, tabId: tabId);
+  }
+
+  /// Stop receiving PTY bytes for the currently-attached tab. Safe to
+  /// call without an active attachment (no-op).
+  Future<void> detachTab() async {
+    final session = _session;
+    if (session == null) return;
+    await session.detachTab();
+  }
+
+  /// Resize the currently-attached tab's PTY. Unlike [sendResize],
+  /// this targets the tab on the daemon's side, not a single-session
+  /// PTY — required when the daemon is bridging into a
+  /// desktop-hosted live tab.
+  Future<void> tabResize({required int cols, required int rows}) async {
+    final session = _session;
+    if (session == null) return;
+    await session.tabResize(cols: cols, rows: rows);
+  }
+
+  /// Ask the daemon to launch this tab's PTY if it isn't already live.
+  /// Safe to call unconditionally before [attachTab] — it's a no-op on
+  /// the daemon side when the tab is already running.
+  Future<void> launchTab({
+    required String sectionId,
+    required String tabId,
+  }) async {
+    final session = _session;
+    if (session == null) return;
+    await session.launchTab(sectionId: sectionId, tabId: tabId);
   }
 
   @override
