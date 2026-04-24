@@ -11,8 +11,9 @@ use gpui::{
     actions, div, hsla, img, prelude::*, px, rems, rgb, svg, AnyElement, AnyView, App, Bounds,
     ClipboardEntry, ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Image, InspectorElementId,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Point,
-    Render, ScrollDelta, ShapedLine, SharedString, Size, Timer, UTF16Selection, WeakEntity, Window,
+    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ObjectFit, Pixels, Point, Render, ScrollDelta, ShapedLine, SharedString, Size, Timer,
+    UTF16Selection, WeakEntity, Window,
 };
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
@@ -93,6 +94,14 @@ fn trim_to_recent_output_limit(buffer: &mut String) {
     buffer.drain(..start);
 }
 
+fn new_tab_seed_agent_id(
+    state: Option<&SectionState>,
+    default_agent_id: Option<&str>,
+) -> Option<String> {
+    state?;
+    default_agent_id.map(str::to_string)
+}
+
 /// A single terminal tab within a section.
 pub struct TerminalTab {
     pub id: String,
@@ -108,6 +117,13 @@ pub(crate) struct TerminalSelectionRange {
     pub start_line: usize,
     pub start_column: usize,
     pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalLinkRange {
+    pub line: usize,
+    pub start_column: usize,
     pub end_column: usize,
 }
 
@@ -1072,21 +1088,16 @@ impl WorkspacePane {
 
     pub(crate) fn open_add_agent_modal(&self, section_id: &SectionId, cx: &mut Context<Self>) {
         let section_id = section_id.clone();
-        let selected_agent_id = self
-            .section_states
-            .get(&section_id)
-            .and_then(|state| state.tabs.get(state.active_tab))
-            .and_then(|tab| tab.launch_config.provider)
-            .and_then(|provider| {
-                AGENTS
-                    .iter()
-                    .find(|agent| agent.provider == Some(provider))
-                    .map(|agent| agent.id)
-            })
-            .map(str::to_string);
         let app = self.app.clone();
         cx.defer(move |cx| {
             let _ = app.update(cx, |app, app_cx| {
+                let selected_agent_id = {
+                    let workspace = app.workspace_pane.read(app_cx);
+                    new_tab_seed_agent_id(
+                        workspace.section_states.get(&section_id),
+                        app.default_agent_id(),
+                    )
+                };
                 app.open_add_agent_modal(section_id.clone(), selected_agent_id.clone(), app_cx);
                 app_cx.notify();
             });
@@ -2000,6 +2011,209 @@ fn terminal_line_selection_range(
         end_line: position.line,
         end_column: snapshot.columns.saturating_sub(1),
     })
+}
+
+fn terminal_link_at_position(
+    snapshot: &TerminalSurfaceSnapshot,
+    position: TerminalCellPosition,
+) -> Option<String> {
+    let line = snapshot.lines.get(position.line)?;
+    let clicked_cell = line
+        .cells
+        .iter()
+        .find(|cell| cell.column <= position.column && position.column < cell.column + cell.width);
+
+    if let Some(link) = clicked_cell
+        .and_then(|cell| cell.hyperlink.as_deref())
+        .and_then(normalize_terminal_link)
+    {
+        return Some(link);
+    }
+
+    terminal_text_link_at_column(line, position.column)
+}
+
+pub(crate) fn terminal_link_ranges(snapshot: &TerminalSurfaceSnapshot) -> Vec<TerminalLinkRange> {
+    let mut ranges = Vec::new();
+
+    for (line_index, line) in snapshot.lines.iter().enumerate() {
+        let mut current_explicit: Option<(String, usize, usize)> = None;
+        for cell in &line.cells {
+            let link = cell.hyperlink.as_deref().and_then(normalize_terminal_link);
+            if let (Some((current_link, _, end_column)), Some(link)) =
+                (current_explicit.as_mut(), link.as_ref())
+            {
+                if current_link == link && cell.column <= *end_column {
+                    *end_column = (*end_column).max(cell.column + cell.width);
+                    continue;
+                }
+            }
+
+            if let Some((_, start_column, end_column)) = current_explicit.take() {
+                ranges.push(TerminalLinkRange {
+                    line: line_index,
+                    start_column,
+                    end_column,
+                });
+            }
+            if let Some(link) = link {
+                current_explicit = Some((link, cell.column, cell.column + cell.width));
+            }
+        }
+        if let Some((_, start_column, end_column)) = current_explicit.take() {
+            ranges.push(TerminalLinkRange {
+                line: line_index,
+                start_column,
+                end_column,
+            });
+        }
+
+        ranges.extend(terminal_text_link_ranges(line).into_iter().map(
+            |(start_column, end_column)| TerminalLinkRange {
+                line: line_index,
+                start_column,
+                end_column,
+            },
+        ));
+    }
+
+    ranges
+}
+
+fn terminal_text_link_at_column(
+    line: &crate::terminal_runtime::TerminalLineSnapshot,
+    column: usize,
+) -> Option<String> {
+    let mut text = String::new();
+    let mut clicked_byte = None;
+    let mut display_column = 0;
+
+    for cell in &line.cells {
+        while display_column < cell.column {
+            if display_column == column {
+                clicked_byte = Some(text.len());
+            }
+            text.push(' ');
+            display_column += 1;
+        }
+
+        let start = text.len();
+        text.push_str(&cell.copy_text);
+        let end = text.len();
+        if cell.column <= column && column < cell.column + cell.width {
+            clicked_byte = Some(start);
+        }
+        display_column = cell.column + cell.width;
+
+        if start == end && clicked_byte.is_some() {
+            break;
+        }
+    }
+
+    let clicked_byte = clicked_byte?;
+    terminal_text_link_at_byte(&text, clicked_byte)
+}
+
+fn terminal_text_link_ranges(
+    line: &crate::terminal_runtime::TerminalLineSnapshot,
+) -> Vec<(usize, usize)> {
+    let mut text = String::new();
+    let mut byte_columns = vec![0];
+    let mut display_column = 0;
+
+    for cell in &line.cells {
+        while display_column < cell.column {
+            text.push(' ');
+            display_column += 1;
+            byte_columns.push(display_column);
+        }
+
+        let cell_start = cell.column;
+        text.push_str(&cell.copy_text);
+        for _ in 0..cell.copy_text.len() {
+            byte_columns.push(cell_start);
+        }
+        display_column = cell.column + cell.width;
+        if let Some(last) = byte_columns.last_mut() {
+            *last = display_column;
+        }
+    }
+
+    terminal_text_link_byte_ranges(&text)
+        .into_iter()
+        .filter_map(|(start, end)| {
+            let start_column = byte_columns.get(start).copied()?;
+            let end_column = byte_columns.get(end).copied()?;
+            (start_column < end_column).then_some((start_column, end_column))
+        })
+        .collect()
+}
+
+fn terminal_text_link_at_byte(text: &str, clicked_byte: usize) -> Option<String> {
+    terminal_text_link_byte_ranges(text)
+        .into_iter()
+        .find_map(|(start, end)| {
+            if start <= clicked_byte && clicked_byte < end {
+                normalize_terminal_link(&text[start..end])
+            } else {
+                None
+            }
+        })
+}
+
+fn terminal_text_link_byte_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut search_start = 0;
+    while search_start < text.len() {
+        let Some((prefix_offset, prefix)) = terminal_link_prefix_after(text, search_start) else {
+            break;
+        };
+        let start = search_start + prefix_offset;
+        let mut end = start + prefix.len();
+        for (offset, ch) in text[end..].char_indices() {
+            if ch.is_whitespace() || ch.is_control() {
+                break;
+            }
+            end = start + prefix.len() + offset + ch.len_utf8();
+        }
+
+        let link = trim_terminal_link_suffix(&text[start..end]);
+        let link_end = start + link.len();
+        if normalize_terminal_link(link).is_some() {
+            ranges.push((start, link_end));
+        }
+        search_start = end.max(start + prefix.len());
+    }
+
+    ranges
+}
+
+fn terminal_link_prefix_after(text: &str, start: usize) -> Option<(usize, &'static str)> {
+    ["https://", "http://"]
+        .into_iter()
+        .filter_map(|prefix| text[start..].find(prefix).map(|offset| (offset, prefix)))
+        .min_by_key(|(offset, _)| *offset)
+}
+
+fn trim_terminal_link_suffix(link: &str) -> &str {
+    link.trim_end_matches(|ch: char| {
+        matches!(
+            ch,
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"'
+        )
+    })
+}
+
+fn normalize_terminal_link(link: &str) -> Option<String> {
+    let link = trim_terminal_link_suffix(link.trim());
+    if link.len() <= "http://".len() {
+        return None;
+    }
+    if link.starts_with("https://") || link.starts_with("http://") {
+        Some(link.to_string())
+    } else {
+        None
+    }
 }
 
 fn terminal_cell_category(
@@ -4537,6 +4751,39 @@ impl AnotherOneApp {
         true
     }
 
+    pub(crate) fn open_terminal_link_at_click(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !(ev.modifiers.control || ev.modifiers.platform) {
+            return false;
+        }
+
+        let Some(metrics) = self.terminal_panel_metrics_for_key(key, window) else {
+            return false;
+        };
+        let Some(position) = terminal_cell_position_from_mouse(ev.position, &metrics) else {
+            return false;
+        };
+        let Some(link) = self
+            .terminal_surface_snapshots
+            .get(key)
+            .and_then(|snapshot| terminal_link_at_position(snapshot, position))
+        else {
+            return false;
+        };
+
+        self.terminal_selection = None;
+        if let Err(err) = crate::platform::CurrentPlatform::open_external_url(&link) {
+            self.show_error_toast(err, cx);
+        }
+        cx.notify();
+        true
+    }
+
     fn update_terminal_selection_drag(
         &mut self,
         ev: &MouseMoveEvent,
@@ -4916,19 +5163,10 @@ impl AnotherOneApp {
         let shortcut_target = {
             let workspace = self.workspace_pane.read(cx);
             workspace.active_section.clone().map(|section_id| {
-                let selected_agent_id = workspace
-                    .section_states
-                    .get(&section_id)
-                    .and_then(|state| state.tabs.get(state.active_tab))
-                    .and_then(|tab| {
-                        tab.launch_config.provider.and_then(|provider| {
-                            AGENTS
-                                .iter()
-                                .find(|agent| agent.provider == Some(provider))
-                                .map(|agent| agent.id)
-                        })
-                    })
-                    .map(str::to_string);
+                let selected_agent_id = new_tab_seed_agent_id(
+                    workspace.section_states.get(&section_id),
+                    self.default_agent_id(),
+                );
                 (section_id, selected_agent_id)
             })
         };
@@ -6803,6 +7041,11 @@ impl AnotherOneApp {
             return;
         }
 
+        let modifiers = window.modifiers();
+        if modifiers.control || modifiers.platform {
+            cx.notify();
+        }
+
         let Some((kind, last_x)) = self.drag else {
             return;
         };
@@ -6851,6 +7094,15 @@ impl AnotherOneApp {
         if had_toast_drag || had_terminal_selection || had_settings_selection || had_layout_drag {
             cx.notify();
         }
+    }
+
+    pub fn on_modifiers_changed(
+        &mut self,
+        _ev: &ModifiersChangedEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.notify();
     }
 
     fn footer_add_project_button(window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -8025,15 +8277,16 @@ fn remove_terminal_runtime_state<T>(
 mod tests {
     use super::{
         apply_terminal_session_backfill, apply_terminal_title_update, choose_initial_section,
-        fixed_title_for_project_action, global_tab_navigation_targets,
+        fixed_title_for_project_action, global_tab_navigation_targets, new_tab_seed_agent_id,
         next_global_tab_navigation_target, next_project_navigation_target,
         next_task_navigation_target, persisted_active_section_key, remove_terminal_runtime_state,
         resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
         sidebar_task_navigation_target, sidebar_task_navigation_targets,
-        terminal_line_selection_range, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
-        AnotherOneApp, NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState,
-        TerminalCellPosition, TerminalSelectionRange, TerminalTab, TERMINAL_RECENT_OUTPUT_LIMIT,
+        terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
+        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
+        terminal_word_selection_range, trim_to_recent_output_limit, AnotherOneApp,
+        NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition,
+        TerminalLinkRange, TerminalSelectionRange, TerminalTab, TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -8145,6 +8398,16 @@ mod tests {
         }
     }
 
+    fn terminal_cell(column: usize, ch: char) -> TerminalCellSnapshot {
+        TerminalCellSnapshot {
+            column,
+            width: 1,
+            text: ch.to_string(),
+            copy_text: ch.to_string(),
+            hyperlink: None,
+        }
+    }
+
     #[test]
     fn clipboard_image_returns_first_image_entry() {
         let image = Image::from_bytes(ImageFormat::Png, vec![1, 2, 3, 4]);
@@ -8221,6 +8484,64 @@ mod tests {
         assert_eq!(removed, Some(only_tab_id));
         assert!(state.tabs.is_empty());
         assert_eq!(state.active_tab, 0);
+    }
+
+    #[test]
+    fn new_tab_seed_agent_uses_default_when_section_has_no_tabs() {
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: String::new(),
+                next_tab_id: 1,
+                cwd: Some(PathBuf::from("/tmp/project")),
+                tabs: Vec::new(),
+            },
+            None,
+        );
+
+        assert_eq!(
+            new_tab_seed_agent_id(Some(&state), Some("codex")).as_deref(),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn new_tab_seed_agent_uses_default_when_active_tab_is_terminal() {
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "0".to_string(),
+                next_tab_id: 1,
+                cwd: Some(PathBuf::from("/tmp/project")),
+                tabs: vec![shell_tab(0, "Terminal")],
+            },
+            None,
+        );
+
+        assert_eq!(
+            new_tab_seed_agent_id(Some(&state), Some("codex")).as_deref(),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn new_tab_seed_agent_uses_default_when_active_tab_is_another_agent() {
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "claude".to_string(),
+                next_tab_id: 1,
+                cwd: Some(PathBuf::from("/tmp/project")),
+                tabs: vec![agent_tab(
+                    "claude",
+                    "Claude Code",
+                    AgentProviderKind::ClaudeCode,
+                )],
+            },
+            None,
+        );
+
+        assert_eq!(
+            new_tab_seed_agent_id(Some(&state), Some("codex")).as_deref(),
+            Some("codex")
+        );
     }
 
     #[test]
@@ -9452,36 +9773,42 @@ mod tests {
                             width: 1,
                             text: "h".to_string(),
                             copy_text: "h".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 1,
                             width: 1,
                             text: "e".to_string(),
                             copy_text: "e".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 2,
                             width: 1,
                             text: "l".to_string(),
                             copy_text: "l".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 3,
                             width: 1,
                             text: "l".to_string(),
                             copy_text: "l".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 4,
                             width: 1,
                             text: "o".to_string(),
                             copy_text: "o".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 5,
                             width: 1,
                             text: " ".to_string(),
                             copy_text: " ".to_string(),
+                            hyperlink: None,
                         },
                     ],
                     runs: Vec::new(),
@@ -9495,36 +9822,42 @@ mod tests {
                             width: 1,
                             text: "w".to_string(),
                             copy_text: "w".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 1,
                             width: 1,
                             text: "o".to_string(),
                             copy_text: "o".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 2,
                             width: 1,
                             text: "r".to_string(),
                             copy_text: "r".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 3,
                             width: 1,
                             text: "l".to_string(),
                             copy_text: "l".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 4,
                             width: 1,
                             text: "d".to_string(),
                             copy_text: "d".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 5,
                             width: 1,
                             text: " ".to_string(),
                             copy_text: " ".to_string(),
+                            hyperlink: None,
                         },
                     ],
                     runs: Vec::new(),
@@ -9549,6 +9882,131 @@ mod tests {
     }
 
     #[test]
+    fn terminal_link_at_position_uses_explicit_hyperlink() {
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: 5,
+            lines: vec![TerminalLineSnapshot {
+                text: "click".to_string(),
+                cells: "click"
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| {
+                        let mut cell = terminal_cell(column, ch);
+                        cell.hyperlink = Some("https://example.com/from-osc8".to_string());
+                        cell
+                    })
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let link =
+            terminal_link_at_position(&snapshot, TerminalCellPosition { line: 0, column: 2 });
+
+        assert_eq!(link.as_deref(), Some("https://example.com/from-osc8"));
+    }
+
+    #[test]
+    fn terminal_link_at_position_detects_plain_text_url() {
+        let text = "visit https://example.com/path.";
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: text.len(),
+            lines: vec![TerminalLineSnapshot {
+                text: text.to_string(),
+                cells: text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| terminal_cell(column, ch))
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let link = terminal_link_at_position(
+            &snapshot,
+            TerminalCellPosition {
+                line: 0,
+                column: 12,
+            },
+        );
+
+        assert_eq!(link.as_deref(), Some("https://example.com/path"));
+    }
+
+    #[test]
+    fn terminal_link_ranges_include_explicit_hyperlinks() {
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: 5,
+            lines: vec![TerminalLineSnapshot {
+                text: "click".to_string(),
+                cells: "click"
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| {
+                        let mut cell = terminal_cell(column, ch);
+                        if (1..=3).contains(&column) {
+                            cell.hyperlink = Some("https://example.com/from-osc8".to_string());
+                        }
+                        cell
+                    })
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        assert_eq!(
+            terminal_link_ranges(&snapshot),
+            vec![TerminalLinkRange {
+                line: 0,
+                start_column: 1,
+                end_column: 4,
+            }]
+        );
+    }
+
+    #[test]
+    fn terminal_link_ranges_include_plain_text_urls() {
+        let text = "visit https://example.com/path.";
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: text.len(),
+            lines: vec![TerminalLineSnapshot {
+                text: text.to_string(),
+                cells: text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| terminal_cell(column, ch))
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        assert_eq!(
+            terminal_link_ranges(&snapshot),
+            vec![TerminalLinkRange {
+                line: 0,
+                start_column: 6,
+                end_column: 30,
+            }]
+        );
+    }
+
+    #[test]
     fn terminal_word_selection_range_selects_clicked_word() {
         let snapshot = TerminalSurfaceSnapshot {
             text: String::new(),
@@ -9563,6 +10021,7 @@ mod tests {
                         width: 1,
                         text: ch.to_string(),
                         copy_text: ch.to_string(),
+                        hyperlink: None,
                     })
                     .collect(),
                 runs: Vec::new(),
@@ -9601,6 +10060,7 @@ mod tests {
                         width: 1,
                         text: ch.to_string(),
                         copy_text: ch.to_string(),
+                        hyperlink: None,
                     })
                     .collect(),
                 runs: Vec::new(),
@@ -9705,6 +10165,7 @@ impl Render for AnotherOneApp {
                     .track_focus(&self.focus_handle)
                     .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
                     .on_mouse_move(cx.listener(Self::on_mouse_move))
+                    .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_key_down(cx.listener(Self::handle_global_key_down))
@@ -9788,6 +10249,7 @@ impl Render for AnotherOneApp {
                 .track_focus(&self.focus_handle)
                 .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
                 .on_mouse_move(cx.listener(Self::on_mouse_move))
+                .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 .on_key_down(cx.listener(Self::handle_global_key_down))

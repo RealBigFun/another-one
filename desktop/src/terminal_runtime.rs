@@ -44,6 +44,7 @@ pub(crate) struct TerminalCellSnapshot {
     pub width: usize,
     pub text: String,
     pub copy_text: String,
+    pub hyperlink: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -331,6 +332,7 @@ fn build_surface_snapshot<T: EventListener>(
                 width: cell_width,
                 text: chunk.clone(),
                 copy_text,
+                hyperlink: cell.hyperlink().map(|link| link.uri().to_string()),
             });
 
             if is_cursor {

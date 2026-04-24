@@ -215,7 +215,7 @@ impl AnotherOneApp {
                 &enabled_agents,
             ),
             agent_dropdown_open: false,
-            keyboard_focus: Some(AddAgentModalFocus::Trigger),
+            keyboard_focus: Some(AddAgentModalFocus::CreateButton),
         });
         self.sync_add_agent_modal_prewarm(cx);
     }

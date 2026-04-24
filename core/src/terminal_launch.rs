@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs as unix_fs;
@@ -456,6 +457,55 @@ fn apply_terminal_environment(builder: &mut CommandBuilder) {
     builder.env("COLORTERM_BCE", "1");
     builder.env("TERM_PROGRAM", "WezTerm");
     builder.env("TERM_PROGRAM_VERSION", "20240203");
+    apply_agent_command_path(builder);
+}
+
+fn apply_agent_command_path(builder: &mut CommandBuilder) {
+    builder.env(
+        "PATH",
+        agent_command_path_env().to_string_lossy().into_owned(),
+    );
+}
+
+fn agent_command_path_env() -> OsString {
+    std::env::join_paths(agent_command_path_dirs()).unwrap_or_else(|_| {
+        std::env::var_os("PATH").unwrap_or_else(|| OsString::from(default_agent_command_path()))
+    })
+}
+
+fn agent_command_path_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        dirs.push(home.join(".local/bin"));
+        dirs.push(home.join(".cargo/bin"));
+    }
+
+    dirs.extend(default_agent_command_path().split(':').map(PathBuf::from));
+
+    let mut unique = Vec::new();
+    for dir in dirs {
+        if !unique.iter().any(|existing| existing == &dir) {
+            unique.push(dir);
+        }
+    }
+    unique
+}
+
+fn default_agent_command_path() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:/snap/bin"
+    }
 }
 
 impl PiSessionCapture {
@@ -927,7 +977,7 @@ mod tests {
         resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
         SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
     };
-    use crate::agents::{HarnessEnv, AgentProviderKind, TerminalLaunchConfig, TerminalLaunchMode};
+    use crate::agents::{AgentProviderKind, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
     use std::fs;
     use std::path::Path;
@@ -957,6 +1007,16 @@ mod tests {
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect()
+    }
+
+    fn assert_command_argv(builder: &portable_pty::CommandBuilder, expected: &[&str]) {
+        let argv = argv(builder);
+        let command_name = Path::new(&argv[0])
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("command should have a file name");
+        assert_eq!(command_name, expected[0]);
+        assert_eq!(&argv[1..], &expected[1..]);
     }
 
     #[test]
@@ -1334,11 +1394,15 @@ mod tests {
             .with_home_override(Some(codex_root.clone()));
         let agent_launch_args = vec!["--yolo".to_string(), "--profile".to_string()];
 
-        let (builder, launch_config, discovery) =
-            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
-                .expect("build should succeed");
+        let (builder, launch_config, discovery) = build_command(
+            &HarnessEnv::for_test(),
+            cwd,
+            launch_config,
+            &agent_launch_args,
+        )
+        .expect("build should succeed");
 
-        assert_eq!(argv(&builder), vec!["codex", "--yolo", "--profile"]);
+        assert_command_argv(&builder, &["codex", "--yolo", "--profile"]);
         assert_eq!(launch_config.home_override, Some(codex_root.clone()));
         assert!(launch_config.session.is_none());
         assert!(matches!(
@@ -1360,14 +1424,15 @@ mod tests {
             .with_session(Some(session.clone()));
         let agent_launch_args = vec!["--yolo".to_string()];
 
-        let (builder, launch_config, discovery) =
-            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
-                .expect("build should succeed");
+        let (builder, launch_config, discovery) = build_command(
+            &HarnessEnv::for_test(),
+            cwd,
+            launch_config,
+            &agent_launch_args,
+        )
+        .expect("build should succeed");
 
-        assert_eq!(
-            argv(&builder),
-            vec!["codex", "--yolo", "resume", "codex-session"]
-        );
+        assert_command_argv(&builder, &["codex", "--yolo", "resume", "codex-session"]);
         assert_eq!(launch_config.session, Some(session));
         assert!(discovery.is_none());
     }
@@ -1378,12 +1443,21 @@ mod tests {
         let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode);
         let agent_launch_args = vec!["--dangerously-skip-permissions".to_string()];
 
-        let (builder, launch_config, discovery) =
-            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
-                .expect("build should succeed");
+        let (builder, launch_config, discovery) = build_command(
+            &HarnessEnv::for_test(),
+            cwd,
+            launch_config,
+            &agent_launch_args,
+        )
+        .expect("build should succeed");
 
         let argv = argv(&builder);
-        assert_eq!(argv[0], "claude");
+        assert_eq!(
+            Path::new(&argv[0])
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("claude")
+        );
         assert_eq!(argv[1], "--dangerously-skip-permissions");
         assert_eq!(argv[2], "--session-id");
         assert_eq!(argv.len(), 4);
@@ -1412,18 +1486,17 @@ mod tests {
             ..HarnessEnv::for_test()
         };
 
-        let (builder, _, discovery) =
-            build_command(&env, cwd, launch_config, &agent_launch_args)
-                .expect("build should succeed");
+        let (builder, _, discovery) = build_command(&env, cwd, launch_config, &agent_launch_args)
+            .expect("build should succeed");
 
-        assert_eq!(
-            argv(&builder),
-            vec![
+        assert_command_argv(
+            &builder,
+            &[
                 "claude",
                 "--dangerously-skip-permissions",
                 "--resume",
-                "session-123"
-            ]
+                "session-123",
+            ],
         );
         assert!(discovery.is_none());
 
@@ -1441,13 +1514,17 @@ mod tests {
             .with_session(Some(session.clone()));
         let agent_launch_args = vec!["--model".to_string(), "sonnet".to_string()];
 
-        let (builder, launch_config, discovery) =
-            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
-                .expect("build should succeed");
+        let (builder, launch_config, discovery) = build_command(
+            &HarnessEnv::for_test(),
+            cwd,
+            launch_config,
+            &agent_launch_args,
+        )
+        .expect("build should succeed");
 
-        assert_eq!(
-            argv(&builder),
-            vec!["agent", "--model", "sonnet", "--resume", "cursor-chat"]
+        assert_command_argv(
+            &builder,
+            &["agent", "--model", "sonnet", "--resume", "cursor-chat"],
         );
         assert_eq!(launch_config.session, Some(session));
         assert!(discovery.is_none());
@@ -1464,14 +1541,15 @@ mod tests {
             .with_session(Some(session));
         let agent_launch_args = vec!["--log-level".to_string(), "debug".to_string()];
 
-        let (builder, _, discovery) =
-            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
-                .expect("build should succeed");
+        let (builder, _, discovery) = build_command(
+            &HarnessEnv::for_test(),
+            cwd,
+            launch_config,
+            &agent_launch_args,
+        )
+        .expect("build should succeed");
 
-        assert_eq!(
-            argv(&builder),
-            vec!["forge", "--log-level", "debug", "resume-me"]
-        );
+        assert_command_argv(&builder, &["forge", "--log-level", "debug", "resume-me"]);
         assert!(discovery.is_none());
     }
 
@@ -1484,9 +1562,13 @@ mod tests {
         };
         let agent_launch_args = vec!["--ignored".to_string()];
 
-        let (builder, _, discovery) =
-            build_command(&HarnessEnv::for_test(), cwd, launch_config, &agent_launch_args)
-                .expect("build should succeed");
+        let (builder, _, discovery) = build_command(
+            &HarnessEnv::for_test(),
+            cwd,
+            launch_config,
+            &agent_launch_args,
+        )
+        .expect("build should succeed");
 
         assert!(builder.is_default_prog());
         assert!(builder.get_argv().is_empty());

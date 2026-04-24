@@ -36,27 +36,26 @@ mod tokens;
 // resolves via those local modules.
 pub(crate) use another_one_core::{agents, git_actions, project_store, terminal_launch};
 
-use std::path::PathBuf;
-
 use gpui::{
     px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions,
 };
 
 use app::{AnotherOneApp, ZoomIn, ZoomOut, ZoomReset};
-use assets::ProjectAssets;
+use assets::{asset_root, ProjectAssets};
 use platform::{CurrentPlatform, PlatformServices};
 
 #[hotpath::main]
 fn main() {
+    let asset_root = asset_root();
     Application::new()
         .with_assets(ProjectAssets {
-            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            root: asset_root.clone(),
         })
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
             CurrentPlatform::set_app_dock_icon(cx);
             // Register bundled Lilex Nerd Font Mono so it's available without
             // the user having to install it system-wide.
-            let font_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts");
+            let font_dir = asset_root.join("assets/fonts");
             let font_files: Vec<std::borrow::Cow<'static, [u8]>> = [
                 "LilexNerdFontMono-Regular.ttf",
                 "LilexNerdFontMono-Bold.ttf",

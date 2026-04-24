@@ -8,7 +8,9 @@ use gpui::{
 
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
-use crate::app::{AnotherOneApp, TerminalSelectionRange, WorkspacePane};
+use crate::app::{
+    terminal_link_ranges, AnotherOneApp, TerminalLinkRange, TerminalSelectionRange, WorkspacePane,
+};
 use crate::layout::{TERMINAL_TAB_BAR_H, TERMINAL_VIEW_PADDING};
 use crate::terminal_runtime::{
     TerminalCursorKind, TerminalRuntimeKey, TerminalSurfaceSnapshot, TERMINAL_CELL_WIDTH_RATIO,
@@ -672,6 +674,10 @@ impl WorkspacePane {
                     cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                         this.focus_handle.focus(window);
                         let _ = this.app.update(cx, |app, app_cx| {
+                            if app.open_terminal_link_at_click(&selection_key, ev, window, app_cx) {
+                                app_cx.stop_propagation();
+                                return;
+                            }
                             app.start_terminal_selection(selection_key.clone(), ev, window, app_cx);
                         });
                     }),
@@ -689,6 +695,19 @@ impl WorkspacePane {
                     canvas(
                         move |bounds, _, _| bounds,
                         move |bounds, _, window, cx| {
+                            let modifiers = window.modifiers();
+                            let hovered_link = if modifiers.control || modifiers.platform {
+                                hovered_terminal_link_range(
+                                    bounds,
+                                    &canvas_snapshot,
+                                    window.mouse_position(),
+                                    padding,
+                                    cell_width,
+                                    line_height,
+                                )
+                            } else {
+                                None
+                            };
                             paint_terminal_snapshot(
                                 bounds,
                                 &canvas_snapshot,
@@ -699,6 +718,7 @@ impl WorkspacePane {
                                 line_height,
                                 font_size,
                                 selection,
+                                hovered_link,
                             );
                         },
                     )
@@ -834,6 +854,7 @@ fn paint_terminal_snapshot(
     cell_height: Pixels,
     font_size: Pixels,
     selection: Option<TerminalSelectionRange>,
+    hovered_link: Option<TerminalLinkRange>,
 ) {
     for (line_index, line) in snapshot.lines.iter().enumerate() {
         let top = bounds.origin.y + padding + cell_height * line_index as f32;
@@ -878,6 +899,10 @@ fn paint_terminal_snapshot(
             .paint(position, cell_height, window, cx);
     }
 
+    if let Some(range) = hovered_link {
+        paint_terminal_link_underline(bounds, window, padding, cell_width, cell_height, range);
+    }
+
     let Some(cursor) = &snapshot.cursor else {
         return;
     };
@@ -908,6 +933,61 @@ fn paint_terminal_snapshot(
             ));
         }
     }
+}
+
+fn hovered_terminal_link_range(
+    bounds: Bounds<Pixels>,
+    snapshot: &TerminalSurfaceSnapshot,
+    mouse_position: gpui::Point<Pixels>,
+    padding: Pixels,
+    cell_width: Pixels,
+    cell_height: Pixels,
+) -> Option<TerminalLinkRange> {
+    if snapshot.columns == 0 || snapshot.lines.is_empty() {
+        return None;
+    }
+
+    let x = f32::from(mouse_position.x) - f32::from(bounds.origin.x) - f32::from(padding);
+    let y = f32::from(mouse_position.y) - f32::from(bounds.origin.y) - f32::from(padding);
+    if x < 0.0 || y < 0.0 {
+        return None;
+    }
+
+    let column = (x / f32::from(cell_width)).floor() as usize;
+    let line = (y / f32::from(cell_height)).floor() as usize;
+    if line >= snapshot.lines.len() || column >= snapshot.columns {
+        return None;
+    }
+
+    terminal_link_ranges(snapshot).into_iter().find(|range| {
+        range.line == line && range.start_column <= column && column < range.end_column
+    })
+}
+
+fn paint_terminal_link_underline(
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    padding: Pixels,
+    cell_width: Pixels,
+    cell_height: Pixels,
+    range: TerminalLinkRange,
+) {
+    if range.start_column >= range.end_column {
+        return;
+    }
+
+    let color = hsla(0.58, 0.72, 0.72, 0.9);
+    let thickness = px(1.);
+    let left = bounds.origin.x + padding + cell_width * range.start_column as f32;
+    let top = bounds.origin.y + padding + cell_height * range.line as f32;
+    let width = cell_width * (range.end_column - range.start_column) as f32;
+    window.paint_quad(fill(
+        Bounds::new(
+            point(left, top + cell_height - px(2.)),
+            size(width, thickness),
+        ),
+        color,
+    ));
 }
 
 fn paint_terminal_selection(
