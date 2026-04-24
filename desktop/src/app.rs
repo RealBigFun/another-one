@@ -1417,6 +1417,7 @@ impl Element for AppInputHost {
 enum TextInputTarget {
     NewTaskModal,
     SidebarTaskRename,
+    CustomActionModal,
     SettingsAgentInput,
     SettingsGitActionScript,
     Terminal,
@@ -1484,6 +1485,13 @@ impl EntityInputHandler for AnotherOneApp {
                 .sidebar_task_rename
                 .as_ref()
                 .map(|state| text_for_utf16_range(&state.task_name, range, adjusted_range)),
+            TextInputTarget::CustomActionModal => {
+                self.custom_action_modal.as_ref().and_then(|state| {
+                    state
+                        .focused_text_value()
+                        .map(|text| text_for_utf16_range(text, range, adjusted_range))
+                })
+            }
             TextInputTarget::SettingsAgentInput => self
                 .settings_agent_input
                 .focused_agent_id
@@ -1525,6 +1533,17 @@ impl EntityInputHandler for AnotherOneApp {
                     state.task_name_selection_anchor,
                 )
             }),
+            TextInputTarget::CustomActionModal => {
+                self.custom_action_modal.as_ref().and_then(|state| {
+                    state.focused_text_value().map(|text| {
+                        utf16_selection_for_text(
+                            text,
+                            state.text_cursor,
+                            state.text_selection_anchor,
+                        )
+                    })
+                })
+            }
             TextInputTarget::SettingsAgentInput => self
                 .settings_agent_input
                 .focused_agent_id
@@ -1579,6 +1598,7 @@ impl EntityInputHandler for AnotherOneApp {
                         &mut state.task_name_selection_anchor,
                         range,
                         text,
+                        false,
                     );
                     cx.notify();
                 }
@@ -1591,8 +1611,27 @@ impl EntityInputHandler for AnotherOneApp {
                         &mut state.task_name_selection_anchor,
                         range,
                         text,
+                        false,
                     );
                     cx.notify();
+                }
+            }
+            TextInputTarget::CustomActionModal => {
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    let preserve_newlines = state.focused_field_preserves_newlines();
+                    if let Some((current_text, cursor, selection_anchor)) =
+                        state.focused_text_parts()
+                    {
+                        replace_custom_text(
+                            current_text,
+                            cursor,
+                            selection_anchor,
+                            range,
+                            text,
+                            preserve_newlines,
+                        );
+                        cx.notify();
+                    }
                 }
             }
             TextInputTarget::SettingsAgentInput => {
@@ -1608,6 +1647,7 @@ impl EntityInputHandler for AnotherOneApp {
                         &mut self.settings_agent_input.selection_anchor,
                         range,
                         text,
+                        false,
                     );
                     cx.notify();
                 }
@@ -1622,6 +1662,7 @@ impl EntityInputHandler for AnotherOneApp {
                             &mut input.selection_anchor,
                             range,
                             text,
+                            true,
                         );
                         input.draft.clone()
                     };
@@ -1658,6 +1699,7 @@ impl EntityInputHandler for AnotherOneApp {
         match self.text_input_target(cx) {
             TextInputTarget::NewTaskModal
             | TextInputTarget::SidebarTaskRename
+            | TextInputTarget::CustomActionModal
             | TextInputTarget::SettingsAgentInput
             | TextInputTarget::SettingsGitActionScript => {
                 self.replace_text_in_range(range, new_text, _window, cx);
@@ -1791,8 +1833,13 @@ fn replace_custom_text(
     selection_anchor: &mut Option<usize>,
     range_utf16: Option<std::ops::Range<usize>>,
     new_text: &str,
+    preserve_newlines: bool,
 ) {
-    let replacement = sanitize_single_line_input(new_text);
+    let replacement = if preserve_newlines {
+        new_text.replace('\r', "")
+    } else {
+        sanitize_single_line_input(new_text)
+    };
     let current_selection = selection_anchor
         .map(|anchor| anchor.min(*cursor)..anchor.max(*cursor))
         .filter(|range| range.start != range.end)
@@ -2254,6 +2301,14 @@ impl AnotherOneApp {
 
         if self.add_agent_modal.is_some() {
             return TextInputTarget::Blocked;
+        }
+
+        if self
+            .custom_action_modal
+            .as_ref()
+            .is_some_and(|state| state.focused_text_value().is_some())
+        {
+            return TextInputTarget::CustomActionModal;
         }
 
         if self.custom_action_modal.is_some() {

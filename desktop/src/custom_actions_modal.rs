@@ -1,8 +1,8 @@
 //! Add/Edit project custom action modal.
 
 use gpui::{
-    div, hsla, prelude::*, px, relative, rems, rgb, svg, AnyElement, Context, KeyDownEvent,
-    MouseButton, MouseDownEvent, SharedString,
+    div, hsla, prelude::*, px, relative, rems, rgb, svg, AnyElement, ClipboardItem, Context,
+    KeyDownEvent, MouseButton, MouseDownEvent, SharedString,
 };
 
 use crate::agent_icons::branded_icon;
@@ -53,6 +53,8 @@ pub(crate) struct CustomActionModalState {
     pub run_on_worktree_create: bool,
     pub save_global_copy: bool,
     pub focused_field: CustomActionField,
+    pub text_cursor: usize,
+    pub text_selection_anchor: Option<usize>,
     pub open_dropdown: Option<CustomActionDropdown>,
 }
 
@@ -160,17 +162,6 @@ fn trim_to_option(text: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_string())
 }
 
-fn field_mut(state: &mut CustomActionModalState, field: CustomActionField) -> &mut String {
-    match field {
-        CustomActionField::Name => &mut state.name,
-        CustomActionField::Command => &mut state.command,
-        CustomActionField::Prompt => &mut state.prompt,
-        CustomActionField::Model => &mut state.model,
-        CustomActionField::Traits => &mut state.traits,
-        CustomActionField::Mode => &mut state.mode,
-    }
-}
-
 fn field_value(state: &CustomActionModalState, field: CustomActionField) -> &str {
     match field {
         CustomActionField::Name => &state.name,
@@ -182,8 +173,288 @@ fn field_value(state: &CustomActionModalState, field: CustomActionField) -> &str
     }
 }
 
+#[derive(Clone, Copy)]
+enum CursorDirection {
+    Left,
+    Right,
+}
+
 fn action_provider_agent(provider: AgentProviderKind) -> Option<&'static crate::agents::AgentDef> {
     AGENTS.iter().find(|agent| agent.provider == Some(provider))
+}
+
+fn sanitize_custom_action_text_input(text: String) -> String {
+    text.replace(['\n', '\r', '\t'], " ")
+}
+
+fn sanitize_custom_action_field_input(field: CustomActionField, text: String) -> String {
+    if field == CustomActionField::Prompt {
+        text.replace('\r', "")
+    } else {
+        sanitize_custom_action_text_input(text)
+    }
+}
+
+fn custom_action_text_selected_range(
+    cursor: usize,
+    selection_anchor: Option<usize>,
+) -> Option<std::ops::Range<usize>> {
+    let anchor = selection_anchor?;
+    if anchor == cursor {
+        None
+    } else if anchor < cursor {
+        Some(anchor..cursor)
+    } else {
+        Some(cursor..anchor)
+    }
+}
+
+fn previous_custom_action_text_boundary(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .rev()
+        .find_map(|(index, _)| (index < cursor).then_some(index))
+        .unwrap_or(0)
+}
+
+fn next_custom_action_text_boundary(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .find_map(|(index, _)| (index > cursor).then_some(index))
+        .unwrap_or(text.len())
+}
+
+fn replace_custom_action_text_range(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    range: std::ops::Range<usize>,
+    replacement: &str,
+) {
+    text.replace_range(range.clone(), replacement);
+    *cursor = range.start + replacement.len();
+    *selection_anchor = None;
+}
+
+fn insert_custom_action_text(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    inserted: &str,
+) {
+    let selected = custom_action_text_selected_range(*cursor, *selection_anchor);
+    let range = selected.unwrap_or(*cursor..*cursor);
+    replace_custom_action_text_range(text, cursor, selection_anchor, range, inserted);
+}
+
+fn delete_custom_action_text_backward(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
+        replace_custom_action_text_range(text, cursor, selection_anchor, range, "");
+        return;
+    }
+    if *cursor == 0 {
+        return;
+    }
+    let start = previous_custom_action_text_boundary(text, *cursor);
+    replace_custom_action_text_range(text, cursor, selection_anchor, start..*cursor, "");
+}
+
+fn previous_custom_action_text_word_boundary(text: &str, cursor: usize) -> usize {
+    let mut idx = cursor;
+    while idx > 0 {
+        let start = previous_custom_action_text_boundary(text, idx);
+        let ch = text[start..idx].chars().next().unwrap_or_default();
+        if !ch.is_whitespace() {
+            break;
+        }
+        idx = start;
+    }
+
+    while idx > 0 {
+        let start = previous_custom_action_text_boundary(text, idx);
+        let ch = text[start..idx].chars().next().unwrap_or_default();
+        if ch.is_alphanumeric() || matches!(ch, '_' | '-') {
+            idx = start;
+        } else {
+            break;
+        }
+    }
+
+    idx
+}
+
+fn delete_custom_action_text_word_backward(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
+        replace_custom_action_text_range(text, cursor, selection_anchor, range, "");
+        return;
+    }
+    if *cursor == 0 {
+        return;
+    }
+    let start = previous_custom_action_text_word_boundary(text, *cursor);
+    replace_custom_action_text_range(text, cursor, selection_anchor, start..*cursor, "");
+}
+
+fn delete_custom_action_text_to_start(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
+        replace_custom_action_text_range(text, cursor, selection_anchor, range, "");
+        return;
+    }
+    if *cursor == 0 {
+        return;
+    }
+    replace_custom_action_text_range(text, cursor, selection_anchor, 0..*cursor, "");
+}
+
+fn delete_custom_action_text_forward(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
+        replace_custom_action_text_range(text, cursor, selection_anchor, range, "");
+        return;
+    }
+    if *cursor >= text.len() {
+        return;
+    }
+    let end = next_custom_action_text_boundary(text, *cursor);
+    replace_custom_action_text_range(text, cursor, selection_anchor, *cursor..end, "");
+}
+
+fn move_custom_action_text_cursor(
+    text: &str,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    direction: CursorDirection,
+    extend_selection: bool,
+) {
+    let next_cursor = match direction {
+        CursorDirection::Left => {
+            if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
+                if extend_selection {
+                    previous_custom_action_text_boundary(text, *cursor)
+                } else {
+                    range.start
+                }
+            } else {
+                previous_custom_action_text_boundary(text, *cursor)
+            }
+        }
+        CursorDirection::Right => {
+            if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
+                if extend_selection {
+                    next_custom_action_text_boundary(text, *cursor)
+                } else {
+                    range.end
+                }
+            } else {
+                next_custom_action_text_boundary(text, *cursor)
+            }
+        }
+    };
+
+    if extend_selection && selection_anchor.is_none() {
+        *selection_anchor = Some(*cursor);
+    }
+    if !extend_selection {
+        *selection_anchor = None;
+    }
+    *cursor = next_cursor;
+}
+
+fn move_custom_action_text_cursor_to_edge(
+    text: &str,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    to_end: bool,
+    extend_selection: bool,
+) {
+    if extend_selection && selection_anchor.is_none() {
+        *selection_anchor = Some(*cursor);
+    }
+    if !extend_selection {
+        *selection_anchor = None;
+    }
+    *cursor = if to_end { text.len() } else { 0 };
+}
+
+fn intersect_byte_ranges(
+    left: std::ops::Range<usize>,
+    right: std::ops::Range<usize>,
+) -> Option<std::ops::Range<usize>> {
+    let start = left.start.max(right.start);
+    let end = left.end.min(right.end);
+    (start < end).then_some(start..end)
+}
+
+fn custom_action_text_visible_range(
+    text: &str,
+    cursor: usize,
+    selection: Option<&std::ops::Range<usize>>,
+    max_chars: usize,
+) -> std::ops::Range<usize> {
+    let boundaries = text
+        .char_indices()
+        .map(|(idx, _)| idx)
+        .chain(std::iter::once(text.len()))
+        .collect::<Vec<_>>();
+    let total_chars = boundaries.len().saturating_sub(1);
+    if total_chars <= max_chars {
+        return 0..text.len();
+    }
+
+    let cursor_char = text[..cursor.min(text.len())].chars().count();
+    let mut start_char = cursor_char.saturating_sub(max_chars / 2);
+    let mut end_char = (start_char + max_chars).min(total_chars);
+    start_char = end_char.saturating_sub(max_chars);
+
+    if cursor_char >= total_chars.saturating_sub(max_chars / 3) {
+        end_char = total_chars;
+        start_char = total_chars.saturating_sub(max_chars);
+    }
+
+    if let Some(selection) = selection {
+        let selection_start_char = text[..selection.start.min(text.len())].chars().count();
+        let selection_end_char = text[..selection.end.min(text.len())].chars().count();
+        if selection_start_char < start_char {
+            start_char = selection_start_char;
+            end_char = (start_char + max_chars).min(total_chars);
+        }
+        if selection_end_char > end_char {
+            end_char = selection_end_char.min(total_chars);
+            start_char = end_char.saturating_sub(max_chars);
+        }
+    }
+
+    boundaries[start_char]..boundaries[end_char]
+}
+
+fn custom_action_text_line_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    if text.is_empty() {
+        return vec![0..0];
+    }
+
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            ranges.push(start..idx);
+            start = idx + ch.len_utf8();
+        }
+    }
+    ranges.push(start..text.len());
+    ranges
 }
 
 fn provider_value_label(provider: AgentProviderKind) -> &'static str {
@@ -291,6 +562,8 @@ impl CustomActionModalState {
             run_on_worktree_create: false,
             save_global_copy: false,
             focused_field: CustomActionField::Name,
+            text_cursor: 0,
+            text_selection_anchor: None,
             open_dropdown: None,
         }
     }
@@ -312,6 +585,8 @@ impl CustomActionModalState {
                 run_on_worktree_create: action.run_on_worktree_create,
                 save_global_copy: action.scope == ProjectActionScope::Global,
                 focused_field: CustomActionField::Name,
+                text_cursor: 0,
+                text_selection_anchor: None,
                 open_dropdown: None,
             },
             ProjectActionKind::Agent {
@@ -336,9 +611,47 @@ impl CustomActionModalState {
                 run_on_worktree_create: action.run_on_worktree_create,
                 save_global_copy: action.scope == ProjectActionScope::Global,
                 focused_field: CustomActionField::Name,
+                text_cursor: 0,
+                text_selection_anchor: None,
                 open_dropdown: None,
             },
         }
+    }
+
+    pub(crate) fn focused_text_value(&self) -> Option<&str> {
+        match self.focused_field {
+            CustomActionField::Name => Some(&self.name),
+            CustomActionField::Command => Some(&self.command),
+            CustomActionField::Prompt => Some(&self.prompt),
+            CustomActionField::Model | CustomActionField::Traits | CustomActionField::Mode => None,
+        }
+    }
+
+    pub(crate) fn focused_text_parts(
+        &mut self,
+    ) -> Option<(&mut String, &mut usize, &mut Option<usize>)> {
+        match self.focused_field {
+            CustomActionField::Name => Some((
+                &mut self.name,
+                &mut self.text_cursor,
+                &mut self.text_selection_anchor,
+            )),
+            CustomActionField::Command => Some((
+                &mut self.command,
+                &mut self.text_cursor,
+                &mut self.text_selection_anchor,
+            )),
+            CustomActionField::Prompt => Some((
+                &mut self.prompt,
+                &mut self.text_cursor,
+                &mut self.text_selection_anchor,
+            )),
+            CustomActionField::Model | CustomActionField::Traits | CustomActionField::Mode => None,
+        }
+    }
+
+    pub(crate) fn focused_field_preserves_newlines(&self) -> bool {
+        self.focused_field == CustomActionField::Prompt
     }
 }
 
@@ -354,6 +667,10 @@ impl AnotherOneApp {
                 .map(CustomActionModalState::from_action)
                 .unwrap_or_else(CustomActionModalState::new),
         );
+        if let Some(state) = self.custom_action_modal.as_mut() {
+            state.text_cursor = field_value(state, state.focused_field).len();
+            state.text_selection_anchor = None;
+        }
         cx.notify();
     }
 
@@ -575,6 +892,9 @@ impl AnotherOneApp {
                         } else {
                             CustomActionField::Prompt
                         };
+                        state.text_cursor = field_value(state, state.focused_field).len();
+                        state.text_selection_anchor = None;
+                        state.open_dropdown = None;
                     }
                     cx.stop_propagation();
                     cx.notify();
@@ -599,13 +919,11 @@ impl AnotherOneApp {
     ) -> impl IntoElement {
         let focused = state.focused_field == field;
         let value = field_value(state, field).to_string();
+        let is_prompt = field == CustomActionField::Prompt;
+        let selection = focused.then(|| {
+            custom_action_text_selected_range(state.text_cursor, state.text_selection_anchor)
+        });
         let is_empty = value.is_empty();
-        let display = if is_empty {
-            SharedString::from(placeholder)
-        } else {
-            SharedString::from(value)
-        };
-        let text_color = if is_empty { muted_col() } else { title_col() };
 
         div()
             .mt(px(14.))
@@ -622,7 +940,7 @@ impl AnotherOneApp {
             .child(
                 div()
                     .id(SharedString::from(format!("custom-action-field-{label}")))
-                    .h(px(38.))
+                    .min_h(if is_prompt { px(190.) } else { px(38.) })
                     .rounded_md()
                     .border_1()
                     .border_color(if focused {
@@ -632,8 +950,10 @@ impl AnotherOneApp {
                     })
                     .bg(subtle_bg())
                     .flex()
-                    .items_center()
+                    .when(!is_prompt, |d| d.items_center())
+                    .when(is_prompt, |d| d.items_start())
                     .px(px(12.))
+                    .when(is_prompt, |d| d.py(px(10.)))
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover_bg()))
                     .on_mouse_down(
@@ -642,19 +962,289 @@ impl AnotherOneApp {
                             this.focus_handle.focus(window);
                             if let Some(state) = this.custom_action_modal.as_mut() {
                                 state.focused_field = field;
+                                let value_len = field_value(state, field).len();
+                                state.text_cursor = value_len;
+                                state.text_selection_anchor = None;
+                                state.open_dropdown = None;
                             }
                             cx.stop_propagation();
                             cx.notify();
                         }),
                     )
-                    .child(
-                        div()
-                            .text_size(rems(13. / 16.))
-                            .text_color(text_color)
-                            .truncate()
-                            .child(display),
-                    ),
+                    .child(Self::render_custom_action_text_field_content(
+                        value,
+                        placeholder,
+                        focused,
+                        state.text_cursor,
+                        selection.flatten(),
+                        is_empty,
+                        is_prompt,
+                    )),
             )
+    }
+
+    fn render_custom_action_text_field_content(
+        value: String,
+        placeholder: &'static str,
+        focused: bool,
+        cursor: usize,
+        selection: Option<std::ops::Range<usize>>,
+        is_empty: bool,
+        multiline: bool,
+    ) -> impl IntoElement {
+        let cursor = cursor.min(value.len());
+        let selection =
+            selection.map(|range| range.start.min(value.len())..range.end.min(value.len()));
+
+        if multiline {
+            return Self::render_custom_action_multiline_text_content(
+                value,
+                placeholder,
+                focused,
+                cursor,
+                selection,
+                is_empty,
+            );
+        }
+
+        if is_empty {
+            return div()
+                .flex()
+                .items_center()
+                .min_w(px(0.))
+                .overflow_hidden()
+                .gap(px(0.))
+                .text_size(rems(13. / 16.))
+                .child(if focused {
+                    div().w(px(1.)).h(px(18.)).mr(px(1.)).bg(title_col())
+                } else {
+                    div().w(px(0.))
+                })
+                .child(div().text_color(muted_col()).child(placeholder));
+        }
+
+        let selected = selection.filter(|range| range.start < range.end);
+        let visible_range = custom_action_text_visible_range(&value, cursor, selected.as_ref(), 56);
+        let visible_start = visible_range.start;
+        let visible_value = value[visible_range.clone()].to_string();
+        let local_cursor = cursor
+            .saturating_sub(visible_start)
+            .min(visible_value.len());
+        let visible_selection = selected
+            .as_ref()
+            .and_then(|range| intersect_byte_ranges(range.clone(), visible_range.clone()))
+            .map(|range| range.start - visible_start..range.end - visible_start);
+
+        let selected_contains_cursor = visible_selection
+            .as_ref()
+            .is_some_and(|range| range.start <= local_cursor && local_cursor <= range.end);
+
+        let prefix_end = visible_selection
+            .as_ref()
+            .map_or(local_cursor, |range| range.start.min(local_cursor));
+        let selected_end = visible_selection
+            .as_ref()
+            .map_or(local_cursor, |range| range.end.min(visible_value.len()));
+        let prefix = visible_value[..prefix_end.min(visible_value.len())].to_string();
+        let middle = visible_selection
+            .as_ref()
+            .map(|range| visible_value[range.clone()].to_string())
+            .unwrap_or_default();
+        let suffix_start = if selected_contains_cursor {
+            selected_end
+        } else {
+            local_cursor.min(visible_value.len())
+        };
+        let between = if visible_selection
+            .as_ref()
+            .is_some_and(|range| range.end < local_cursor)
+        {
+            visible_value[selected_end..local_cursor.min(visible_value.len())].to_string()
+        } else {
+            String::new()
+        };
+        let trailing = visible_value[suffix_start..].to_string();
+
+        let mut row = div()
+            .flex()
+            .items_center()
+            .min_w(px(0.))
+            .overflow_hidden()
+            .gap(px(0.))
+            .text_size(rems(13. / 16.));
+
+        if visible_range.start > 0 {
+            row = row.child(div().text_color(muted_col()).child("..."));
+        }
+        if !prefix.is_empty() {
+            row = row.child(div().text_color(title_col()).child(prefix));
+        }
+        if visible_selection
+            .as_ref()
+            .is_some_and(|range| range.end < local_cursor)
+            && !middle.is_empty()
+        {
+            row = row.child(
+                div()
+                    .px(px(1.))
+                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .text_color(title_col())
+                    .child(middle.clone()),
+            );
+        }
+        if focused {
+            row = row.child(div().w(px(1.)).h(px(18.)).bg(title_col()));
+        }
+        if selected_contains_cursor && !middle.is_empty() {
+            row = row.child(
+                div()
+                    .px(px(1.))
+                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .text_color(title_col())
+                    .child(middle.clone()),
+            );
+        }
+        if !between.is_empty() {
+            row = row.child(div().text_color(title_col()).child(between));
+        }
+        if visible_selection
+            .as_ref()
+            .is_some_and(|range| range.start > local_cursor)
+            && !middle.is_empty()
+        {
+            row = row.child(
+                div()
+                    .px(px(1.))
+                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .text_color(title_col())
+                    .child(middle),
+            );
+        }
+        if !trailing.is_empty() {
+            row = row.child(div().text_color(title_col()).child(trailing));
+        }
+        if visible_range.end < value.len() {
+            row = row.child(div().text_color(muted_col()).child("..."));
+        }
+
+        row
+    }
+
+    fn render_custom_action_multiline_text_content(
+        value: String,
+        placeholder: &'static str,
+        focused: bool,
+        cursor: usize,
+        selection: Option<std::ops::Range<usize>>,
+        is_empty: bool,
+    ) -> gpui::Div {
+        let selected = selection.filter(|range| range.start < range.end);
+        let mut column = div()
+            .w_full()
+            .min_h(px(170.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .overflow_hidden()
+            .text_size(rems(13. / 16.))
+            .line_height(rems(18. / 16.));
+
+        if is_empty {
+            return column.child(
+                div()
+                    .min_h(px(18.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(0.))
+                    .child(if focused {
+                        div().w(px(1.)).h(px(18.)).mr(px(1.)).bg(title_col())
+                    } else {
+                        div().w(px(0.))
+                    })
+                    .child(div().text_color(muted_col()).child(placeholder)),
+            );
+        }
+
+        for line_range in custom_action_text_line_ranges(&value) {
+            let line_text = &value[line_range.clone()];
+            let local_cursor = if (line_range.start..=line_range.end).contains(&cursor) {
+                Some(cursor - line_range.start)
+            } else {
+                None
+            };
+            let visible_selection = selected
+                .as_ref()
+                .and_then(|range| intersect_byte_ranges(range.clone(), line_range.clone()))
+                .map(|range| range.start - line_range.start..range.end - line_range.start);
+
+            let mut row = div()
+                .min_h(px(18.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(0.))
+                .overflow_hidden();
+
+            match (visible_selection, focused.then_some(local_cursor).flatten()) {
+                (Some(range), _) => {
+                    let prefix = &line_text[..range.start];
+                    let middle = &line_text[range.clone()];
+                    let suffix = &line_text[range.end..];
+                    if !prefix.is_empty() {
+                        row = row.child(div().text_color(title_col()).child(prefix.to_string()));
+                    }
+                    row = row.child(
+                        div()
+                            .px(px(1.))
+                            .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                            .text_color(title_col())
+                            .child(if middle.is_empty() {
+                                " ".to_string()
+                            } else {
+                                middle.to_string()
+                            }),
+                    );
+                    if !suffix.is_empty() {
+                        row = row.child(div().text_color(title_col()).child(suffix.to_string()));
+                    }
+                }
+                (None, Some(local_cursor)) => {
+                    let local_cursor = local_cursor.min(line_text.len());
+                    let prefix = &line_text[..local_cursor];
+                    let suffix = &line_text[local_cursor..];
+                    if !prefix.is_empty() {
+                        row = row.child(div().text_color(title_col()).child(prefix.to_string()));
+                    }
+                    row = row.child(div().w(px(1.)).h(px(18.)).bg(title_col()));
+                    if !suffix.is_empty() {
+                        row = row.child(div().text_color(title_col()).child(suffix.to_string()));
+                    }
+                    if prefix.is_empty() && suffix.is_empty() {
+                        row = row.child(div().text_color(title_col().opacity(0.)).child(" "));
+                    }
+                }
+                (None, None) => {
+                    row = row.child(
+                        div()
+                            .text_color(if line_text.is_empty() {
+                                title_col().opacity(0.)
+                            } else {
+                                title_col()
+                            })
+                            .child(if line_text.is_empty() {
+                                " ".to_string()
+                            } else {
+                                line_text.to_string()
+                            }),
+                    );
+                }
+            }
+
+            column = column.child(row);
+        }
+
+        column
     }
 
     fn render_custom_action_icon_picker(
@@ -1316,45 +1906,165 @@ impl AnotherOneApp {
             "enter" if ev.keystroke.modifiers.platform => {
                 self.submit_custom_action_modal(cx);
             }
+            "enter" => {
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    if state.focused_field == CustomActionField::Prompt {
+                        if let Some((value, cursor, selection_anchor)) = state.focused_text_parts()
+                        {
+                            insert_custom_action_text(value, cursor, selection_anchor, "\n");
+                            cx.notify();
+                        }
+                    }
+                }
+            }
             "tab" => {
                 self.focus_next_custom_action_field(ev.keystroke.modifiers.shift, cx);
             }
             "backspace" => {
                 if let Some(state) = self.custom_action_modal.as_mut() {
-                    let field = state.focused_field;
-                    if matches!(
-                        field,
-                        CustomActionField::Model
-                            | CustomActionField::Traits
-                            | CustomActionField::Mode
-                    ) {
-                        return;
+                    let modifiers = ev.keystroke.modifiers;
+                    if let Some((value, cursor, selection_anchor)) = state.focused_text_parts() {
+                        if modifiers.platform {
+                            delete_custom_action_text_to_start(value, cursor, selection_anchor);
+                        } else if modifiers.alt {
+                            delete_custom_action_text_word_backward(
+                                value,
+                                cursor,
+                                selection_anchor,
+                            );
+                        } else {
+                            delete_custom_action_text_backward(value, cursor, selection_anchor);
+                        }
+                        cx.notify();
                     }
-                    let value = field_mut(state, field);
-                    value.pop();
-                    cx.notify();
+                }
+            }
+            "delete" => {
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    if let Some((value, cursor, selection_anchor)) = state.focused_text_parts() {
+                        delete_custom_action_text_forward(value, cursor, selection_anchor);
+                        cx.notify();
+                    }
+                }
+            }
+            "left" => {
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    let extend = ev.keystroke.modifiers.shift;
+                    if let Some((value, cursor, selection_anchor)) = state.focused_text_parts() {
+                        move_custom_action_text_cursor(
+                            value,
+                            cursor,
+                            selection_anchor,
+                            CursorDirection::Left,
+                            extend,
+                        );
+                        cx.notify();
+                    }
+                }
+            }
+            "right" => {
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    let extend = ev.keystroke.modifiers.shift;
+                    if let Some((value, cursor, selection_anchor)) = state.focused_text_parts() {
+                        move_custom_action_text_cursor(
+                            value,
+                            cursor,
+                            selection_anchor,
+                            CursorDirection::Right,
+                            extend,
+                        );
+                        cx.notify();
+                    }
+                }
+            }
+            "home" => {
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    let extend = ev.keystroke.modifiers.shift;
+                    if let Some((value, cursor, selection_anchor)) = state.focused_text_parts() {
+                        move_custom_action_text_cursor_to_edge(
+                            value,
+                            cursor,
+                            selection_anchor,
+                            false,
+                            extend,
+                        );
+                        cx.notify();
+                    }
+                }
+            }
+            "end" => {
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    let extend = ev.keystroke.modifiers.shift;
+                    if let Some((value, cursor, selection_anchor)) = state.focused_text_parts() {
+                        move_custom_action_text_cursor_to_edge(
+                            value,
+                            cursor,
+                            selection_anchor,
+                            true,
+                            extend,
+                        );
+                        cx.notify();
+                    }
                 }
             }
             _ => {
-                if ev.keystroke.modifiers.platform
-                    || ev.keystroke.modifiers.control
-                    || ev.keystroke.modifiers.alt
-                {
-                    return;
-                }
-                if let Some(key_char) = ev.keystroke.key_char.as_deref() {
-                    if let Some(state) = self.custom_action_modal.as_mut() {
-                        let field = state.focused_field;
-                        if matches!(
-                            field,
-                            CustomActionField::Model
-                                | CustomActionField::Traits
-                                | CustomActionField::Mode
-                        ) {
+                let modifiers = ev.keystroke.modifiers;
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    let focused_field = state.focused_field;
+                    if let Some((value, cursor, selection_anchor)) = state.focused_text_parts() {
+                        if modifiers.platform && ev.keystroke.key.as_str() == "a" {
+                            *cursor = value.len();
+                            *selection_anchor = Some(0);
+                            cx.notify();
                             return;
                         }
-                        field_mut(state, field).push_str(key_char);
-                        cx.notify();
+                        if modifiers.platform && ev.keystroke.key.as_str() == "c" {
+                            if let Some(range) =
+                                custom_action_text_selected_range(*cursor, *selection_anchor)
+                            {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    value[range].to_string(),
+                                ));
+                            }
+                            return;
+                        }
+                        if modifiers.platform && ev.keystroke.key.as_str() == "x" {
+                            if let Some(range) =
+                                custom_action_text_selected_range(*cursor, *selection_anchor)
+                            {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    value[range.clone()].to_string(),
+                                ));
+                                replace_custom_action_text_range(
+                                    value,
+                                    cursor,
+                                    selection_anchor,
+                                    range,
+                                    "",
+                                );
+                                cx.notify();
+                            }
+                            return;
+                        }
+                        if modifiers.platform && ev.keystroke.key.as_str() == "v" {
+                            if let Some(text) = cx
+                                .read_from_clipboard()
+                                .and_then(|item| item.text())
+                                .map(|text| sanitize_custom_action_field_input(focused_field, text))
+                            {
+                                insert_custom_action_text(value, cursor, selection_anchor, &text);
+                                cx.notify();
+                            }
+                            return;
+                        }
+
+                        if modifiers.platform || modifiers.control || modifiers.alt {
+                            return;
+                        }
+                        if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+                            insert_custom_action_text(value, cursor, selection_anchor, key_char);
+                            cx.notify();
+                        }
                     }
                 }
             }
@@ -1386,6 +2096,8 @@ impl AnotherOneApp {
             (current + 1) % fields.len()
         };
         state.focused_field = fields[next];
+        state.text_cursor = field_value(state, state.focused_field).len();
+        state.text_selection_anchor = None;
         cx.notify();
     }
 
