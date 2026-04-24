@@ -4,7 +4,6 @@ use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -157,7 +156,7 @@ fn launch_terminal(
         build_command(&env, &cwd, launch_config, &agent_launch_args)?;
 
     builder.cwd(&cwd);
-    apply_terminal_environment(&mut builder);
+    apply_terminal_environment(&mut builder, &cwd);
 
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(size.as_pty_size())?;
@@ -275,7 +274,7 @@ fn launch_warm_terminal(
         build_command(&env, &cwd, launch_config, &agent_launch_args)?;
 
     builder.cwd(&cwd);
-    apply_terminal_environment(&mut builder);
+    apply_terminal_environment(&mut builder, &cwd);
 
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(size.as_pty_size())?;
@@ -579,38 +578,48 @@ fn claude_project_dir_name(cwd: &Path) -> String {
         .collect()
 }
 
-fn apply_terminal_environment(builder: &mut CommandBuilder) {
+fn apply_terminal_environment(builder: &mut CommandBuilder, cwd: &Path) {
     builder.env("TERM", "xterm-256color");
     builder.env("COLORTERM", "truecolor");
     builder.env("COLORTERM_BCE", "1");
     builder.env("TERM_PROGRAM", "WezTerm");
     builder.env("TERM_PROGRAM_VERSION", "20240203");
-    apply_agent_command_path(builder);
+    apply_agent_command_path(builder, cwd);
 }
 
-fn apply_agent_command_path(builder: &mut CommandBuilder) {
+fn apply_agent_command_path(builder: &mut CommandBuilder, cwd: &Path) {
     builder.env(
         "PATH",
-        agent_command_path_env().to_string_lossy().into_owned(),
+        agent_command_path_env(cwd).to_string_lossy().into_owned(),
     );
 }
 
-fn agent_command_path_env() -> OsString {
-    std::env::join_paths(agent_command_path_dirs()).unwrap_or_else(|_| {
+fn agent_command_path_env(cwd: &Path) -> OsString {
+    std::env::join_paths(agent_command_path_dirs(cwd)).unwrap_or_else(|_| {
         std::env::var_os("PATH").unwrap_or_else(|| OsString::from(default_agent_command_path()))
     })
 }
 
-fn agent_command_path_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
+fn agent_command_path_dirs(cwd: &Path) -> Vec<PathBuf> {
+    command_path_dirs(
+        std::env::var_os("PATH").as_deref(),
+        shell_initialized_path_dirs(cwd),
+        dirs::home_dir().as_deref(),
+    )
+}
 
-    if let Some(path) = std::env::var_os("PATH") {
+fn command_path_dirs(
+    current_path: Option<&std::ffi::OsStr>,
+    shell_initialized_dirs: Vec<PathBuf>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut dirs = shell_initialized_dirs;
+
+    if let Some(path) = current_path {
         dirs.extend(std::env::split_paths(&path));
     }
 
-    dirs.extend(shell_initialized_path_dirs());
-
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = home {
         dirs.push(home.join(".local/bin"));
         dirs.push(home.join(".cargo/bin"));
     }
@@ -626,20 +635,18 @@ fn agent_command_path_dirs() -> Vec<PathBuf> {
     unique
 }
 
-fn shell_initialized_path_dirs() -> Vec<PathBuf> {
-    static PATH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
-    PATH_DIRS
-        .get_or_init(read_shell_initialized_path_dirs)
-        .clone()
+fn shell_initialized_path_dirs(cwd: &Path) -> Vec<PathBuf> {
+    read_shell_initialized_path_dirs(cwd)
 }
 
-fn read_shell_initialized_path_dirs() -> Vec<PathBuf> {
+fn read_shell_initialized_path_dirs(cwd: &Path) -> Vec<PathBuf> {
     let Some(shell) = user_shell_path() else {
         return Vec::new();
     };
 
     let Ok(output) = std::process::Command::new(shell)
         .args(["-lic", "printf '\\n__ANOTHER_ONE_PATH__%s\\n' \"$PATH\""])
+        .current_dir(cwd)
         .output()
     else {
         return Vec::new();
@@ -1156,13 +1163,14 @@ fn newest_matching_jsonl(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_command, claude_project_dir_name, claude_session_exists, discover_codex_session,
-        discover_codex_session_from_index, discover_codex_session_from_saved_sessions,
-        discover_pi_session, discovery_timeout_for_kind, pi_session_capture_extension_path,
-        pi_session_exists, prepare_codex_home_override_from, read_session_capture,
-        resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
-        SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
-        CLAUDE_BYPASS_PERMISSIONS_ARG, CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
+        build_command, claude_project_dir_name, claude_session_exists, command_path_dirs,
+        discover_codex_session, discover_codex_session_from_index,
+        discover_codex_session_from_saved_sessions, discover_pi_session,
+        discovery_timeout_for_kind, pi_session_capture_extension_path, pi_session_exists,
+        prepare_codex_home_override_from, read_session_capture, resolve_claude_session,
+        resolve_pi_session, DiscoveryKind, PiSessionCapture, SessionCaptureState,
+        TerminalSessionKind, TerminalSessionRef, CLAUDE_BYPASS_PERMISSIONS_ARG,
+        CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
     };
     use crate::agents::{AgentProviderKind, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
@@ -1204,6 +1212,29 @@ mod tests {
             .expect("command should have a file name");
         assert_eq!(command_name, expected[0]);
         assert_eq!(&argv[1..], &expected[1..]);
+    }
+
+    #[test]
+    fn command_path_dirs_prefers_worktree_shell_path() {
+        let current_path =
+            env::join_paths([PathBuf::from("/app/bin"), PathBuf::from("/shell/node")])
+                .expect("test path should be joinable");
+
+        let dirs = command_path_dirs(
+            Some(current_path.as_os_str()),
+            vec![PathBuf::from("/shell/node"), PathBuf::from("/shell/bin")],
+            Some(Path::new("/home/tester")),
+        );
+
+        assert_eq!(
+            &dirs[..4],
+            [
+                PathBuf::from("/shell/node"),
+                PathBuf::from("/shell/bin"),
+                PathBuf::from("/app/bin"),
+                PathBuf::from("/home/tester/.local/bin"),
+            ]
+        );
     }
 
     #[test]
