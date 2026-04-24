@@ -15,6 +15,11 @@ pub fn asset_root() -> PathBuf {
         return root;
     }
 
+    #[cfg(target_os = "linux")]
+    if let Some(root) = linux_appimage_resource_root() {
+        return root;
+    }
+
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
@@ -52,4 +57,16 @@ fn macos_bundle_resource_root() -> Option<PathBuf> {
 #[cfg(target_os = "macos")]
 fn has_bundled_assets(resources_dir: &Path) -> bool {
     resources_dir.join("assets").is_dir()
+}
+
+/// AppImage runtime: `linuxdeploy`'s `AppRun` exports `APPDIR`
+/// pointing at the squashfs mount root. The packaging script lays
+/// assets under `$APPDIR/usr/share/another-one/assets/`, matching
+/// the XDG-ish convention `linuxdeploy` already uses for icons and
+/// .desktop files.
+#[cfg(target_os = "linux")]
+fn linux_appimage_resource_root() -> Option<PathBuf> {
+    let appdir = std::env::var_os("APPDIR")?;
+    let resources = PathBuf::from(appdir).join("usr/share/another-one");
+    resources.join("assets").is_dir().then_some(resources)
 }
