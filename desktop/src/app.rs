@@ -9172,7 +9172,17 @@ fn sidebar_task_navigation_targets(
             .get(&root_project.id)
             .into_iter()
             .flat_map(|tasks| tasks.iter())
-            .filter_map(|task| sidebar_task_navigation_target(projects, root_project, task))
+            .filter_map(|task| {
+                crate::task_launcher::task_workspace_target(projects, root_project, task).map(
+                    |target| SidebarTaskNavigationTarget {
+                        root_project_id: target.root_project_id,
+                        project_id: target.project_id,
+                        task_id: target.task_id,
+                        branch_name: target.branch_name,
+                        project_path: target.project_path,
+                    },
+                )
+            })
             .collect::<Vec<_>>();
 
         group_targets.sort_by_key(|target| !pinned_task_ids.contains(&target.task_id));
@@ -9180,41 +9190,6 @@ fn sidebar_task_navigation_targets(
     }
 
     targets
-}
-
-fn sidebar_task_navigation_target(
-    projects: &[crate::project_store::Project],
-    root_project: &crate::project_store::Project,
-    task: &Task,
-) -> Option<SidebarTaskNavigationTarget> {
-    match task.kind {
-        TaskKind::Direct => Some(SidebarTaskNavigationTarget {
-            root_project_id: root_project.id.clone(),
-            project_id: root_project.id.clone(),
-            task_id: task.id.clone(),
-            branch_name: task.branch_name.clone(),
-            project_path: root_project.path.clone(),
-        }),
-        TaskKind::Worktree | TaskKind::MultiWorktree => task
-            .worktree_project_id
-            .as_ref()
-            .and_then(|worktree_project_id| {
-                projects
-                    .iter()
-                    .find(|project| project.id == *worktree_project_id)
-            })
-            .map(|worktree_project| SidebarTaskNavigationTarget {
-                root_project_id: root_project.id.clone(),
-                project_id: worktree_project.id.clone(),
-                task_id: task.id.clone(),
-                branch_name: worktree_project
-                    .checkout
-                    .current_branch
-                    .clone()
-                    .unwrap_or_else(|| task.branch_name.clone()),
-                project_path: worktree_project.path.clone(),
-            }),
-    }
 }
 
 fn next_task_navigation_target<'a>(
@@ -9317,13 +9292,12 @@ mod tests {
         next_global_tab_navigation_target, next_project_navigation_target,
         next_task_navigation_target, persisted_active_section_key, remove_terminal_runtime_state,
         resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
-        sidebar_task_navigation_target, sidebar_task_navigation_targets,
-        terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
-        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
-        terminal_word_selection_range, trim_to_recent_output_limit, AnotherOneApp, AppToast,
-        NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition,
-        TerminalLinkRange, TerminalSelectionRange, TerminalTab, ToastKind,
-        TERMINAL_RECENT_OUTPUT_LIMIT,
+        sidebar_task_navigation_targets, terminal_line_selection_range, terminal_link_at_position,
+        terminal_link_ranges, terminal_scroll_lines, terminal_selected_text,
+        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
+        AnotherOneApp, AppToast, NavigationDirection, NewTaskShortcutTarget, SectionId,
+        SectionState, TerminalCellPosition, TerminalLinkRange, TerminalSelectionRange, TerminalTab,
+        ToastKind, TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -10460,7 +10434,7 @@ mod tests {
             Some("root-a-wt"),
         );
 
-        let target = sidebar_task_navigation_target(
+        let target = crate::task_launcher::task_workspace_target(
             &[root_project.clone(), worktree_project.clone()],
             &root_project,
             &task,

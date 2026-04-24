@@ -152,30 +152,25 @@ impl AnotherOneApp {
             let mut child_entries = Vec::new();
             if let Some(tasks) = self.project_store.tasks.get(&root_project.id) {
                 for task in tasks {
-                    let (project_id, project_path, branch) = match task.kind {
-                        TaskKind::Direct => (
-                            root_project.id.clone(),
-                            root_project.path.clone(),
-                            self.sidebar_branch_named(&root_project, &task.branch_name),
-                        ),
-                        TaskKind::Worktree | TaskKind::MultiWorktree => {
-                            let wt_project = task.worktree_project_id.as_ref().and_then(|wt_id| {
-                                self.project_store.projects.iter().find(|p| p.id == *wt_id)
-                            });
-                            if let Some(wt) = wt_project {
-                                let branch =
-                                    self.sidebar_branch_for_project(wt, false).unwrap_or_else(
-                                        || self.sidebar_branch_named(wt, &task.branch_name),
-                                    );
-                                (wt.id.clone(), wt.path.clone(), branch)
-                            } else {
-                                continue;
-                            }
-                        }
+                    let Some(target) = crate::task_launcher::task_workspace_target(
+                        &self.project_store.projects,
+                        &root_project,
+                        task,
+                    ) else {
+                        continue;
                     };
+                    let Some(project) = self
+                        .project_store
+                        .projects
+                        .iter()
+                        .find(|project| project.id == target.project_id)
+                    else {
+                        continue;
+                    };
+                    let branch = self.sidebar_branch_named(project, &target.branch_name);
                     child_entries.push(SidebarTaskEntry {
-                        project_id,
-                        project_path,
+                        project_id: target.project_id,
+                        project_path: target.project_path,
                         task_id: task.id.clone(),
                         task_name: task.name.clone(),
                         kind: task.kind,

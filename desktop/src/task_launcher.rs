@@ -1,5 +1,6 @@
 use crate::agents::TerminalLaunchConfig;
-use crate::project_store::{Project, ProjectKind};
+use crate::project_store::{Project, ProjectKind, Task, TaskKind};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub(crate) enum TaskLaunchRequest {
@@ -39,6 +40,47 @@ pub(crate) fn review_task_title(pull_request_number: u64) -> String {
 
 pub(crate) fn review_worktree_name_prefix(pull_request_number: u64) -> String {
     format!("review-{pull_request_number}-wt")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TaskWorkspaceTarget {
+    pub root_project_id: String,
+    pub project_id: String,
+    pub task_id: String,
+    pub branch_name: String,
+    pub project_path: PathBuf,
+}
+
+pub(crate) fn task_workspace_target(
+    projects: &[Project],
+    root_project: &Project,
+    task: &Task,
+) -> Option<TaskWorkspaceTarget> {
+    let project = match task.kind {
+        TaskKind::Direct => projects
+            .iter()
+            .find(|project| project.id == task.target_project_id)
+            .unwrap_or(root_project),
+        TaskKind::Worktree | TaskKind::MultiWorktree => {
+            let project_id = task
+                .worktree_project_id
+                .as_ref()
+                .unwrap_or(&task.target_project_id);
+            projects.iter().find(|project| project.id == *project_id)?
+        }
+    };
+
+    Some(TaskWorkspaceTarget {
+        root_project_id: root_project.id.clone(),
+        project_id: project.id.clone(),
+        task_id: task.id.clone(),
+        branch_name: project
+            .checkout
+            .current_branch
+            .clone()
+            .unwrap_or_else(|| task.branch_name.clone()),
+        project_path: task.cwd.clone().unwrap_or_else(|| project.path.clone()),
+    })
 }
 
 pub(crate) fn existing_review_worktree_project<'a>(
@@ -91,6 +133,31 @@ mod tests {
         }
     }
 
+    fn sample_task(
+        id: &str,
+        kind: TaskKind,
+        root_project_id: &str,
+        target_project_id: &str,
+        branch_name: &str,
+        worktree_project_id: Option<&str>,
+        cwd: Option<PathBuf>,
+    ) -> Task {
+        Task {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind,
+            root_project_id: root_project_id.to_string(),
+            target_project_id: target_project_id.to_string(),
+            branch_name: branch_name.to_string(),
+            section_id: format!("{target_project_id}::{branch_name}::{id}"),
+            worktree_project_id: worktree_project_id.map(str::to_string),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd,
+        }
+    }
+
     #[test]
     fn review_task_title_uses_pull_request_number() {
         assert_eq!(review_task_title(1808), "Review #1808");
@@ -99,6 +166,49 @@ mod tests {
     #[test]
     fn review_worktree_name_prefix_uses_pull_request_number() {
         assert_eq!(review_worktree_name_prefix(1808), "review-1808-wt");
+    }
+
+    #[test]
+    fn task_workspace_target_uses_direct_task_cwd_and_current_branch() {
+        let root = sample_project("root", "repo-1", ProjectKind::Root, "feature/current");
+        let task = sample_task(
+            "task-1",
+            TaskKind::Direct,
+            "root",
+            "root",
+            "feature/stale",
+            None,
+            Some(PathBuf::from("/tmp/root-current")),
+        );
+
+        let target = task_workspace_target(std::slice::from_ref(&root), &root, &task)
+            .expect("direct task target should resolve");
+
+        assert_eq!(target.project_id, "root");
+        assert_eq!(target.branch_name, "feature/current");
+        assert_eq!(target.project_path, PathBuf::from("/tmp/root-current"));
+    }
+
+    #[test]
+    fn task_workspace_target_uses_worktree_project_when_available() {
+        let root = sample_project("root", "repo-1", ProjectKind::Root, "main");
+        let worktree = sample_project("worktree", "repo-1", ProjectKind::Worktree, "feature/wt");
+        let task = sample_task(
+            "task-1",
+            TaskKind::Worktree,
+            "root",
+            "worktree",
+            "feature/stale",
+            Some("worktree"),
+            None,
+        );
+
+        let target = task_workspace_target(&[root.clone(), worktree.clone()], &root, &task)
+            .expect("worktree task target should resolve");
+
+        assert_eq!(target.project_id, "worktree");
+        assert_eq!(target.branch_name, "feature/wt");
+        assert_eq!(target.project_path, worktree.path);
     }
 
     #[test]
