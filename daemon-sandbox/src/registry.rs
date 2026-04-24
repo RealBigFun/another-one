@@ -43,13 +43,21 @@ impl EndpointHandle {
     /// Snapshot of the currently-published pairing URL. Changes after
     /// [`Self::regenerate_pairing`].
     pub fn pairing_url(&self) -> String {
-        self.pair_state.lock().unwrap().pairing_url.clone()
+        self.pair_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pairing_url
+            .clone()
     }
 
     /// Snapshot of the currently-published pairing QR PNG bytes.
     /// Changes after [`Self::regenerate_pairing`].
     pub fn qr_png_bytes(&self) -> Vec<u8> {
-        self.pair_state.lock().unwrap().qr_png_bytes.clone()
+        self.pair_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .qr_png_bytes
+            .clone()
     }
 
     /// Roll a fresh TOFU nonce and rebuild the pairing URL + QR. Call
@@ -57,7 +65,12 @@ impl EndpointHandle {
     /// scanned QR can no longer pair (even if the attacker captured
     /// it). Cheap — no new endpoint / socket work.
     pub fn regenerate_pairing(&self) -> anyhow::Result<()> {
-        let mut state = self.pair_state.lock().unwrap();
+        // Recover from a poisoned mutex: if a prior regeneration
+        // panicked while holding the guard (e.g. qr render OOM),
+        // the PairState is still structurally valid — it's just
+        // "observed while mid-mutation". Panicking here too would
+        // turn a recoverable hiccup into a daemon crash.
+        let mut state = self.pair_state.lock().unwrap_or_else(|p| p.into_inner());
         let new_nonce = crate::transport_iroh::generate_pair_nonce();
         let new_url =
             crate::transport_iroh::build_pairing_url_with_token(&state.addr, &new_nonce);

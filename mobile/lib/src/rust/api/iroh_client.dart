@@ -87,13 +87,6 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// the daemon when nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
   Future<void> tabResize({required int cols, required int rows});
-
-  /// Ask the daemon to watch `project_path` and start forwarding
-  /// [`WorkerReply::GitRefresh`] frames for it. See
-  /// `daemon-sandbox/src/frame.rs::Control::WatchProject` for the
-  /// daemon-side semantics. Reissuing replaces the previous
-  /// subscription.
-  Future<void> watchProject({required String projectPath});
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form

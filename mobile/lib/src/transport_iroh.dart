@@ -69,9 +69,8 @@ class IrohTransport implements TerminalTransport {
   @override
   TransportStatus get currentStatus => _current;
 
-  /// Daemon-pushed worker replies (git state etc.) for the currently
-  /// watched project. Call [watchProject] first; nothing arrives on
-  /// this stream until the daemon has a subscription to forward.
+  /// Daemon-pushed worker replies. Today the only variant is
+  /// `ProjectList`, pushed in response to [listProjects].
   Stream<WorkerReply> get workerReplies => _workerReplies.stream;
 
   @override
@@ -119,25 +118,16 @@ class IrohTransport implements TerminalTransport {
 
   /// Map an error thrown by the iroh layer to the best-fitting
   /// TransportStatus. The daemon closes the connection with the
-  /// ASCII reason `anotherone/unpaired: …` when the peer isn't in
-  /// its allowlist; iroh surfaces that reason inside the close
-  /// error string, so a substring match is good enough.
+  /// ASCII reason `anotherone/unpaired` when the peer isn't in its
+  /// allowlist or fails TOFU validation; iroh surfaces that reason
+  /// inside the close error string, so a substring match is good
+  /// enough. Kept short to avoid leaking UI copy onto the wire.
   TransportStatus _statusForError(Object err) {
     final msg = err.toString();
     if (msg.contains('anotherone/unpaired')) {
       return const TransportStatus.unpaired('pairing expired or cleared');
     }
     return TransportStatus.error(msg);
-  }
-
-  /// Ask the daemon to start forwarding git state (and later, more
-  /// worker replies) for [projectPath]. Safe to call multiple times —
-  /// the daemon treats each call as a fresh subscription, replacing
-  /// any prior one for this session.
-  void watchProject(String projectPath) {
-    final session = _session;
-    if (session == null) return;
-    unawaited(session.watchProject(projectPath: projectPath));
   }
 
   /// Ask the daemon to send its project list. The response arrives on

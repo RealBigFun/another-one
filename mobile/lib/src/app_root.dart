@@ -131,9 +131,20 @@ class _AppRootState extends State<AppRoot> {
     // `pair=<hex>` is the TOFU nonce the daemon puts in its pairing
     // URL. The mobile client echoes it back in the first `Hello`
     // control frame so the daemon can confirm this peer scanned the
-    // *current* QR (not a stale one). Persisted endpoints saved
-    // before TOFU existed won't have this — send null and let the
-    // daemon's already-paired path accept us.
+    // *current* QR (not a stale one).
+    //
+    // Persisted endpoints saved before TOFU existed won't have this
+    // query param, so `pairToken` is null. On the daemon side, a
+    // peer that was already in the allowlist on a prior session
+    // hits the `PostAuth::AlreadyPaired` branch and skips Hello
+    // entirely — fine. But a pre-TOFU endpoint whose allowlist
+    // entry has been wiped (e.g. desktop re-install, user hit
+    // "Reset pairings") will NOT auto-accept: the daemon takes the
+    // AwaitHello branch and a null pair_token is rejected with
+    // `anotherone/unpaired`. Our status listener maps that to
+    // `.unpaired` → `_unlink`, which boots the user back to the
+    // pair screen. The UX isn't silent, but the error copy is
+    // generic — track improving that if users start hitting this.
     final pairToken = uri.queryParameters['pair'];
     return IrohTransport(
       id,
@@ -171,24 +182,28 @@ class _AppRootState extends State<AppRoot> {
   Future<void> _unlink() async {
     if (_unlinking) return;
     _unlinking = true;
-    _tearDownTransport();
-    // Pop *before* the async so any nested routes (settings,
-    // task page) tear down while the root context is still valid.
-    // If we awaited first, a rebuild triggered by the async
-    // completing could run popUntil against a half-disposed tree.
-    if (mounted) {
-      Navigator.of(context).popUntil((r) => r.isFirst);
-    }
-    await _clearEndpoint();
-    if (!mounted) {
+    try {
+      _tearDownTransport();
+      // Pop *before* the async so any nested routes (settings,
+      // task page) tear down while the root context is still valid.
+      // If we awaited first, a rebuild triggered by the async
+      // completing could run popUntil against a half-disposed tree.
+      if (mounted) {
+        Navigator.of(context).popUntil((r) => r.isFirst);
+      }
+      await _clearEndpoint();
+      if (!mounted) return;
+      setState(() {
+        _endpoint = '';
+        _projects = const [];
+      });
+    } finally {
+      // Always release the guard — if `_clearEndpoint` threw
+      // (SharedPreferences disk-full, plugin not ready), leaving
+      // `_unlinking = true` forever would silently no-op every
+      // future unpair attempt.
       _unlinking = false;
-      return;
     }
-    setState(() {
-      _endpoint = '';
-      _projects = const [];
-    });
-    _unlinking = false;
   }
 
   Future<void> _replaceEndpoint(String url) async {

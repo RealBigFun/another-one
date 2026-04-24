@@ -212,10 +212,41 @@ impl TerminalRegistry for DesktopTerminalRegistry {
         // pipe blocks, the whole daemon stalls.
         let writer = self.with_state(|state| state.writers.get(&key).cloned()).flatten();
         let Some(writer) = writer else { return };
-        if let Ok(mut guard) = writer.lock() {
+        // `write_all` on a portable-pty master is a plain blocking
+        // syscall. If the child has stopped reading (paused agent,
+        // pipe buffer full, fork bomb), the write can park for
+        // seconds. Without `block_in_place` that parks a tokio
+        // worker thread entirely — reducing our 4-worker pool to
+        // 3, 2, 1, eventually zero. `block_in_place` hands the
+        // worker back to the runtime for the duration of the
+        // syscall, letting the accept loop / forwarder / other
+        // tab's writer keep draining.
+        //
+        // Ordering note: `tab_input` is called from inside the
+        // single async task that reads frames off this viewer's
+        // QUIC stream, sequentially, one frame at a time. So the
+        // `block_in_place` calls from this viewer are naturally
+        // serialised by that task's single execution. Cross-viewer
+        // ordering is mediated by the inner `Mutex` (a second
+        // viewer typing into the same PTY waits for the first
+        // viewer's write to finish). Swapping to `spawn_blocking`
+        // would break this sequentiality — concurrent spawns can
+        // race for the Mutex and interleave multi-byte sequences
+        // like `\e[A`.
+        //
+        // Poison recovery: if a prior write panicked under the
+        // guard, we still want to try — a poisoned lock here just
+        // means the last write crashed, not that the fd is dead.
+        // Clobbering the data is no worse than the panic already
+        // did.
+        tokio::task::block_in_place(|| {
+            let mut guard = match writer.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             let _ = guard.write_all(bytes);
             let _ = guard.flush();
-        };
+        });
     }
 
     fn tab_resize(
@@ -257,22 +288,41 @@ impl TerminalRegistry for DesktopTerminalRegistry {
 
     fn viewer_disconnected(&self, viewer_id: &str) {
         self.with_state(|state| {
-            let Some(key) = state.viewer_focus.remove(viewer_id) else {
-                return;
-            };
-            let empty = state
+            state.viewer_focus.remove(viewer_id);
+            // Scan every active_viewers map, not just the one this
+            // viewer was "focused" on. The trait contract says
+            // "forget *every* size announcement this viewer made",
+            // and a race between `tab_resize` and a concurrent
+            // focus change could leave a stale entry in a prior
+            // tab's map without updating viewer_focus — the old
+            // "drop only the focused key" logic would then silently
+            // orphan that claim, clamping a tab nobody's watching.
+            //
+            // Collect keys first to avoid borrow-across-iter issues
+            // when we recompute / prune below.
+            let touched_keys: Vec<TerminalRuntimeKey> = state
                 .active_viewers
-                .get_mut(&key)
-                .map(|map| {
-                    map.remove(viewer_id);
-                    map.is_empty()
+                .iter_mut()
+                .filter_map(|(key, map)| {
+                    if map.remove(viewer_id).is_some() {
+                        Some(key.clone())
+                    } else {
+                        None
+                    }
                 })
-                .unwrap_or(true);
-            if empty {
-                state.active_viewers.remove(&key);
-                state.effective_sizes.remove(&key);
-            } else {
-                state.recompute_effective_size(&key);
+                .collect();
+            for key in touched_keys {
+                let empty = state
+                    .active_viewers
+                    .get(&key)
+                    .map(|m| m.is_empty())
+                    .unwrap_or(true);
+                if empty {
+                    state.active_viewers.remove(&key);
+                    state.effective_sizes.remove(&key);
+                } else {
+                    state.recompute_effective_size(&key);
+                }
             }
         });
     }
@@ -438,8 +488,14 @@ fn run(
     registry_state: Arc<Mutex<RegistryState>>,
     tx: mpsc::Sender<anyhow::Result<EndpointHandle>>,
 ) {
+    // Four workers so a single stuck PTY write (child paused /
+    // pipe buffer full) + its `block_in_place` scope don't starve
+    // accept loop, writer task, and forwarder concurrently. Two is
+    // the minimum viable count; four gives comfortable headroom
+    // against the ~3 concurrent tab_inputs you can get when desktop
+    // + phone type at the same tab during a resize burst.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(4)
         .enable_all()
         .thread_name("another-one-daemon-rt")
         .build()

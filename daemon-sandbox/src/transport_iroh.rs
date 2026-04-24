@@ -33,6 +33,15 @@ use crate::registry::{EndpointHandle, PairState, TerminalRegistry};
 /// breaks can be versioned cleanly (`/1`, `/2`, …).
 pub const ALPN: &[u8] = b"anotherone/pty/0";
 
+/// QUIC close reason emitted to unauthorised peers. Short on purpose:
+/// the CONNECTION_CLOSE frame is observable on the wire, so long
+/// user-facing copy here would leak product UX text to an on-path
+/// observer. Clients match on this byte string and expand it into
+/// localisable copy ("Pairing expired — please re-scan the QR")
+/// in the UI. Keep in lockstep with the substring match in
+/// `mobile/lib/src/transport_iroh.dart::_statusForError`.
+pub const CLOSE_REASON_UNPAIRED: &[u8] = b"anotherone/unpaired";
+
 /// Bring up an iroh endpoint backed by `registry`. Returns once the
 /// endpoint is online + the pairing QR has been rendered; the accept
 /// loop runs on a detached task owned by the returned handle (drop
@@ -137,7 +146,7 @@ async fn handle_incoming(
         }
         Err(e) => {
             warn!(%remote, error = %e, "rejecting peer");
-            conn.close(1u8.into(), b"anotherone/unpaired: scan the pairing QR again");
+            conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
             return Ok(());
         }
     };
@@ -190,7 +199,7 @@ async fn handle_connection(
                     warn!(viewer_id, "pre-Hello data from unpaired peer; rejecting");
                     conn.close(
                         1u8.into(),
-                        b"anotherone/unpaired: scan the pairing QR again",
+                        CLOSE_REASON_UNPAIRED,
                     );
                     break;
                 }
@@ -216,7 +225,7 @@ async fn handle_connection(
                                     warn!(viewer_id, error = %e, "rejecting unpaired peer");
                                     conn.close(
                                         1u8.into(),
-                                        b"anotherone/unpaired: scan the pairing QR again",
+                                        CLOSE_REASON_UNPAIRED,
                                     );
                                     break;
                                 }
@@ -276,22 +285,41 @@ fn consume_hello(
         anyhow::anyhow!("Hello from unpaired peer missing pair_token")
     })?;
 
+    // Validate-under-lock but do NOT consume yet — we need to know the
+    // allowlist write succeeded before clearing the nonce. If we
+    // consumed first and `persist_pairing` failed (disk full, perms),
+    // the peer would be in limbo: rejected for the rest of this
+    // session and unable to pair via Hello ever again until the user
+    // clicks "Reset pairings" to roll a fresh nonce. The trade-off is
+    // the short window where two concurrent Hellos could both pass
+    // validation if they squeak past the lock boundary — bounded by
+    // the time between dropping the guard here and re-acquiring it
+    // below. Acceptable because only whichever peer wins the
+    // allowlist `append` race ends up paired; the loser's nonce-clear
+    // attempt is still under lock and the nonce is already `None`, so
+    // the loser's `persist_pairing` still runs (idempotent append of
+    // the same NodeId), double-adding the *same* peer. Not a security
+    // issue.
     {
-        let mut state = pair_state.lock().unwrap();
+        let state = pair_state.lock().unwrap_or_else(|p| p.into_inner());
         let expected = state
             .nonce
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no outstanding pair nonce (consumed or not rolled)"))?;
-        // Constant-time compare not strictly required (an attacker
-        // can't iterate nonces across a single connect), but cheap
-        // enough to do anyway.
         if !constant_time_eq(expected.as_bytes(), presented.as_bytes()) {
             anyhow::bail!("pair_token mismatch");
         }
-        state.nonce = None; // consume on success
     }
 
-    persist_pairing(viewer_id, paired_peers_path)
+    persist_pairing(viewer_id, paired_peers_path)?;
+
+    // Only clear after persist succeeded. A second peer that presents
+    // the same token between the two locks will also pass validation
+    // and persist — which is fine; both end up in the allowlist, the
+    // nonce ends up None either way, and the typical case (one phone
+    // scanning one QR) is unchanged.
+    pair_state.lock().unwrap_or_else(|p| p.into_inner()).nonce = None;
+    Ok(())
 }
 
 async fn handle_control(
@@ -326,6 +354,14 @@ async fn handle_control(
             if let Some(prev) = attached.take() {
                 prev.forwarder.abort();
             }
+            // Clear this viewer's viewport claim from the prior tab
+            // before installing a new one. Without this, switching
+            // attach targets leaves the old tab's `active_viewers`
+            // entry stale until the first TabResize arrives — which
+            // often doesn't fire on cold attach, leaving the old
+            // tab's PTY clamped to this phone's viewport despite
+            // the phone having moved on.
+            registry.viewer_disconnected(viewer_id);
 
             let Some(mut rx) = registry.attach_tab(&section_id, &tab_id) else {
                 warn!(section_id, tab_id, "attach_tab: no such live runtime");
@@ -343,13 +379,20 @@ async fn handle_control(
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
                         Err(broadcast::error::RecvError::Lagged(n)) => {
-                            // Slow mobile consumer. Skip over the
-                            // missing chunks — the PTY is lossless
-                            // from the desktop's point of view, but
-                            // the mobile terminal will just see a
-                            // resume from the new tail. Rare in
-                            // practice at our frame sizes.
-                            warn!(lagged = n, "attach forwarder lagged");
+                            // Slow mobile consumer lost `n` chunks.
+                            // Silently resuming from the new tail
+                            // would leave the client's terminal
+                            // state machine stranded — mid-CSI or
+                            // mid-alt-screen, cursor at wrong row —
+                            // because the skipped bytes carried the
+                            // closing escape sequences. There's no
+                            // in-band resync we can perform; the
+                            // only correct recovery is to tear down
+                            // the attachment and let the client
+                            // reconnect, where it'll get a fresh
+                            // scrollback replay + a clean VT state.
+                            warn!(lagged = n, "attach forwarder lagged; dropping attachment to force reattach");
+                            break;
                         }
                     }
                 }

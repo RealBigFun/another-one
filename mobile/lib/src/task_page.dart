@@ -48,6 +48,18 @@ class _TaskPageState extends State<TaskPage> {
   StreamSubscription<Uint8List>? _bytesSub;
   StreamSubscription<TransportStatus>? _statusSub;
   int _instanceKey = 0;
+  /// Timestamp before which we drop incoming bytes instead of writing
+  /// them to the Terminal. Set 200ms into the future whenever we
+  /// switch tabs so any in-flight bytes from the *previous* tab —
+  /// already queued in the daemon's outbound mpsc (cap 64) when we
+  /// sent DetachTab — get discarded instead of splatting into the
+  /// new Terminal. A cleaner fix would be an explicit "attach
+  /// complete for tab X" sentinel in the daemon → client protocol;
+  /// until that exists, a short grace period handles the common
+  /// case (LAN RTT ≪ 200ms, cellular usually < 200ms). Initial open
+  /// uses the same mechanism so any bytes from a still-detaching
+  /// prior session also get dropped.
+  DateTime _ignoreBytesUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// `true` until the first byte of the attached tab's PTY has
   /// arrived *or* [_spinnerTimeout] fires — whichever is first.
@@ -76,27 +88,44 @@ class _TaskPageState extends State<TaskPage> {
     super.initState();
     _activeTabId = widget.task.activeTabId;
     _wireTerminal();
+    _armBytesListener();
+    _statusSub = widget.transport.status.listen(_onStatus);
+    // Seed with the current status — the stream only fires on changes,
+    // so if we arrived already in `.error` state we'd show nothing.
+    _onStatus(widget.transport.currentStatus);
+    _armSpinnerTimeout();
+    _armIgnoreWindow();
+    unawaited(_openTab(_activeTabId));
+  }
+
+  /// (Re)subscribe the PTY-bytes listener. Pulled into a helper so
+  /// initState + _switchTab can't drift apart. The listener does not
+  /// rely on `setState` — xterm's Terminal internally schedules a
+  /// rebuild when `write` is called, so flipping spinner state via
+  /// setState on every byte would be needless churn.
+  void _armBytesListener() {
+    _bytesSub?.cancel();
     _bytesSub = widget.transport.incoming.listen((bytes) {
+      if (DateTime.now().isBefore(_ignoreBytesUntil)) {
+        // In-flight bytes from a prior attachment — drop instead of
+        // splatting into the current tab's Terminal.
+        return;
+      }
       _gotFirstByte = true;
       _attachRetry?.cancel();
       _attachRetry = null;
       _clearSpinner();
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
     });
-    _statusSub = widget.transport.status.listen(_onStatus);
-    // Seed with the current status — the stream only fires on changes,
-    // so if we arrived already in `.error` state we'd show nothing.
-    _onStatus(widget.transport.currentStatus);
-    _armSpinnerTimeout();
-    // Defer the initial attach by one frame so `_terminal.viewWidth /
-    // viewHeight` reflect the real TerminalView layout instead of
-    // xterm's defaults (80×25). Without this, the first TabResize we
-    // send carries stale numbers and the desktop clamps the PTY to
-    // those until the first real onResize fires.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      unawaited(_openTab(_activeTabId));
-    });
+  }
+
+  /// Open the ignore window. Call before sending DetachTab so bytes
+  /// already queued by the daemon for the old tab don't land in the
+  /// new Terminal once the listener re-arms. 200ms empirically
+  /// covers LAN round-trip (~20-50ms) plus the daemon's outbound
+  /// mpsc flush; cellular usually fits too.
+  void _armIgnoreWindow() {
+    _ignoreBytesUntil = DateTime.now().add(const Duration(milliseconds: 200));
   }
 
   void _onStatus(TransportStatus status) {
@@ -108,7 +137,10 @@ class _TaskPageState extends State<TaskPage> {
         }
       case TransportState.error:
       case TransportState.unpaired:
-        setState(() => _errorDetail = status.toString());
+        // status.toString() returns "Instance of 'TransportStatus'" —
+        // TransportStatus doesn't override toString. status.label is
+        // the human-readable form defined in transport.dart.
+        setState(() => _errorDetail = status.label);
       case TransportState.connecting:
       case TransportState.disconnected:
         // Transient — don't surface as an error banner; the spinner
@@ -137,14 +169,26 @@ class _TaskPageState extends State<TaskPage> {
     });
   }
 
-  /// LaunchTab + AttachTab + TabResize in that order. LaunchTab is a
-  /// no-op on the daemon if the tab's already running, so it's cheap
-  /// to send unconditionally. We AttachTab immediately and arm a
-  /// Timer-based retry — if the first AttachTab landed before the
-  /// daemon's LaunchTab had populated a broadcast, the retry catches
-  /// up. The retry cancels itself the instant any byte arrives (see
-  /// the `_bytesSub` listener) so the common case doesn't pay a
+  /// LaunchTab + AttachTab in that order. LaunchTab is a no-op on
+  /// the daemon if the tab's already running, so it's cheap to send
+  /// unconditionally. We AttachTab immediately and arm a Timer-based
+  /// retry — if the first AttachTab landed before the daemon's
+  /// LaunchTab had populated a broadcast, the retry catches up. The
+  /// retry cancels itself the instant any byte arrives (see the
+  /// `_bytesSub` listener) so the common case doesn't pay a
   /// redundant second AttachTab round-trip.
+  ///
+  /// The initial PTY size is *not* sent here. xterm.dart's Terminal
+  /// starts out with defaults (80×25) and only learns its real
+  /// dimensions after TerminalView has laid out — which happens
+  /// asynchronously during the build phase after we return. The
+  /// real dimensions arrive via `onResize` (wired in
+  /// [_wireTerminal]), which fires on first layout and whenever
+  /// the widget reflows. If we sent a resize here we'd carry
+  /// xterm's defaults onto the wire and clamp the desktop's PTY to
+  /// 80×25 until the real onResize landed — visibly squeezing the
+  /// desktop window for the first few hundred ms on every mobile
+  /// open.
   Future<void> _openTab(String tabId) async {
     _gotFirstByte = false;
     unawaited(
@@ -156,10 +200,6 @@ class _TaskPageState extends State<TaskPage> {
     await widget.transport.attachTab(
       sectionId: widget.task.sectionId,
       tabId: tabId,
-    );
-    await widget.transport.tabResize(
-      cols: _terminal.viewWidth,
-      rows: _terminal.viewHeight,
     );
     _attachRetry?.cancel();
     _attachRetry = Timer(const Duration(milliseconds: 400), () async {
@@ -182,8 +222,19 @@ class _TaskPageState extends State<TaskPage> {
 
   Future<void> _switchTab(TabSummary tab) async {
     if (tab.id == _activeTabId) return;
-    // Wipe Dart-side state first so no bytes from the previous tab
-    // sneak in after detach/attach.
+    // Open the ignore window BEFORE sending DetachTab so the
+    // listener is already set to drop anything that arrives after
+    // this point until the window expires.
+    _armIgnoreWindow();
+    // Detach the old Terminal's callbacks before dropping our ref
+    // to it. TerminalView doesn't dispose synchronously and its
+    // onResize can fire one more time during the key-swap —
+    // without these nulls, that stray onResize would call
+    // `widget.transport.tabResize` with the OLD tab still in the
+    // active_viewers map (we've already moved on conceptually),
+    // clamping the newly-attached tab's PTY to a bogus size.
+    _terminal.onOutput = null;
+    _terminal.onResize = null;
     await _bytesSub?.cancel();
     await widget.transport.detachTab();
 
@@ -195,13 +246,7 @@ class _TaskPageState extends State<TaskPage> {
       _awaitingFirstByte = true;
     });
 
-    _bytesSub = widget.transport.incoming.listen((bytes) {
-      _gotFirstByte = true;
-      _attachRetry?.cancel();
-      _attachRetry = null;
-      _clearSpinner();
-      _terminal.write(utf8.decode(bytes, allowMalformed: true));
-    });
+    _armBytesListener();
     _armSpinnerTimeout();
 
     await _openTab(tab.id);
