@@ -650,6 +650,11 @@ impl AnotherOneApp {
             return;
         }
 
+        if self.create_branch_modal.is_some() {
+            self.handle_create_branch_modal_key_down(ev, cx);
+            return;
+        }
+
         if self.custom_action_modal.is_some() {
             self.handle_custom_action_modal_key_down(ev, cx);
             return;

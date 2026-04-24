@@ -1187,6 +1187,9 @@ pub struct AnotherOneApp {
     git_refresh_receiver: Option<broadcast::Receiver<GitRefreshReply>>,
     /// Receiver for the in-flight new task worktree creation result.
     task_creation_receiver: Option<broadcast::Receiver<TaskCreationReply>>,
+    /// Receiver for the in-flight create-branch operation.
+    branch_creation_receiver:
+        Option<broadcast::Receiver<another_one_core::project_service::BranchCreationReply>>,
     /// UI context for the in-flight task creation worker.
     pending_task_launch: Option<PendingTaskLaunch>,
     /// Receiver for the in-flight add-project background preparation result.
@@ -1272,6 +1275,8 @@ pub struct AnotherOneApp {
     pub(crate) add_agent_modal: Option<crate::add_agent_modal::AddAgentModalState>,
     /// Add/Edit custom action modal state. Some when open, None when closed.
     pub(crate) custom_action_modal: Option<crate::custom_actions_modal::CustomActionModalState>,
+    /// Create Branch modal state. Some when open, None when closed.
+    pub(crate) create_branch_modal: Option<crate::create_branch_modal::CreateBranchModalState>,
     /// Inline rename state for a direct task in the left sidebar.
     pub(crate) sidebar_task_rename: Option<SidebarTaskRenameState>,
     /// Most recent direct-task click used to detect double-click rename reliably.
@@ -1468,6 +1473,7 @@ impl Element for AppInputHost {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TextInputTarget {
     NewTaskModal,
+    CreateBranchModal,
     SidebarTaskRename,
     CustomActionModal,
     SettingsAgentInput,
@@ -1533,6 +1539,10 @@ impl EntityInputHandler for AnotherOneApp {
                 .new_task_modal
                 .as_ref()
                 .map(|state| text_for_utf16_range(&state.task_name, range, adjusted_range)),
+            TextInputTarget::CreateBranchModal => self
+                .create_branch_modal
+                .as_ref()
+                .map(|state| text_for_utf16_range(&state.branch_name, range, adjusted_range)),
             TextInputTarget::SidebarTaskRename => self
                 .sidebar_task_rename
                 .as_ref()
@@ -1576,6 +1586,13 @@ impl EntityInputHandler for AnotherOneApp {
                     &state.task_name,
                     state.task_name_cursor,
                     state.task_name_selection_anchor,
+                )
+            }),
+            TextInputTarget::CreateBranchModal => self.create_branch_modal.as_ref().map(|state| {
+                utf16_selection_for_text(
+                    &state.branch_name,
+                    state.branch_name_cursor,
+                    state.branch_name_selection_anchor,
                 )
             }),
             TextInputTarget::SidebarTaskRename => self.sidebar_task_rename.as_ref().map(|state| {
@@ -1648,6 +1665,19 @@ impl EntityInputHandler for AnotherOneApp {
                         &mut state.task_name,
                         &mut state.task_name_cursor,
                         &mut state.task_name_selection_anchor,
+                        range,
+                        text,
+                        false,
+                    );
+                    cx.notify();
+                }
+            }
+            TextInputTarget::CreateBranchModal => {
+                if let Some(state) = self.create_branch_modal.as_mut() {
+                    replace_custom_text(
+                        &mut state.branch_name,
+                        &mut state.branch_name_cursor,
+                        &mut state.branch_name_selection_anchor,
                         range,
                         text,
                         false,
@@ -1750,6 +1780,7 @@ impl EntityInputHandler for AnotherOneApp {
     ) {
         match self.text_input_target(cx) {
             TextInputTarget::NewTaskModal
+            | TextInputTarget::CreateBranchModal
             | TextInputTarget::SidebarTaskRename
             | TextInputTarget::CustomActionModal
             | TextInputTarget::SettingsAgentInput
@@ -2349,6 +2380,18 @@ impl AnotherOneApp {
 
         if self.new_task_modal.is_some() {
             return TextInputTarget::Blocked;
+        }
+
+        if self
+            .create_branch_modal
+            .as_ref()
+            .is_some_and(|state| state.submitting)
+        {
+            return TextInputTarget::Blocked;
+        }
+
+        if self.create_branch_modal.is_some() {
+            return TextInputTarget::CreateBranchModal;
         }
 
         if self.add_agent_modal.is_some() {
@@ -3536,6 +3579,7 @@ impl AnotherOneApp {
             git_refresh_in_flight: false,
             git_refresh_receiver: None,
             task_creation_receiver: None,
+            branch_creation_receiver: None,
             pending_task_launch: None,
             project_add_receiver: None,
             commit_file_changes_sender,
@@ -3656,6 +3700,7 @@ impl AnotherOneApp {
             branch_compare_states: HashMap::new(),
             marked_text: None,
             add_agent_modal: None,
+            create_branch_modal: None,
             custom_action_modal: None,
             sidebar_task_last_click: None,
             font_size: initial_font_size,
@@ -4245,11 +4290,7 @@ impl AnotherOneApp {
                 // Switching focused tabs on desktop: drop the prior
                 // tab's desktop-local entry (same semantics as a
                 // mobile detach/reattach).
-                if let Some(old_key) = state
-                    .viewer_focus
-                    .get(DESKTOP_LOCAL_VIEWER_ID)
-                    .cloned()
-                {
+                if let Some(old_key) = state.viewer_focus.get(DESKTOP_LOCAL_VIEWER_ID).cloned() {
                     if old_key != request.key {
                         if let Some(map) = state.active_viewers.get_mut(&old_key) {
                             map.remove(DESKTOP_LOCAL_VIEWER_ID);
@@ -6350,6 +6391,251 @@ impl AnotherOneApp {
             },
             cx,
         );
+    }
+
+    pub(crate) fn submit_create_branch_modal(&mut self, cx: &mut Context<Self>) {
+        if self.branch_creation_receiver.is_some() {
+            self.show_info_toast("A branch is already being created.", cx);
+            return;
+        }
+
+        let Some((project_id, project_path)) = self.active_project_context(cx) else {
+            self.show_error_toast("No active project is selected.", cx);
+            return;
+        };
+
+        let (branch_name, use_current_task, migrate_changes) = {
+            let Some(state) = self.create_branch_modal.as_mut() else {
+                return;
+            };
+            if state.submitting {
+                return;
+            }
+            let branch_name = if state.branch_name.trim().is_empty() {
+                state.generated_branch_name.clone()
+            } else {
+                state.branch_name.clone()
+            };
+            state.submitting = true;
+            (
+                branch_name,
+                state.use_current_task,
+                state.migrate_changes || state.use_current_task,
+            )
+        };
+
+        self.show_info_toast("Creating branch...", cx);
+        self.git_actions_menu_open = false;
+        self.branch_creation_receiver =
+            Some(another_one_core::project_service::spawn_branch_creation(
+                project_id,
+                project_path,
+                branch_name,
+                use_current_task,
+                migrate_changes,
+            ));
+        cx.notify();
+    }
+
+    fn drain_branch_creation(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(receiver) = self.branch_creation_receiver.as_mut() else {
+            return false;
+        };
+
+        match receiver.try_recv() {
+            Ok(reply) => {
+                self.branch_creation_receiver = None;
+                if let Some(state) = self.create_branch_modal.as_mut() {
+                    state.submitting = false;
+                }
+
+                match reply.result {
+                    Ok(success) => {
+                        if success.use_current_task {
+                            self.finish_current_task_branch_creation(&success, cx);
+                        } else if let Some(prepared) = success.project.clone() {
+                            self.finish_worktree_branch_creation(success, prepared, cx);
+                        } else {
+                            self.show_error_toast(
+                                "The branch was created, but the app could not load the worktree.",
+                                cx,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        self.mark_git_refresh_stale();
+                        self.show_error_toast(error.message, cx);
+                    }
+                }
+                true
+            }
+            Err(broadcast::error::TryRecvError::Empty) => false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                log::warn!("branch_creation drain lagged {n} messages");
+                false
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
+                self.branch_creation_receiver = None;
+                if let Some(state) = self.create_branch_modal.as_mut() {
+                    state.submitting = false;
+                }
+                self.mark_git_refresh_stale();
+                self.show_error_toast("The branch creation process did not complete.", cx);
+                true
+            }
+        }
+    }
+
+    fn finish_worktree_branch_creation(
+        &mut self,
+        success: another_one_core::project_service::BranchCreationSuccess,
+        prepared: another_one_core::project_store::PreparedProject,
+        cx: &mut Context<Self>,
+    ) {
+        let inserted = self.project_store.insert_prepared_project(prepared.clone());
+        if !inserted {
+            self.show_error_toast(
+                "The worktree was created, but the app could not load it.",
+                cx,
+            );
+            return;
+        }
+
+        let Some(project) = self.project_store.project(&prepared.project.id).cloned() else {
+            self.show_error_toast(
+                "The worktree was created, but the app could not resolve its saved state.",
+                cx,
+            );
+            return;
+        };
+
+        self.insert_and_open_task(
+            success.original_project_id.clone(),
+            project.id.clone(),
+            TaskKind::Worktree,
+            success.task_name.clone(),
+            success.branch_name.clone(),
+            Some(project.id.clone()),
+            project.path.clone(),
+            None,
+            None,
+            cx,
+        );
+        self.create_branch_modal = None;
+        self.project_store.save();
+        self.show_success_toast(
+            format!("Created branch {} in a new worktree.", success.branch_name),
+            cx,
+        );
+    }
+
+    fn finish_current_task_branch_creation(
+        &mut self,
+        success: &another_one_core::project_service::BranchCreationSuccess,
+        cx: &mut Context<Self>,
+    ) {
+        let active_section = self.workspace_pane.read(cx).active_section.clone();
+        let Some(section) = active_section else {
+            let invalid_settings = self.refresh_project_git_state(&success.original_project_id);
+            let _ = self.handle_invalid_project_branch_settings(
+                &success.original_project_id,
+                invalid_settings,
+                cx,
+            );
+            self.create_branch_modal = None;
+            self.show_success_toast(format!("Created branch {}.", success.branch_name), cx);
+            return;
+        };
+
+        let Some(task_id) = section.task_id.clone() else {
+            let invalid_settings = self.refresh_project_git_state(&section.project_id);
+            let _ = self.handle_invalid_project_branch_settings(
+                &section.project_id,
+                invalid_settings,
+                cx,
+            );
+            self.create_branch_modal = None;
+            self.show_success_toast(format!("Created branch {}.", success.branch_name), cx);
+            return;
+        };
+
+        let new_section = SectionId::for_task(&section.project_id, &success.branch_name, &task_id);
+        self.move_active_task_section(&section, &new_section, cx);
+        let _ = self.project_store.update_task_branch(
+            &task_id,
+            &section.project_id,
+            &success.branch_name,
+        );
+        let invalid_settings = self.refresh_project_git_state(&section.project_id);
+        let _ =
+            self.handle_invalid_project_branch_settings(&section.project_id, invalid_settings, cx);
+        self.create_branch_modal = None;
+        self.show_success_toast(format!("Created branch {}.", success.branch_name), cx);
+    }
+
+    fn move_active_task_section(
+        &mut self,
+        old_section: &SectionId,
+        new_section: &SectionId,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace_pane.update(cx, |workspace, cx| {
+            if let Some(state) = workspace.section_states.remove(old_section) {
+                workspace.section_states.insert(new_section.clone(), state);
+            }
+            if workspace.active_section.as_ref() == Some(old_section) {
+                workspace.active_section = Some(new_section.clone());
+                workspace.persist_active_section(cx);
+            }
+            cx.notify();
+        });
+
+        let runtime_keys = self
+            .live_terminal_runtimes
+            .keys()
+            .filter(|key| key.section_id == *old_section)
+            .cloned()
+            .collect::<Vec<_>>();
+        for old_key in runtime_keys {
+            let new_key = TerminalRuntimeKey {
+                section_id: new_section.clone(),
+                tab_id: old_key.tab_id.clone(),
+            };
+            if let Some(runtime) = self.live_terminal_runtimes.remove(&old_key) {
+                self.live_terminal_runtimes.insert(new_key.clone(), runtime);
+            }
+            if let Some(snapshot) = self.terminal_surface_snapshots.remove(&old_key) {
+                self.terminal_surface_snapshots
+                    .insert(new_key.clone(), snapshot);
+            }
+            if let Some(remainder) = self.terminal_scroll_remainder_lines.remove(&old_key) {
+                self.terminal_scroll_remainder_lines
+                    .insert(new_key.clone(), remainder);
+            }
+            if let Some(process) = self.terminal_manager.processes.remove(&old_key) {
+                self.terminal_manager
+                    .processes
+                    .insert(new_key.clone(), process);
+            }
+            if self.terminal_manager.pending_launches.remove(&old_key) {
+                self.terminal_manager
+                    .pending_launches
+                    .insert(new_key.clone());
+            }
+            if let Some(output) = self.terminal_manager.recent_output.remove(&old_key) {
+                self.terminal_manager
+                    .recent_output
+                    .insert(new_key.clone(), output);
+            }
+            if let Some(error) = self.terminal_manager.errors.remove(&old_key) {
+                self.terminal_manager.errors.insert(new_key.clone(), error);
+            }
+        }
+        if let Some(selection) = self.terminal_selection.as_mut() {
+            if selection.key.section_id == *old_section {
+                selection.key.section_id = new_section.clone();
+            }
+        }
     }
 
     pub(crate) fn active_changed_files(&self, cx: &App) -> Arc<[ChangedFile]> {
@@ -10743,16 +11029,15 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_changed_files_git_mutations(cx);
                             should_notify |= this.drain_git_refresh(cx);
                             should_notify |= this.drain_task_creation(cx);
+                            should_notify |= this.drain_branch_creation(cx);
                             should_notify |= this.drain_project_add(cx);
                             should_notify |= this.drain_commit_file_changes(cx);
                             should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.drain_project_pull_request_lookup(cx);
                             should_notify |= this.drain_project_page_pull_requests(cx);
                             should_notify |= this.drain_project_check_runs_lookup(cx);
-                            let terminal_launched =
-                                this.drain_terminal_launch_replies(cx);
-                            let warm_launched =
-                                this.drain_warm_terminal_launch_replies(cx);
+                            let terminal_launched = this.drain_terminal_launch_replies(cx);
+                            let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;
                             should_notify |= warm_launched;
                             // Any terminal-launch state change may have
@@ -10913,6 +11198,7 @@ impl Render for AnotherOneApp {
                 .child(self.sidebar_task_menu_overlay(window, cx))
                 .child(self.terminal_tab_menu_overlay(window, cx))
                 .child(self.new_task_modal_overlay(cx))
+                .child(self.create_branch_modal_overlay(cx))
                 .child(self.add_agent_modal_overlay(cx))
                 .child(self.custom_action_modal_overlay(cx))
                 .child(self.project_remove_confirm_modal(cx))

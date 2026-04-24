@@ -1155,6 +1155,49 @@ impl AnotherOneApp {
             .child(div().h(px(1.)).mx(px(8.)).bg(divider))
             .child(
                 div()
+                    .id("titlebar-git-actions-create-branch")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(34.))
+                    .px(px(12.))
+                    .opacity(if toolbar_enabled { 1. } else { 0.55 })
+                    .when(toolbar_enabled, |d| {
+                        d.cursor_pointer()
+                            .hover(move |s| s.bg(hover_bg))
+                            .tooltip(move |_window, cx| {
+                                Self::action_tooltip_view(
+                                    "Create a branch in this task or a new worktree",
+                                    cx,
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                    this.git_actions_menu_open = false;
+                                    this.open_create_branch_modal(cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                    })
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__git-branch.svg")
+                            .size(px(14.))
+                            .text_color(text_col),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(text_col)
+                            .child("Create Branch"),
+                    ),
+            )
+            .child(div().h(px(1.)).mx(px(8.)).bg(divider))
+            .child(
+                div()
                     .id("titlebar-git-actions-fetch")
                     .flex()
                     .items_center()

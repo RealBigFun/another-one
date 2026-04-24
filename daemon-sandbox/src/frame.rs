@@ -38,17 +38,12 @@ pub enum Control {
     /// (desktop-hosted) daemons, use [`Control::TabResize`] after
     /// [`Control::AttachTab`] — that routes the resize to the
     /// specific tab's PTY.
-    Resize {
-        cols: u16,
-        rows: u16,
-    },
+    Resize { cols: u16, rows: u16 },
     /// Legacy: ask the daemon to spawn `git_refresh` for a literal
     /// path. Preserved for backward compat with clients built before
     /// the projects/tasks/tabs protocol. New clients call
     /// [`Control::ListProjects`] then [`Control::AttachTab`].
-    WatchProject {
-        project_path: String,
-    },
+    WatchProject { project_path: String },
     /// Ask the daemon to send its full project tree as a
     /// [`WorkerReply::ProjectList`] frame (projects → tasks → tabs).
     /// The embedded (desktop) daemon projects straight off the
@@ -60,28 +55,19 @@ pub enum Control {
     /// [`TY_DATA`] frames until either the session closes or
     /// another `AttachTab` / `DetachTab` arrives — at most one
     /// attachment per session.
-    AttachTab {
-        section_id: String,
-        tab_id: String,
-    },
+    AttachTab { section_id: String, tab_id: String },
     /// Stop forwarding PTY bytes for the currently-attached tab.
     /// Idempotent if nothing is attached.
     DetachTab,
     /// Resize the currently-attached tab's PTY. Silently no-ops
     /// when nothing is attached.
-    TabResize {
-        cols: u16,
-        rows: u16,
-    },
+    TabResize { cols: u16, rows: u16 },
     /// Ask the daemon to launch the task's tab as a live PTY if it
     /// isn't running. If already running, no-op. After this call,
     /// [`AttachTab`] will succeed. Both the desktop GUI and mobile
     /// are equal citizens in launching — neither is a "master" that
     /// gates the other.
-    LaunchTab {
-        section_id: String,
-        tab_id: String,
-    },
+    LaunchTab { section_id: String, tab_id: String },
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -97,9 +83,7 @@ pub enum Control {
     /// (or missing) token from an unpaired peer is an
     /// unrecoverable rejection — we never auto-pair without proof
     /// the user scanned the current QR.
-    Hello {
-        pair_token: Option<String>,
-    },
+    Hello { pair_token: Option<String> },
 }
 
 /// Worker replies (type=2 frames). Payload is JSON. Daemon → client
@@ -133,9 +117,7 @@ pub enum WorkerReply {
     /// emitted as their own entries rather than nested children
     /// (the mobile UI can still group them by `repo_id` if it
     /// wants a tree rendering later).
-    ProjectList {
-        projects: Vec<ProjectSummary>,
-    },
+    ProjectList { projects: Vec<ProjectSummary> },
 }
 
 /// Lossy wire projection of `core::project_store::Project`, with

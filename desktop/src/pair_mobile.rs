@@ -55,10 +55,7 @@ impl AnotherOneApp {
             .cursor_pointer()
             .hover(|style| style.bg(gpui::white().opacity(0.08)))
             .tooltip(move |_window, cx| {
-                Self::action_tooltip_view(
-                    "Pair a mobile device with the embedded daemon",
-                    cx,
-                )
+                Self::action_tooltip_view("Pair a mobile device with the embedded daemon", cx)
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -112,10 +109,7 @@ impl AnotherOneApp {
         // start) yields the "not ready" empty state.
         let body = match self.daemon_handle.as_ref() {
             Some(handle) => modal_body_ready(
-                std::sync::Arc::new(Image::from_bytes(
-                    ImageFormat::Png,
-                    handle.qr_png_bytes(),
-                )),
+                std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, handle.qr_png_bytes())),
                 handle.pairing_url(),
             ),
             None => modal_body_daemon_not_ready(),
@@ -154,10 +148,7 @@ impl AnotherOneApp {
                     .gap(px(16.))
                     // Swallow inner clicks so they don't propagate to
                     // the backdrop's close handler.
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        |_ev: &MouseDownEvent, _window, _cx| {},
-                    )
+                    .on_mouse_down(MouseButton::Left, |_ev: &MouseDownEvent, _window, _cx| {})
                     .child(
                         div()
                             .text_size(rems(16. / 16.))
@@ -181,17 +172,9 @@ impl AnotherOneApp {
                                 // click from nuking pair state.
                                 let pending = self.pair_mobile_reset_pending;
                                 let (label, bg_color, hover_color) = if pending {
-                                    (
-                                        "Confirm reset?",
-                                        gpui::rgb(0x8a2a2a),
-                                        gpui::rgb(0xa03a3a),
-                                    )
+                                    ("Confirm reset?", gpui::rgb(0x8a2a2a), gpui::rgb(0xa03a3a))
                                 } else {
-                                    (
-                                        "Reset pairings",
-                                        gpui::rgb(0x4a2a2a),
-                                        gpui::rgb(0x5a3636),
-                                    )
+                                    ("Reset pairings", gpui::rgb(0x4a2a2a), gpui::rgb(0x5a3636))
                                 };
                                 div()
                                     .id("pair-mobile-reset")
@@ -267,11 +250,7 @@ fn modal_body_ready(qr: std::sync::Arc<Image>, pairing_url: String) -> AnyElemen
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(
-                    gpui::img(qr)
-                        .w(px(QR_SIZE - 16.))
-                        .h(px(QR_SIZE - 16.)),
-                ),
+                .child(gpui::img(qr).w(px(QR_SIZE - 16.)).h(px(QR_SIZE - 16.))),
         )
         .child(
             div()

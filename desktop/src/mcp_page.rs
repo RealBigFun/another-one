@@ -53,11 +53,7 @@ impl AnotherOneApp {
         // "Add" prompt that copies the catalog default into the
         // registry.
         for (index, entry) in catalog::entries().iter().enumerate() {
-            let in_registry = self
-                .mcp_registry
-                .entries
-                .iter()
-                .any(|e| e.id == entry.id);
+            let in_registry = self.mcp_registry.entries.iter().any(|e| e.id == entry.id);
             if in_registry {
                 let server = self
                     .mcp_registry
@@ -83,12 +79,8 @@ impl AnotherOneApp {
             .filter(|e| !matches!(e.source, McpSource::Catalog))
             .enumerate()
         {
-            let row = self.render_mcp_registry_row(
-                server,
-                row_bg,
-                index + catalog::entries().len(),
-                cx,
-            );
+            let row =
+                self.render_mcp_registry_row(server, row_bg, index + catalog::entries().len(), cx);
             rows = rows.child(row);
         }
 
@@ -244,12 +236,14 @@ impl AnotherOneApp {
                         }),
                     );
             }
-            toggles = toggles.child(cell.child(
-                div()
-                    .text_size(rems(11. / 16.))
-                    .text_color(text_color)
-                    .child(*short),
-            ));
+            toggles = toggles.child(
+                cell.child(
+                    div()
+                        .text_size(rems(11. / 16.))
+                        .text_color(text_color)
+                        .child(*short),
+                ),
+            );
         }
 
         let remove_id = id.clone();
@@ -303,7 +297,11 @@ impl AnotherOneApp {
 
     // ---- Registry mutations ----
 
-    pub(crate) fn mcp_add_from_catalog(&mut self, catalog_id: &'static str, cx: &mut Context<Self>) {
+    pub(crate) fn mcp_add_from_catalog(
+        &mut self,
+        catalog_id: &'static str,
+        cx: &mut Context<Self>,
+    ) {
         let Some(entry) = catalog::find(catalog_id) else {
             return;
         };
@@ -343,10 +341,7 @@ impl AnotherOneApp {
         for (provider, result) in report {
             if let Err(err) = result {
                 self.mcp_last_sync_errors.insert(provider);
-                self.show_error_toast(
-                    format!("MCP sync failed for {:?}: {err}", provider),
-                    cx,
-                );
+                self.show_error_toast(format!("MCP sync failed for {:?}: {err}", provider), cx);
             }
         }
         self.persist_mcp_registry();

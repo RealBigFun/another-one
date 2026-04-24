@@ -162,15 +162,13 @@ fn launch_terminal(
     // roughly one full alt-screen repaint from Claude Code's
     // status-panel rewrite storms without the subscriber hitting
     // `RecvError::Lagged` and skipping rows.
-    let (output_broadcast, _initial_rx) =
-        tokio::sync::broadcast::channel::<Vec<u8>>(512);
+    let (output_broadcast, _initial_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(512);
     let broadcast_for_reader = output_broadcast.clone();
 
     // Only clone the 8 KiB chunk when there's actually a subscriber —
     // zero-subscriber `send()` returns Err and we were cloning for
     // nothing before. `receiver_count()` is atomic, so this is cheap.
-    let has_subscribers =
-        move || broadcast_for_reader.receiver_count() > 0;
+    let has_subscribers = move || broadcast_for_reader.receiver_count() > 0;
     let broadcast_for_reader_send = output_broadcast.clone();
 
     sender
@@ -282,8 +280,7 @@ fn launch_warm_terminal(
     // tabs aren't promoted onto a task's tab row until committed),
     // but constructing the sender here keeps `PreparedTerminalRuntime`
     // non-optional and lets future code subscribe without a branch.
-    let (output_broadcast, _initial_rx) =
-        tokio::sync::broadcast::channel::<Vec<u8>>(512);
+    let (output_broadcast, _initial_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(512);
     let broadcast_for_reader = output_broadcast.clone();
 
     sender
@@ -310,10 +307,8 @@ fn launch_warm_terminal(
                 Ok(count) => {
                     let bytes = buf[..count].to_vec();
                     let _ = broadcast_for_reader.send(bytes.clone());
-                    let _ = output_sender.send(WarmTerminalLaunchReply::Output {
-                        launch_id,
-                        bytes,
-                    });
+                    let _ =
+                        output_sender.send(WarmTerminalLaunchReply::Output { launch_id, bytes });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,

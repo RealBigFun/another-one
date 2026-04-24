@@ -350,6 +350,20 @@ pub struct CreatedTaskWorktree {
     pub task_name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreateBranchMode {
+    CurrentTask,
+    Worktree { migrate_changes: bool },
+}
+
+#[derive(Debug, Clone)]
+pub struct CreatedBranch {
+    pub path: PathBuf,
+    pub branch_name: String,
+    pub task_name: String,
+    pub migration_stash: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PreparedProject {
     pub project: Project,
@@ -1161,6 +1175,32 @@ impl ProjectStore {
             .push(task.id.clone());
         self.tasks_by_id.insert(task.id.clone(), task);
         self.rebuild_runtime_views();
+    }
+
+    pub fn update_task_branch(
+        &mut self,
+        task_id: &str,
+        target_project_id: &str,
+        branch_name: &str,
+    ) -> Option<(String, String)> {
+        let task = self.tasks_by_id.get_mut(task_id)?;
+        let old_section_id = task.section_id.clone();
+        task.target_project_id = target_project_id.to_string();
+        task.branch_name = branch_name.to_string();
+        task.section_id =
+            crate::section::SectionId::for_task(target_project_id, branch_name, task_id)
+                .store_key();
+        let new_section_id = task.section_id.clone();
+        if let Some(section) = self.terminal_sections.remove(&old_section_id) {
+            self.terminal_sections
+                .insert(new_section_id.clone(), section);
+        }
+        if self.ui.last_active_section_id.as_deref() == Some(&old_section_id) {
+            self.ui.last_active_section_id = Some(new_section_id.clone());
+        }
+        self.rebuild_runtime_views();
+        self.save();
+        Some((old_section_id, new_section_id))
     }
 
     pub fn set_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
@@ -2446,6 +2486,166 @@ pub fn create_task_worktree(
     })
 }
 
+pub fn slugify_branch_name(name: &str) -> String {
+    slugify_task_name(name)
+}
+
+pub fn unique_branch_name_for_repo(repo_path: &Path, base_slug: &str) -> Result<String, String> {
+    unique_branch_name(repo_path, base_slug)
+}
+
+pub fn create_branch_from_head(
+    repo_path: &Path,
+    requested_branch_name: &str,
+    mode: CreateBranchMode,
+) -> Result<CreatedBranch, String> {
+    let slug = slugify_branch_name(requested_branch_name);
+    let branch_name = unique_branch_name(repo_path, &slug)?;
+    match mode {
+        CreateBranchMode::CurrentTask => {
+            let output = git_command(repo_path)
+                .args(["switch", "-c", &branch_name])
+                .output()
+                .map_err(|error| format!("Failed to create branch: {error}"))?;
+            if !output.status.success() {
+                return Err(format_git_command_failure(
+                    "Git failed to create the branch",
+                    &output,
+                ));
+            }
+
+            Ok(CreatedBranch {
+                path: repo_path.to_path_buf(),
+                branch_name: branch_name.clone(),
+                task_name: branch_name,
+                migration_stash: None,
+            })
+        }
+        CreateBranchMode::Worktree { migrate_changes } => {
+            let worktree_slug = format!("{branch_name}-wt");
+            let worktree_path = unique_worktree_path(repo_path, &worktree_slug);
+            let Some(worktree_parent) = worktree_path.parent() else {
+                return Err("Failed to determine the worktree parent directory.".to_string());
+            };
+            std::fs::create_dir_all(worktree_parent)
+                .map_err(|error| format!("Failed to prepare the worktree directory: {error}"))?;
+
+            let stash_ref = if migrate_changes {
+                create_branch_migration_stash(repo_path, &branch_name)?
+            } else {
+                None
+            };
+
+            let output = git_command(repo_path)
+                .args([
+                    "worktree",
+                    "add",
+                    "-b",
+                    &branch_name,
+                    worktree_path.to_string_lossy().as_ref(),
+                    "HEAD",
+                ])
+                .output()
+                .map_err(|error| format!("Failed to create worktree: {error}"))?;
+
+            if !output.status.success() {
+                return Err(format_git_command_failure(
+                    "Git failed to create the worktree",
+                    &output,
+                ));
+            }
+
+            if let Some(stash_ref) = stash_ref.as_deref() {
+                let apply = git_command(&worktree_path)
+                    .args(["stash", "apply", "--index", stash_ref])
+                    .output()
+                    .map_err(|error| {
+                        format!(
+                            "Created the worktree, but failed to apply migrated changes from {stash_ref}: {error}"
+                        )
+                    })?;
+                if !apply.status.success() {
+                    return Err(format!(
+                        "{}. The stash is still available as {stash_ref}.",
+                        format_git_command_failure(
+                            "Created the worktree, but Git failed to apply migrated changes",
+                            &apply,
+                        )
+                    ));
+                }
+
+                let drop = git_command(repo_path)
+                    .args(["stash", "drop", stash_ref])
+                    .output()
+                    .map_err(|error| {
+                        format!("Applied migrated changes, but failed to drop {stash_ref}: {error}")
+                    })?;
+                if !drop.status.success() {
+                    return Err(format_git_command_failure(
+                        "Applied migrated changes, but Git failed to drop the migration stash",
+                        &drop,
+                    ));
+                }
+            }
+
+            Ok(CreatedBranch {
+                path: worktree_path,
+                branch_name: branch_name.clone(),
+                task_name: branch_name,
+                migration_stash: stash_ref,
+            })
+        }
+    }
+}
+
+fn create_branch_migration_stash(
+    repo_path: &Path,
+    branch_name: &str,
+) -> Result<Option<String>, String> {
+    let status = git_command(repo_path)
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .output()
+        .map_err(|error| format!("Failed to inspect changes for migration: {error}"))?;
+    if !status.status.success() {
+        return Err(format_git_command_failure(
+            "Git failed to inspect changes for migration",
+            &status,
+        ));
+    }
+    let status_text = String::from_utf8_lossy(&status.stdout).trim().to_string();
+    if status_text.is_empty() {
+        return Ok(None);
+    }
+
+    let before = git_stdout(repo_path, &["rev-parse", "-q", "--verify", "refs/stash"]);
+    let message = format!("another-one-create-branch-{branch_name}");
+    let output = git_command(repo_path)
+        .args(["stash", "push", "--include-untracked", "-m", &message])
+        .output()
+        .map_err(|error| format!("Failed to stash changes for migration: {error}"))?;
+    if !output.status.success() {
+        let mut message =
+            format_git_command_failure("Git failed to stash changes for migration", &output);
+        if message.contains("No additional details were reported.") {
+            message = format!(
+                "{}. Git exited with {}. Current changes: {}",
+                message,
+                output.status,
+                status_text.replace('\n', "; ")
+            );
+        }
+        return Err(message);
+    }
+
+    let after =
+        git_stdout(repo_path, &["rev-parse", "-q", "--verify", "refs/stash"]).unwrap_or_default();
+    if before.as_deref() == Some(after.as_str()) {
+        return Ok(None);
+    }
+
+    Ok(Some("stash@{0}".to_string()))
+}
+
 pub fn create_review_task_worktree(
     repo_path: &Path,
     task_name: &str,
@@ -3069,6 +3269,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
+    use std::process::Command;
 
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
@@ -3078,15 +3279,16 @@ mod tests {
     use crate::shortcuts::ShortcutSettings;
 
     use super::{
-        app_worktrees_root, combine_commit_file_changes, format_git_command_error,
-        parse_branch_commit_entries, parse_branch_compare_name_status_entries,
-        parse_branch_compare_numstat_entries, parse_recent_branch_commit_page,
-        project_action_agent_launch_args, review_worktree_slug, worktree_parent_dir_with_root,
-        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, PersistedSectionState,
-        PersistedTerminalTab, Project, ProjectAction, ProjectActionAccess, ProjectActionIcon,
-        ProjectActionKind, ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings,
-        ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task,
-        TaskKind, UiState,
+        app_worktrees_root, combine_commit_file_changes, create_branch_from_head, current_branch,
+        format_git_command_error, git_stdout, parse_branch_commit_entries,
+        parse_branch_compare_name_status_entries, parse_branch_compare_numstat_entries,
+        parse_recent_branch_commit_page, project_action_agent_launch_args, review_worktree_slug,
+        slugify_branch_name, unique_branch_name_for_repo, worktree_parent_dir_with_root,
+        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, CreateBranchMode,
+        PersistedSectionState, PersistedTerminalTab, Project, ProjectAction, ProjectActionAccess,
+        ProjectActionIcon, ProjectActionKind, ProjectActionScope, ProjectBranchSettingField,
+        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
+        RepoRecord, StoreFile, Task, TaskKind, UiState,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -3239,6 +3441,118 @@ mod tests {
     #[test]
     fn review_worktree_slug_uses_pull_request_number() {
         assert_eq!(review_worktree_slug(1808), "review-1808-wt");
+    }
+
+    fn run_git(path: &std::path::Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("git should run");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_repo() -> tempfile::TempDir {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        run_git(temp_dir.path(), &["init", "-b", "main"]);
+        run_git(
+            temp_dir.path(),
+            &["config", "user.email", "test@example.com"],
+        );
+        run_git(temp_dir.path(), &["config", "user.name", "Test User"]);
+        fs::write(temp_dir.path().join("file.txt"), "base\n").expect("file should write");
+        run_git(temp_dir.path(), &["add", "."]);
+        run_git(temp_dir.path(), &["commit", "-m", "initial"]);
+        temp_dir
+    }
+
+    #[test]
+    fn slugifies_and_suffixes_duplicate_branch_names() {
+        let repo = init_repo();
+        run_git(repo.path(), &["branch", "feature-test"]);
+
+        assert_eq!(slugify_branch_name(" Feature Test!! "), "feature-test");
+        let unique = unique_branch_name_for_repo(repo.path(), "feature-test")
+            .expect("unique branch should resolve");
+        assert_eq!(unique, "feature-test-2");
+    }
+
+    #[test]
+    fn creates_current_task_branch_with_dirty_changes_left_in_place() {
+        let repo = init_repo();
+        fs::write(repo.path().join("file.txt"), "base\nchanged\n").expect("file should write");
+        fs::write(repo.path().join("staged.txt"), "staged\n").expect("file should write");
+        run_git(repo.path(), &["add", "staged.txt"]);
+
+        let created =
+            create_branch_from_head(repo.path(), "Feature Here", CreateBranchMode::CurrentTask)
+                .expect("branch should be created");
+        assert_eq!(created.branch_name, "feature-here");
+        assert_eq!(current_branch(repo.path()).as_deref(), Some("feature-here"));
+        let status = git_stdout(repo.path(), &["status", "--porcelain"]).unwrap_or_default();
+        assert!(status.contains("file.txt"), "status was {status:?}");
+        assert!(status.contains("A  staged.txt"), "status was {status:?}");
+    }
+
+    #[test]
+    fn creates_clean_worktree_branch_without_migration() {
+        let repo = init_repo();
+        fs::write(repo.path().join("file.txt"), "base\nchanged\n").expect("file should write");
+
+        let created = create_branch_from_head(
+            repo.path(),
+            "Clean Worktree",
+            CreateBranchMode::Worktree {
+                migrate_changes: false,
+            },
+        )
+        .expect("worktree branch should be created");
+        assert_eq!(created.branch_name, "clean-worktree");
+        assert_eq!(
+            current_branch(&created.path).as_deref(),
+            Some("clean-worktree")
+        );
+        assert_eq!(
+            git_stdout(&created.path, &["status", "--porcelain"]).unwrap_or_default(),
+            ""
+        );
+        let source_status = git_stdout(repo.path(), &["status", "--porcelain"]).unwrap_or_default();
+        assert!(
+            source_status.contains("file.txt"),
+            "source status was {source_status:?}"
+        );
+    }
+
+    #[test]
+    fn migrates_staged_unstaged_and_untracked_changes_to_worktree() {
+        let repo = init_repo();
+        fs::write(repo.path().join("file.txt"), "base\nchanged\n").expect("file should write");
+        fs::write(repo.path().join("staged.txt"), "staged\n").expect("file should write");
+        run_git(repo.path(), &["add", "staged.txt"]);
+        fs::write(repo.path().join("untracked.txt"), "untracked\n").expect("file should write");
+
+        let created = create_branch_from_head(
+            repo.path(),
+            "Migrate Worktree",
+            CreateBranchMode::Worktree {
+                migrate_changes: true,
+            },
+        )
+        .expect("worktree branch should be created");
+
+        assert_eq!(
+            git_stdout(repo.path(), &["status", "--porcelain"]).unwrap_or_default(),
+            ""
+        );
+        let status = git_stdout(&created.path, &["status", "--porcelain"]).unwrap_or_default();
+        assert!(status.contains("file.txt"), "status was {status:?}");
+        assert!(status.contains("A  staged.txt"), "status was {status:?}");
+        assert!(status.contains("?? untracked.txt"), "status was {status:?}");
     }
 
     #[test]

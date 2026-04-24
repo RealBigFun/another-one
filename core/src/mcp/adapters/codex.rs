@@ -53,7 +53,9 @@ pub fn read() -> anyhow::Result<Vec<McpServer>> {
     };
     let mut out = Vec::new();
     for (id, item) in servers.iter() {
-        let Some(table) = item.as_table() else { continue };
+        let Some(table) = item.as_table() else {
+            continue;
+        };
         let Some(command) = table
             .get("command")
             .and_then(Item::as_value)
@@ -203,7 +205,10 @@ mod tests {
             .and_then(Item::as_table_mut)
             .expect("just inserted or upgraded");
         let owned_ids: HashSet<String> = registry_owned.iter().map(|s| s.id.clone()).collect();
-        for id in previously_owned.iter().filter(|id| !owned_ids.contains(id.as_str())) {
+        for id in previously_owned
+            .iter()
+            .filter(|id| !owned_ids.contains(id.as_str()))
+        {
             servers_tbl.remove(id);
         }
         for server in &registry_owned {
@@ -245,7 +250,10 @@ command = "python"
         let prev = HashSet::new();
         let out = apply_write_in_memory(src, http_owned, prev);
         assert!(out.contains("theirs"), "user's row was deleted:\n{out}");
-        assert!(out.contains(r#"command = "python""#), "lost contents:\n{out}");
+        assert!(
+            out.contains(r#"command = "python""#),
+            "lost contents:\n{out}"
+        );
     }
 
     #[test]
@@ -269,7 +277,10 @@ command = "old-node"
         let mut prev = HashSet::new();
         prev.insert("ours".into());
         let out = apply_write_in_memory(src, http_owned, prev);
-        assert!(!out.contains("mcp_servers.ours"), "expected ours stripped:\n{out}");
+        assert!(
+            !out.contains("mcp_servers.ours"),
+            "expected ours stripped:\n{out}"
+        );
     }
 
     #[test]
@@ -303,11 +314,12 @@ command = "old-node"
             source: McpSource::Custom,
         };
         let table = server_to_table(&server).unwrap();
-        assert_eq!(
-            table.get("command").and_then(|v| v.as_str()),
-            Some("node")
-        );
-        let args = table.get("args").and_then(Item::as_value).and_then(TomlValue::as_array).unwrap();
+        assert_eq!(table.get("command").and_then(|v| v.as_str()), Some("node"));
+        let args = table
+            .get("args")
+            .and_then(Item::as_value)
+            .and_then(TomlValue::as_array)
+            .unwrap();
         assert_eq!(args.len(), 1);
         assert_eq!(args.get(0).and_then(TomlValue::as_str), Some("server.js"));
         let env_tbl = table.get("env").and_then(Item::as_table).unwrap();

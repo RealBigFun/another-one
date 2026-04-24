@@ -21,8 +21,9 @@ use tokio::sync::broadcast;
 
 use crate::agents::TerminalLaunchConfig;
 use crate::project_store::{
-    create_review_task_worktree, create_task_worktree, prepare_project, PreparedProject, Project,
-    ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoRecord,
+    create_branch_from_head, create_review_task_worktree, create_task_worktree, prepare_project,
+    CreateBranchMode, PreparedProject, Project, ProjectBranchSettings, ProjectCheckoutState,
+    ProjectKind, RepoRecord,
 };
 
 // ---- project add ----------------------------------------------------
@@ -65,6 +66,20 @@ pub struct TaskCreationFailure {
 #[derive(Clone)]
 pub struct TaskCreationReply {
     pub result: Result<TaskCreationSuccess, TaskCreationFailure>,
+}
+
+#[derive(Clone)]
+pub struct BranchCreationSuccess {
+    pub original_project_id: String,
+    pub project: Option<PreparedProject>,
+    pub branch_name: String,
+    pub task_name: String,
+    pub use_current_task: bool,
+}
+
+#[derive(Clone)]
+pub struct BranchCreationReply {
+    pub result: Result<BranchCreationSuccess, TaskCreationFailure>,
 }
 
 /// Create a new git worktree for a task, prepare a `PreparedProject`
@@ -131,6 +146,73 @@ pub fn spawn_task_creation(
         })
         .map_err(|message| TaskCreationFailure { message });
         let _ = tx.send(TaskCreationReply { result });
+    });
+    rx
+}
+
+pub fn spawn_branch_creation(
+    project_id: String,
+    project_path: PathBuf,
+    branch_name: String,
+    use_current_task: bool,
+    migrate_changes: bool,
+) -> broadcast::Receiver<BranchCreationReply> {
+    let (tx, rx) = broadcast::channel(1);
+    thread::spawn(move || {
+        let mode = if use_current_task {
+            CreateBranchMode::CurrentTask
+        } else {
+            CreateBranchMode::Worktree { migrate_changes }
+        };
+        let result = create_branch_from_head(&project_path, &branch_name, mode)
+            .map(|created| {
+                let project = if use_current_task {
+                    None
+                } else {
+                    Some(prepare_project(&created.path).unwrap_or_else(|_| {
+                        PreparedProject {
+                            project: Project {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                repo_id: uuid::Uuid::new_v4().to_string(),
+                                name: created
+                                    .path
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| created.path.display().to_string()),
+                                path: created.path.clone(),
+                                kind: ProjectKind::Worktree,
+                                checkout: ProjectCheckoutState {
+                                    current_branch: Some(created.branch_name.clone()),
+                                    ..ProjectCheckoutState::default()
+                                },
+                                branch_settings: ProjectBranchSettings::default(),
+                                actions: Vec::new(),
+                                worktree_name: created
+                                    .path
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned()),
+                                repo_common_dir: None,
+                            },
+                            repo: RepoRecord {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                common_dir: None,
+                                branch_order: Vec::new(),
+                                branches_by_name: HashMap::new(),
+                            },
+                        }
+                    }))
+                };
+
+                BranchCreationSuccess {
+                    original_project_id: project_id,
+                    project,
+                    branch_name: created.branch_name,
+                    task_name: created.task_name,
+                    use_current_task,
+                }
+            })
+            .map_err(|message| TaskCreationFailure { message });
+        let _ = tx.send(BranchCreationReply { result });
     });
     rx
 }

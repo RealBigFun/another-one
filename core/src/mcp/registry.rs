@@ -65,8 +65,7 @@ impl McpRegistry {
     pub fn save(&self) -> std::io::Result<()> {
         let path = Self::config_path();
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        crate::mcp::adapters::atomic_write(&path, json.as_bytes())
-            .map_err(std::io::Error::other)
+        crate::mcp::adapters::atomic_write(&path, json.as_bytes()).map_err(std::io::Error::other)
     }
 
     /// Replace `entries` with the passed set. Also handled: rebuild
@@ -233,9 +232,7 @@ fn write_for_provider(
         AgentProviderKind::OpenCode => adapters::opencode::write(owned, previously_owned_ids),
         AgentProviderKind::Amp => adapters::amp::write(owned, previously_owned_ids),
         // No-op for providers without MCP client support today.
-        AgentProviderKind::Pi
-        | AgentProviderKind::RovoDev
-        | AgentProviderKind::Forge => Ok(()),
+        AgentProviderKind::Pi | AgentProviderKind::RovoDev | AgentProviderKind::Forge => Ok(()),
     }
 }
 
@@ -251,9 +248,9 @@ pub fn read_for_provider(provider: AgentProviderKind) -> anyhow::Result<Vec<McpS
         AgentProviderKind::Gemini => adapters::gemini::read(),
         AgentProviderKind::OpenCode => adapters::opencode::read(),
         AgentProviderKind::Amp => adapters::amp::read(),
-        AgentProviderKind::Pi
-        | AgentProviderKind::RovoDev
-        | AgentProviderKind::Forge => Ok(Vec::new()),
+        AgentProviderKind::Pi | AgentProviderKind::RovoDev | AgentProviderKind::Forge => {
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -265,9 +262,7 @@ pub fn config_path_for_provider(provider: AgentProviderKind) -> Option<PathBuf> 
         AgentProviderKind::Gemini => adapters::gemini::config_path(),
         AgentProviderKind::OpenCode => adapters::opencode::config_path(),
         AgentProviderKind::Amp => adapters::amp::config_path(),
-        AgentProviderKind::Pi
-        | AgentProviderKind::RovoDev
-        | AgentProviderKind::Forge => None,
+        AgentProviderKind::Pi | AgentProviderKind::RovoDev | AgentProviderKind::Forge => None,
     }
 }
 
