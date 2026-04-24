@@ -52,7 +52,14 @@ pub async fn run_embedded(
     paired_peers_path: PathBuf,
 ) -> anyhow::Result<EndpointHandle> {
     let secret_key = load_or_create_secret_key(&secret_key_path)?;
-    let endpoint = Endpoint::builder(presets::N0)
+    // Use the minimal preset for the embedded desktop daemon.
+    //
+    // `presets::N0` enables pkarr publishing and default relay wiring.
+    // On macOS release app launches we've seen that background publish
+    // path abort inside iroh/libmalloc during startup. The desktop only
+    // needs a stable local endpoint plus direct addresses in the pairing
+    // URL, so keep the embedded daemon on direct-only transport here.
+    let endpoint = Endpoint::builder(presets::Minimal)
         .secret_key(secret_key)
         .alpns(vec![ALPN.to_vec()])
         .bind()
