@@ -216,7 +216,11 @@ fn handle_tool_call(req: &Request, orchestrator: &dyn McpOrchestrator) -> String
             // Unknown tool is a protocol-level problem — the
             // client asked for a name we don't expose. JSON-RPC
             // error is correct here.
-            error(req, err_code::METHOD_NOT_FOUND, format!("unknown tool: {name}"))
+            error(
+                req,
+                err_code::METHOD_NOT_FOUND,
+                format!("unknown tool: {name}"),
+            )
         }
         Err(tools::ToolError::InvalidArgs(msg)) => {
             // Arg validation is likewise a protocol-level
@@ -390,7 +394,10 @@ mod tests {
             .unwrap(),
         );
         let (out, _orch) = drive(&script);
-        assert!(out.is_empty(), "expected no response to notification, got: {out}");
+        assert!(
+            out.is_empty(),
+            "expected no response to notification, got: {out}"
+        );
     }
 
     #[test]
@@ -398,10 +405,7 @@ mod tests {
         let (out, _orch) = drive(&req(2, "tools/list", json!({})));
         let resp: Value = serde_json::from_str(out.trim()).unwrap();
         let tools = resp["result"]["tools"].as_array().expect("tools array");
-        let names: Vec<&str> = tools
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for expected in &[
             "list_projects",
             "list_tasks",
@@ -423,7 +427,11 @@ mod tests {
 
     #[test]
     fn tools_call_list_projects_hits_orchestrator() {
-        let script = req(3, "tools/call", json!({ "name": "list_projects", "arguments": {} }));
+        let script = req(
+            3,
+            "tools/call",
+            json!({ "name": "list_projects", "arguments": {} }),
+        );
         let (out, orch) = drive(&script);
         assert_eq!(orch.calls.lock().unwrap().as_slice(), &["list_projects"]);
         let resp: Value = serde_json::from_str(out.trim()).unwrap();
@@ -435,7 +443,11 @@ mod tests {
 
     #[test]
     fn tools_call_unknown_tool_returns_method_not_found() {
-        let script = req(4, "tools/call", json!({ "name": "not_a_tool", "arguments": {} }));
+        let script = req(
+            4,
+            "tools/call",
+            json!({ "name": "not_a_tool", "arguments": {} }),
+        );
         let (out, _orch) = drive(&script);
         let resp: Value = serde_json::from_str(out.trim()).unwrap();
         assert_eq!(resp["error"]["code"], err_code::METHOD_NOT_FOUND);

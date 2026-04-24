@@ -30,9 +30,7 @@ use std::thread;
 
 use tokio::sync::broadcast;
 
-use daemon_sandbox::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
-};
+use daemon_sandbox::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
 use daemon_sandbox::{EndpointHandle, TerminalRegistry};
 
 use another_one_core::agents::AgentProviderKind;
@@ -59,8 +57,7 @@ pub(crate) struct RegistryState {
     /// Per-tab PTY output broadcast senders, cloned from the
     /// launcher's `PreparedTerminalRuntime::output_broadcast`. Mobile
     /// `AttachTab` subscribes to the matching sender.
-    pub(crate) broadcasts:
-        HashMap<TerminalRuntimeKey, broadcast::Sender<Vec<u8>>>,
+    pub(crate) broadcasts: HashMap<TerminalRuntimeKey, broadcast::Sender<Vec<u8>>>,
     /// Per-tab master-PTY writer handles shared with
     /// `LiveTerminalRuntime`. Mobile keystrokes flow through these
     /// exactly like desktop keystrokes do.
@@ -76,8 +73,7 @@ pub(crate) struct RegistryState {
     /// appears in at most one tab's map at a time (switching
     /// focused tabs clears the prior entry); leaving the session
     /// clears every entry for that viewer.
-    pub(crate) active_viewers:
-        HashMap<TerminalRuntimeKey, HashMap<String, (u16, u16)>>,
+    pub(crate) active_viewers: HashMap<TerminalRuntimeKey, HashMap<String, (u16, u16)>>,
     /// Tracks which tab each viewer currently has in focus — used to
     /// clear their prior entry when they switch or detach.
     pub(crate) viewer_focus: HashMap<String, TerminalRuntimeKey>,
@@ -129,9 +125,11 @@ impl RegistryState {
         if viewers.is_empty() {
             return None;
         }
-        let (cols, rows) = viewers.values().fold((u16::MAX, u16::MAX), |(c, r), (vc, vr)| {
-            (c.min(*vc), r.min(*vr))
-        });
+        let (cols, rows) = viewers
+            .values()
+            .fold((u16::MAX, u16::MAX), |(c, r), (vc, vr)| {
+                (c.min(*vc), r.min(*vr))
+            });
         let effective = (cols.max(1), rows.max(1));
         if self.effective_sizes.get(key).copied() == Some(effective) {
             return Some(effective);
@@ -187,14 +185,11 @@ impl DesktopTerminalRegistry {
 
 impl TerminalRegistry for DesktopTerminalRegistry {
     fn list_projects(&self) -> Vec<ProjectSummary> {
-        self.with_state(|state| project_summaries(state)).unwrap_or_default()
+        self.with_state(|state| project_summaries(state))
+            .unwrap_or_default()
     }
 
-    fn attach_tab(
-        &self,
-        section_id: &str,
-        tab_id: &str,
-    ) -> Option<broadcast::Receiver<Vec<u8>>> {
+    fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>> {
         let key = key_from_wire(section_id, tab_id)?;
         self.with_state(|state| state.broadcasts.get(&key).map(|tx| tx.subscribe()))
             .flatten()
@@ -210,7 +205,9 @@ impl TerminalRegistry for DesktopTerminalRegistry {
         // serialises every daemon task on the tokio worker pool
         // while one mobile keystroke is in flight — if the PTY
         // pipe blocks, the whole daemon stalls.
-        let writer = self.with_state(|state| state.writers.get(&key).cloned()).flatten();
+        let writer = self
+            .with_state(|state| state.writers.get(&key).cloned())
+            .flatten();
         let Some(writer) = writer else { return };
         // `write_all` on a portable-pty master is a plain blocking
         // syscall. If the child has stopped reading (paused agent,
@@ -249,14 +246,7 @@ impl TerminalRegistry for DesktopTerminalRegistry {
         });
     }
 
-    fn tab_resize(
-        &self,
-        viewer_id: &str,
-        section_id: &str,
-        tab_id: &str,
-        cols: u16,
-        rows: u16,
-    ) {
+    fn tab_resize(&self, viewer_id: &str, section_id: &str, tab_id: &str, cols: u16, rows: u16) {
         let Some(key) = key_from_wire(section_id, tab_id) else {
             return;
         };
@@ -281,7 +271,9 @@ impl TerminalRegistry for DesktopTerminalRegistry {
                 .entry(key.clone())
                 .or_default()
                 .insert(viewer_id.to_string(), (cols, rows));
-            state.viewer_focus.insert(viewer_id.to_string(), key.clone());
+            state
+                .viewer_focus
+                .insert(viewer_id.to_string(), key.clone());
             state.recompute_effective_size(&key);
         });
     }
@@ -347,16 +339,10 @@ impl TerminalRegistry for DesktopTerminalRegistry {
             if state.in_flight_launches.contains(&key) {
                 return;
             }
-            if state
-                .pending_tab_launches
-                .iter()
-                .any(|r| r.key == key)
-            {
+            if state.pending_tab_launches.iter().any(|r| r.key == key) {
                 return;
             }
-            state
-                .pending_tab_launches
-                .push(TabLaunchRequest { key });
+            state.pending_tab_launches.push(TabLaunchRequest { key });
         });
     }
 }
@@ -396,8 +382,7 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                 .map(|task| {
                     let section_key = task.section_id.clone();
                     let parsed_section = SectionId::from_store_key(&section_key);
-                    let task_pinned =
-                        store.ui.pinned_task_ids.contains(&task.id);
+                    let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
                     let tabs = task
                         .tabs
                         .into_iter()
@@ -502,7 +487,9 @@ fn run(
     {
         Ok(rt) => rt,
         Err(e) => {
-            let _ = tx.send(Err(anyhow::Error::new(e).context("build daemon tokio runtime")));
+            let _ = tx.send(Err(
+                anyhow::Error::new(e).context("build daemon tokio runtime")
+            ));
             return;
         }
     };
@@ -532,7 +519,10 @@ fn run(
         daemon_sandbox::transport_mcp::spawn(mcp_socket_path.clone(), mcp_orchestrator)
     }) {
         Ok(listener) => {
-            log::info!("mcp: daemon MCP listener started at {}", mcp_socket_path.display());
+            log::info!(
+                "mcp: daemon MCP listener started at {}",
+                mcp_socket_path.display()
+            );
             std::mem::forget(listener);
         }
         Err(err) => {

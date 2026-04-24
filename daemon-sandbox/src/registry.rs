@@ -72,8 +72,7 @@ impl EndpointHandle {
         // turn a recoverable hiccup into a daemon crash.
         let mut state = self.pair_state.lock().unwrap_or_else(|p| p.into_inner());
         let new_nonce = crate::transport_iroh::generate_pair_nonce();
-        let new_url =
-            crate::transport_iroh::build_pairing_url_with_token(&state.addr, &new_nonce);
+        let new_url = crate::transport_iroh::build_pairing_url_with_token(&state.addr, &new_nonce);
         let new_qr = crate::transport_iroh::render_qr_png_bytes(&new_url)?;
         state.nonce = Some(new_nonce);
         state.pairing_url = new_url;
@@ -101,11 +100,7 @@ pub trait TerminalRegistry: Send + Sync + 'static {
     /// tab_id)`. Returns `None` if the tab isn't currently running
     /// (e.g., closed or never launched). Multiple subscribers share
     /// the same broadcast — each gets a fresh `Receiver`.
-    fn attach_tab(
-        &self,
-        section_id: &str,
-        tab_id: &str,
-    ) -> Option<broadcast::Receiver<Vec<u8>>>;
+    fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>>;
 
     /// Feed input bytes into the tab's master PTY writer. Serialised
     /// by the underlying `Arc<Mutex<…>>` so desktop and mobile can
@@ -124,14 +119,7 @@ pub trait TerminalRegistry: Send + Sync + 'static {
     /// constant like `"desktop-local"` for in-process views).
     /// Clear stale entries with [`viewer_disconnected`] when a
     /// session ends.
-    fn tab_resize(
-        &self,
-        viewer_id: &str,
-        section_id: &str,
-        tab_id: &str,
-        cols: u16,
-        rows: u16,
-    );
+    fn tab_resize(&self, viewer_id: &str, section_id: &str, tab_id: &str, cols: u16, rows: u16);
 
     /// Forget every size announcement this viewer made. Called when
     /// the viewer's session ends so its stale viewport doesn't keep

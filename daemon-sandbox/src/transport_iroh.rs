@@ -76,8 +76,7 @@ pub async fn run_embedded(
 
     let nonce = generate_pair_nonce();
     let pairing_url = build_pairing_url_with_token(&addr, &nonce);
-    let qr_png_bytes =
-        render_qr_png_bytes(&pairing_url).context("render pairing QR PNG")?;
+    let qr_png_bytes = render_qr_png_bytes(&pairing_url).context("render pairing QR PNG")?;
     let pair_state = Arc::new(Mutex::new(PairState {
         nonce: Some(nonce),
         addr: addr.clone(),
@@ -96,8 +95,7 @@ pub async fn run_embedded(
             let paired_path = paired_peers_path.clone();
             let pair_state = pair_state_cloned.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    handle_incoming(incoming, registry, &paired_path, pair_state).await
+                if let Err(e) = handle_incoming(incoming, registry, &paired_path, pair_state).await
                 {
                     warn!(error = %e, "iroh connection error");
                 }
@@ -158,9 +156,15 @@ async fn handle_incoming(
         }
     };
 
-    let result =
-        handle_connection(conn, registry.clone(), &viewer_id, authz, paired_peers_path, pair_state)
-            .await;
+    let result = handle_connection(
+        conn,
+        registry.clone(),
+        &viewer_id,
+        authz,
+        paired_peers_path,
+        pair_state,
+    )
+    .await;
     // Clear this viewer's size entries so a stale small viewport
     // doesn't keep the PTY cramped after the session ends.
     registry.viewer_disconnected(&viewer_id);
@@ -204,10 +208,7 @@ async fn handle_connection(
             Ok(Some((frame::TY_DATA, payload))) => {
                 if matches!(authz, PostAuth::AwaitHello) {
                     warn!(viewer_id, "pre-Hello data from unpaired peer; rejecting");
-                    conn.close(
-                        1u8.into(),
-                        CLOSE_REASON_UNPAIRED,
-                    );
+                    conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
                     break;
                 }
                 if let Some(att) = &attached {
@@ -221,8 +222,7 @@ async fn handle_connection(
                 match serde_json::from_slice::<Control>(&payload) {
                     Ok(ctrl) => {
                         if matches!(authz, PostAuth::AwaitHello) {
-                            match consume_hello(ctrl, viewer_id, &pair_state, paired_peers_path)
-                            {
+                            match consume_hello(ctrl, viewer_id, &pair_state, paired_peers_path) {
                                 Ok(()) => {
                                     authz = PostAuth::AlreadyPaired;
                                     info!(viewer_id, "TOFU pair complete");
@@ -230,25 +230,16 @@ async fn handle_connection(
                                 }
                                 Err(e) => {
                                     warn!(viewer_id, error = %e, "rejecting unpaired peer");
-                                    conn.close(
-                                        1u8.into(),
-                                        CLOSE_REASON_UNPAIRED,
-                                    );
+                                    conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
                                     break;
                                 }
                             }
                         }
-                        handle_control(
-                            ctrl,
-                            &registry,
-                            &outbound_tx,
-                            &mut attached,
-                            viewer_id,
-                        )
-                        .await
-                        .unwrap_or_else(|e| {
-                            warn!(error = %e, "control dispatch failed");
-                        });
+                        handle_control(ctrl, &registry, &outbound_tx, &mut attached, viewer_id)
+                            .await
+                            .unwrap_or_else(|e| {
+                                warn!(error = %e, "control dispatch failed");
+                            });
                     }
                     Err(e) => warn!(error = %e, "bad iroh control frame"),
                 }
@@ -288,9 +279,8 @@ fn consume_hello(
     let Control::Hello { pair_token } = ctrl else {
         anyhow::bail!("first frame from unpaired peer must be Control::Hello");
     };
-    let presented = pair_token.ok_or_else(|| {
-        anyhow::anyhow!("Hello from unpaired peer missing pair_token")
-    })?;
+    let presented =
+        pair_token.ok_or_else(|| anyhow::anyhow!("Hello from unpaired peer missing pair_token"))?;
 
     // Validate-under-lock but do NOT consume yet — we need to know the
     // allowlist write succeeded before clearing the nonce. If we
@@ -339,13 +329,7 @@ async fn handle_control(
     match ctrl {
         Control::Resize { cols, rows } | Control::TabResize { cols, rows } => {
             if let Some(att) = attached.as_ref() {
-                registry.tab_resize(
-                    viewer_id,
-                    &att.section_id,
-                    &att.tab_id,
-                    cols,
-                    rows,
-                );
+                registry.tab_resize(viewer_id, &att.section_id, &att.tab_id, cols, rows);
             }
         }
         Control::ListProjects => {
@@ -353,10 +337,7 @@ async fn handle_control(
             let wire = WorkerReply::ProjectList { projects };
             send_worker_reply(outbound_tx, &wire).await?;
         }
-        Control::AttachTab {
-            section_id,
-            tab_id,
-        } => {
+        Control::AttachTab { section_id, tab_id } => {
             // Drop any prior attachment on this connection.
             if let Some(prev) = attached.take() {
                 prev.forwarder.abort();
@@ -398,7 +379,10 @@ async fn handle_control(
                             // the attachment and let the client
                             // reconnect, where it'll get a fresh
                             // scrollback replay + a clean VT state.
-                            warn!(lagged = n, "attach forwarder lagged; dropping attachment to force reattach");
+                            warn!(
+                                lagged = n,
+                                "attach forwarder lagged; dropping attachment to force reattach"
+                            );
                             break;
                         }
                     }
@@ -429,10 +413,7 @@ async fn handle_control(
             // ListProjects + AttachTab.
             debug!("legacy Control::WatchProject ignored");
         }
-        Control::LaunchTab {
-            section_id,
-            tab_id,
-        } => {
+        Control::LaunchTab { section_id, tab_id } => {
             registry.launch_tab(&section_id, &tab_id);
         }
         Control::Hello { .. } => {
@@ -580,10 +561,7 @@ fn persist_pairing(remote_id: &str, path: &Path) -> anyhow::Result<()> {
 /// client dials. The trailing `pair=<hex>` encodes the current TOFU
 /// nonce; the mobile client echoes it back as the `pair_token` field
 /// of [`Control::Hello`] on its first control frame.
-pub(crate) fn build_pairing_url_with_token(
-    addr: &EndpointAddr,
-    pair_token: &str,
-) -> String {
+pub(crate) fn build_pairing_url_with_token(addr: &EndpointAddr, pair_token: &str) -> String {
     let direct = addr
         .ip_addrs()
         .map(|a| a.to_string())
@@ -669,6 +647,9 @@ mod tests {
     fn render_qr_png_produces_png_magic_bytes() {
         let png = render_qr_png_bytes("iroh://test").unwrap();
         assert!(png.len() > 100);
-        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']);
+        assert_eq!(
+            &png[..8],
+            &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']
+        );
     }
 }

@@ -99,9 +99,8 @@ fn uds_end_to_end_initialize_and_call() {
     let orch: Arc<FakeOrch> = Arc::new(FakeOrch::default());
     let orch_trait: Arc<dyn McpOrchestrator> = orch.clone();
 
-    let _listener = rt.block_on(async {
-        transport_mcp::spawn(socket_path.clone(), orch_trait).unwrap()
-    });
+    let _listener =
+        rt.block_on(async { transport_mcp::spawn(socket_path.clone(), orch_trait).unwrap() });
 
     // Tiny retry loop: `spawn` returns before the accept loop
     // actually starts polling the listener, so a too-eager

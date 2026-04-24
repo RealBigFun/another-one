@@ -95,10 +95,8 @@ pub fn spawn(
     // moment it exists on the filesystem — closes the TOCTOU
     // window between bind(2) and a post-hoc chmod.
     let prev_umask = set_umask(0o177);
-    let listener_result =
-        UnixListener::bind(&socket_path).with_context(|| {
-            format!("failed to bind MCP socket at {}", socket_path.display())
-        });
+    let listener_result = UnixListener::bind(&socket_path)
+        .with_context(|| format!("failed to bind MCP socket at {}", socket_path.display()));
     set_umask(prev_umask);
     let listener = listener_result?;
 
@@ -150,15 +148,11 @@ fn unlink_if_ours_and_dead(path: &Path) -> anyhow::Result<()> {
     // instance is alive. Don't rug-pull it.
     if let Ok(stream) = std::os::unix::net::UnixStream::connect(path) {
         drop(stream);
-        anyhow::bail!(
-            "another MCP listener is already serving {}",
-            path.display()
-        );
+        anyhow::bail!("another MCP listener is already serving {}", path.display());
     }
     // Dead socket: unlink.
-    std::fs::remove_file(path).with_context(|| {
-        format!("failed to unlink stale socket at {}", path.display())
-    })?;
+    std::fs::remove_file(path)
+        .with_context(|| format!("failed to unlink stale socket at {}", path.display()))?;
     Ok(())
 }
 
@@ -179,10 +173,7 @@ pub fn spawn(
 }
 
 #[cfg(unix)]
-async fn accept_loop(
-    listener: tokio::net::UnixListener,
-    orchestrator: Arc<dyn McpOrchestrator>,
-) {
+async fn accept_loop(listener: tokio::net::UnixListener, orchestrator: Arc<dyn McpOrchestrator>) {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
@@ -252,6 +243,5 @@ pub fn default_socket_path() -> PathBuf {
     let uid = unsafe { libc::geteuid() };
     #[cfg(not(unix))]
     let uid: u32 = 0;
-    tmp.join(format!("another-one-mcp-{uid}"))
-        .join("mcp.sock")
+    tmp.join(format!("another-one-mcp-{uid}")).join("mcp.sock")
 }

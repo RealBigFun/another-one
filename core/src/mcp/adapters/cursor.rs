@@ -80,7 +80,10 @@ mod tests {
         };
         let value = forward_cursor(&server);
         let obj = value.as_object().unwrap();
-        assert_eq!(obj.get("url").and_then(|v| v.as_str()), Some("https://e.test"));
+        assert_eq!(
+            obj.get("url").and_then(|v| v.as_str()),
+            Some("https://e.test")
+        );
         assert!(!obj.contains_key("type"));
     }
 
@@ -101,5 +104,4 @@ mod tests {
         let obj = value.as_object().unwrap();
         assert_eq!(obj.get("type").and_then(|v| v.as_str()), Some("stdio"));
     }
-
 }

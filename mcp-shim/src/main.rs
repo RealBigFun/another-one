@@ -58,8 +58,7 @@ fn run(socket_path: &Path) -> io::Result<()> {
     let stream_write = stream;
 
     // stdin → socket on a worker thread.
-    let _stdin_thread =
-        thread::spawn(move || copy_until_eof(io::stdin().lock(), stream_write));
+    let _stdin_thread = thread::spawn(move || copy_until_eof(io::stdin().lock(), stream_write));
 
     // socket → stdout on the main thread so main exits as soon
     // as the server closes.

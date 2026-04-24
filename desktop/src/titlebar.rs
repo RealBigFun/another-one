@@ -1023,7 +1023,6 @@ impl AnotherOneApp {
         let border = gpui::white().opacity(0.08);
         let text_col = hsla(0., 0., 0.92, 1.);
         let hover_bg = gpui::white().opacity(0.06);
-        let muted_text = hsla(0., 0., 0.48, 1.);
         let danger_col = hsla(0., 0.78, 0.72, 1.);
         let danger_hover = hsla(0., 0.45, 0.34, 0.26);
         let divider = gpui::white().opacity(0.08);
@@ -1053,18 +1052,6 @@ impl AnotherOneApp {
             .occlude()
             .overflow_hidden()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .h(px(30.))
-                    .px(px(12.))
-                    .flex()
-                    .items_center()
-                    .text_size(rems(11. / 16.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(muted_text)
-                    .child("Git actions"),
-            )
-            .child(div().h(px(1.)).mx(px(8.)).bg(divider))
             .child(
                 div()
                     .id("titlebar-git-actions-commit")
@@ -1422,6 +1409,49 @@ impl AnotherOneApp {
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(text_col)
                             .child("Draft PR"),
+                    ),
+            )
+            .child(div().h(px(1.)).mx(px(8.)).bg(divider))
+            .child(
+                div()
+                    .id("titlebar-git-actions-create-branch")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(34.))
+                    .px(px(12.))
+                    .opacity(if toolbar_enabled { 1. } else { 0.55 })
+                    .when(toolbar_enabled, |d| {
+                        d.cursor_pointer()
+                            .hover(move |s| s.bg(hover_bg))
+                            .tooltip(move |_window, cx| {
+                                Self::action_tooltip_view(
+                                    "Create a branch in this task or a new worktree",
+                                    cx,
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                    this.git_actions_menu_open = false;
+                                    this.open_create_branch_modal(cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                    })
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__git-branch.svg")
+                            .size(px(14.))
+                            .text_color(text_col),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(text_col)
+                            .child("Create Branch"),
                     ),
             );
 

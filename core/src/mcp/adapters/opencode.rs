@@ -19,9 +19,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde_json::{Map, Value};
 
-use crate::mcp::adapters::{
-    home, merge_owned, read_json, write_json, JsonSpec, ServerMap,
-};
+use crate::mcp::adapters::{home, merge_owned, read_json, write_json, JsonSpec, ServerMap};
 use crate::mcp::{McpServer, McpSource, McpTransport};
 
 const INJECTED_ACCEPT: &str = "application/json, text/event-stream";
@@ -89,11 +87,7 @@ pub fn read() -> anyhow::Result<Vec<McpServer>> {
                             .collect()
                     })
                     .unwrap_or_default();
-                McpTransport::Stdio {
-                    command,
-                    args,
-                    env,
-                }
+                McpTransport::Stdio { command, args, env }
             }
             _ => continue,
         };

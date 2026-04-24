@@ -15,9 +15,7 @@ use portable_pty::MasterPty;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use crate::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
-};
+use crate::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
 use crate::pty::PtySession;
 use crate::registry::TerminalRegistry;
 
@@ -104,11 +102,7 @@ impl TerminalRegistry for SandboxRegistry {
         }]
     }
 
-    fn attach_tab(
-        &self,
-        section_id: &str,
-        tab_id: &str,
-    ) -> Option<broadcast::Receiver<Vec<u8>>> {
+    fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>> {
         if section_id != SANDBOX_SECTION_ID || tab_id != SANDBOX_TAB_ID {
             debug!(section_id, tab_id, "sandbox: unknown section/tab");
             return None;
@@ -133,14 +127,7 @@ impl TerminalRegistry for SandboxRegistry {
         let _ = writer.flush();
     }
 
-    fn tab_resize(
-        &self,
-        _viewer_id: &str,
-        section_id: &str,
-        tab_id: &str,
-        cols: u16,
-        rows: u16,
-    ) {
+    fn tab_resize(&self, _viewer_id: &str, section_id: &str, tab_id: &str, cols: u16, rows: u16) {
         // Sandbox has a single shell and a single viewer in practice;
         // min-across-viewers collapses to "whatever arrived last".
         if section_id != SANDBOX_SECTION_ID || tab_id != SANDBOX_TAB_ID {

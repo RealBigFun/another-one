@@ -68,10 +68,7 @@ enum Control {
     /// (desktop-hosted) daemon, use [`Control::TabResize`] after
     /// [`Control::AttachTab`] — that routes the resize to the specific
     /// tab's PTY. Kept for backward compat with the smoke-test binary.
-    Resize {
-        cols: u16,
-        rows: u16,
-    },
+    Resize { cols: u16, rows: u16 },
     /// Ask the daemon to send back its current project list as a
     /// [`WorkerReply::ProjectList`] frame. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ListProjects`.
@@ -81,10 +78,7 @@ enum Control {
     /// until the session closes or another `AttachTab` / `DetachTab`
     /// arrives — at most one attachment per session. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::AttachTab`.
-    AttachTab {
-        section_id: String,
-        tab_id: String,
-    },
+    AttachTab { section_id: String, tab_id: String },
     /// Stop forwarding PTY bytes for the currently-attached tab.
     /// Idempotent if nothing is attached. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
@@ -92,25 +86,17 @@ enum Control {
     /// Resize the currently-attached tab's PTY. Silently no-ops when
     /// nothing is attached. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
-    TabResize {
-        cols: u16,
-        rows: u16,
-    },
+    TabResize { cols: u16, rows: u16 },
     /// Ask the daemon to launch this tab's PTY if it's not already
     /// running. No-op if already live. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::LaunchTab`.
-    LaunchTab {
-        section_id: String,
-        tab_id: String,
-    },
+    LaunchTab { section_id: String, tab_id: String },
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
     /// `pair=<hex>` query param on the pairing URL. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::Hello`.
-    Hello {
-        pair_token: Option<String>,
-    },
+    Hello { pair_token: Option<String> },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -130,9 +116,7 @@ pub enum WorkerReply {
     /// Response to [`Control::ListProjects`]. Order matches the
     /// desktop sidebar. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectList`.
-    ProjectList {
-        projects: Vec<ProjectSummary>,
-    },
+    ProjectList { projects: Vec<ProjectSummary> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ProjectSummary`. Contains
@@ -491,8 +475,8 @@ async fn iroh_connect_inner(
     // Persist the client's iroh identity so the EndpointId stays stable
     // across app restarts. Without this, TOFU pairing breaks every
     // time the user reopens the app.
-    let secret_key = load_or_create_device_secret_key()
-        .context("load/create device iroh secret key")?;
+    let secret_key =
+        load_or_create_device_secret_key().context("load/create device iroh secret key")?;
     let endpoint = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         Endpoint::builder(presets::Minimal)
@@ -536,8 +520,8 @@ async fn iroh_connect_inner(
     // daemon ignores Hello from already-paired peers, so sending it
     // unconditionally is safe. We send via the mpsc so ordering is
     // preserved with whatever the Dart layer sends next.
-    let hello_payload = serde_json::to_vec(&Control::Hello { pair_token })
-        .context("encode hello")?;
+    let hello_payload =
+        serde_json::to_vec(&Control::Hello { pair_token }).context("encode hello")?;
     send_tx
         .send((TY_CONTROL, hello_payload))
         .await
@@ -678,11 +662,8 @@ impl IrohSession {
     /// the previous one. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::AttachTab`.
     pub async fn attach_tab(&self, section_id: String, tab_id: String) -> anyhow::Result<()> {
-        let payload = serde_json::to_vec(&Control::AttachTab {
-            section_id,
-            tab_id,
-        })
-        .context("encode attach_tab")?;
+        let payload = serde_json::to_vec(&Control::AttachTab { section_id, tab_id })
+            .context("encode attach_tab")?;
         self.send_frame(TY_CONTROL, payload).await
     }
 

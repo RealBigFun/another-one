@@ -153,17 +153,11 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         std::process::id()
     ));
     // Ensure tempfile lands beside the target so rename stays atomic.
-    std::fs::write(&tmp, bytes).with_context(|| {
-        format!("failed to write tempfile at {}", tmp.display())
-    })?;
+    std::fs::write(&tmp, bytes)
+        .with_context(|| format!("failed to write tempfile at {}", tmp.display()))?;
     apply_mode(&tmp, preserved_mode)?;
-    std::fs::rename(&tmp, path).with_context(|| {
-        format!(
-            "failed to rename {} onto {}",
-            tmp.display(),
-            path.display()
-        )
-    })?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("failed to rename {} onto {}", tmp.display(), path.display()))?;
     Ok(())
 }
 
@@ -473,8 +467,14 @@ mod tests {
         prev.insert("ours".into());
 
         let out = merge_owned(&disk, &owned, &prev);
-        assert_eq!(out.get("user-added"), Some(&serde_json::json!({"command": "foo"})));
-        assert_eq!(out.get("ours"), Some(&serde_json::json!({"command": "new"})));
+        assert_eq!(
+            out.get("user-added"),
+            Some(&serde_json::json!({"command": "foo"}))
+        );
+        assert_eq!(
+            out.get("ours"),
+            Some(&serde_json::json!({"command": "new"}))
+        );
     }
 
     #[test]

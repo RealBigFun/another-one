@@ -71,8 +71,7 @@ fn sandbox_data_dir() -> anyhow::Result<PathBuf> {
         PathBuf::from(home).join(".local").join("share")
     };
     let dir = base.join("another-one-sandbox");
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("create data dir {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("create data dir {}", dir.display()))?;
     Ok(dir)
 }
 
@@ -125,8 +124,9 @@ fn ticket_body_from_url(url: &str) -> String {
                 }
             }
         } else if let Some(relay) = part.strip_prefix("relay=") {
-            let decoded =
-                urlencoding::decode(relay).map(|c| c.into_owned()).unwrap_or_else(|_| relay.to_string());
+            let decoded = urlencoding::decode(relay)
+                .map(|c| c.into_owned())
+                .unwrap_or_else(|_| relay.to_string());
             body.push_str(&format!("relay={decoded}\n"));
         }
     }

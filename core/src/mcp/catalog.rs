@@ -109,7 +109,10 @@ pub const DAEMON_MCP_ID: &str = "another-one-daemon";
 /// `ANOTHERONE_MCP_SOCKET` — the shim prefers that env var so
 /// the user's harness config can continue working even if we
 /// later relocate the default per-user socket path.
-pub fn daemon_catalog_entry(shim_bin: &std::path::Path, socket_path: &std::path::Path) -> McpServer {
+pub fn daemon_catalog_entry(
+    shim_bin: &std::path::Path,
+    socket_path: &std::path::Path,
+) -> McpServer {
     let mut env = BTreeMap::new();
     env.insert(
         "ANOTHERONE_MCP_SOCKET".to_string(),

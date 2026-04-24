@@ -1905,7 +1905,7 @@ fn move_task_name_cursor_to_edge(
     state.task_name_cursor = if to_end { state.task_name.len() } else { 0 };
 }
 
-fn generate_task_name() -> String {
+pub(crate) fn generate_task_name() -> String {
     const FIRST: &[&str] = &[
         "quiet",
         "silver",
