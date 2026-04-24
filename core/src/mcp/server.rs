@@ -33,11 +33,11 @@
 //! both call this. Session ends when the reader EOFs or a write
 //! fails.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Deserializer, Value};
 
 use crate::mcp::orchestrator::McpOrchestrator;
 use crate::mcp::tools;
@@ -76,39 +76,56 @@ struct ErrorObject {
     message: String,
 }
 
-/// JSON-RPC error codes we use.
+/// JSON-RPC error codes we use. Tool *execution* failures go
+/// inside `result.isError`, not as JSON-RPC errors — see
+/// `handle_tool_call` for the rationale.
 mod err_code {
     pub const METHOD_NOT_FOUND: i32 = -32601;
     pub const INVALID_PARAMS: i32 = -32602;
-    pub const SERVER_ERROR: i32 = -32000;
 }
+
+/// Hard cap on a single session's incoming bytes. A hostile peer
+/// sending an unterminated stream can't run us out of memory.
+/// 16 MiB is well above any plausible legitimate payload (MCP
+/// tool requests are tens of KB at most) and well below
+/// comfortable address space.
+const MAX_SESSION_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Drive one MCP session to completion. Returns `Ok(())` on clean
 /// EOF, `Err` only on I/O errors the transport can't recover from.
+///
+/// We parse the incoming byte stream with
+/// [`serde_json::Deserializer::into_iter`] rather than
+/// line-splitting so the server handles both newline-delimited
+/// and concatenated JSON-RPC — some MCP clients pack back-to-back
+/// requests without a separator. Whitespace between messages
+/// (spaces, tabs, LF, CRLF) is consumed by the deserialiser.
 pub fn serve<R: Read, W: Write>(
     reader: R,
     mut writer: W,
     orchestrator: Arc<dyn McpOrchestrator>,
 ) -> std::io::Result<()> {
-    let mut reader = BufReader::new(reader);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let n = reader.read_line(&mut line)?;
-        if n == 0 {
-            // EOF. Clean end-of-session.
-            return Ok(());
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let request: Request = match serde_json::from_str(trimmed) {
+    let capped = reader.take(MAX_SESSION_BYTES);
+    let buffered = BufReader::new(capped);
+    let stream = Deserializer::from_reader(buffered).into_iter::<Value>();
+    for item in stream {
+        let value = match item {
+            Ok(v) => v,
+            Err(err) if err.is_eof() => return Ok(()),
+            Err(err) if err.is_io() => return Err(err.into()),
+            Err(err) => {
+                // Malformed JSON — can't produce a spec-compliant
+                // response without an id. Log and close the
+                // session; the peer needs to reconnect to sync up
+                // the framing.
+                eprintln!("mcp: malformed request: {err}");
+                return Ok(());
+            }
+        };
+        let request: Request = match serde_json::from_value(value) {
             Ok(r) => r,
             Err(err) => {
-                // Can't even parse — can't produce a valid JSON-RPC
-                // error response (no id). Log to stderr, skip.
-                eprintln!("mcp: malformed request: {err} ({trimmed})");
+                eprintln!("mcp: not a JSON-RPC request: {err}");
                 continue;
             }
         };
@@ -122,6 +139,7 @@ pub fn serve<R: Read, W: Write>(
         writer.write_all(b"\n")?;
         writer.flush()?;
     }
+    Ok(())
 }
 
 fn dispatch(req: &Request, orchestrator: &dyn McpOrchestrator) -> Option<String> {
@@ -185,8 +203,8 @@ fn handle_tool_call(req: &Request, orchestrator: &dyn McpOrchestrator) -> String
 
     match tools::call(name, &args, orchestrator) {
         Ok(result) => {
-            // MCP tools/call result shape:
-            //   { content: [ { type: "text", text: "..." } ], isError?: bool }
+            // MCP tools/call success shape:
+            //   { content: [ { type: "text", text: "..." } ], isError?: false, structuredContent? }
             let text = serde_json::to_string(&result).unwrap_or_else(|_| "{}".into());
             let wrapped = json!({
                 "content": [ { "type": "text", "text": text } ],
@@ -195,13 +213,27 @@ fn handle_tool_call(req: &Request, orchestrator: &dyn McpOrchestrator) -> String
             success(req, wrapped)
         }
         Err(tools::ToolError::UnknownTool) => {
+            // Unknown tool is a protocol-level problem — the
+            // client asked for a name we don't expose. JSON-RPC
+            // error is correct here.
             error(req, err_code::METHOD_NOT_FOUND, format!("unknown tool: {name}"))
         }
         Err(tools::ToolError::InvalidArgs(msg)) => {
+            // Arg validation is likewise a protocol-level
+            // problem — JSON-RPC error is correct.
             error(req, err_code::INVALID_PARAMS, msg)
         }
         Err(tools::ToolError::Execution(err)) => {
-            error(req, err_code::SERVER_ERROR, format!("{err:#}"))
+            // MCP spec: tool *execution* errors live inside
+            // `result` with `isError: true` so the model can
+            // observe them and react. Mapping these to JSON-RPC
+            // -32000 breaks MCP clients' error-recovery path.
+            let msg = format!("{err:#}");
+            let wrapped = json!({
+                "content": [ { "type": "text", "text": msg } ],
+                "isError": true,
+            });
+            success(req, wrapped)
         }
     }
 }
@@ -461,12 +493,102 @@ mod tests {
     }
 
     #[test]
-    fn malformed_json_is_skipped_without_killing_session() {
+    fn malformed_json_closes_session_cleanly() {
+        // Malformed framing is unrecoverable (we can't re-sync
+        // without a delimiter contract), so the session ends —
+        // but it doesn't panic or propagate an I/O error.
+        let script = "this is not json\n";
+        let (out, _orch) = drive(script);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn concatenated_requests_are_parsed_independently() {
+        // Two JSON-RPC messages back-to-back with no newline
+        // between them. Must both dispatch.
         let mut script = String::new();
-        script.push_str("this is not json\n");
-        script.push_str(&req(9, "tools/list", json!({})));
+        script.push_str(
+            &serde_json::to_string(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {},
+            }))
+            .unwrap(),
+        );
+        script.push_str(
+            &serde_json::to_string(&json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {},
+            }))
+            .unwrap(),
+        );
         let (out, _orch) = drive(&script);
-        // Exactly one response — the tools/list one.
-        assert_eq!(out.trim().split('\n').count(), 1);
+        let lines: Vec<&str> = out.trim().split('\n').collect();
+        assert_eq!(lines.len(), 2, "got {out}");
+    }
+
+    /// Orchestrator that fails every write tool.
+    struct ErrOrch;
+    impl McpOrchestrator for ErrOrch {
+        fn list_projects(&self) -> Vec<ProjectInfo> {
+            vec![]
+        }
+        fn list_tasks(&self) -> Vec<TaskInfo> {
+            vec![]
+        }
+        fn list_tabs(&self, _: &str) -> Vec<TabInfo> {
+            vec![]
+        }
+        fn get_task_status(&self, _: &str) -> Option<TaskStatus> {
+            None
+        }
+        fn read_terminal_output(&self, _: &str, _: usize) -> Option<TerminalSnapshot> {
+            None
+        }
+        fn spawn_task(&self, _: SpawnTaskRequest) -> anyhow::Result<SpawnTaskResponse> {
+            anyhow::bail!("synthetic failure from test")
+        }
+        fn spawn_terminal(&self, _: SpawnTerminalRequest) -> anyhow::Result<SpawnTerminalResponse> {
+            anyhow::bail!("no")
+        }
+        fn send_input(&self, _: &str, _: &[u8]) -> anyhow::Result<()> {
+            anyhow::bail!("no")
+        }
+        fn run_command(&self, _: RunCommandRequest) -> anyhow::Result<RunCommandResponse> {
+            anyhow::bail!("no")
+        }
+        fn close_tab(&self, _: &str) -> anyhow::Result<()> {
+            anyhow::bail!("no")
+        }
+    }
+
+    #[test]
+    fn tool_execution_error_surfaces_as_is_error_in_result() {
+        // MCP spec: tool execution failures are NOT JSON-RPC
+        // errors — they're successful responses with
+        // `result.isError = true` so the model can observe and
+        // react. Mapping these to -32000 (as a prior version did)
+        // breaks Claude Code's error-recovery path.
+        let reader = Cursor::new(
+            r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"spawn_task","arguments":{"project_id":"p","harness":"claude-code"}}}"#
+                .to_string(),
+        );
+        let mut writer = Vec::new();
+        let orch: Arc<dyn McpOrchestrator> = Arc::new(ErrOrch);
+        serve(reader, &mut writer, orch).unwrap();
+        let out = String::from_utf8(writer).unwrap();
+        let resp: Value = serde_json::from_str(out.trim()).unwrap();
+        assert!(
+            resp.get("error").is_none(),
+            "expected success response, got error: {out}"
+        );
+        assert_eq!(resp["result"]["isError"], true);
+        assert!(resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("synthetic failure"));
     }
 }

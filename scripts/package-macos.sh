@@ -68,14 +68,23 @@ if [[ ! -f "$ICON_PATH" ]]; then
   exit 1
 fi
 
-echo "Building $PACKAGE_NAME for release..."
+SHIM_NAME="another-one-mcp-shim"
+SHIM_BINARY_PATH="$ROOT_DIR/target/release/$SHIM_NAME"
+
+echo "Building $PACKAGE_NAME + $SHIM_NAME for release..."
 (
   cd "$ROOT_DIR"
-  cargo build -p "$PACKAGE_NAME" --release
+  cargo build -p "$PACKAGE_NAME" -p "$SHIM_NAME" --release
 )
 
 if [[ ! -x "$BINARY_PATH" ]]; then
   echo "Expected built binary at $BINARY_PATH, but it was not found or is not executable." >&2
+  exit 1
+fi
+
+if [[ ! -x "$SHIM_BINARY_PATH" ]]; then
+  echo "Expected shim binary at $SHIM_BINARY_PATH, but it was not found or is not executable." >&2
+  echo "The daemon MCP catalog entry will not work without it." >&2
   exit 1
 fi
 
@@ -84,6 +93,10 @@ rm -rf "$APP_BUNDLE" "$STAGING_DIR" "$DMG_PATH"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 install -m 755 "$BINARY_PATH" "$MACOS_DIR/$PACKAGE_NAME"
+# Bundle the shim next to the main exe. `shim_binary_path()` in
+# desktop/src/app.rs resolves the shim relative to current_exe,
+# so it has to live in Contents/MacOS/ alongside the main binary.
+install -m 755 "$SHIM_BINARY_PATH" "$MACOS_DIR/$SHIM_NAME"
 ditto "$ASSETS_SOURCE" "$ASSETS_DIR"
 install -m 644 "$ICON_PATH" "$RESOURCES_DIR/$APP_NAME.icns"
 

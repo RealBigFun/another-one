@@ -3570,18 +3570,49 @@ impl AnotherOneApp {
                 // Re-register the daemon MCP entry on every
                 // startup: preserves the user's per-harness
                 // `enabled_for` set across app upgrades while
-                // letting us update the generated command/env
-                // (e.g. if the shim binary moves or the socket
-                // path convention changes).
-                let shim_bin = shim_binary_path();
-                let socket_path =
-                    daemon_sandbox::transport_mcp::default_socket_path();
-                reg.ensure_builtin(another_one_core::mcp::catalog::daemon_catalog_entry(
-                    &shim_bin,
-                    &socket_path,
-                ));
-                if let Err(err) = reg.save() {
-                    log::warn!("failed to persist MCP registry at startup: {err}");
+                // letting us refresh the generated command/env
+                // if the shim binary moves or the socket path
+                // convention changes. If we can't locate the
+                // shim (current_exe failed, or the packaging
+                // didn't bundle it), skip registration rather
+                // than write a broken command into harness
+                // configs.
+                if let Some(shim_bin) = shim_binary_path() {
+                    let socket_path = daemon_sandbox::transport_mcp::default_socket_path();
+                    let prior_transport = reg
+                        .entries
+                        .iter()
+                        .find(|e| e.id == another_one_core::mcp::catalog::DAEMON_MCP_ID)
+                        .map(|e| e.transport.clone());
+                    let entry = another_one_core::mcp::catalog::daemon_catalog_entry(
+                        &shim_bin,
+                        &socket_path,
+                    );
+                    let new_transport = entry.transport.clone();
+                    reg.ensure_builtin(entry);
+                    // Transport-fingerprint sync: if the daemon
+                    // entry had a prior transport and it changed
+                    // (shim path moved across versions, socket
+                    // convention changed), downstream harness
+                    // config files still point at the old
+                    // command. Rerun sync so they're re-written
+                    // with the current transport. Errors are
+                    // logged only — they surface again through
+                    // the MCP page's toast path once the user
+                    // visits it.
+                    if let Some(prev) = prior_transport {
+                        if prev != new_transport {
+                            let _report = reg.sync_all();
+                        }
+                    }
+                    if let Err(err) = reg.save() {
+                        log::warn!("failed to persist MCP registry at startup: {err}");
+                    }
+                } else {
+                    log::warn!(
+                        "could not locate another-one-mcp-shim next to current exe; \
+                         skipping daemon MCP catalog registration"
+                    );
                 }
                 reg
             },
@@ -8221,18 +8252,20 @@ fn persisted_active_section_key(active_section: Option<&SectionId>) -> Option<St
 /// Absolute path to the `another-one-mcp-shim` binary for the
 /// daemon-MCP catalog entry. Resolved by looking next to the
 /// running app binary — that's where the release packaging
-/// drops it. If `current_exe()` fails (unusual), we fall back
-/// to the bare name so `PATH` can resolve it.
-fn shim_binary_path() -> std::path::PathBuf {
+/// drops it. Returns `None` when `current_exe()` fails so the
+/// caller can skip registering a broken catalog entry; we
+/// intentionally do **not** fall back to a bare name (letting
+/// `$PATH` resolve it would let a hostile shim earlier on `PATH`
+/// be written into users' harness configs during `sync_all`).
+fn shim_binary_path() -> Option<std::path::PathBuf> {
     let exe_name = if cfg!(windows) {
         "another-one-mcp-shim.exe"
     } else {
         "another-one-mcp-shim"
     };
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|parent| parent.join(exe_name)))
-        .unwrap_or_else(|| std::path::PathBuf::from(exe_name))
+    let exe = std::env::current_exe().ok()?;
+    let parent = exe.parent()?;
+    Some(parent.join(exe_name))
 }
 
 fn choose_initial_section(

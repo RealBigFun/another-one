@@ -53,9 +53,24 @@ impl Drop for McpListener {
 ///
 /// The returned handle should be kept alive for the duration of
 /// the daemon's run — dropping it shuts the listener down and
-/// unlinks the socket file. Missing parent directories are
-/// created; a pre-existing socket at the path is unlinked first
-/// (stale sockets from a crashed prior run).
+/// unlinks the socket file.
+///
+/// ## Security-relevant behaviour
+///
+/// - The parent directory is ensured `chmod 0700` so even a brief
+///   window where the socket file has permissive mode is
+///   unreachable to other local users.
+/// - We set a tight `umask(0o177)` before `bind(2)` so the socket
+///   file is created `0600` from the start, closing the TOCTOU
+///   window between bind and a post-hoc chmod.
+/// - Before unlinking any pre-existing file at `socket_path` we
+///   `lstat(2)` it and confirm it's a socket owned by our uid.
+///   A symlink, regular file, or socket owned by somebody else
+///   is left alone and causes bind to fail — rather than letting
+///   a race or a hostile pre-squat at a predictable path give us
+///   a wrong-owner accept loop.
+/// - On concurrent AnotherOne startup, a live sibling socket is
+///   detected by a probe `connect(2)`; we refuse to clobber it.
 #[cfg(unix)]
 pub fn spawn(
     socket_path: PathBuf,
@@ -66,13 +81,26 @@ pub fn spawn(
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
+        // `chmod 0700` on the directory. Safe to apply on every
+        // startup: if the parent already existed with tighter
+        // perms, 0700 is the same or looser; if it was looser,
+        // we tighten.
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
     }
-    // Unlink any stale socket left over from a prior crash.
-    let _ = std::fs::remove_file(&socket_path);
 
-    let listener = UnixListener::bind(&socket_path)
-        .with_context(|| format!("failed to bind MCP socket at {}", socket_path.display()))?;
-    restrict_socket_mode(&socket_path)?;
+    unlink_if_ours_and_dead(&socket_path)?;
+
+    // Tight umask so the bound socket file is 0600 from the
+    // moment it exists on the filesystem — closes the TOCTOU
+    // window between bind(2) and a post-hoc chmod.
+    let prev_umask = set_umask(0o177);
+    let listener_result =
+        UnixListener::bind(&socket_path).with_context(|| {
+            format!("failed to bind MCP socket at {}", socket_path.display())
+        });
+    set_umask(prev_umask);
+    let listener = listener_result?;
 
     tracing::info!(path = %socket_path.display(), "mcp: listening on UDS");
     let accept_task = tokio::spawn(accept_loop(listener, orchestrator));
@@ -81,6 +109,63 @@ pub fn spawn(
         socket_path,
         abort: Some(accept_task.abort_handle()),
     })
+}
+
+/// Only remove `path` if it exists, is a socket, and is owned by
+/// our euid. If it exists *and* looks live (connect probe
+/// succeeds), bail so a concurrent AnotherOne instance can keep
+/// serving.
+#[cfg(unix)]
+fn unlink_if_ours_and_dead(path: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(anyhow::Error::from(err).context(format!(
+                "failed to stat existing {} before bind",
+                path.display()
+            )))
+        }
+    };
+    let ft = meta.file_type();
+    if !ft.is_socket() {
+        anyhow::bail!(
+            "refusing to unlink non-socket at {} — inspect before retrying",
+            path.display()
+        );
+    }
+    // SAFETY: geteuid is always safe on unix.
+    let our_uid = unsafe { libc::geteuid() };
+    if meta.uid() != our_uid {
+        anyhow::bail!(
+            "refusing to unlink socket at {} owned by uid {} (ours is {})",
+            path.display(),
+            meta.uid(),
+            our_uid,
+        );
+    }
+    // Probe: if something is listening, another AnotherOne
+    // instance is alive. Don't rug-pull it.
+    if let Ok(stream) = std::os::unix::net::UnixStream::connect(path) {
+        drop(stream);
+        anyhow::bail!(
+            "another MCP listener is already serving {}",
+            path.display()
+        );
+    }
+    // Dead socket: unlink.
+    std::fs::remove_file(path).with_context(|| {
+        format!("failed to unlink stale socket at {}", path.display())
+    })?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_umask(mask: u32) -> u32 {
+    // SAFETY: umask(2) takes and returns the prior mask; always safe.
+    unsafe { libc::umask(mask as libc::mode_t) as u32 }
 }
 
 #[cfg(not(unix))]
@@ -149,23 +234,12 @@ async fn handle_connection(stream: tokio::net::UnixStream, orchestrator: Arc<dyn
     }
 }
 
-/// Lock the socket down to owner-only access. On unix the mode
-/// check happens at connect time for UDS (connecting peer must
-/// have permission to the socket file), so 0600 is the right
-/// default for a per-user local endpoint.
-#[cfg(unix)]
-fn restrict_socket_mode(path: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let perms = std::fs::Permissions::from_mode(0o600);
-    std::fs::set_permissions(path, perms)
-        .with_context(|| format!("chmod 0600 on {} failed", path.display()))
-}
-
 /// Return the default per-user socket path. Lives under
 /// `$XDG_RUNTIME_DIR/another-one/mcp.sock` when that's set
-/// (Linux); falls back to `${TMPDIR:-/tmp}/another-one-mcp-$UID.sock`
-/// otherwise. macOS ships no `$XDG_RUNTIME_DIR` so the fallback is
-/// the common case there.
+/// (Linux); falls back to `${TMPDIR:-/tmp}/another-one-mcp-<uid>/mcp.sock`
+/// otherwise. Keyed on effective UID (not `$USER`) so a hostile
+/// `USER` environment can't collide with another user's socket.
+/// The parent directory is chmod 0700 by `spawn()`.
 pub fn default_socket_path() -> PathBuf {
     if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
         return PathBuf::from(runtime).join("another-one").join("mcp.sock");
@@ -173,10 +247,11 @@ pub fn default_socket_path() -> PathBuf {
     let tmp = std::env::var_os("TMPDIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
-    // Namespace per-user in `/tmp` so two logins on the same box
-    // don't collide on the same socket. `$USER` is set in every
-    // POSIX login shell; fall back to "anon" if an embedder is
-    // running with an unusual environment.
-    let user = std::env::var("USER").unwrap_or_else(|_| "anon".into());
-    tmp.join(format!("another-one-mcp-{user}.sock"))
+    #[cfg(unix)]
+    // SAFETY: geteuid is always safe on unix.
+    let uid = unsafe { libc::geteuid() };
+    #[cfg(not(unix))]
+    let uid: u32 = 0;
+    tmp.join(format!("another-one-mcp-{uid}"))
+        .join("mcp.sock")
 }
