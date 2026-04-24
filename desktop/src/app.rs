@@ -427,6 +427,7 @@ struct TerminalRuntimeRequest {
     key: TerminalRuntimeKey,
     cwd: std::path::PathBuf,
     launch_config: TerminalLaunchConfig,
+    restore_status: TerminalRestoreStatus,
     agent_launch_args: Vec<String>,
     size: TerminalGridSize,
 }
@@ -3708,6 +3709,7 @@ impl AnotherOneApp {
             key: key.clone(),
             cwd,
             launch_config: tab.launch_config.clone(),
+            restore_status: tab.restore_status,
             agent_launch_args: self.agent_launch_args_for_launch_config(&tab.launch_config),
             size: TerminalGridSize::default(),
         })
@@ -3795,6 +3797,7 @@ impl AnotherOneApp {
             },
             cwd,
             launch_config: tab.launch_config.clone(),
+            restore_status: tab.restore_status,
             agent_launch_args: self.agent_launch_args_for_launch_config(&tab.launch_config),
             size: self.terminal_panel_size(window),
         })
@@ -4086,6 +4089,10 @@ impl AnotherOneApp {
             .pending_launches
             .contains(&request.key)
         {
+            return;
+        }
+
+        if request.restore_status == TerminalRestoreStatus::Failed {
             return;
         }
 

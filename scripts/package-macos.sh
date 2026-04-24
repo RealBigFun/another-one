@@ -2,6 +2,39 @@
 
 set -euo pipefail
 
+OPEN_DMG=0
+
+usage() {
+  cat <<EOF
+Usage: $0 [--open]
+
+Build, sign, and package the macOS app.
+
+Options:
+  --open    Open the generated DMG after packaging.
+  -h, --help
+            Show this help message.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --open)
+      OPEN_DMG=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "macOS packaging requires Darwin; current platform is $(uname -s)." >&2
   exit 1
@@ -106,5 +139,7 @@ echo "Created:"
 echo "  $APP_BUNDLE"
 echo "  $DMG_PATH"
 
-echo "Opening $APP_NAME.dmg..."
-open "$DMG_PATH"
+if [[ "$OPEN_DMG" -eq 1 ]]; then
+  echo "Opening $APP_NAME.dmg..."
+  open "$DMG_PATH"
+fi

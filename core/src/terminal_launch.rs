@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -93,7 +94,7 @@ pub fn spawn_terminal_launch(
         ) {
             let _ = sender.send(TerminalLaunchReply::Failed {
                 key,
-                message: error.to_string(),
+                message: format_launch_error(&error),
             });
         }
     });
@@ -118,10 +119,14 @@ pub fn spawn_warm_terminal_launch(
         ) {
             let _ = sender.send(WarmTerminalLaunchReply::Failed {
                 launch_id,
-                message: error.to_string(),
+                message: format_launch_error(&error),
             });
         }
     });
+}
+
+fn format_launch_error(error: &anyhow::Error) -> String {
+    format!("{error:#}")
 }
 
 fn launch_terminal(
@@ -480,6 +485,8 @@ fn agent_command_path_dirs() -> Vec<PathBuf> {
         dirs.extend(std::env::split_paths(&path));
     }
 
+    dirs.extend(shell_initialized_path_dirs());
+
     if let Some(home) = dirs::home_dir() {
         dirs.push(home.join(".local/bin"));
         dirs.push(home.join(".cargo/bin"));
@@ -494,6 +501,62 @@ fn agent_command_path_dirs() -> Vec<PathBuf> {
         }
     }
     unique
+}
+
+fn shell_initialized_path_dirs() -> Vec<PathBuf> {
+    static PATH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    PATH_DIRS
+        .get_or_init(read_shell_initialized_path_dirs)
+        .clone()
+}
+
+fn read_shell_initialized_path_dirs() -> Vec<PathBuf> {
+    let Some(shell) = user_shell_path() else {
+        return Vec::new();
+    };
+
+    let Ok(output) = std::process::Command::new(shell)
+        .args(["-lic", "printf '\\n__ANOTHER_ONE_PATH__%s\\n' \"$PATH\""])
+        .output()
+    else {
+        return Vec::new();
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(path) = stdout
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix("__ANOTHER_ONE_PATH__"))
+    else {
+        return Vec::new();
+    };
+
+    std::env::split_paths(path).collect()
+}
+
+fn user_shell_path() -> Option<OsString> {
+    if let Some(shell) = std::env::var_os("SHELL").filter(|shell| !shell.is_empty()) {
+        return Some(shell);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Some(OsString::from("/bin/zsh"))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Some(OsString::from("/bin/bash"))
+    }
+
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 fn default_agent_command_path() -> &'static str {
