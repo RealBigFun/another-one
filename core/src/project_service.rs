@@ -23,7 +23,7 @@ use crate::agents::TerminalLaunchConfig;
 use crate::project_store::{
     create_branch_from_head, create_review_task_worktree, create_task_worktree, prepare_project,
     CreateBranchMode, PreparedProject, Project, ProjectBranchSettings, ProjectCheckoutState,
-    ProjectKind, RepoRecord,
+    ProjectKind, RepoRecord, TaskWorktreeBranchMode,
 };
 
 // ---- project add ----------------------------------------------------
@@ -97,7 +97,7 @@ pub fn spawn_task_creation(
     project_name: String,
     task_name: String,
     generated_task_name: String,
-    source_branch: String,
+    branch_mode: TaskWorktreeBranchMode,
     launch_config: TerminalLaunchConfig,
 ) -> broadcast::Receiver<TaskCreationReply> {
     let (tx, rx) = broadcast::channel(1);
@@ -107,7 +107,7 @@ pub fn spawn_task_creation(
             &project_name,
             &task_name,
             &generated_task_name,
-            &source_branch,
+            branch_mode,
         )
         .map(|created| TaskCreationSuccess {
             original_project_id: project_id,

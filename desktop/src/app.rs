@@ -44,7 +44,7 @@ use crate::project_store::{
     ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
     ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchCompareState,
     ProjectBranchSettingField, ProjectGitState, ProjectStore, RepoBranchRecord,
-    RepoDefaultCommitAction, Task, TaskKind,
+    RepoDefaultCommitAction, Task, TaskKind, TaskWorktreeBranchMode,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
 use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
@@ -6310,7 +6310,7 @@ impl AnotherOneApp {
                 project_id,
                 task_name,
                 generated_task_name,
-                source_branch,
+                branch_mode,
                 launch_config,
             } => {
                 let Some(project) = self.project_store.project(&project_id).cloned() else {
@@ -6333,7 +6333,7 @@ impl AnotherOneApp {
                         project.name,
                         task_name,
                         generated_task_name,
-                        source_branch,
+                        branch_mode,
                         launch_config,
                     ));
                 cx.notify();
@@ -6465,6 +6465,7 @@ impl AnotherOneApp {
             task_name,
             generated_task_name,
             source_branch,
+            branch_mode,
             worktree_mode,
             launch_config,
             warm_launch_id,
@@ -6484,6 +6485,7 @@ impl AnotherOneApp {
                 state.task_name.trim().to_string(),
                 state.generated_task_name.clone(),
                 state.source_branch.clone(),
+                state.branch_mode,
                 state.worktree_mode,
                 terminal_launch_config_for_selected_agents(&state.selected_agents),
                 self.active_new_task_warm_launch_id,
@@ -6514,7 +6516,16 @@ impl AnotherOneApp {
                 project_id,
                 task_name,
                 generated_task_name,
-                source_branch,
+                branch_mode: match branch_mode {
+                    crate::new_task_modal::NewTaskBranchMode::NewBranch => {
+                        TaskWorktreeBranchMode::NewBranchFrom { source_branch }
+                    }
+                    crate::new_task_modal::NewTaskBranchMode::ExistingBranch => {
+                        TaskWorktreeBranchMode::ExistingBranch {
+                            branch: source_branch,
+                        }
+                    }
+                },
                 launch_config,
             },
             cx,

@@ -351,6 +351,12 @@ pub struct CreatedTaskWorktree {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskWorktreeBranchMode {
+    NewBranchFrom { source_branch: String },
+    ExistingBranch { branch: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreateBranchMode {
     CurrentTask,
     Worktree { migrate_changes: bool },
@@ -2425,7 +2431,7 @@ pub fn create_task_worktree(
     _project_name: &str,
     requested_task_name: &str,
     fallback_task_name: &str,
-    source_branch: &str,
+    branch_mode: TaskWorktreeBranchMode,
 ) -> Result<CreatedTaskWorktree, String> {
     let task_name = if requested_task_name.trim().is_empty() {
         fallback_task_name.trim().to_string()
@@ -2438,16 +2444,7 @@ pub fn create_task_worktree(
         task_name
     };
 
-    let base_branch = if source_branch.trim().is_empty() {
-        current_branch(repo_path)
-            .or_else(|| git_default_branch(repo_path))
-            .ok_or_else(|| "Could not determine a base branch for the new worktree.".to_string())?
-    } else {
-        source_branch.trim().to_string()
-    };
-
     let slug = slugify_task_name(&task_name);
-    let branch_name = unique_branch_name(repo_path, &slug)?;
     let worktree_slug = format!("{slug}-wt");
     let worktree_path = unique_worktree_path(repo_path, &worktree_slug);
     let Some(worktree_parent) = worktree_path.parent() else {
@@ -2457,25 +2454,64 @@ pub fn create_task_worktree(
     std::fs::create_dir_all(worktree_parent)
         .map_err(|error| format!("Failed to prepare the worktree directory: {error}"))?;
 
-    let output = git_command(repo_path)
-        .args([
-            "worktree",
-            "add",
-            "-b",
-            &branch_name,
-            worktree_path.to_string_lossy().as_ref(),
-            &base_branch,
-        ])
-        .output()
-        .map_err(|error| format!("Failed to create worktree: {error}"))?;
+    let (branch_name, output) = match branch_mode {
+        TaskWorktreeBranchMode::NewBranchFrom { source_branch } => {
+            let base_branch = if source_branch.trim().is_empty() {
+                current_branch(repo_path)
+                    .or_else(|| git_default_branch(repo_path))
+                    .ok_or_else(|| {
+                        "Could not determine a base branch for the new worktree.".to_string()
+                    })?
+            } else {
+                source_branch.trim().to_string()
+            };
+            let branch_name = unique_branch_name(repo_path, &slug)?;
+            let output = git_command(repo_path)
+                .args([
+                    "worktree",
+                    "add",
+                    "-b",
+                    &branch_name,
+                    worktree_path.to_string_lossy().as_ref(),
+                    &base_branch,
+                ])
+                .output()
+                .map_err(|error| format!("Failed to create worktree: {error}"))?;
+            (branch_name, output)
+        }
+        TaskWorktreeBranchMode::ExistingBranch { branch } => {
+            let branch_name = if branch.trim().is_empty() {
+                current_branch(repo_path)
+                    .or_else(|| git_default_branch(repo_path))
+                    .ok_or_else(|| {
+                        "Could not determine a branch for the new worktree.".to_string()
+                    })?
+            } else {
+                branch.trim().to_string()
+            };
+            let output = git_command(repo_path)
+                .args([
+                    "worktree",
+                    "add",
+                    worktree_path.to_string_lossy().as_ref(),
+                    &branch_name,
+                ])
+                .output()
+                .map_err(|error| format!("Failed to create worktree: {error}"))?;
+            (branch_name, output)
+        }
+    };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            "Git failed to create the worktree.".to_string()
-        } else {
-            format!("Git failed to create the worktree: {stderr}")
-        });
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(
+            if let Some(path) = git_worktree_checked_out_path(&stderr, &stdout) {
+                format!("Branch {branch_name} is already checked out in another worktree: {path}")
+            } else {
+                format_git_command_failure("Git failed to create the worktree", &output)
+            },
+        );
     }
 
     Ok(CreatedTaskWorktree {
@@ -2483,6 +2519,24 @@ pub fn create_task_worktree(
         branch_name,
         task_name,
     })
+}
+
+fn git_worktree_checked_out_path(stderr: &str, stdout: &str) -> Option<String> {
+    let combined = format!("{stderr}\n{stdout}");
+    if !combined.contains("is already checked out") {
+        return None;
+    }
+
+    let (_, rest) = combined.split_once("is already checked out at ")?;
+    let path = rest
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('\'')
+        .trim_matches('"');
+
+    (!path.is_empty()).then(|| path.to_string())
 }
 
 pub fn slugify_branch_name(name: &str) -> String {
@@ -3278,16 +3332,17 @@ mod tests {
     use crate::shortcuts::ShortcutSettings;
 
     use super::{
-        app_worktrees_root, combine_commit_file_changes, create_branch_from_head, current_branch,
-        format_git_command_error, git_stdout, parse_branch_commit_entries,
-        parse_branch_compare_name_status_entries, parse_branch_compare_numstat_entries,
-        parse_recent_branch_commit_page, project_action_agent_launch_args, review_worktree_slug,
-        slugify_branch_name, unique_branch_name_for_repo, worktree_parent_dir_with_root,
-        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, CreateBranchMode,
-        PersistedSectionState, PersistedTerminalTab, Project, ProjectAction, ProjectActionAccess,
-        ProjectActionIcon, ProjectActionKind, ProjectActionScope, ProjectBranchSettingField,
-        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
-        RepoRecord, StoreFile, Task, TaskKind, UiState,
+        app_worktrees_root, combine_commit_file_changes, create_branch_from_head,
+        create_task_worktree, current_branch, format_git_command_error, git_stdout,
+        parse_branch_commit_entries, parse_branch_compare_name_status_entries,
+        parse_branch_compare_numstat_entries, parse_recent_branch_commit_page,
+        project_action_agent_launch_args, review_worktree_slug, slugify_branch_name,
+        unique_branch_name_for_repo, worktree_parent_dir_with_root, BranchCompareNameStatusEntry,
+        BranchCompareNumStatEntry, CreateBranchMode, PersistedSectionState, PersistedTerminalTab,
+        Project, ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind,
+        ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings, ProjectCheckoutState,
+        ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task, TaskKind,
+        TaskWorktreeBranchMode, UiState,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -3479,6 +3534,95 @@ mod tests {
         let unique = unique_branch_name_for_repo(repo.path(), "feature-test")
             .expect("unique branch should resolve");
         assert_eq!(unique, "feature-test-2");
+    }
+
+    #[test]
+    fn create_task_worktree_creates_unique_branch_from_selected_source_branch() {
+        let repo = init_repo();
+        run_git(repo.path(), &["switch", "-c", "feature/base"]);
+        fs::write(repo.path().join("file.txt"), "base\nfeature\n").expect("file should write");
+        run_git(repo.path(), &["add", "."]);
+        run_git(repo.path(), &["commit", "-m", "feature base"]);
+        let source_head =
+            git_stdout(repo.path(), &["rev-parse", "HEAD"]).expect("source head should resolve");
+        run_git(repo.path(), &["switch", "main"]);
+
+        let created = create_task_worktree(
+            repo.path(),
+            "Project",
+            "Feature Task",
+            "Fallback",
+            TaskWorktreeBranchMode::NewBranchFrom {
+                source_branch: "feature/base".to_string(),
+            },
+        )
+        .expect("worktree should be created");
+
+        assert_eq!(created.branch_name, "feature-task");
+        assert_eq!(
+            current_branch(&created.path).as_deref(),
+            Some("feature-task")
+        );
+        assert_eq!(
+            git_stdout(&created.path, &["rev-parse", "HEAD"]).as_deref(),
+            Some(source_head.as_str())
+        );
+    }
+
+    #[test]
+    fn create_task_worktree_uses_existing_branch_without_creating_new_branch() {
+        let repo = init_repo();
+        run_git(repo.path(), &["branch", "feature/existing"]);
+
+        let created = create_task_worktree(
+            repo.path(),
+            "Project",
+            "Use Existing",
+            "Fallback",
+            TaskWorktreeBranchMode::ExistingBranch {
+                branch: "feature/existing".to_string(),
+            },
+        )
+        .expect("worktree should be created");
+
+        assert_eq!(created.branch_name, "feature/existing");
+        assert_eq!(
+            current_branch(&created.path).as_deref(),
+            Some("feature/existing")
+        );
+        assert!(
+            !git_stdout(
+                repo.path(),
+                &["show-ref", "--verify", "refs/heads/use-existing"]
+            )
+            .is_some_and(|output| !output.is_empty()),
+            "existing branch mode should not create a generated task branch"
+        );
+    }
+
+    #[test]
+    fn create_task_worktree_errors_when_existing_branch_is_checked_out_elsewhere() {
+        let repo = init_repo();
+
+        let error = create_task_worktree(
+            repo.path(),
+            "Project",
+            "Already Checked Out",
+            "Fallback",
+            TaskWorktreeBranchMode::ExistingBranch {
+                branch: "main".to_string(),
+            },
+        )
+        .expect_err("checked-out branch should be rejected");
+
+        assert!(
+            error.starts_with("Branch main is already checked out in another worktree: "),
+            "error was {error:?}"
+        );
+        assert!(
+            error.contains(&repo.path().display().to_string()),
+            "error should include checkout path, was {error:?}"
+        );
     }
 
     #[test]

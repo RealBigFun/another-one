@@ -1,5 +1,5 @@
 use crate::agents::TerminalLaunchConfig;
-use crate::project_store::{Project, ProjectKind, Task, TaskKind};
+use crate::project_store::{Project, ProjectKind, Task, TaskKind, TaskWorktreeBranchMode};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -16,7 +16,7 @@ pub(crate) enum TaskLaunchRequest {
         project_id: String,
         task_name: String,
         generated_task_name: String,
-        source_branch: String,
+        branch_mode: TaskWorktreeBranchMode,
         launch_config: TerminalLaunchConfig,
     },
     Review {

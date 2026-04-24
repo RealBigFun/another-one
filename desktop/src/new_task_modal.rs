@@ -19,6 +19,7 @@ pub(crate) struct NewTaskModalState {
     pub task_name: String,
     pub generated_task_name: String,
     pub source_branch: String,
+    pub branch_mode: NewTaskBranchMode,
     pub branch_dropdown_open: bool,
     pub agent_dropdown_open: bool,
     pub selected_agents: HashSet<String>,
@@ -29,6 +30,12 @@ pub(crate) struct NewTaskModalState {
     pub task_name_selection_anchor: Option<usize>,
     pub advanced_expanded: bool,
     pub submitting: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NewTaskBranchMode {
+    NewBranch,
+    ExistingBranch,
 }
 
 const CARD_BG: u32 = 0x2b2d31;
@@ -87,6 +94,7 @@ struct SourceBranchSectionProps<'a> {
     current_branch: SharedString,
     branches: &'a [String],
     worktree_mode: bool,
+    branch_mode: NewTaskBranchMode,
     dropdown_open: bool,
     submitting: bool,
 }
@@ -180,6 +188,7 @@ impl AnotherOneApp {
             task_name: String::new(),
             generated_task_name: generate_task_name(),
             source_branch: source_branch.to_string(),
+            branch_mode: NewTaskBranchMode::NewBranch,
             branch_dropdown_open: false,
             agent_dropdown_open: false,
             selected_agents,
@@ -218,6 +227,7 @@ impl AnotherOneApp {
         let task_name: SharedString = state.task_name.clone().into();
         let generated_task_name: SharedString = state.generated_task_name.clone().into();
         let worktree_mode = state.worktree_mode;
+        let branch_mode = state.branch_mode;
         let branch_dropdown_open = state.branch_dropdown_open;
         let agent_dropdown_open = state.agent_dropdown_open;
         let selected_agents =
@@ -273,6 +283,7 @@ impl AnotherOneApp {
                                     current_branch,
                                     branches: &available_branches,
                                     worktree_mode,
+                                    branch_mode,
                                     dropdown_open: branch_dropdown_open,
                                     submitting,
                                 },
@@ -527,9 +538,18 @@ impl AnotherOneApp {
             current_branch,
             branches,
             worktree_mode,
+            branch_mode,
             dropdown_open,
             submitting,
         } = props;
+        let branch_mode_help = match branch_mode {
+            NewTaskBranchMode::NewBranch => {
+                "Selected branch is the base branch for the generated task branch."
+            }
+            NewTaskBranchMode::ExistingBranch => {
+                "Selected branch is checked out directly in the new worktree."
+            }
+        };
         let mut section = div()
             .mx(px(20.))
             .mt(px(4.))
@@ -556,18 +576,167 @@ impl AnotherOneApp {
                             .text_color(title_col())
                             .child(project_name),
                     ),
-            )
-            .child(
-                div()
-                    .text_size(rems(12. / 16.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(title_col())
-                    .child("Source branch"),
             );
 
         if worktree_mode {
-            section = section.child(
-                div().relative().child(
+            section = section
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(12.))
+                        .child(
+                            div()
+                                .text_size(rems(12. / 16.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(title_col())
+                                .child("Branch"),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .rounded_md()
+                                .bg(subtle_bg())
+                                .p(px(3.))
+                                .gap(px(2.))
+                                .child(
+                                    div()
+                                        .id("new-task-branch-mode-new")
+                                        .h(px(28.))
+                                        .px(px(10.))
+                                        .rounded(px(5.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .opacity(if submitting { 0.45 } else { 1.0 })
+                                        .bg(if branch_mode == NewTaskBranchMode::NewBranch {
+                                            active_bg()
+                                        } else {
+                                            gpui::transparent_black()
+                                        })
+                                        .hover(move |s| {
+                                            s.bg(if branch_mode == NewTaskBranchMode::NewBranch {
+                                                active_bg()
+                                            } else {
+                                                hover_bg()
+                                            })
+                                        })
+                                        .tooltip(move |_window, cx| {
+                                            Self::action_tooltip_view(
+                                                "Create a generated task branch from the selected branch",
+                                                cx,
+                                            )
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(
+                                                |this, _ev: &MouseDownEvent, _window, cx| {
+                                                    if let Some(state) =
+                                                        this.new_task_modal.as_mut()
+                                                    {
+                                                        if state.submitting {
+                                                            return;
+                                                        }
+                                                        state.branch_mode =
+                                                            NewTaskBranchMode::NewBranch;
+                                                        state.agent_dropdown_open = false;
+                                                        state.task_name_focused = false;
+                                                    }
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                },
+                                            ),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(rems(12. / 16.))
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(
+                                                    if branch_mode == NewTaskBranchMode::NewBranch {
+                                                        title_col()
+                                                    } else {
+                                                        muted_col()
+                                                    },
+                                                )
+                                                .child("New branch"),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("new-task-branch-mode-existing")
+                                        .h(px(28.))
+                                        .px(px(10.))
+                                        .rounded(px(5.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .opacity(if submitting { 0.45 } else { 1.0 })
+                                        .bg(if branch_mode == NewTaskBranchMode::ExistingBranch {
+                                            active_bg()
+                                        } else {
+                                            gpui::transparent_black()
+                                        })
+                                        .hover(move |s| {
+                                            s.bg(
+                                                if branch_mode
+                                                    == NewTaskBranchMode::ExistingBranch
+                                                {
+                                                    active_bg()
+                                                } else {
+                                                    hover_bg()
+                                                },
+                                            )
+                                        })
+                                        .tooltip(move |_window, cx| {
+                                            Self::action_tooltip_view(
+                                                "Check out the selected branch directly in the new worktree",
+                                                cx,
+                                            )
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(
+                                                |this, _ev: &MouseDownEvent, _window, cx| {
+                                                    if let Some(state) =
+                                                        this.new_task_modal.as_mut()
+                                                    {
+                                                        if state.submitting {
+                                                            return;
+                                                        }
+                                                        state.branch_mode =
+                                                            NewTaskBranchMode::ExistingBranch;
+                                                        state.agent_dropdown_open = false;
+                                                        state.task_name_focused = false;
+                                                    }
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                },
+                                            ),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(rems(12. / 16.))
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(
+                                                    if branch_mode
+                                                        == NewTaskBranchMode::ExistingBranch
+                                                    {
+                                                        title_col()
+                                                    } else {
+                                                        muted_col()
+                                                    },
+                                                )
+                                                .child("Existing branch"),
+                                        ),
+                                ),
+                        ),
+                )
+                .child(div().relative().child(
                     div()
                         .id("new-task-source-branch")
                         .h(px(38.))
@@ -584,10 +753,12 @@ impl AnotherOneApp {
                         .opacity(if submitting { 0.45 } else { 1.0 })
                         .hover(move |s| s.bg(hover_bg()))
                         .tooltip(move |_window, cx| {
-                            Self::action_tooltip_view(
-                                "Choose the base branch for the new worktree",
-                                cx,
-                            )
+                            let message = if branch_mode == NewTaskBranchMode::NewBranch {
+                                "Choose the base branch for the generated task branch"
+                            } else {
+                                "Choose the branch to check out in the new worktree"
+                            };
+                            Self::action_tooltip_view(message, cx)
                         })
                         .on_mouse_down(
                             MouseButton::Left,
@@ -616,8 +787,13 @@ impl AnotherOneApp {
                                 .size(px(11.))
                                 .text_color(muted_col()),
                         ),
-                ),
-            );
+                ))
+                .child(
+                    div()
+                        .text_size(rems(11. / 16.))
+                        .text_color(muted_col())
+                        .child(branch_mode_help),
+                );
 
             if dropdown_open {
                 let mut list = div()
@@ -645,10 +821,12 @@ impl AnotherOneApp {
                             .cursor_pointer()
                             .hover(move |s| s.bg(hover_bg()))
                             .tooltip(move |_window, cx| {
-                                Self::action_tooltip_view(
-                                    "Use this branch as the worktree base",
-                                    cx,
-                                )
+                                let message = if branch_mode == NewTaskBranchMode::NewBranch {
+                                    "Use this branch as the generated branch base"
+                                } else {
+                                    "Check out this branch directly"
+                                };
+                                Self::action_tooltip_view(message, cx)
                             })
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -679,6 +857,13 @@ impl AnotherOneApp {
             }
         } else {
             section = section
+                .child(
+                    div()
+                        .text_size(rems(12. / 16.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(title_col())
+                        .child("Current branch"),
+                )
                 .child(
                     div()
                         .rounded_md()
