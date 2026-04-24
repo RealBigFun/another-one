@@ -5,6 +5,7 @@ mod add_agent_modal;
 mod agent_icons;
 mod app;
 mod assets;
+mod build_info;
 mod create_branch_modal;
 mod custom_actions_modal;
 mod daemon_host;

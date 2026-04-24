@@ -17,17 +17,24 @@
 set -euo pipefail
 
 OPEN_AFTER=0
+INSTALL_AFTER=0
 
 usage() {
   cat <<EOF
-Usage: $0 [--open]
+Usage: $0 [--open] [--install]
 
 Build the AnotherOne AppImage from the current source tree.
 
 Options:
-  --open    Launch the AppImage after a successful build.
-  -h, --help
-            Show this help message.
+  --open       Launch the AppImage after a successful build.
+  --install    Replace the installed AppImage at \$INSTALL_PATH after
+               a successful build (default: \$HOME/Applications/AnotherOne.AppImage).
+               Designed for wiring into an in-app "Action" so a click
+               does build + install in one shot. Works even while the
+               currently-installed binary is running: the file is
+               unlinked (running process keeps its inode) before the
+               new one is written.
+  -h, --help   Show this help message.
 EOF
 }
 
@@ -35,6 +42,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --open)
       OPEN_AFTER=1
+      shift
+      ;;
+    --install)
+      INSTALL_AFTER=1
       shift
       ;;
     -h | --help)
@@ -48,6 +59,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+INSTALL_PATH="${INSTALL_PATH:-$HOME/Applications/AnotherOne.AppImage}"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "Linux packaging requires Linux; current platform is $(uname -s)." >&2
@@ -184,6 +197,24 @@ fi
 echo ""
 echo "AppImage built: $APPIMAGE_OUT"
 ls -lh "$APPIMAGE_OUT"
+
+if [[ "$INSTALL_AFTER" -eq 1 ]]; then
+  echo ""
+  echo "==> installing to $INSTALL_PATH"
+  mkdir -p "$(dirname "$INSTALL_PATH")"
+  # Unlink before copy so the install works even when the existing
+  # AppImage at INSTALL_PATH is currently running. Linux is happy to
+  # unlink a running ELF — the kernel keeps the inode alive for the
+  # running process, and a fresh inode is created for the new file.
+  # Without this, `cp` would fail with ETXTBSY ("Text file busy").
+  if [[ -e "$INSTALL_PATH" ]]; then
+    rm -f "$INSTALL_PATH"
+  fi
+  cp "$APPIMAGE_OUT" "$INSTALL_PATH"
+  chmod +x "$INSTALL_PATH"
+  echo "installed: $INSTALL_PATH"
+  echo "(close and reopen AnotherOne to use the new build)"
+fi
 
 if [[ "$OPEN_AFTER" -eq 1 ]]; then
   echo "==> launching"
