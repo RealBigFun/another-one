@@ -359,6 +359,9 @@ impl WorkspacePane {
             tabs = tabs.child(
                 div()
                     .id(SharedString::from(format!("pr-filter-{i}")))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .h(px(26.))
                     .px(px(7.))
                     .rounded(px(5.))
@@ -541,7 +544,7 @@ impl WorkspacePane {
                 );
             } else {
                 for pr in prs.iter() {
-                    section = section.child(Self::project_page_pr_row(pr));
+                    section = section.child(self.project_page_pr_row(pr, cx));
                 }
             }
         }
@@ -549,13 +552,19 @@ impl WorkspacePane {
         section
     }
 
-    fn project_page_pr_row(pr: &crate::git_actions::ProjectPagePullRequest) -> impl IntoElement {
+    fn project_page_pr_row(
+        &self,
+        pr: &crate::git_actions::ProjectPagePullRequest,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let number_label: SharedString = format!("#{}", pr.number).into();
         let title: SharedString = pr.title.clone().into();
         let branch: SharedString = pr.branch.clone().into();
         let author: SharedString = pr.author.clone().into();
         let added: SharedString = format!("+{}", pr.lines_added).into();
         let removed: SharedString = format!("-{}", pr.lines_removed).into();
+        let pr_url = pr.url.clone();
+        let number_link_id = SharedString::from(format!("pr-number-link-{}", pr.number));
 
         let ci_icon = if pr.review_required {
             "assets/icons/icons__badge-x.svg"
@@ -587,12 +596,29 @@ impl WorkspacePane {
             .gap(px(8.))
             .child(
                 div()
+                    .id(number_link_id)
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(5.))
                     .bg(gpui::white().opacity(0.08))
                     .text_xs()
                     .text_color(TEXT_SECONDARY())
+                    .hover(|s| {
+                        s.bg(gpui::white().opacity(0.14))
+                            .text_color(TEXT_PRIMARY())
+                    })
+                    .cursor_pointer()
+                    .tooltip(|_window, cx| {
+                        AnotherOneApp::action_tooltip_view("Open pull request in GitHub", cx)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                            if let Err(err) = open_external_url(&pr_url) {
+                                this.show_error_toast(err, cx);
+                            }
+                        }),
+                    )
                     .child(number_label),
             )
             .child(svg().path(ci_icon).size(px(16.)).text_color(ci_color))
@@ -699,27 +725,6 @@ impl WorkspacePane {
                 .child("Review"),
         );
 
-        // Action icons
-        bottom = bottom.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.))
-                .child(
-                    svg()
-                        .path("assets/icons/icons__git-pull-request-create.svg")
-                        .size(px(14.))
-                        .text_color(TEXT_SECONDARY()),
-                )
-                .child(
-                    svg()
-                        .path("assets/icons/icons__external-link.svg")
-                        .size(px(14.))
-                        .text_color(TEXT_SECONDARY()),
-                ),
-        );
-
         row = row.child(bottom);
         row
     }
@@ -746,25 +751,14 @@ impl WorkspacePane {
             .gap(px(12.))
             .mt(px(28.))
             .mb(px(24.))
-            .rounded(px(12.))
-            .bg(rgb(0x24262b))
-            .border_1()
-            .border_color(if targeted {
-                hsla(210. / 360., 0.72, 0.64, 1.)
-            } else {
-                gpui::white().opacity(0.08)
-            })
             .child(
                 div()
                     .id("project-page-configuration-header")
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_between()
-                    .px(px(16.))
-                    .py(px(14.))
+                    .gap(px(8.))
                     .cursor_pointer()
-                    .hover(|style| style.bg(gpui::white().opacity(0.03)))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
@@ -807,6 +801,7 @@ impl WorkspacePane {
                                     ),
                             ),
                     )
+                    .when(targeted, |header| header.child(div().flex_1()))
                     .when(targeted, |header| {
                         header.child(
                             div()
@@ -831,8 +826,6 @@ impl WorkspacePane {
                 .flex()
                 .flex_col()
                 .gap(px(12.))
-                .px(px(16.))
-                .pb(px(16.))
                 .child(self.project_page_branch_config_row(
                     project_id,
                     "Default Branch",
