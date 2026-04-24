@@ -70,9 +70,20 @@ pub async fn run_embedded(
     info!("iroh EndpointId: {endpoint_id}");
     info!("iroh ALPN: {}", String::from_utf8_lossy(ALPN));
 
-    endpoint.online().await;
+    // Don't call `endpoint.online()` here. iroh's `online()` loops on
+    // `home_relay_status()` waiting for a relay to report connected,
+    // but we configured `presets::Minimal` precisely *because* we
+    // don't use a relay — so the watcher would fire forever and the
+    // daemon thread would park in `block_on(run_endpoint)` for the
+    // process lifetime. (iroh's own docs note `online()` is for
+    // endpoints that need to be "dialable… over the internet" via a
+    // relay; ours just need direct LAN addresses for pairing.)
+    //
+    // For Minimal, the direct addresses are populated synchronously
+    // by network-interface enumeration after `bind()`, so
+    // `endpoint.addr()` is ready immediately.
     let addr = endpoint.addr();
-    info!("iroh endpoint online: {addr:?}");
+    info!("iroh endpoint ready: {addr:?}");
 
     let nonce = generate_pair_nonce();
     let pairing_url = build_pairing_url_with_token(&addr, &nonce);
