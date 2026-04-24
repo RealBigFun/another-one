@@ -605,8 +605,47 @@ struct AppToast {
     id: u64,
     kind: ToastKind,
     message: SharedString,
+    copy_message: SharedString,
     shown_at: Instant,
     dismiss_at: Instant,
+}
+
+impl AppToast {
+    fn new(
+        id: u64,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        shown_at: Instant,
+        dismiss_at: Instant,
+    ) -> Self {
+        let message = message.into();
+        Self {
+            id,
+            kind,
+            copy_message: message.clone(),
+            message,
+            shown_at,
+            dismiss_at,
+        }
+    }
+
+    fn with_copy_message(
+        id: u64,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        copy_message: impl Into<SharedString>,
+        shown_at: Instant,
+        dismiss_at: Instant,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            message: message.into(),
+            copy_message: copy_message.into(),
+            shown_at,
+            dismiss_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2468,6 +2507,24 @@ impl AnotherOneApp {
         self.show_toast(ToastKind::Error, message, cx);
     }
 
+    pub(crate) fn show_error_details_toast(
+        &mut self,
+        message: impl Into<SharedString>,
+        copy_message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_toast_with_copy_message(ToastKind::Error, message, copy_message, cx);
+    }
+
+    pub(crate) fn show_anyhow_error_toast(
+        &mut self,
+        message: impl Into<SharedString>,
+        error: &anyhow::Error,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_error_details_toast(message, Self::anyhow_error_details(error), cx);
+    }
+
     pub(crate) fn show_warning_toast(
         &mut self,
         message: impl Into<SharedString>,
@@ -2922,6 +2979,10 @@ impl AnotherOneApp {
         &self,
         launch_config: &TerminalLaunchConfig,
     ) -> Vec<String> {
+        if !launch_config.use_agent_launch_args {
+            return Vec::new();
+        }
+
         launch_config
             .provider
             .and_then(agent_id_for_provider)
@@ -3311,27 +3372,59 @@ impl AnotherOneApp {
         message: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) {
+        let message = message.into();
         let now = Instant::now();
-        let toast_id = self.next_toast_id;
-        let lifetime = match kind {
-            ToastKind::Error => TOAST_LIFETIME + TOAST_ERROR_EXTRA_LIFETIME,
-            ToastKind::Success | ToastKind::Warning | ToastKind::Info => TOAST_LIFETIME,
-        };
-        self.next_toast_id += 1;
-        self.toasts.push(AppToast {
-            id: toast_id,
+        self.push_toast(AppToast::new(
+            self.next_toast_id,
             kind,
-            message: message.into(),
-            shown_at: now,
-            dismiss_at: now + lifetime,
-        });
+            message,
+            now,
+            now + Self::toast_lifetime(kind),
+        ));
+
+        cx.notify();
+    }
+
+    fn show_toast_with_copy_message(
+        &mut self,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        copy_message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let now = Instant::now();
+        let toast = AppToast::with_copy_message(
+            self.next_toast_id,
+            kind,
+            message,
+            copy_message,
+            now,
+            now + Self::toast_lifetime(kind),
+        );
+        self.push_toast(toast);
+
+        cx.notify();
+    }
+
+    fn push_toast(&mut self, toast: AppToast) {
+        self.next_toast_id += 1;
+        self.toasts.push(toast);
 
         if self.toasts.len() > TOAST_STACK_LIMIT {
             let excess = self.toasts.len() - TOAST_STACK_LIMIT;
             self.toasts.drain(0..excess);
         }
+    }
 
-        cx.notify();
+    fn toast_lifetime(kind: ToastKind) -> Duration {
+        match kind {
+            ToastKind::Error => TOAST_LIFETIME + TOAST_ERROR_EXTRA_LIFETIME,
+            ToastKind::Success | ToastKind::Warning | ToastKind::Info => TOAST_LIFETIME,
+        }
+    }
+
+    fn anyhow_error_details(error: &anyhow::Error) -> String {
+        format!("{error:?}")
     }
 
     pub(crate) fn project_expand_progress(&self, project_id: &str) -> f32 {
@@ -3944,6 +4037,17 @@ impl AnotherOneApp {
         self.terminal_manager.recent_output.remove(key);
     }
 
+    fn terminal_failure_details(status: &str, recent_output: Option<&str>) -> String {
+        let Some(recent_output) = recent_output
+            .map(str::trim)
+            .filter(|output| !output.is_empty())
+        else {
+            return status.to_string();
+        };
+
+        format!("{status}\n\nRecent terminal output:\n{recent_output}")
+    }
+
     fn maybe_retry_claude_restore(
         &mut self,
         key: &TerminalRuntimeKey,
@@ -4444,7 +4548,14 @@ impl AnotherOneApp {
                     self.terminal_manager.pending_launches.remove(&key);
                     self.terminal_manager.processes.remove(&key);
                     self.terminal_surface_snapshots.remove(&key);
-                    self.terminal_manager.errors.insert(key.clone(), status);
+                    let details = Self::terminal_failure_details(
+                        &status,
+                        self.terminal_manager
+                            .recent_output
+                            .get(&key)
+                            .map(String::as_str),
+                    );
+                    self.terminal_manager.errors.insert(key.clone(), details);
                     self.clear_terminal_recent_output(&key);
                     self.live_terminal_runtimes.remove(&key);
                     self.unregister_tab_from_registry(&key);
@@ -4453,7 +4564,11 @@ impl AnotherOneApp {
                     });
                     updated = true;
                 }
-                Ok(TerminalLaunchReply::Failed { key, message }) => {
+                Ok(TerminalLaunchReply::Failed {
+                    key,
+                    message,
+                    details,
+                }) => {
                     self.terminal_manager.pending_launches.remove(&key);
                     self.terminal_manager.processes.remove(&key);
                     self.live_terminal_runtimes.remove(&key);
@@ -4461,12 +4576,12 @@ impl AnotherOneApp {
                     self.unregister_tab_from_registry(&key);
                     self.terminal_manager
                         .errors
-                        .insert(key.clone(), message.clone());
+                        .insert(key.clone(), details.clone());
                     self.clear_terminal_recent_output(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
                         tab.restore_status = TerminalRestoreStatus::Failed;
                     });
-                    self.show_error_toast(message, cx);
+                    self.show_error_details_toast(message, details, cx);
                     updated = true;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
@@ -4653,7 +4768,14 @@ impl AnotherOneApp {
                         self.terminal_manager.pending_launches.remove(&key);
                         self.terminal_manager.processes.remove(&key);
                         self.terminal_surface_snapshots.remove(&key);
-                        self.terminal_manager.errors.insert(key.clone(), status);
+                        let details = Self::terminal_failure_details(
+                            &status,
+                            self.terminal_manager
+                                .recent_output
+                                .get(&key)
+                                .map(String::as_str),
+                        );
+                        self.terminal_manager.errors.insert(key.clone(), details);
                         self.clear_terminal_recent_output(&key);
                         self.live_terminal_runtimes.remove(&key);
                         self.unregister_tab_from_registry(&key);
@@ -4663,7 +4785,11 @@ impl AnotherOneApp {
                         updated = true;
                     }
                 }
-                Ok(WarmTerminalLaunchReply::Failed { launch_id, message }) => {
+                Ok(WarmTerminalLaunchReply::Failed {
+                    launch_id,
+                    message,
+                    details,
+                }) => {
                     let attached_key = self
                         .prewarmed_terminal_launches
                         .get(&launch_id)
@@ -4684,12 +4810,12 @@ impl AnotherOneApp {
                         self.unregister_tab_from_registry(&key);
                         self.terminal_manager
                             .errors
-                            .insert(key.clone(), message.clone());
+                            .insert(key.clone(), details.clone());
                         self.clear_terminal_recent_output(&key);
                         self.update_terminal_tab(&key, cx, |tab| {
                             tab.restore_status = TerminalRestoreStatus::Failed;
                         });
-                        self.show_error_toast(message, cx);
+                        self.show_error_details_toast(message, details, cx);
                         updated = true;
                     }
                 }
@@ -4777,7 +4903,7 @@ impl AnotherOneApp {
                 // Surface once — the pair-mobile modal will show its
                 // empty state anyway, but a toast tells the user
                 // what's wrong if they try to open it.
-                self.show_error_toast(format!("Mobile daemon failed to start: {e}"), cx);
+                self.show_anyhow_error_toast(format!("Mobile daemon failed to start: {e}"), &e, cx);
                 true
             }
             Err(mpsc::TryRecvError::Empty) => false,
@@ -5022,7 +5148,9 @@ impl AnotherOneApp {
             ProjectActionKind::Agent { provider, .. } => {
                 let args = crate::project_store::project_action_agent_launch_args(&action)?;
                 (
-                    TerminalLaunchConfig::for_provider(*provider).with_extra_args(args),
+                    TerminalLaunchConfig::for_provider(*provider)
+                        .with_extra_args(args)
+                        .with_agent_launch_args(false),
                     None,
                     None,
                 )
@@ -8523,7 +8651,12 @@ impl AnotherOneApp {
             hsla(0., 0., 0.72, 1.)
         };
         let message = toast.message.clone();
-        let copy_message = message.clone();
+        let copy_message = toast.copy_message.clone();
+        let copy_tooltip = if toast.kind == ToastKind::Error {
+            "Copy error details"
+        } else {
+            "Copy notification message"
+        };
 
         div()
             .w(px(360.))
@@ -8599,11 +8732,7 @@ impl AnotherOneApp {
                             .hover(move |style| style.bg(copy_hover))
                             .tooltip(move |_window, cx| {
                                 Self::action_tooltip_view(
-                                    if copied {
-                                        "Copied"
-                                    } else {
-                                        "Copy notification message"
-                                    },
+                                    if copied { "Copied" } else { copy_tooltip },
                                     cx,
                                 )
                             })
@@ -9191,9 +9320,10 @@ mod tests {
         sidebar_task_navigation_target, sidebar_task_navigation_targets,
         terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
         terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
-        terminal_word_selection_range, trim_to_recent_output_limit, AnotherOneApp,
+        terminal_word_selection_range, trim_to_recent_output_limit, AnotherOneApp, AppToast,
         NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition,
-        TerminalLinkRange, TerminalSelectionRange, TerminalTab, TERMINAL_RECENT_OUTPUT_LIMIT,
+        TerminalLinkRange, TerminalSelectionRange, TerminalTab, ToastKind,
+        TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -9210,6 +9340,7 @@ mod tests {
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, ScrollDelta};
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
 
     fn shell_tab(id: usize, title: &str) -> PersistedTerminalTab {
         PersistedTerminalTab {
@@ -9313,6 +9444,70 @@ mod tests {
             copy_text: ch.to_string(),
             hyperlink: None,
         }
+    }
+
+    #[test]
+    fn toast_copy_message_defaults_to_visible_message() {
+        let now = Instant::now();
+        let toast = AppToast::new(
+            1,
+            ToastKind::Info,
+            "Visible message",
+            now,
+            now + Duration::from_secs(1),
+        );
+
+        assert_eq!(toast.message.as_ref(), "Visible message");
+        assert_eq!(toast.copy_message.as_ref(), "Visible message");
+    }
+
+    #[test]
+    fn toast_copy_message_can_hold_error_details() {
+        let now = Instant::now();
+        let toast = AppToast::with_copy_message(
+            1,
+            ToastKind::Error,
+            "Could not start daemon.",
+            "Could not start daemon: build daemon tokio runtime\n\nCaused by:\n    boom",
+            now,
+            now + Duration::from_secs(1),
+        );
+
+        assert_eq!(toast.message.as_ref(), "Could not start daemon.");
+        assert!(toast.copy_message.as_ref().contains("Caused by:"));
+        assert_ne!(toast.message, toast.copy_message);
+    }
+
+    #[test]
+    fn anyhow_error_details_include_context_chain() {
+        use anyhow::Context as _;
+
+        let error = Err::<(), _>(anyhow::anyhow!("root cause"))
+            .context("outer context")
+            .unwrap_err();
+        let details = AnotherOneApp::anyhow_error_details(&error);
+
+        assert!(details.contains("outer context"));
+        assert!(details.contains("root cause"));
+    }
+
+    #[test]
+    fn terminal_failure_details_include_recent_output_when_available() {
+        let details = AnotherOneApp::terminal_failure_details(
+            "Exited with code 2",
+            Some("thread 'main' panicked\nstack backtrace:\n   0: example"),
+        );
+
+        assert!(details.contains("Exited with code 2"));
+        assert!(details.contains("Recent terminal output:"));
+        assert!(details.contains("stack backtrace:"));
+    }
+
+    #[test]
+    fn terminal_failure_details_fall_back_to_status_without_recent_output() {
+        let details = AnotherOneApp::terminal_failure_details("Exited with code 2", Some("  \n"));
+
+        assert_eq!(details, "Exited with code 2");
     }
 
     #[test]

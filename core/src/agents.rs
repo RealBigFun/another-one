@@ -159,7 +159,7 @@ pub fn effective_enabled_agents(configured: Option<&HashSet<String>>) -> Vec<&'s
         .collect()
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalLaunchConfig {
     pub mode: TerminalLaunchMode,
     pub provider: Option<AgentProviderKind>,
@@ -168,6 +168,25 @@ pub struct TerminalLaunchConfig {
     pub home_override: Option<PathBuf>,
     #[serde(default)]
     pub extra_args: Vec<String>,
+    #[serde(default = "default_use_agent_launch_args")]
+    pub use_agent_launch_args: bool,
+}
+
+fn default_use_agent_launch_args() -> bool {
+    true
+}
+
+impl Default for TerminalLaunchConfig {
+    fn default() -> Self {
+        Self {
+            mode: TerminalLaunchMode::default(),
+            provider: None,
+            session: None,
+            home_override: None,
+            extra_args: Vec::new(),
+            use_agent_launch_args: true,
+        }
+    }
 }
 
 impl TerminalLaunchConfig {
@@ -178,6 +197,7 @@ impl TerminalLaunchConfig {
             session: None,
             home_override: None,
             extra_args: Vec::new(),
+            use_agent_launch_args: true,
         }
     }
 
@@ -193,6 +213,11 @@ impl TerminalLaunchConfig {
 
     pub fn with_extra_args(mut self, extra_args: Vec<String>) -> Self {
         self.extra_args = extra_args;
+        self
+    }
+
+    pub fn with_agent_launch_args(mut self, use_agent_launch_args: bool) -> Self {
+        self.use_agent_launch_args = use_agent_launch_args;
         self
     }
 

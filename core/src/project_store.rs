@@ -538,7 +538,6 @@ pub fn project_action_agent_launch_args(action: &ProjectAction) -> Result<Vec<St
                         args.extend(["--ask-for-approval".to_string(), "on-request".to_string()]);
                     }
                     ProjectActionAccess::FullAccess => {
-                        args.extend(["--sandbox".to_string(), "danger-full-access".to_string()]);
                         args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
                     }
                 }
@@ -4407,6 +4406,30 @@ mod tests {
                 "on-request",
                 "Fix the bug"
             ]
+        );
+    }
+
+    #[test]
+    fn project_action_codex_full_access_uses_bypass_flag_only() {
+        let action = ProjectAction {
+            id: "a".to_string(),
+            name: "Ask Codex".to_string(),
+            icon: ProjectActionIcon::Agent,
+            run_on_worktree_create: false,
+            scope: ProjectActionScope::Project,
+            kind: ProjectActionKind::Agent {
+                prompt: "Fix the bug".to_string(),
+                provider: AgentProviderKind::Codex,
+                model: None,
+                traits: None,
+                mode: None,
+                access: ProjectActionAccess::FullAccess,
+            },
+        };
+
+        assert_eq!(
+            project_action_agent_launch_args(&action).expect("args should build"),
+            vec!["--dangerously-bypass-approvals-and-sandbox", "Fix the bug"]
         );
     }
 

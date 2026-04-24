@@ -1,9 +1,9 @@
 //! Reusable panel helper and main content assembly.
 
 use gpui::{
-    canvas, div, fill, hsla, outline, point, prelude::*, px, rgb, size, svg, App, BorderStyle,
-    Bounds, Context, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent, SharedString,
-    Window,
+    canvas, div, fill, hsla, outline, point, prelude::*, px, rems, rgb, size, svg, App,
+    BorderStyle, Bounds, ClipboardItem, Context, MouseButton, MouseDownEvent, Pixels, Render,
+    ScrollWheelEvent, SharedString, Window,
 };
 
 use crate::agent_icons::branded_icon;
@@ -737,6 +737,7 @@ impl WorkspacePane {
         let status_body = if pending {
             "The tab was created immediately and its PTY is launching in the background."
         } else if let Some(error) = error {
+            let error_copy = error.clone();
             return div()
                 .flex_1()
                 .flex()
@@ -748,10 +749,10 @@ impl WorkspacePane {
                     div()
                         .flex()
                         .flex_col()
-                        .items_center()
                         .gap(px(12.))
                         .w_full()
-                        .max_w(px(520.))
+                        .max_w(px(720.))
+                        .max_h(px(520.))
                         .p_6()
                         .rounded(px(14.))
                         .bg(panel_bg)
@@ -759,12 +760,64 @@ impl WorkspacePane {
                         .border_color(border)
                         .child(
                             div()
-                                .text_sm()
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(title_col)
-                                .child(status_title),
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap(px(12.))
+                                .w_full()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(title_col)
+                                        .child(status_title),
+                                )
+                                .child(
+                                    div()
+                                        .id("terminal-error-copy")
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .flex_shrink_0()
+                                        .w(px(28.))
+                                        .h(px(28.))
+                                        .rounded(px(7.))
+                                        .cursor_pointer()
+                                        .hover(|style| style.bg(gpui::white().opacity(0.08)))
+                                        .tooltip(move |_window, cx| {
+                                            AnotherOneApp::action_tooltip_view(
+                                                "Copy error details",
+                                                cx,
+                                            )
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(
+                                                move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(
+                                                            error_copy.clone(),
+                                                        ),
+                                                    );
+                                                    let _ = this.app.update(cx, |app, app_cx| {
+                                                        app.show_info_toast(
+                                                            "Copied terminal error details.",
+                                                            app_cx,
+                                                        );
+                                                    });
+                                                    cx.stop_propagation();
+                                                },
+                                            ),
+                                        )
+                                        .child(
+                                            svg()
+                                                .path("assets/icons/icons__copy.svg")
+                                                .size(px(15.))
+                                                .text_color(body_col),
+                                        ),
+                                ),
                         )
-                        .child(div().text_sm().text_color(body_col).child(error)),
+                        .child(terminal_error_details(error, body_col)),
                 );
         } else {
             "This restored tab has metadata only. Opening it triggers launch or resume on demand."
@@ -842,6 +895,39 @@ impl WorkspacePane {
                     ),
             )
     }
+}
+
+fn terminal_error_details(error: String, body_col: gpui::Hsla) -> impl IntoElement {
+    let mut details = div()
+        .id("terminal-error-details")
+        .w_full()
+        .max_h(px(420.))
+        .overflow_scroll()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(gpui::white().opacity(0.06))
+        .bg(gpui::black().opacity(0.14))
+        .px(px(12.))
+        .py(px(10.))
+        .text_size(rems(12. / 16.))
+        .line_height(rems(18. / 16.))
+        .font_family("Lilex Nerd Font Mono")
+        .text_color(body_col);
+
+    for line in error.lines() {
+        details = details.child(
+            div()
+                .min_w_0()
+                .whitespace_nowrap()
+                .child(if line.is_empty() {
+                    " ".to_string()
+                } else {
+                    line.to_string()
+                }),
+        );
+    }
+
+    details
 }
 
 fn paint_terminal_snapshot(

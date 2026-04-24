@@ -14,8 +14,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::agents::{
-    harness, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode, TerminalSessionKind,
-    TerminalSessionRef,
+    harness, AgentProviderKind, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode,
+    TerminalSessionKind, TerminalSessionRef,
 };
 use crate::terminal_types::{PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey};
 
@@ -24,6 +24,11 @@ const CODEX_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const ANOTHER_ONE_PI_SESSION_CAPTURE_ENV: &str = "ANOTHER_ONE_PI_SESSION_CAPTURE";
+const CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG: &str = "--dangerously-bypass-approvals-and-sandbox";
+const CODEX_FULL_AUTO_ARG: &str = "--full-auto";
+const CODEX_YOLO_ARG: &str = "--yolo";
+const CODEX_ACCESS_MODE_ARG_KEY: &str = "__codex_access_mode";
+const CLAUDE_BYPASS_PERMISSIONS_ARG: &str = "--dangerously-skip-permissions";
 
 pub enum TerminalLaunchReply {
     Launched {
@@ -47,6 +52,7 @@ pub enum TerminalLaunchReply {
     Failed {
         key: TerminalRuntimeKey,
         message: String,
+        details: String,
     },
 }
 
@@ -72,6 +78,7 @@ pub enum WarmTerminalLaunchReply {
     Failed {
         launch_id: u64,
         message: String,
+        details: String,
     },
 }
 
@@ -95,6 +102,7 @@ pub fn spawn_terminal_launch(
             let _ = sender.send(TerminalLaunchReply::Failed {
                 key,
                 message: format_launch_error(&error),
+                details: format_launch_error_details(&error),
             });
         }
     });
@@ -120,6 +128,7 @@ pub fn spawn_warm_terminal_launch(
             let _ = sender.send(WarmTerminalLaunchReply::Failed {
                 launch_id,
                 message: format_launch_error(&error),
+                details: format_launch_error_details(&error),
             });
         }
     });
@@ -127,6 +136,10 @@ pub fn spawn_warm_terminal_launch(
 
 fn format_launch_error(error: &anyhow::Error) -> String {
     format!("{error:#}")
+}
+
+fn format_launch_error_details(error: &anyhow::Error) -> String {
+    format!("{error:?}")
 }
 
 fn launch_terminal(
@@ -367,10 +380,87 @@ fn build_command(
         return Ok((CommandBuilder::new_default_prog(), launch_config, None));
     };
 
-    let mut combined_agent_launch_args = agent_launch_args.to_vec();
-    combined_agent_launch_args.extend(launch_config.extra_args.iter().cloned());
+    let combined_agent_launch_args =
+        merge_agent_launch_args(provider, agent_launch_args, &launch_config.extra_args);
 
     harness(provider).build_launch(env, cwd, launch_config, &combined_agent_launch_args)
+}
+
+fn merge_agent_launch_args(
+    provider: AgentProviderKind,
+    agent_launch_args: &[String],
+    extra_args: &[String],
+) -> Vec<String> {
+    let mut combined = agent_launch_args.to_vec();
+    combined.extend(extra_args.iter().cloned());
+
+    match provider {
+        AgentProviderKind::Codex | AgentProviderKind::ClaudeCode => {
+            dedupe_singleton_launch_args(provider, combined)
+        }
+        _ => combined,
+    }
+}
+
+fn dedupe_singleton_launch_args(provider: AgentProviderKind, args: Vec<String>) -> Vec<String> {
+    let mut keep = vec![true; args.len()];
+    let mut seen: Vec<(&str, usize)> = Vec::new();
+    let mut index = 0;
+
+    while index < args.len() {
+        let Some(value_count) = singleton_launch_arg_value_count(provider, args[index].as_str())
+        else {
+            index += 1;
+            continue;
+        };
+        let key = singleton_launch_arg_key(provider, args[index].as_str());
+        if let Some((_, previous_index)) = seen.iter().find(|(seen_key, _)| *seen_key == key) {
+            let previous_index = *previous_index;
+            for keep_value in keep.iter_mut().skip(previous_index).take(value_count + 1) {
+                *keep_value = false;
+            }
+        }
+        seen.retain(|(seen_key, _)| *seen_key != key);
+        seen.push((key, index));
+        index += 1 + value_count.min(args.len().saturating_sub(index + 1));
+    }
+
+    args.into_iter()
+        .zip(keep)
+        .filter_map(|(arg, keep)| keep.then_some(arg))
+        .collect()
+}
+
+fn singleton_launch_arg_value_count(provider: AgentProviderKind, arg: &str) -> Option<usize> {
+    match provider {
+        AgentProviderKind::Codex => match arg {
+            "--model" | "--sandbox" | "--ask-for-approval" | "--profile" => Some(1),
+            CODEX_YOLO_ARG | CODEX_FULL_AUTO_ARG | CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG => {
+                Some(0)
+            }
+            _ => None,
+        },
+        AgentProviderKind::ClaudeCode => match arg {
+            "--model" | "--effort" | "--permission-mode" => Some(1),
+            CLAUDE_BYPASS_PERMISSIONS_ARG => Some(0),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn singleton_launch_arg_key(provider: AgentProviderKind, arg: &str) -> &str {
+    match provider {
+        AgentProviderKind::Codex
+            if matches!(
+                arg,
+                CODEX_YOLO_ARG | CODEX_FULL_AUTO_ARG | CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG
+            ) =>
+        {
+            CODEX_ACCESS_MODE_ARG_KEY
+        }
+        _ => arg,
+    }
 }
 
 pub(crate) fn resolve_pi_session(
@@ -1072,6 +1162,7 @@ mod tests {
         pi_session_exists, prepare_codex_home_override_from, read_session_capture,
         resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
         SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
+        CLAUDE_BYPASS_PERMISSIONS_ARG, CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
     };
     use crate::agents::{AgentProviderKind, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
@@ -1534,6 +1625,63 @@ mod tests {
     }
 
     #[test]
+    fn build_command_deduplicates_codex_singleton_args() {
+        let cwd = Path::new("/tmp/project");
+        let codex_root = temp_codex_root();
+        fs::create_dir_all(&codex_root).expect("codex root should be created");
+        let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::Codex)
+            .with_home_override(Some(codex_root.clone()))
+            .with_extra_args(vec![
+                "--model".to_string(),
+                "action-model".to_string(),
+                "--sandbox".to_string(),
+                "danger-full-access".to_string(),
+                "--ask-for-approval".to_string(),
+                "never".to_string(),
+                CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG.to_string(),
+                "Fix the bug".to_string(),
+            ]);
+        let agent_launch_args = vec![
+            "--model".to_string(),
+            "settings-model".to_string(),
+            "--sandbox".to_string(),
+            "workspace-write".to_string(),
+            "--ask-for-approval".to_string(),
+            "on-request".to_string(),
+            CODEX_YOLO_ARG.to_string(),
+            "--profile".to_string(),
+            "default".to_string(),
+        ];
+
+        let (builder, _, _) = build_command(
+            &HarnessEnv::for_test(),
+            cwd,
+            launch_config,
+            &agent_launch_args,
+        )
+        .expect("build should succeed");
+
+        assert_command_argv(
+            &builder,
+            &[
+                "codex",
+                "--profile",
+                "default",
+                "--model",
+                "action-model",
+                "--sandbox",
+                "danger-full-access",
+                "--ask-for-approval",
+                "never",
+                CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG,
+                "Fix the bug",
+            ],
+        );
+
+        let _ = fs::remove_dir_all(codex_root);
+    }
+
+    #[test]
     fn build_command_injects_claude_args_for_new_session() {
         let cwd = Path::new("/tmp/project");
         let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode);
@@ -1557,6 +1705,58 @@ mod tests {
         assert_eq!(argv[1], "--dangerously-skip-permissions");
         assert_eq!(argv[2], "--session-id");
         assert_eq!(argv.len(), 4);
+        assert!(launch_config.session.is_some());
+        assert!(discovery.is_none());
+    }
+
+    #[test]
+    fn build_command_deduplicates_claude_singleton_args() {
+        let cwd = Path::new("/tmp/project");
+        let launch_config = TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode)
+            .with_extra_args(vec![
+                "--model".to_string(),
+                "action-model".to_string(),
+                "--permission-mode".to_string(),
+                "bypassPermissions".to_string(),
+                CLAUDE_BYPASS_PERMISSIONS_ARG.to_string(),
+                "Summarize".to_string(),
+            ]);
+        let agent_launch_args = vec![
+            "--model".to_string(),
+            "settings-model".to_string(),
+            "--permission-mode".to_string(),
+            "plan".to_string(),
+            CLAUDE_BYPASS_PERMISSIONS_ARG.to_string(),
+        ];
+
+        let (builder, launch_config, discovery) = build_command(
+            &HarnessEnv::for_test(),
+            cwd,
+            launch_config,
+            &agent_launch_args,
+        )
+        .expect("build should succeed");
+
+        let argv = argv(&builder);
+        assert_eq!(
+            Path::new(&argv[0])
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("claude")
+        );
+        assert_eq!(
+            &argv[1..7],
+            [
+                "--model",
+                "action-model",
+                "--permission-mode",
+                "bypassPermissions",
+                CLAUDE_BYPASS_PERMISSIONS_ARG,
+                "Summarize",
+            ]
+        );
+        assert_eq!(argv[7], "--session-id");
+        assert_eq!(argv.len(), 9);
         assert!(launch_config.session.is_some());
         assert!(discovery.is_none());
     }

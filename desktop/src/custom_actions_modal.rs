@@ -457,6 +457,47 @@ fn custom_action_text_line_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     ranges
 }
 
+fn custom_action_text_wrapped_line_ranges(
+    text: &str,
+    max_chars: usize,
+) -> Vec<std::ops::Range<usize>> {
+    let max_chars = max_chars.max(1);
+    let mut wrapped = Vec::new();
+
+    for line_range in custom_action_text_line_ranges(text) {
+        let line = &text[line_range.clone()];
+        let mut start = line_range.start;
+
+        while text[start..line_range.end].chars().count() > max_chars {
+            let mut fallback_end = line_range.end;
+            let mut word_end = None;
+
+            for (char_count, (idx, ch)) in text[start..line_range.end].char_indices().enumerate() {
+                if char_count == max_chars {
+                    fallback_end = start + idx;
+                    break;
+                }
+                if ch.is_whitespace() && idx > 0 {
+                    word_end = Some(start + idx + ch.len_utf8());
+                }
+            }
+
+            let end = word_end.unwrap_or(fallback_end).max(start);
+            if end == start {
+                break;
+            }
+            wrapped.push(start..end);
+            start = end;
+        }
+
+        if line.is_empty() || start < line_range.end {
+            wrapped.push(start..line_range.end);
+        }
+    }
+
+    wrapped
+}
+
 fn provider_value_label(provider: AgentProviderKind) -> &'static str {
     match provider {
         AgentProviderKind::ClaudeCode => "Claude Code",
@@ -1166,9 +1207,20 @@ impl AnotherOneApp {
             );
         }
 
-        for line_range in custom_action_text_line_ranges(&value) {
+        let line_ranges = custom_action_text_wrapped_line_ranges(&value, 64);
+        let last_line_index = line_ranges.len().saturating_sub(1);
+        for (line_index, line_range) in line_ranges.iter().cloned().enumerate() {
             let line_text = &value[line_range.clone()];
-            let local_cursor = if (line_range.start..=line_range.end).contains(&cursor) {
+            let next_line_start = line_ranges
+                .get(line_index + 1)
+                .map_or(value.len() + 1, |range| range.start);
+            let contains_cursor = line_range.start <= cursor
+                && (cursor < line_range.end
+                    || (cursor <= line_range.end
+                        && (line_range.is_empty()
+                            || line_index == last_line_index
+                            || next_line_start != line_range.end)));
+            let local_cursor = if contains_cursor {
                 Some(cursor - line_range.start)
             } else {
                 None
