@@ -11,10 +11,11 @@
 
 use std::collections::HashSet;
 
-use anyhow::Context;
 use toml_edit::{Array, DocumentMut, Item, Table, Value as TomlValue};
 
-use crate::mcp::adapters::home;
+use anyhow::Context;
+
+use crate::mcp::adapters::{atomic_write, home};
 use crate::mcp::{McpServer, McpSource, McpTransport};
 
 const SERVERS_KEY: &str = "mcp_servers";
@@ -128,10 +129,6 @@ pub fn write(
     previously_owned_ids: &HashSet<String>,
 ) -> anyhow::Result<()> {
     let path = config_path_inner()?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
     let mut doc = read_document().unwrap_or_else(|_| DocumentMut::new());
 
     // Ensure `[mcp_servers]` exists as an implicit table parent so
@@ -160,17 +157,21 @@ pub fn write(
         servers_tbl.remove(&id);
     }
 
-    // Replace each owned row.
+    // Replace each owned row. For HTTP entries (unsupported on
+    // Codex) only strip a prior row if AnotherOne actually wrote
+    // it — otherwise an id collision with a user-authored row
+    // would silently delete the user's config.
     for server in registry_owned {
         let Some(table) = server_to_table(server) else {
-            // HTTP entry on Codex — make sure we haven't left a stale copy.
-            servers_tbl.remove(&server.id);
+            if previously_owned_ids.contains(&server.id) {
+                servers_tbl.remove(&server.id);
+            }
             continue;
         };
         servers_tbl.insert(&server.id, Item::Table(table));
     }
 
-    std::fs::write(&path, doc.to_string())
+    atomic_write(&path, doc.to_string().as_bytes())
         .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
@@ -179,6 +180,97 @@ pub fn write(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    fn apply_write_in_memory(
+        doc_src: &str,
+        registry_owned: Vec<McpServer>,
+        previously_owned: HashSet<String>,
+    ) -> String {
+        // Mirrors `write()` body but operates on an in-memory doc so
+        // tests don't touch `~/.codex/config.toml`.
+        let mut doc = doc_src
+            .parse::<DocumentMut>()
+            .unwrap_or_else(|_| DocumentMut::new());
+        if doc.get(SERVERS_KEY).is_none() {
+            let mut t = Table::new();
+            t.set_implicit(true);
+            doc.insert(SERVERS_KEY, Item::Table(t));
+        } else if let Some(existing) = doc.get_mut(SERVERS_KEY).and_then(Item::as_table_mut) {
+            existing.set_implicit(true);
+        }
+        let servers_tbl = doc
+            .get_mut(SERVERS_KEY)
+            .and_then(Item::as_table_mut)
+            .expect("just inserted or upgraded");
+        let owned_ids: HashSet<String> = registry_owned.iter().map(|s| s.id.clone()).collect();
+        for id in previously_owned.iter().filter(|id| !owned_ids.contains(id.as_str())) {
+            servers_tbl.remove(id);
+        }
+        for server in &registry_owned {
+            match server_to_table(server) {
+                Some(table) => {
+                    servers_tbl.insert(&server.id, Item::Table(table));
+                }
+                None => {
+                    if previously_owned.contains(&server.id) {
+                        servers_tbl.remove(&server.id);
+                    }
+                }
+            }
+        }
+        doc.to_string()
+    }
+
+    #[test]
+    fn http_registry_entry_does_not_delete_colliding_user_row() {
+        let src = r#"
+[mcp_servers.ours]
+command = "node"
+
+[mcp_servers.theirs]
+command = "python"
+"#;
+        // "theirs" id collides with a registry HTTP entry, but was
+        // never owned by AnotherOne. Must be preserved.
+        let http_owned = vec![McpServer {
+            id: "theirs".into(),
+            label: "theirs".into(),
+            transport: McpTransport::Http {
+                url: "https://e.test".into(),
+                headers: BTreeMap::new(),
+            },
+            enabled_for: HashSet::new(),
+            source: McpSource::Custom,
+        }];
+        let prev = HashSet::new();
+        let out = apply_write_in_memory(src, http_owned, prev);
+        assert!(out.contains("theirs"), "user's row was deleted:\n{out}");
+        assert!(out.contains(r#"command = "python""#), "lost contents:\n{out}");
+    }
+
+    #[test]
+    fn http_registry_entry_strips_previously_owned_row() {
+        let src = r#"
+[mcp_servers.ours]
+command = "old-node"
+"#;
+        // "ours" was AnotherOne-owned. User toggled it off OR
+        // converted it to HTTP. Strip it either way.
+        let http_owned = vec![McpServer {
+            id: "ours".into(),
+            label: "ours".into(),
+            transport: McpTransport::Http {
+                url: "https://e.test".into(),
+                headers: BTreeMap::new(),
+            },
+            enabled_for: HashSet::new(),
+            source: McpSource::Custom,
+        }];
+        let mut prev = HashSet::new();
+        prev.insert("ours".into());
+        let out = apply_write_in_memory(src, http_owned, prev);
+        assert!(!out.contains("mcp_servers.ours"), "expected ours stripped:\n{out}");
+    }
 
     #[test]
     fn server_to_table_drops_http_entries() {

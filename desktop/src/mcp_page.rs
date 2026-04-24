@@ -20,7 +20,7 @@ use gpui::{
 };
 
 use another_one_core::agents::AgentProviderKind;
-use another_one_core::mcp::{catalog, McpServer, McpSource};
+use another_one_core::mcp::{catalog, McpServer, McpSource, McpTransport};
 
 use crate::app::AnotherOneApp;
 
@@ -199,29 +199,42 @@ impl AnotherOneApp {
             let is_on = server.enabled_for.contains(provider);
             let provider = *provider;
             let toggle_id = id.clone();
-            let has_error = self
-                .mcp_last_sync_errors
-                .get(&provider)
-                .is_some_and(|ids| ids.contains(&toggle_id));
-            let bg_color = if has_error {
+            let provider_errored = self.mcp_last_sync_errors.contains(&provider);
+            // Codex is stdio-only. Rather than letting the user
+            // flip a toggle that silently does nothing, gate it
+            // off entirely for HTTP entries.
+            let unsupported_transport = matches!(provider, AgentProviderKind::Codex)
+                && matches!(server.transport, McpTransport::Http { .. });
+
+            let bg_color = if unsupported_transport {
+                gpui::white().opacity(0.03)
+            } else if provider_errored {
                 hsla(0. / 360., 0.70, 0.40, 1.)
             } else if is_on {
                 hsla(215. / 360., 0.60, 0.45, 1.)
             } else {
                 gpui::white().opacity(0.06)
             };
-            let hover_bg = if is_on {
+            let hover_bg = if unsupported_transport {
+                gpui::white().opacity(0.03)
+            } else if is_on {
                 hsla(215. / 360., 0.60, 0.55, 1.)
             } else {
                 gpui::white().opacity(0.10)
             };
-            toggles = toggles.child(
-                div()
-                    .id(("mcp-toggle", index * 16 + pindex))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded(px(5.))
-                    .bg(bg_color)
+            let text_color = if unsupported_transport {
+                TEXT_SECONDARY()
+            } else {
+                TEXT_PRIMARY()
+            };
+            let mut cell = div()
+                .id(("mcp-toggle", index * 16 + pindex))
+                .px(px(8.))
+                .py(px(4.))
+                .rounded(px(5.))
+                .bg(bg_color);
+            if !unsupported_transport {
+                cell = cell
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover_bg))
                     .on_mouse_down(
@@ -229,14 +242,14 @@ impl AnotherOneApp {
                         cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                             this.mcp_toggle(&toggle_id, provider, cx);
                         }),
-                    )
-                    .child(
-                        div()
-                            .text_size(rems(11. / 16.))
-                            .text_color(TEXT_PRIMARY())
-                            .child(*short),
-                    ),
-            );
+                    );
+            }
+            toggles = toggles.child(cell.child(
+                div()
+                    .text_size(rems(11. / 16.))
+                    .text_color(text_color)
+                    .child(*short),
+            ));
         }
 
         let remove_id = id.clone();
@@ -329,15 +342,7 @@ impl AnotherOneApp {
         self.mcp_last_sync_errors.clear();
         for (provider, result) in report {
             if let Err(err) = result {
-                let ids_for_provider: Vec<String> = self
-                    .mcp_registry
-                    .entries
-                    .iter()
-                    .filter(|e| e.enabled_for.contains(&provider))
-                    .map(|e| e.id.clone())
-                    .collect();
-                self.mcp_last_sync_errors
-                    .insert(provider, ids_for_provider.into_iter().collect());
+                self.mcp_last_sync_errors.insert(provider);
                 self.show_error_toast(
                     format!("MCP sync failed for {:?}: {err}", provider),
                     cx,

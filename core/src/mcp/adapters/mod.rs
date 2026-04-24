@@ -16,6 +16,24 @@
 //! only add/remove/update rows whose ids are in the registry's
 //! owned set.
 //!
+//! ## Id collisions
+//!
+//! If the registry owns id `X` and the harness config on disk also
+//! has a row named `X` that AnotherOne never wrote (user set it up
+//! directly), the registry wins on the next sync — the on-disk row
+//! is replaced with the registry's version. `McpServer::id` is the
+//! shared namespace; the registry does not attempt to detect or
+//! warn on a first-sync collision.
+//!
+//! ## Atomic writes
+//!
+//! Every adapter writes via [`atomic_write`] (tempfile + rename on
+//! the same filesystem), so a crash or ENOSPC mid-write cannot
+//! truncate or corrupt the user's config. File permissions from
+//! the pre-existing file are preserved; freshly-created config
+//! files default to `0600` on unix since they may carry bearer
+//! tokens in MCP `env` / `headers`.
+//!
 //! ## Format translation nuances (ported from emdash)
 //!
 //! - **passthrough** (ClaudeCode, Amp): canonical JSON shape, no
@@ -100,14 +118,6 @@ pub fn read_json(spec: &JsonSpec) -> anyhow::Result<ServerMap> {
 /// **dropped**. Callers are responsible for passing a merged map
 /// (registry-owned rows + non-registry rows read back from disk).
 pub fn write_json(spec: &JsonSpec, servers: &ServerMap) -> anyhow::Result<()> {
-    if let Some(parent) = spec.config_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create config directory {}",
-                parent.display()
-            )
-        })?;
-    }
     let existing = std::fs::read_to_string(&spec.config_path).ok();
     let mut root: Value = existing
         .as_deref()
@@ -119,12 +129,67 @@ pub fn write_json(spec: &JsonSpec, servers: &ServerMap) -> anyhow::Result<()> {
 
     let pretty = serde_json::to_string_pretty(&root)
         .with_context(|| format!("failed to serialise {}", spec.config_path.display()))?;
-    std::fs::write(&spec.config_path, pretty).with_context(|| {
+    atomic_write(&spec.config_path, pretty.as_bytes())
+}
+
+/// Atomically write `bytes` to `path`: `mkdir -p` the parent,
+/// write to a sibling tempfile, sync, and rename over the target.
+/// File permissions from any pre-existing file at `path` are
+/// preserved; new files default to `0600` on unix. Rename is
+/// atomic on the same filesystem (all platforms) — a crash or
+/// ENOSPC mid-write leaves either the old file intact or the new
+/// file complete, never a truncated mix.
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let preserved_mode = preserved_mode(path);
+    let tmp = path.with_extension(format!(
+        "{}.tmp.{}",
+        path.extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("anotherone"),
+        std::process::id()
+    ));
+    // Ensure tempfile lands beside the target so rename stays atomic.
+    std::fs::write(&tmp, bytes).with_context(|| {
+        format!("failed to write tempfile at {}", tmp.display())
+    })?;
+    apply_mode(&tmp, preserved_mode)?;
+    std::fs::rename(&tmp, path).with_context(|| {
         format!(
-            "failed to write MCP config at {}",
-            spec.config_path.display()
+            "failed to rename {} onto {}",
+            tmp.display(),
+            path.display()
         )
     })?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn preserved_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.permissions().mode() & 0o777)
+        .unwrap_or(0o600)
+}
+
+#[cfg(not(unix))]
+fn preserved_mode(_path: &Path) -> u32 {
+    0
+}
+
+#[cfg(unix)]
+fn apply_mode(path: &Path, mode: u32) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let perms = std::fs::Permissions::from_mode(mode);
+    std::fs::set_permissions(path, perms)
+        .with_context(|| format!("failed to chmod {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn apply_mode(_path: &Path, _mode: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
@@ -425,6 +490,43 @@ mod tests {
         let out = merge_owned(&disk, &owned, &prev);
         assert!(out.contains_key("user-added"));
         assert!(!out.contains_key("retired"));
+    }
+
+    #[test]
+    fn atomic_write_preserves_existing_file_mode() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = tempfile::tempdir().unwrap();
+            let f = dir.path().join("cfg.json");
+            std::fs::write(&f, b"original").unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+            atomic_write(&f, b"rewritten").unwrap();
+
+            let mode = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "mode should be preserved across rewrite, got {:o}",
+                mode
+            );
+            assert_eq!(std::fs::read(&f).unwrap(), b"rewritten");
+        }
+    }
+
+    #[test]
+    fn atomic_write_new_file_defaults_to_0600_on_unix() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = tempfile::tempdir().unwrap();
+            let f = dir.path().join("new.json");
+
+            atomic_write(&f, b"secret-bearer-in-env").unwrap();
+
+            let mode = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "new file should be 0600, got {:o}", mode);
+        }
     }
 
     #[test]

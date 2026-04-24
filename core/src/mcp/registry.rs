@@ -64,11 +64,9 @@ impl McpRegistry {
 
     pub fn save(&self) -> std::io::Result<()> {
         let path = Self::config_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(&path, json)
+        crate::mcp::adapters::atomic_write(&path, json.as_bytes())
+            .map_err(std::io::Error::other)
     }
 
     /// Replace `entries` with the passed set. Also handled: rebuild
@@ -154,12 +152,58 @@ impl McpRegistry {
             };
         };
         match serde_json::from_str::<Self>(&contents) {
-            Ok(r) if r.version == REGISTRY_VERSION => r,
-            _ => Self {
-                version: REGISTRY_VERSION,
-                entries: Vec::new(),
-                previously_owned: HashMap::new(),
-            },
+            Ok(mut r) => {
+                // On a future version bump we still want to keep
+                // `previously_owned` intact so the next sync can
+                // strip harness-side rows AnotherOne used to own.
+                // `entries` we reset since their shape may have
+                // changed; migration hooks can slot in here later.
+                if r.version != REGISTRY_VERSION {
+                    eprintln!(
+                        "warn: MCP registry at {} is version {} (current {}); preserving \
+                         previously_owned and resetting entries",
+                        path.display(),
+                        r.version,
+                        REGISTRY_VERSION,
+                    );
+                    r.entries.clear();
+                    r.version = REGISTRY_VERSION;
+                }
+                r
+            }
+            Err(err) => {
+                eprintln!(
+                    "warn: failed to parse MCP registry at {}: {err}; starting empty",
+                    path.display(),
+                );
+                Self {
+                    version: REGISTRY_VERSION,
+                    entries: Vec::new(),
+                    previously_owned: HashMap::new(),
+                }
+            }
+        }
+    }
+
+    /// Ensure a built-in entry (e.g. the daemon MCP from #34)
+    /// exists in the registry with the latest generated transport,
+    /// preserving the user's `enabled_for` set across restarts and
+    /// app upgrades. If the id isn't present yet, inserts it with
+    /// the provided default (typically `enabled_for = {}`, so the
+    /// user explicitly opts in).
+    ///
+    /// The id is a stable contract across app versions — built-ins
+    /// must keep the same id even as their generated command line
+    /// evolves. Renaming a built-in id would orphan the user's
+    /// enablement in `previously_owned` without a migration hook.
+    pub fn ensure_builtin(&mut self, default: McpServer) {
+        if let Some(slot) = self.entries.iter_mut().find(|e| e.id == default.id) {
+            slot.label = default.label;
+            slot.transport = default.transport;
+            slot.source = default.source;
+            // enabled_for preserved.
+        } else {
+            self.entries.push(default);
         }
     }
 }

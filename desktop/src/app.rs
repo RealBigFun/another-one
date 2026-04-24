@@ -1274,11 +1274,13 @@ pub struct AnotherOneApp {
     /// MCP servers AnotherOne manages and which harnesses each is
     /// enabled for. Synced into per-harness config files on toggle.
     pub(crate) mcp_registry: another_one_core::mcp::registry::McpRegistry,
-    /// Last per-provider sync error set. Keyed by provider; the
-    /// value is the set of registry ids whose cell should render
-    /// with an error indicator. Cleared before each sync.
+    /// Providers whose most recent MCP sync failed. The MCP page
+    /// renders a column-level error indicator on these; we don't
+    /// track which row caused the failure because `sync_all`
+    /// returns a single Result per provider rather than per id.
+    /// Cleared before each sync.
     pub(crate) mcp_last_sync_errors:
-        std::collections::HashMap<another_one_core::agents::AgentProviderKind, std::collections::HashSet<String>>,
+        std::collections::HashSet<another_one_core::agents::AgentProviderKind>,
     /// Apps detected on this machine that support opening a project directory.
     pub(crate) available_open_in_apps: Vec<OpenInAppKind>,
     /// Project id whose header "Open In" menu is currently expanded.
@@ -3564,7 +3566,7 @@ impl AnotherOneApp {
             settings_open: false,
             settings_section: crate::settings_page::SettingsSection::Agents,
             mcp_registry: another_one_core::mcp::registry::McpRegistry::load(),
-            mcp_last_sync_errors: std::collections::HashMap::new(),
+            mcp_last_sync_errors: std::collections::HashSet::new(),
             available_open_in_apps,
             project_page_open_in_menu_project_id: None,
             project_page_config_panel_expanded: true,
