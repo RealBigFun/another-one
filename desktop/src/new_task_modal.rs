@@ -21,6 +21,10 @@ pub(crate) struct NewTaskModalState {
     pub source_branch: String,
     pub branch_mode: NewTaskBranchMode,
     pub branch_dropdown_open: bool,
+    pub branch_filter: String,
+    pub branch_filter_focused: bool,
+    pub branch_filter_cursor: usize,
+    pub branch_filter_selection_anchor: Option<usize>,
     pub agent_dropdown_open: bool,
     pub selected_agents: HashSet<String>,
     /// true = Worktree, false = Direct.
@@ -96,6 +100,10 @@ struct SourceBranchSectionProps<'a> {
     worktree_mode: bool,
     branch_mode: NewTaskBranchMode,
     dropdown_open: bool,
+    branch_filter: SharedString,
+    branch_filter_focused: bool,
+    branch_filter_cursor: usize,
+    branch_filter_selection: Option<std::ops::Range<usize>>,
     submitting: bool,
 }
 
@@ -190,6 +198,10 @@ impl AnotherOneApp {
             source_branch: source_branch.to_string(),
             branch_mode: NewTaskBranchMode::NewBranch,
             branch_dropdown_open: false,
+            branch_filter: String::new(),
+            branch_filter_focused: false,
+            branch_filter_cursor: 0,
+            branch_filter_selection_anchor: None,
             agent_dropdown_open: false,
             selected_agents,
             worktree_mode: true,
@@ -229,6 +241,10 @@ impl AnotherOneApp {
         let worktree_mode = state.worktree_mode;
         let branch_mode = state.branch_mode;
         let branch_dropdown_open = state.branch_dropdown_open;
+        let branch_filter: SharedString = state.branch_filter.clone().into();
+        let branch_filter_focused = state.branch_filter_focused;
+        let branch_filter_cursor = state.branch_filter_cursor;
+        let branch_filter_selection = selected_branch_filter_range(state);
         let agent_dropdown_open = state.agent_dropdown_open;
         let selected_agents =
             sanitized_new_task_selected_agents(&state.selected_agents, &enabled_agents);
@@ -285,6 +301,10 @@ impl AnotherOneApp {
                                     worktree_mode,
                                     branch_mode,
                                     dropdown_open: branch_dropdown_open,
+                                    branch_filter,
+                                    branch_filter_focused,
+                                    branch_filter_cursor,
+                                    branch_filter_selection,
                                     submitting,
                                 },
                                 cx,
@@ -356,12 +376,130 @@ impl AnotherOneApp {
                 cx.notify();
             }
             "enter" => {
+                if self
+                    .new_task_modal
+                    .as_ref()
+                    .is_some_and(|state| state.branch_filter_focused)
+                {
+                    return;
+                }
                 self.submit_new_task_modal(cx);
             }
             _ => {
-                self.handle_task_name_key_down(ev, cx);
+                if !self.handle_branch_filter_key_down(ev, cx) {
+                    self.handle_task_name_key_down(ev, cx);
+                }
             }
         }
+    }
+
+    fn handle_branch_filter_key_down(
+        &mut self,
+        ev: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = self.new_task_modal.as_mut() else {
+            return false;
+        };
+
+        if !state.branch_filter_focused {
+            return false;
+        }
+
+        let modifiers = ev.keystroke.modifiers;
+        match ev.keystroke.key.as_str() {
+            "backspace" => {
+                if modifiers.platform {
+                    delete_branch_filter_to_start(state);
+                } else if modifiers.alt {
+                    delete_branch_filter_word_backward(state);
+                } else {
+                    delete_backward_in_branch_filter(state);
+                }
+                cx.notify();
+                return true;
+            }
+            "delete" => {
+                delete_forward_in_branch_filter(state);
+                cx.notify();
+                return true;
+            }
+            "left" => {
+                move_branch_filter_cursor(state, CursorDirection::Left, modifiers.shift);
+                cx.notify();
+                return true;
+            }
+            "right" => {
+                move_branch_filter_cursor(state, CursorDirection::Right, modifiers.shift);
+                cx.notify();
+                return true;
+            }
+            "home" => {
+                move_branch_filter_cursor_to_edge(state, false, modifiers.shift);
+                cx.notify();
+                return true;
+            }
+            "end" => {
+                move_branch_filter_cursor_to_edge(state, true, modifiers.shift);
+                cx.notify();
+                return true;
+            }
+            "up" | "down" | "tab" => {
+                return true;
+            }
+            _ => {}
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "a" {
+            state.branch_filter_cursor = state.branch_filter.len();
+            state.branch_filter_selection_anchor = Some(0);
+            cx.notify();
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "c" {
+            if let Some(range) = selected_branch_filter_range(state) {
+                cx.write_to_clipboard(ClipboardItem::new_string(
+                    state.branch_filter[range].to_string(),
+                ));
+            }
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "x" {
+            if let Some(range) = selected_branch_filter_range(state) {
+                cx.write_to_clipboard(ClipboardItem::new_string(
+                    state.branch_filter[range.clone()].to_string(),
+                ));
+                replace_branch_filter_range(state, range, "");
+                cx.notify();
+            }
+            return true;
+        }
+
+        if modifiers.platform && ev.keystroke.key.as_str() == "v" {
+            if let Some(text) = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .map(sanitize_task_name_input)
+            {
+                insert_branch_filter_text(state, &text);
+                cx.notify();
+            }
+            return true;
+        }
+
+        if modifiers.control || modifiers.platform || modifiers.function {
+            return false;
+        }
+
+        if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+            insert_branch_filter_text(state, key_char);
+            cx.notify();
+            return true;
+        }
+
+        false
     }
 
     fn handle_task_name_key_down(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
@@ -540,6 +678,10 @@ impl AnotherOneApp {
             worktree_mode,
             branch_mode,
             dropdown_open,
+            branch_filter,
+            branch_filter_focused,
+            branch_filter_cursor,
+            branch_filter_selection,
             submitting,
         } = props;
         let branch_mode_help = match branch_mode {
@@ -645,6 +787,7 @@ impl AnotherOneApp {
                                                             NewTaskBranchMode::NewBranch;
                                                         state.agent_dropdown_open = false;
                                                         state.task_name_focused = false;
+                                                        state.branch_filter_focused = false;
                                                     }
                                                     cx.stop_propagation();
                                                     cx.notify();
@@ -712,6 +855,7 @@ impl AnotherOneApp {
                                                             NewTaskBranchMode::ExistingBranch;
                                                         state.agent_dropdown_open = false;
                                                         state.task_name_focused = false;
+                                                        state.branch_filter_focused = false;
                                                     }
                                                     cx.stop_propagation();
                                                     cx.notify();
@@ -770,6 +914,7 @@ impl AnotherOneApp {
                                     state.branch_dropdown_open = !state.branch_dropdown_open;
                                     state.agent_dropdown_open = false;
                                     state.task_name_focused = false;
+                                    state.branch_filter_focused = state.branch_dropdown_open;
                                 }
                                 cx.stop_propagation();
                                 cx.notify();
@@ -796,6 +941,17 @@ impl AnotherOneApp {
                 );
 
             if dropdown_open {
+                let filter = branch_filter.to_string();
+                let filter_trimmed = filter.trim().to_lowercase();
+                let filtered_branches = branches
+                    .iter()
+                    .filter(|branch| {
+                        filter_trimmed.is_empty()
+                            || branch.to_lowercase().contains(filter_trimmed.as_str())
+                    })
+                    .collect::<Vec<_>>();
+                let visible_rows = filtered_branches.len().min(7) as f32;
+                let list_height = px((visible_rows * 36.).max(36.));
                 let mut list = div()
                     .mt(px(4.))
                     .rounded_md()
@@ -803,12 +959,76 @@ impl AnotherOneApp {
                     .border_1()
                     .border_color(border_col())
                     .shadow_md()
-                    .overflow_hidden();
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .p(px(6.))
+                            .border_b_1()
+                            .border_color(border_col())
+                            .child(
+                                div()
+                                    .id("new-task-source-branch-filter")
+                                    .h(px(34.))
+                                    .rounded_md()
+                                    .bg(subtle_bg())
+                                    .border_1()
+                                    .border_color(if branch_filter_focused {
+                                        hsla(220. / 360., 0.55, 0.60, 1.)
+                                    } else {
+                                        border_col()
+                                    })
+                                    .px(px(10.))
+                                    .flex()
+                                    .items_center()
+                                    .cursor_text()
+                                    .tooltip(move |_window, cx| {
+                                        Self::action_tooltip_view(
+                                            "Filter branches by name",
+                                            cx,
+                                        )
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            |this, _ev: &MouseDownEvent, window, cx| {
+                                                this.focus_handle.focus(window);
+                                                if let Some(state) = this.new_task_modal.as_mut() {
+                                                    if state.submitting {
+                                                        return;
+                                                    }
+                                                    state.branch_filter_focused = true;
+                                                    state.branch_filter_cursor =
+                                                        state.branch_filter.len();
+                                                    state.branch_filter_selection_anchor = None;
+                                                    state.task_name_focused = false;
+                                                    state.agent_dropdown_open = false;
+                                                }
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            },
+                                        ),
+                                    )
+                                    .child(Self::render_text_input_content(
+                                        branch_filter.clone(),
+                                        "Filter branches".into(),
+                                        branch_filter_focused,
+                                        branch_filter_cursor,
+                                        branch_filter_selection.clone(),
+                                        branch_filter.is_empty(),
+                                        38,
+                                    )),
+                            ),
+                    );
 
-                for branch in branches {
-                    let branch_name = branch.clone();
-                    let branch_label: SharedString = branch.clone().into();
-                    list = list.child(
+                let mut branch_rows = div()
+                    .id("new-task-source-branch-results")
+                    .h(list_height)
+                    .overflow_y_scroll();
+                let no_matching_branches = filtered_branches.is_empty();
+                for branch in &filtered_branches {
+                    let branch_name = (*branch).clone();
+                    let branch_label: SharedString = (*branch).clone().into();
+                    branch_rows = branch_rows.child(
                         div()
                             .id(SharedString::from(format!(
                                 "new-task-source-branch-{}",
@@ -837,6 +1057,7 @@ impl AnotherOneApp {
                                         }
                                         state.source_branch = branch_name.clone();
                                         state.branch_dropdown_open = false;
+                                        state.branch_filter_focused = false;
                                         state.agent_dropdown_open = false;
                                     }
                                     this.sync_new_task_modal_prewarm(cx);
@@ -853,7 +1074,20 @@ impl AnotherOneApp {
                     );
                 }
 
-                section = section.child(list);
+                if no_matching_branches {
+                    branch_rows = branch_rows.child(
+                        div()
+                            .h(px(36.))
+                            .px(px(12.))
+                            .flex()
+                            .items_center()
+                            .text_size(rems(13. / 16.))
+                            .text_color(muted_col())
+                            .child("No branches match"),
+                    );
+                }
+
+                section = section.child(list.child(branch_rows));
             }
         } else {
             section = section
@@ -952,6 +1186,7 @@ impl AnotherOneApp {
                                 state.task_name_cursor = state.task_name.len();
                                 state.task_name_selection_anchor = None;
                                 state.branch_dropdown_open = false;
+                                state.branch_filter_focused = false;
                                 state.agent_dropdown_open = false;
                             }
                             cx.stop_propagation();
@@ -1053,6 +1288,7 @@ impl AnotherOneApp {
                                     }
                                     state.agent_dropdown_open = !state.agent_dropdown_open;
                                     state.branch_dropdown_open = false;
+                                    state.branch_filter_focused = false;
                                     state.task_name_focused = false;
                                 }
                                 cx.stop_propagation();
@@ -1326,6 +1562,7 @@ impl AnotherOneApp {
                                         }
                                         state.worktree_mode = true;
                                         state.agent_dropdown_open = false;
+                                        state.branch_filter_focused = false;
                                     }
                                     this.sync_new_task_modal_prewarm(cx);
                                     cx.stop_propagation();
@@ -1394,6 +1631,7 @@ impl AnotherOneApp {
                                         }
                                         state.worktree_mode = false;
                                         state.branch_dropdown_open = false;
+                                        state.branch_filter_focused = false;
                                         state.agent_dropdown_open = false;
                                     }
                                     this.sync_new_task_modal_prewarm(cx);
@@ -1479,6 +1717,7 @@ impl AnotherOneApp {
                             state.advanced_expanded = !state.advanced_expanded;
                             state.agent_dropdown_open = false;
                             state.branch_dropdown_open = false;
+                            state.branch_filter_focused = false;
                             state.task_name_focused = false;
                         }
                         cx.stop_propagation();
@@ -1702,9 +1941,29 @@ impl AnotherOneApp {
         selection: Option<std::ops::Range<usize>>,
         is_empty: bool,
     ) -> impl IntoElement {
-        let cursor = cursor.min(task_name.len());
+        Self::render_text_input_content(
+            task_name,
+            generated_task_name,
+            focused,
+            cursor,
+            selection,
+            is_empty,
+            42,
+        )
+    }
+
+    fn render_text_input_content(
+        text: SharedString,
+        placeholder: SharedString,
+        focused: bool,
+        cursor: usize,
+        selection: Option<std::ops::Range<usize>>,
+        is_empty: bool,
+        max_chars: usize,
+    ) -> impl IntoElement {
+        let cursor = cursor.min(text.len());
         let selection =
-            selection.map(|range| range.start.min(task_name.len())..range.end.min(task_name.len()));
+            selection.map(|range| range.start.min(text.len())..range.end.min(text.len()));
 
         if is_empty {
             return div()
@@ -1722,19 +1981,19 @@ impl AnotherOneApp {
                 .child(
                     div()
                         .text_color(placeholder_col())
-                        .child(generated_task_name),
+                        .child(placeholder),
                 );
         }
 
         let selected = selection.filter(|range| range.start < range.end);
-        let visible_range = task_name_visible_range(&task_name, cursor, selected.as_ref(), 42);
+        let visible_range = text_visible_range(&text, cursor, selected.as_ref(), max_chars);
         let leading_clipped = visible_range.start > 0;
-        let trailing_clipped = visible_range.end < task_name.len();
+        let trailing_clipped = visible_range.end < text.len();
         let visible_start = visible_range.start;
-        let visible_task_name = task_name[visible_range.clone()].to_string();
+        let visible_text = text[visible_range.clone()].to_string();
         let local_cursor = cursor
             .saturating_sub(visible_start)
-            .min(visible_task_name.len());
+            .min(visible_text.len());
         let visible_selection = selected
             .as_ref()
             .and_then(|range| intersect_byte_ranges(range.clone(), visible_range.clone()))
@@ -1746,35 +2005,35 @@ impl AnotherOneApp {
         let (prefix_end, selected_end) = if let Some(range) = visible_selection.as_ref() {
             (
                 range.start.min(local_cursor),
-                range.end.min(visible_task_name.len()),
+                range.end.min(visible_text.len()),
             )
         } else {
             (
-                local_cursor.min(visible_task_name.len()),
-                local_cursor.min(visible_task_name.len()),
+                local_cursor.min(visible_text.len()),
+                local_cursor.min(visible_text.len()),
             )
         };
 
-        let prefix = visible_task_name[..prefix_end].to_string();
+        let prefix = visible_text[..prefix_end].to_string();
         let middle = if let Some(range) = visible_selection.as_ref() {
-            visible_task_name[range.clone()].to_string()
+            visible_text[range.clone()].to_string()
         } else {
             String::new()
         };
         let suffix_start = if selected_contains_cursor {
             selected_end
         } else {
-            local_cursor.min(visible_task_name.len())
+            local_cursor.min(visible_text.len())
         };
         let between = if visible_selection
             .as_ref()
             .is_some_and(|range| range.end < local_cursor)
         {
-            visible_task_name[selected_end..local_cursor.min(visible_task_name.len())].to_string()
+            visible_text[selected_end..local_cursor.min(visible_text.len())].to_string()
         } else {
             String::new()
         };
-        let trailing = visible_task_name[suffix_start..].to_string();
+        let trailing = visible_text[suffix_start..].to_string();
 
         let mut row = div()
             .flex()
@@ -1868,7 +2127,7 @@ fn intersect_byte_ranges(
     (start < end).then_some(start..end)
 }
 
-fn task_name_visible_range(
+fn text_visible_range(
     text: &str,
     cursor: usize,
     selection: Option<&std::ops::Range<usize>>,
@@ -1923,6 +2182,19 @@ fn selected_task_name_range(state: &NewTaskModalState) -> Option<std::ops::Range
     }
 }
 
+pub(crate) fn selected_branch_filter_range(
+    state: &NewTaskModalState,
+) -> Option<std::ops::Range<usize>> {
+    let anchor = state.branch_filter_selection_anchor?;
+    if anchor == state.branch_filter_cursor {
+        None
+    } else if anchor < state.branch_filter_cursor {
+        Some(anchor..state.branch_filter_cursor)
+    } else {
+        Some(state.branch_filter_cursor..anchor)
+    }
+}
+
 fn previous_task_name_boundary(text: &str, cursor: usize) -> usize {
     text.char_indices()
         .rev()
@@ -1934,6 +2206,132 @@ fn next_task_name_boundary(text: &str, cursor: usize) -> usize {
     text.char_indices()
         .find_map(|(index, _)| (index > cursor).then_some(index))
         .unwrap_or(text.len())
+}
+
+fn replace_branch_filter_range(
+    state: &mut NewTaskModalState,
+    range: std::ops::Range<usize>,
+    new_text: &str,
+) {
+    state.branch_filter.replace_range(range.clone(), new_text);
+    state.branch_filter_cursor = range.start + new_text.len();
+    state.branch_filter_selection_anchor = None;
+}
+
+fn insert_branch_filter_text(state: &mut NewTaskModalState, text: &str) {
+    let range = selected_branch_filter_range(state)
+        .unwrap_or(state.branch_filter_cursor..state.branch_filter_cursor);
+    replace_branch_filter_range(state, range, text);
+}
+
+fn delete_backward_in_branch_filter(state: &mut NewTaskModalState) {
+    if let Some(range) = selected_branch_filter_range(state) {
+        replace_branch_filter_range(state, range, "");
+        return;
+    }
+
+    if state.branch_filter_cursor == 0 {
+        return;
+    }
+
+    let start = previous_task_name_boundary(&state.branch_filter, state.branch_filter_cursor);
+    replace_branch_filter_range(state, start..state.branch_filter_cursor, "");
+}
+
+fn delete_branch_filter_word_backward(state: &mut NewTaskModalState) {
+    if let Some(range) = selected_branch_filter_range(state) {
+        replace_branch_filter_range(state, range, "");
+        return;
+    }
+
+    if state.branch_filter_cursor == 0 {
+        return;
+    }
+
+    let start = previous_task_name_word_boundary(&state.branch_filter, state.branch_filter_cursor);
+    replace_branch_filter_range(state, start..state.branch_filter_cursor, "");
+}
+
+fn delete_branch_filter_to_start(state: &mut NewTaskModalState) {
+    if let Some(range) = selected_branch_filter_range(state) {
+        replace_branch_filter_range(state, range, "");
+        return;
+    }
+
+    if state.branch_filter_cursor == 0 {
+        return;
+    }
+
+    replace_branch_filter_range(state, 0..state.branch_filter_cursor, "");
+}
+
+fn delete_forward_in_branch_filter(state: &mut NewTaskModalState) {
+    if let Some(range) = selected_branch_filter_range(state) {
+        replace_branch_filter_range(state, range, "");
+        return;
+    }
+
+    if state.branch_filter_cursor >= state.branch_filter.len() {
+        return;
+    }
+
+    let end = next_task_name_boundary(&state.branch_filter, state.branch_filter_cursor);
+    replace_branch_filter_range(state, state.branch_filter_cursor..end, "");
+}
+
+fn move_branch_filter_cursor(
+    state: &mut NewTaskModalState,
+    direction: CursorDirection,
+    extend_selection: bool,
+) {
+    let next_cursor = match direction {
+        CursorDirection::Left => {
+            if let Some(range) = selected_branch_filter_range(state) {
+                if extend_selection {
+                    previous_task_name_boundary(&state.branch_filter, state.branch_filter_cursor)
+                } else {
+                    range.start
+                }
+            } else {
+                previous_task_name_boundary(&state.branch_filter, state.branch_filter_cursor)
+            }
+        }
+        CursorDirection::Right => {
+            if let Some(range) = selected_branch_filter_range(state) {
+                if extend_selection {
+                    next_task_name_boundary(&state.branch_filter, state.branch_filter_cursor)
+                } else {
+                    range.end
+                }
+            } else {
+                next_task_name_boundary(&state.branch_filter, state.branch_filter_cursor)
+            }
+        }
+    };
+
+    if extend_selection {
+        if state.branch_filter_selection_anchor.is_none() {
+            state.branch_filter_selection_anchor = Some(state.branch_filter_cursor);
+        }
+    } else {
+        state.branch_filter_selection_anchor = None;
+    }
+
+    state.branch_filter_cursor = next_cursor;
+}
+
+fn move_branch_filter_cursor_to_edge(
+    state: &mut NewTaskModalState,
+    to_end: bool,
+    extend_selection: bool,
+) {
+    if extend_selection && state.branch_filter_selection_anchor.is_none() {
+        state.branch_filter_selection_anchor = Some(state.branch_filter_cursor);
+    }
+    if !extend_selection {
+        state.branch_filter_selection_anchor = None;
+    }
+    state.branch_filter_cursor = if to_end { state.branch_filter.len() } else { 0 };
 }
 
 fn replace_task_name_range(

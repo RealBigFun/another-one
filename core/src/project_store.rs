@@ -2844,6 +2844,7 @@ fn detect_branches(path: &Path) -> Vec<Branch> {
     let Ok(out) = git_command(path)
         .args([
             "for-each-ref",
+            "--sort=-committerdate",
             "--format=%(HEAD)|%(refname:short)|%(committerdate:relative)",
             "refs/heads",
         ])
@@ -2907,6 +2908,7 @@ fn detect_branches(path: &Path) -> Vec<Branch> {
     if let Ok(out) = git_command(path)
         .args([
             "for-each-ref",
+            "--sort=-committerdate",
             "--format=%(refname:short)|%(committerdate:relative)",
             "refs/remotes",
         ])

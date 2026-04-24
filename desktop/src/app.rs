@@ -1512,6 +1512,7 @@ impl Element for AppInputHost {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TextInputTarget {
     NewTaskModal,
+    NewTaskModalBranchFilter,
     CreateBranchModal,
     SidebarTaskRename,
     CustomActionModal,
@@ -1578,6 +1579,10 @@ impl EntityInputHandler for AnotherOneApp {
                 .new_task_modal
                 .as_ref()
                 .map(|state| text_for_utf16_range(&state.task_name, range, adjusted_range)),
+            TextInputTarget::NewTaskModalBranchFilter => self
+                .new_task_modal
+                .as_ref()
+                .map(|state| text_for_utf16_range(&state.branch_filter, range, adjusted_range)),
             TextInputTarget::CreateBranchModal => self
                 .create_branch_modal
                 .as_ref()
@@ -1627,6 +1632,15 @@ impl EntityInputHandler for AnotherOneApp {
                     state.task_name_selection_anchor,
                 )
             }),
+            TextInputTarget::NewTaskModalBranchFilter => {
+                self.new_task_modal.as_ref().map(|state| {
+                    utf16_selection_for_text(
+                        &state.branch_filter,
+                        state.branch_filter_cursor,
+                        state.branch_filter_selection_anchor,
+                    )
+                })
+            }
             TextInputTarget::CreateBranchModal => self.create_branch_modal.as_ref().map(|state| {
                 utf16_selection_for_text(
                     &state.branch_name,
@@ -1704,6 +1718,19 @@ impl EntityInputHandler for AnotherOneApp {
                         &mut state.task_name,
                         &mut state.task_name_cursor,
                         &mut state.task_name_selection_anchor,
+                        range,
+                        text,
+                        false,
+                    );
+                    cx.notify();
+                }
+            }
+            TextInputTarget::NewTaskModalBranchFilter => {
+                if let Some(state) = self.new_task_modal.as_mut() {
+                    replace_custom_text(
+                        &mut state.branch_filter,
+                        &mut state.branch_filter_cursor,
+                        &mut state.branch_filter_selection_anchor,
                         range,
                         text,
                         false,
@@ -1819,6 +1846,7 @@ impl EntityInputHandler for AnotherOneApp {
     ) {
         match self.text_input_target(cx) {
             TextInputTarget::NewTaskModal
+            | TextInputTarget::NewTaskModalBranchFilter
             | TextInputTarget::CreateBranchModal
             | TextInputTarget::SidebarTaskRename
             | TextInputTarget::CustomActionModal
@@ -2415,6 +2443,14 @@ impl AnotherOneApp {
             .is_some_and(|state| state.task_name_focused)
         {
             return TextInputTarget::NewTaskModal;
+        }
+
+        if self
+            .new_task_modal
+            .as_ref()
+            .is_some_and(|state| state.branch_filter_focused)
+        {
+            return TextInputTarget::NewTaskModalBranchFilter;
         }
 
         if self.new_task_modal.is_some() {
@@ -6478,6 +6514,7 @@ impl AnotherOneApp {
             }
 
             state.branch_dropdown_open = false;
+            state.branch_filter_focused = false;
             state.task_name_focused = false;
 
             (
