@@ -25,7 +25,10 @@ use crate::agents::AgentProviderKind;
 
 pub mod adapters;
 pub mod catalog;
+pub mod orchestrator;
 pub mod registry;
+pub mod server;
+pub mod tools;
 
 /// A single MCP server entry in the registry. Identity is `id`; the
 /// same id is used as the partition key when writing to harness

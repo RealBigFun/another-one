@@ -208,6 +208,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "another-one-mcp-shim"
+version = "0.1.0"
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1832,11 +1836,13 @@ dependencies = [
  "futures-util",
  "image",
  "iroh",
+ "libc",
  "portable-pty",
  "qrcode",
  "rand 0.9.2",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

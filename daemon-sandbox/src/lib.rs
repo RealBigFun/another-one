@@ -20,6 +20,7 @@ use std::sync::Arc;
 pub mod frame;
 pub mod registry;
 pub mod transport_iroh;
+pub mod transport_mcp;
 
 pub use registry::{EndpointHandle, TerminalRegistry};
 
