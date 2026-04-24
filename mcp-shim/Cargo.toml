@@ -1,0 +1,16 @@
+[package]
+name = "another-one-mcp-shim"
+version = "0.1.0"
+edition = "2021"
+description = "Tiny stdio ↔ UDS forwarder. Harnesses launch this; it connects to the running AnotherOne daemon's MCP socket and copies bytes in both directions."
+publish = false
+
+[[bin]]
+name = "another-one-mcp-shim"
+path = "src/main.rs"
+
+[dependencies]
+# Deliberately minimal — the whole point of the shim is fast
+# cold-start per MCP session, so we stick to std + a thin I/O
+# helper. No tokio: two blocking threads is plenty for
+# bidirectional copying.

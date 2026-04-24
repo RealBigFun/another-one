@@ -509,7 +509,8 @@ fn run(
 
     let weak = Arc::downgrade(&registry_state);
     drop(registry_state); // drop the strong ref we took for spawn; the app still holds one.
-    let registry: Arc<dyn TerminalRegistry> = Arc::new(DesktopTerminalRegistry::new(weak));
+    let registry: Arc<dyn TerminalRegistry> = Arc::new(DesktopTerminalRegistry::new(weak.clone()));
+    let mcp_orchestrator = crate::mcp_orchestrator::arc(weak);
 
     let paths = match daemon_paths() {
         Ok(p) => p,
@@ -518,6 +519,26 @@ fn run(
             return;
         }
     };
+
+    // Start the local MCP UDS listener alongside the iroh
+    // endpoint. The handle is leaked on success because the
+    // daemon thread parks for the rest of the process lifetime;
+    // `McpListener::drop` would unlink the socket, which is
+    // exactly what we want at process exit but not mid-run. A
+    // bind failure only warns — the desktop still runs without
+    // a local MCP socket (mobile iroh path is independent).
+    let mcp_socket_path = daemon_sandbox::transport_mcp::default_socket_path();
+    match runtime.block_on(async {
+        daemon_sandbox::transport_mcp::spawn(mcp_socket_path.clone(), mcp_orchestrator)
+    }) {
+        Ok(listener) => {
+            log::info!("mcp: daemon MCP listener started at {}", mcp_socket_path.display());
+            std::mem::forget(listener);
+        }
+        Err(err) => {
+            log::warn!("mcp: failed to start local listener; continuing: {err}");
+        }
+    }
 
     let endpoint_result = runtime.block_on(async {
         daemon_sandbox::run_endpoint(registry, paths.secret_key, paths.paired_peers).await

@@ -3565,7 +3565,26 @@ impl AnotherOneApp {
             project_check_runs_checked_at: HashMap::new(),
             settings_open: false,
             settings_section: crate::settings_page::SettingsSection::Agents,
-            mcp_registry: another_one_core::mcp::registry::McpRegistry::load(),
+            mcp_registry: {
+                let mut reg = another_one_core::mcp::registry::McpRegistry::load();
+                // Re-register the daemon MCP entry on every
+                // startup: preserves the user's per-harness
+                // `enabled_for` set across app upgrades while
+                // letting us update the generated command/env
+                // (e.g. if the shim binary moves or the socket
+                // path convention changes).
+                let shim_bin = shim_binary_path();
+                let socket_path =
+                    daemon_sandbox::transport_mcp::default_socket_path();
+                reg.ensure_builtin(another_one_core::mcp::catalog::daemon_catalog_entry(
+                    &shim_bin,
+                    &socket_path,
+                ));
+                if let Err(err) = reg.save() {
+                    log::warn!("failed to persist MCP registry at startup: {err}");
+                }
+                reg
+            },
             mcp_last_sync_errors: std::collections::HashSet::new(),
             available_open_in_apps,
             project_page_open_in_menu_project_id: None,
@@ -8197,6 +8216,23 @@ fn select_active_section(
 
 fn persisted_active_section_key(active_section: Option<&SectionId>) -> Option<String> {
     active_section.map(SectionId::store_key)
+}
+
+/// Absolute path to the `another-one-mcp-shim` binary for the
+/// daemon-MCP catalog entry. Resolved by looking next to the
+/// running app binary — that's where the release packaging
+/// drops it. If `current_exe()` fails (unusual), we fall back
+/// to the bare name so `PATH` can resolve it.
+fn shim_binary_path() -> std::path::PathBuf {
+    let exe_name = if cfg!(windows) {
+        "another-one-mcp-shim.exe"
+    } else {
+        "another-one-mcp-shim"
+    };
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|parent| parent.join(exe_name)))
+        .unwrap_or_else(|| std::path::PathBuf::from(exe_name))
 }
 
 fn choose_initial_section(

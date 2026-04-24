@@ -93,6 +93,41 @@ fn github_transport() -> McpTransport {
     }
 }
 
+/// Stable id for the daemon MCP entry. Used by
+/// [`crate::mcp::registry::McpRegistry::ensure_builtin`] so
+/// upgrading the app preserves the user's `enabled_for` set
+/// across versions. Do not rename.
+pub const DAEMON_MCP_ID: &str = "another-one-daemon";
+
+/// Build the `McpServer` the app re-registers on every startup
+/// to represent its own daemon MCP. `enabled_for` is empty on
+/// first install; `ensure_builtin` preserves the user's choice
+/// on subsequent runs.
+///
+/// The catalog entry uses stdio transport with `shim_bin` as
+/// the command and the socket path exported via
+/// `ANOTHERONE_MCP_SOCKET` — the shim prefers that env var so
+/// the user's harness config can continue working even if we
+/// later relocate the default per-user socket path.
+pub fn daemon_catalog_entry(shim_bin: &std::path::Path, socket_path: &std::path::Path) -> McpServer {
+    let mut env = BTreeMap::new();
+    env.insert(
+        "ANOTHERONE_MCP_SOCKET".to_string(),
+        socket_path.to_string_lossy().into_owned(),
+    );
+    McpServer {
+        id: DAEMON_MCP_ID.to_string(),
+        label: "AnotherOne Daemon".to_string(),
+        transport: McpTransport::Stdio {
+            command: shim_bin.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            env,
+        },
+        enabled_for: HashSet::new(),
+        source: McpSource::BuiltInDaemon,
+    }
+}
+
 const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         id: "playwright",
