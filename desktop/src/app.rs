@@ -2979,6 +2979,10 @@ impl AnotherOneApp {
         &self,
         launch_config: &TerminalLaunchConfig,
     ) -> Vec<String> {
+        if !launch_config.use_agent_launch_args {
+            return Vec::new();
+        }
+
         launch_config
             .provider
             .and_then(agent_id_for_provider)
@@ -5144,7 +5148,9 @@ impl AnotherOneApp {
             ProjectActionKind::Agent { provider, .. } => {
                 let args = crate::project_store::project_action_agent_launch_args(&action)?;
                 (
-                    TerminalLaunchConfig::for_provider(*provider).with_extra_args(args),
+                    TerminalLaunchConfig::for_provider(*provider)
+                        .with_extra_args(args)
+                        .with_agent_launch_args(false),
                     None,
                     None,
                 )
