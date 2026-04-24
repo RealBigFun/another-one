@@ -5,9 +5,11 @@ use gpui::{
     Window,
 };
 
+use crate::agents::terminal_launch_config_for_selected_agent;
 use crate::app::{AnotherOneApp, WorkspacePane};
 use crate::left_sidebar::open_external_url;
 use crate::project_store::{ProjectBranchSettingField, ResolvedProjectBranchSettings};
+use crate::task_launcher::TaskLaunchRequest;
 
 const PR_FILTER_TABS: &[&str] = &["All Open", "Needs My Review", "My PRs", "Draft"];
 
@@ -564,6 +566,10 @@ impl WorkspacePane {
         let added: SharedString = format!("+{}", pr.lines_added).into();
         let removed: SharedString = format!("-{}", pr.lines_removed).into();
         let pr_url = pr.url.clone();
+        let review_project_id = self.active_project_page.clone().unwrap_or_default();
+        let review_pr_number = pr.number;
+        let review_pr_url = pr.url.clone();
+        let review_head_branch = pr.branch.clone();
         let number_link_id = SharedString::from(format!("pr-number-link-{}", pr.number));
 
         let ci_icon = if pr.review_required {
@@ -603,10 +609,7 @@ impl WorkspacePane {
                     .bg(gpui::white().opacity(0.08))
                     .text_xs()
                     .text_color(TEXT_SECONDARY())
-                    .hover(|s| {
-                        s.bg(gpui::white().opacity(0.14))
-                            .text_color(TEXT_PRIMARY())
-                    })
+                    .hover(|s| s.bg(gpui::white().opacity(0.14)).text_color(TEXT_PRIMARY()))
                     .cursor_pointer()
                     .tooltip(|_window, cx| {
                         AnotherOneApp::action_tooltip_view("Open pull request in GitHub", cx)
@@ -722,6 +725,39 @@ impl WorkspacePane {
                 .text_xs()
                 .text_color(TEXT_PRIMARY())
                 .font_weight(gpui::FontWeight::MEDIUM)
+                .tooltip(|_window, cx| {
+                    AnotherOneApp::action_tooltip_view(
+                        "Open a review task for this pull request",
+                        cx,
+                    )
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                        let app = this.app.clone();
+                        let project_id = review_project_id.clone();
+                        let pull_request_url = review_pr_url.clone();
+                        let head_branch = review_head_branch.clone();
+                        cx.defer(move |cx| {
+                            let _ = app.update(cx, |app, app_cx| {
+                                let launch_config = terminal_launch_config_for_selected_agent(
+                                    app.default_agent_id(),
+                                )
+                                .unwrap_or_default();
+                                app.launch_task_request(
+                                    TaskLaunchRequest::Review {
+                                        project_id,
+                                        pull_request_number: review_pr_number,
+                                        pull_request_url,
+                                        head_branch,
+                                        launch_config,
+                                    },
+                                    app_cx,
+                                );
+                            });
+                        });
+                    }),
+                )
                 .child("Review"),
         );
 

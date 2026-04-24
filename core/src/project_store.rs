@@ -2446,6 +2446,73 @@ pub fn create_task_worktree(
     })
 }
 
+pub fn create_review_task_worktree(
+    repo_path: &Path,
+    task_name: &str,
+    pull_request_number: u64,
+    head_branch: &str,
+) -> Result<CreatedTaskWorktree, String> {
+    let head_branch = head_branch.trim();
+    if head_branch.is_empty() {
+        return Err("Could not determine the pull request head branch.".to_string());
+    }
+
+    let base_ref = fetch_pull_request_head(repo_path, pull_request_number)?;
+    let worktree_path = unique_worktree_path(repo_path, &review_worktree_slug(pull_request_number));
+    let Some(worktree_parent) = worktree_path.parent() else {
+        return Err("Failed to determine the worktree parent directory.".to_string());
+    };
+
+    std::fs::create_dir_all(worktree_parent)
+        .map_err(|error| format!("Failed to prepare the worktree directory: {error}"))?;
+
+    let output = git_command(repo_path)
+        .args([
+            "worktree",
+            "add",
+            "--detach",
+            worktree_path.to_string_lossy().as_ref(),
+            &base_ref,
+        ])
+        .output()
+        .map_err(|error| format!("Failed to create review worktree: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format_git_command_failure(
+            "Git failed to create the review worktree",
+            &output,
+        ));
+    }
+
+    Ok(CreatedTaskWorktree {
+        path: worktree_path,
+        branch_name: head_branch.to_string(),
+        task_name: task_name.trim().to_string(),
+    })
+}
+
+fn review_worktree_slug(pull_request_number: u64) -> String {
+    format!("review-{pull_request_number}-wt")
+}
+
+fn fetch_pull_request_head(repo_path: &Path, pull_request_number: u64) -> Result<String, String> {
+    let fetched_ref = format!("refs/remotes/origin/pr-{pull_request_number}");
+    let refspec = format!("+pull/{pull_request_number}/head:{fetched_ref}");
+    let output = git_command(repo_path)
+        .args(["fetch", "origin", &refspec])
+        .output()
+        .map_err(|error| format!("Failed to fetch pull request head: {error}"))?;
+
+    if output.status.success() {
+        Ok(fetched_ref)
+    } else {
+        Err(format_git_command_failure(
+            "Git failed to fetch the pull request head",
+            &output,
+        ))
+    }
+}
+
 pub fn remove_task_worktree(repo_path: &Path, worktree_path: &Path) -> Result<(), String> {
     let output = git_command(repo_path)
         .args([
@@ -3014,7 +3081,7 @@ mod tests {
         app_worktrees_root, combine_commit_file_changes, format_git_command_error,
         parse_branch_commit_entries, parse_branch_compare_name_status_entries,
         parse_branch_compare_numstat_entries, parse_recent_branch_commit_page,
-        project_action_agent_launch_args, worktree_parent_dir_with_root,
+        project_action_agent_launch_args, review_worktree_slug, worktree_parent_dir_with_root,
         BranchCompareNameStatusEntry, BranchCompareNumStatEntry, PersistedSectionState,
         PersistedTerminalTab, Project, ProjectAction, ProjectActionAccess, ProjectActionIcon,
         ProjectActionKind, ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings,
@@ -3167,6 +3234,11 @@ mod tests {
         let parent = worktree_parent_dir_with_root(&repo_path, Some(app_worktrees_root(&home_dir)));
 
         assert_eq!(parent, expected);
+    }
+
+    #[test]
+    fn review_worktree_slug_uses_pull_request_number() {
+        assert_eq!(review_worktree_slug(1808), "review-1808-wt");
     }
 
     #[test]

@@ -21,8 +21,8 @@ use tokio::sync::broadcast;
 
 use crate::agents::TerminalLaunchConfig;
 use crate::project_store::{
-    create_task_worktree, prepare_project, PreparedProject, Project, ProjectBranchSettings,
-    ProjectCheckoutState, ProjectKind, RepoRecord,
+    create_review_task_worktree, create_task_worktree, prepare_project, PreparedProject, Project,
+    ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoRecord,
 };
 
 // ---- project add ----------------------------------------------------
@@ -53,6 +53,8 @@ pub struct TaskCreationSuccess {
     pub branch_name: String,
     pub task_name: String,
     pub launch_config: TerminalLaunchConfig,
+    pub run_automatic_actions: bool,
+    pub open_agent: bool,
 }
 
 #[derive(Clone)]
@@ -124,6 +126,67 @@ pub fn spawn_task_creation(
             branch_name: created.branch_name,
             task_name: created.task_name,
             launch_config,
+            run_automatic_actions: true,
+            open_agent: true,
+        })
+        .map_err(|message| TaskCreationFailure { message });
+        let _ = tx.send(TaskCreationReply { result });
+    });
+    rx
+}
+
+pub fn spawn_review_task_creation(
+    project_id: String,
+    project_path: PathBuf,
+    task_name: String,
+    pull_request_number: u64,
+    head_branch: String,
+    launch_config: TerminalLaunchConfig,
+    run_automatic_actions: bool,
+    open_agent: bool,
+) -> broadcast::Receiver<TaskCreationReply> {
+    let (tx, rx) = broadcast::channel(1);
+    thread::spawn(move || {
+        let result = create_review_task_worktree(
+            &project_path,
+            &task_name,
+            pull_request_number,
+            &head_branch,
+        )
+        .map(|created| TaskCreationSuccess {
+            original_project_id: project_id,
+            project: prepare_project(&created.path).unwrap_or_else(|_| PreparedProject {
+                project: Project {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    repo_id: uuid::Uuid::new_v4().to_string(),
+                    name: created
+                        .path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| created.path.display().to_string()),
+                    path: created.path.clone(),
+                    kind: ProjectKind::Worktree,
+                    checkout: ProjectCheckoutState::default(),
+                    branch_settings: ProjectBranchSettings::default(),
+                    actions: Vec::new(),
+                    worktree_name: created
+                        .path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned()),
+                    repo_common_dir: None,
+                },
+                repo: RepoRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    common_dir: None,
+                    branch_order: Vec::new(),
+                    branches_by_name: HashMap::new(),
+                },
+            }),
+            branch_name: created.branch_name,
+            task_name: created.task_name,
+            launch_config,
+            run_automatic_actions,
+            open_agent,
         })
         .map_err(|message| TaskCreationFailure { message });
         let _ = tx.send(TaskCreationReply { result });

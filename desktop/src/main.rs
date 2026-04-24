@@ -22,6 +22,7 @@ mod resource_usage;
 mod right_sidebar;
 mod settings_page;
 mod shortcuts;
+mod task_launcher;
 mod terminal_runtime;
 mod theme;
 mod titlebar;

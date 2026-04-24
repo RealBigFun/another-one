@@ -47,6 +47,7 @@ use crate::project_store::{
     RepoDefaultCommitAction, Task, TaskKind,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
+use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
 use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
 };
@@ -101,6 +102,15 @@ fn new_tab_seed_agent_id(
 ) -> Option<String> {
     state?;
     default_agent_id.map(str::to_string)
+}
+
+fn resolved_task_name(task_name: &str, generated_task_name: &str) -> String {
+    let task_name = task_name.trim();
+    if task_name.is_empty() {
+        generated_task_name.to_string()
+    } else {
+        task_name.to_string()
+    }
 }
 
 /// A single terminal tab within a section.
@@ -1177,6 +1187,8 @@ pub struct AnotherOneApp {
     git_refresh_receiver: Option<broadcast::Receiver<GitRefreshReply>>,
     /// Receiver for the in-flight new task worktree creation result.
     task_creation_receiver: Option<broadcast::Receiver<TaskCreationReply>>,
+    /// UI context for the in-flight task creation worker.
+    pending_task_launch: Option<PendingTaskLaunch>,
     /// Receiver for the in-flight add-project background preparation result.
     project_add_receiver: Option<broadcast::Receiver<ProjectAddReply>>,
     /// Sender used by background commit file-change lookups.
@@ -3524,6 +3536,7 @@ impl AnotherOneApp {
             git_refresh_in_flight: false,
             git_refresh_receiver: None,
             task_creation_receiver: None,
+            pending_task_launch: None,
             project_add_receiver: None,
             commit_file_changes_sender,
             commit_file_changes_receiver,
@@ -6072,6 +6085,209 @@ impl AnotherOneApp {
             })
     }
 
+    pub(crate) fn launch_task_request(
+        &mut self,
+        request: TaskLaunchRequest,
+        cx: &mut Context<Self>,
+    ) {
+        match request {
+            TaskLaunchRequest::Direct {
+                project_id,
+                task_name,
+                generated_task_name,
+                source_branch,
+                launch_config,
+                warm_launch_id,
+            } => {
+                let Some(project) = self.project_store.project(&project_id).cloned() else {
+                    self.show_error_toast("Could not find the selected project.", cx);
+                    self.cancel_active_new_task_prewarm();
+                    self.new_task_modal = None;
+                    return;
+                };
+
+                let branch_name = crate::project_store::current_branch(&project.path)
+                    .or_else(|| self.project_store.current_branch_name(&project.id))
+                    .unwrap_or(source_branch);
+
+                if branch_name.is_empty() {
+                    self.show_error_toast(
+                        "Could not determine the current branch for the selected project.",
+                        cx,
+                    );
+                    return;
+                }
+
+                let task_name = resolved_task_name(&task_name, &generated_task_name);
+                self.insert_and_open_task(
+                    project.id.clone(),
+                    project.id.clone(),
+                    TaskKind::Direct,
+                    task_name.clone(),
+                    branch_name.clone(),
+                    None,
+                    project.path.clone(),
+                    Some(launch_config.clone()),
+                    warm_launch_id,
+                    cx,
+                );
+                self.new_task_modal = None;
+                self.show_success_toast(
+                    format!("Opened direct task {} on {}.", task_name, branch_name),
+                    cx,
+                );
+            }
+            TaskLaunchRequest::Worktree {
+                project_id,
+                task_name,
+                generated_task_name,
+                source_branch,
+                launch_config,
+            } => {
+                let Some(project) = self.project_store.project(&project_id).cloned() else {
+                    self.show_error_toast("Could not find the selected project.", cx);
+                    self.cancel_active_new_task_prewarm();
+                    self.new_task_modal = None;
+                    return;
+                };
+
+                if let Some(state) = self.new_task_modal.as_mut() {
+                    state.submitting = true;
+                }
+                self.cancel_active_new_task_prewarm();
+                self.show_info_toast("Creating worktree task...", cx);
+                self.pending_task_launch = Some(PendingTaskLaunch::NewTaskModal);
+                self.task_creation_receiver =
+                    Some(another_one_core::project_service::spawn_task_creation(
+                        project.id,
+                        project.path,
+                        project.name,
+                        task_name,
+                        generated_task_name,
+                        source_branch,
+                        launch_config,
+                    ));
+                cx.notify();
+            }
+            TaskLaunchRequest::Review {
+                project_id,
+                pull_request_number,
+                pull_request_url,
+                head_branch,
+                launch_config,
+            } => {
+                let Some(project) = self.project_store.project(&project_id).cloned() else {
+                    self.show_error_toast("Could not find the selected project.", cx);
+                    return;
+                };
+                let task_name = crate::task_launcher::review_task_title(pull_request_number);
+
+                if let Some(existing) = crate::task_launcher::existing_review_worktree_project(
+                    &self.project_store.projects,
+                    &project,
+                    pull_request_number,
+                    &head_branch,
+                    |project_id| self.project_store.current_branch_name(project_id),
+                )
+                .cloned()
+                {
+                    self.insert_and_open_task(
+                        project.id,
+                        existing.id.clone(),
+                        TaskKind::Worktree,
+                        task_name.clone(),
+                        head_branch,
+                        Some(existing.id.clone()),
+                        existing.path,
+                        None,
+                        None,
+                        cx,
+                    );
+                    self.show_success_toast(format!("Opened {}.", task_name), cx);
+                    return;
+                }
+
+                self.show_info_toast(
+                    format!("Creating review worktree for {}...", pull_request_url),
+                    cx,
+                );
+                self.pending_task_launch = Some(PendingTaskLaunch::Review);
+                self.task_creation_receiver = Some(
+                    another_one_core::project_service::spawn_review_task_creation(
+                        project.id,
+                        project.path,
+                        task_name,
+                        pull_request_number,
+                        head_branch,
+                        launch_config,
+                        false,
+                        false,
+                    ),
+                );
+                cx.notify();
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_and_open_task(
+        &mut self,
+        root_project_id: String,
+        target_project_id: String,
+        kind: TaskKind,
+        task_name: String,
+        branch_name: String,
+        worktree_project_id: Option<String>,
+        project_path: std::path::PathBuf,
+        launch_config: Option<TerminalLaunchConfig>,
+        warm_launch_id: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        let task_id = uuid::Uuid::new_v4().to_string();
+        self.project_store.insert_task(Task {
+            id: task_id.clone(),
+            name: task_name,
+            kind,
+            root_project_id,
+            target_project_id: target_project_id.clone(),
+            branch_name: branch_name.clone(),
+            section_id: SectionId::for_task(&target_project_id, &branch_name, &task_id).store_key(),
+            worktree_project_id,
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        });
+        self.project_store.save();
+
+        if let Some(project) = self.project_store.project(&target_project_id) {
+            self.expanded_projects.insert(project.repo_id.clone());
+            self.project_store
+                .set_expanded_projects(&self.expanded_projects);
+        }
+
+        let section_id = SectionId::for_task(&target_project_id, &branch_name, &task_id);
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.activate_section(
+                section_id.clone(),
+                Some(project_path.clone()),
+                launch_config.clone(),
+                cx,
+            );
+        });
+        self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
+        if let (Some(key), Some(launch_config)) = (self.active_terminal_key(cx), launch_config) {
+            self.attach_or_start_prewarmed_terminal(
+                warm_launch_id,
+                key,
+                project_path,
+                launch_config,
+                cx,
+            );
+        }
+        self.mark_git_refresh_stale();
+    }
+
     pub(crate) fn submit_new_task_modal(&mut self, cx: &mut Context<Self>) {
         self.sanitize_new_task_modal_selected_agents();
 
@@ -6105,107 +6321,35 @@ impl AnotherOneApp {
             )
         };
 
-        let Some(project) = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-        else {
-            self.show_error_toast("Could not find the selected project.", cx);
-            self.cancel_active_new_task_prewarm();
-            self.new_task_modal = None;
-            return;
-        };
-
         if !worktree_mode {
-            let branch_name = crate::project_store::current_branch(&project.path)
-                .or_else(|| self.project_store.current_branch_name(&project.id))
-                .unwrap_or_else(|| source_branch.clone());
-
-            if branch_name.is_empty() {
-                self.show_error_toast(
-                    "Could not determine the current branch for the selected project.",
-                    cx,
-                );
-                return;
-            }
-
-            let task_name = if task_name.is_empty() {
-                generated_task_name.clone()
-            } else {
-                task_name.clone()
-            };
-            let task_id = uuid::Uuid::new_v4().to_string();
-            self.project_store.insert_task(Task {
-                id: task_id.clone(),
-                name: task_name.clone(),
-                kind: TaskKind::Direct,
-                root_project_id: project.id.clone(),
-                target_project_id: project.id.clone(),
-                branch_name: branch_name.clone(),
-                section_id: SectionId::for_task(&project.id, &branch_name, &task_id).store_key(),
-                worktree_project_id: None,
-                tabs: Vec::new(),
-                active_tab_id: String::new(),
-                next_tab_id: 0,
-                cwd: None,
-            });
-            self.project_store.save();
-            self.expanded_projects.insert(project.repo_id.clone());
-            self.project_store
-                .set_expanded_projects(&self.expanded_projects);
-            let section_id = SectionId::for_task(&project.id, &branch_name, &task_id);
-            let project_path = project.path.clone();
-            let launch_config = launch_config.clone();
-            self.workspace_pane.update(cx, |workspace, cx| {
-                workspace.activate_section(
-                    section_id.clone(),
-                    Some(project_path.clone()),
-                    Some(launch_config.clone()),
-                    cx,
-                );
-            });
-            self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
-            let key = self.active_terminal_key(cx);
             let warm_launch_id = self
                 .active_new_task_warm_launch_id
                 .take()
                 .or(warm_launch_id);
-            if let Some(key) = key {
-                self.attach_or_start_prewarmed_terminal(
+            self.launch_task_request(
+                TaskLaunchRequest::Direct {
+                    project_id,
+                    task_name,
+                    generated_task_name,
+                    source_branch,
                     warm_launch_id,
-                    key,
-                    project.path.clone(),
                     launch_config,
-                    cx,
-                );
-            }
-            self.mark_git_refresh_stale();
-            self.new_task_modal = None;
-            self.show_success_toast(
-                format!("Opened direct task {} on {}.", task_name, branch_name),
+                },
                 cx,
             );
             return;
         }
 
-        if let Some(state) = self.new_task_modal.as_mut() {
-            state.submitting = true;
-        }
-        self.cancel_active_new_task_prewarm();
-        self.show_info_toast("Creating worktree task...", cx);
-
-        self.task_creation_receiver = Some(another_one_core::project_service::spawn_task_creation(
-            project_id,
-            project.path.clone(),
-            project.name.clone(),
-            task_name,
-            generated_task_name,
-            source_branch,
-            launch_config,
-        ));
-        cx.notify();
+        self.launch_task_request(
+            TaskLaunchRequest::Worktree {
+                project_id,
+                task_name,
+                generated_task_name,
+                source_branch,
+                launch_config,
+            },
+            cx,
+        );
     }
 
     pub(crate) fn active_changed_files(&self, cx: &App) -> Arc<[ChangedFile]> {
@@ -6765,13 +6909,16 @@ impl AnotherOneApp {
         match receiver.try_recv() {
             Ok(reply) => {
                 self.task_creation_receiver = None;
+                let pending_launch = self.pending_task_launch.take();
                 match reply.result {
                     Ok(success) => {
                         let prepared = success.project.clone();
                         let inserted = self.project_store.insert_prepared_project(prepared.clone());
                         if !inserted {
-                            if let Some(state) = self.new_task_modal.as_mut() {
-                                state.submitting = false;
+                            if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
+                                if let Some(state) = self.new_task_modal.as_mut() {
+                                    state.submitting = false;
+                                }
                             }
                             self.show_error_toast(
                                 "The worktree was created, but the app could not load it.",
@@ -6783,8 +6930,10 @@ impl AnotherOneApp {
                         let Some(project) =
                             self.project_store.project(&prepared.project.id).cloned()
                         else {
-                            if let Some(state) = self.new_task_modal.as_mut() {
-                                state.submitting = false;
+                            if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
+                                if let Some(state) = self.new_task_modal.as_mut() {
+                                    state.submitting = false;
+                                }
                             }
                             self.show_error_toast(
                                 "The worktree was created, but the app could not resolve its saved state.",
@@ -6822,40 +6971,48 @@ impl AnotherOneApp {
                             SectionId::for_task(&project.id, &success.branch_name, &task_id);
                         let project_path = project.path.clone();
                         let launch_config = success.launch_config;
+                        let launch_config_for_section =
+                            success.open_agent.then_some(launch_config.clone());
                         self.workspace_pane.update(cx, |workspace, cx| {
                             workspace.activate_section(
                                 section_id.clone(),
                                 Some(project_path.clone()),
-                                Some(launch_config.clone()),
+                                launch_config_for_section,
                                 cx,
                             );
                         });
                         self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
-                        if let Some(key) = self.active_terminal_key(cx) {
-                            self.attach_or_start_prewarmed_terminal(
-                                None,
-                                key,
-                                project.path.clone(),
-                                launch_config,
-                                cx,
-                            );
+                        if success.open_agent {
+                            if let Some(key) = self.active_terminal_key(cx) {
+                                self.attach_or_start_prewarmed_terminal(
+                                    None,
+                                    key,
+                                    project.path.clone(),
+                                    launch_config,
+                                    cx,
+                                );
+                            }
                         }
-                        let automatic_actions = self
-                            .project_store
-                            .automatic_project_actions(&success.original_project_id);
-                        for action in automatic_actions {
-                            if let Err(error) = self.run_project_action_in_section(
-                                &section_id,
-                                action,
-                                Some(TerminalGridSize::default()),
-                                cx,
-                            ) {
-                                self.show_error_toast(error, cx);
+                        if success.run_automatic_actions {
+                            let automatic_actions = self
+                                .project_store
+                                .automatic_project_actions(&success.original_project_id);
+                            for action in automatic_actions {
+                                if let Err(error) = self.run_project_action_in_section(
+                                    &section_id,
+                                    action,
+                                    Some(TerminalGridSize::default()),
+                                    cx,
+                                ) {
+                                    self.show_error_toast(error, cx);
+                                }
                             }
                         }
                         self.mark_git_refresh_stale();
 
-                        self.new_task_modal = None;
+                        if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
+                            self.new_task_modal = None;
+                        }
                         self.project_store.save();
                         self.show_success_toast(
                             format!(
@@ -6866,8 +7023,10 @@ impl AnotherOneApp {
                         );
                     }
                     Err(error) => {
-                        if let Some(state) = self.new_task_modal.as_mut() {
-                            state.submitting = false;
+                        if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
+                            if let Some(state) = self.new_task_modal.as_mut() {
+                                state.submitting = false;
+                            }
                         }
                         self.show_error_toast(error.message, cx);
                     }
@@ -6881,8 +7040,11 @@ impl AnotherOneApp {
             }
             Err(broadcast::error::TryRecvError::Closed) => {
                 self.task_creation_receiver = None;
-                if let Some(state) = self.new_task_modal.as_mut() {
-                    state.submitting = false;
+                let pending_launch = self.pending_task_launch.take();
+                if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
+                    if let Some(state) = self.new_task_modal.as_mut() {
+                        state.submitting = false;
+                    }
                 }
                 self.show_error_toast("The task creation process did not complete.", cx);
                 true
