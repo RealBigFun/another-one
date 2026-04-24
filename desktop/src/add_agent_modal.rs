@@ -215,7 +215,7 @@ impl AnotherOneApp {
                 &enabled_agents,
             ),
             agent_dropdown_open: false,
-            keyboard_focus: Some(AddAgentModalFocus::Trigger),
+            keyboard_focus: Some(AddAgentModalFocus::CreateButton),
         });
         self.sync_add_agent_modal_prewarm(cx);
     }
@@ -567,7 +567,7 @@ impl AnotherOneApp {
         };
         let section_id = state.section_id.clone();
         let added_tab_id = self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.add_tab_with_launch_config(&section_id, launch_config.clone(), cx)
+            workspace.add_tab_with_launch_config(&section_id, launch_config.clone(), None, cx)
         });
 
         let Some(tab_id) = added_tab_id else {

@@ -9,17 +9,24 @@ use crate::app::AnotherOneApp;
 use crate::git_actions::ToolbarGitAction;
 use crate::layout::*;
 use crate::platform::PlatformServices;
-use crate::project_store::RepoDefaultCommitAction;
+use crate::project_store::{ProjectAction, ProjectActionScope, RepoDefaultCommitAction};
 use crate::resource_indicator::RESOURCE_INDICATOR_BUTTON_W;
 use crate::theme;
 use crate::tokens;
 
 const TITLEBAR_OPEN_IN_BUTTON_W: f32 = 114.;
 const TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT: f32 = 6.;
+const TITLEBAR_GITHUB_BUTTON_W: f32 = 32.;
+const TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT: f32 = 6.;
+const TITLEBAR_PULL_REQUEST_BUTTON_W: f32 = 32.;
+const TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT: f32 = 6.;
+const TITLEBAR_CUSTOM_ACTIONS_BUTTON_W: f32 = 124.;
+const TITLEBAR_CUSTOM_ACTIONS_BUTTON_MARGIN_RIGHT: f32 = 6.;
 const TITLEBAR_GIT_ACTIONS_BUTTON_W: f32 = 156.;
 const TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT: f32 = 6.;
 const TITLEBAR_RIGHT_TOGGLE_SPACE: f32 = 36.;
 const TITLEBAR_OPEN_IN_MENU_W: f32 = TITLEBAR_OPEN_IN_BUTTON_W;
+const TITLEBAR_CUSTOM_ACTIONS_MENU_W: f32 = 260.;
 const TITLEBAR_GIT_ACTIONS_MENU_W: f32 = 188.;
 const TITLEBAR_MENU_OFFSET_TOP: f32 = 6.;
 
@@ -231,6 +238,331 @@ impl AnotherOneApp {
         )
     }
 
+    fn selected_custom_action(&self, cx: &App) -> Option<ProjectAction> {
+        let project_id = self.active_open_in_project_id(cx)?;
+        let actions = self.project_store.project_actions(&project_id);
+        self.last_used_custom_action_id
+            .as_ref()
+            .and_then(|last_used_id| {
+                actions
+                    .iter()
+                    .find(|action| action.id == *last_used_id)
+                    .cloned()
+            })
+            .or_else(|| actions.into_iter().next())
+    }
+
+    pub fn titlebar_custom_actions_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let has_project = self.active_open_in_project_id(cx).is_some();
+        if !has_project {
+            return div().into_any_element();
+        }
+
+        let selected_action = self.selected_custom_action(cx);
+        let has_actions = selected_action.is_some();
+        let is_open = self.custom_actions_menu_open;
+        let button_bg = if is_open {
+            gpui::white().opacity(0.10)
+        } else {
+            gpui::white().opacity(0.05)
+        };
+        let hover_bg = gpui::white().opacity(0.08);
+        let label = selected_action
+            .as_ref()
+            .map(|action| SharedString::from(action.display_name().to_string()))
+            .unwrap_or_else(|| SharedString::from("Actions"));
+        let icon_path = selected_action
+            .as_ref()
+            .map(|action| action.icon.icon_path())
+            .unwrap_or("assets/icons/icons__tool-bolt.svg");
+        let selected_for_run = selected_action.clone();
+
+        div()
+            .id("titlebar-custom-actions-trigger")
+            .flex()
+            .flex_shrink_0()
+            .flex_row()
+            .items_center()
+            .w(px(TITLEBAR_CUSTOM_ACTIONS_BUTTON_W))
+            .h(px(28.))
+            .mr(px(TITLEBAR_CUSTOM_ACTIONS_BUTTON_MARGIN_RIGHT))
+            .rounded(px(11.))
+            .bg(button_bg)
+            .border_1()
+            .border_color(gpui::white().opacity(0.08))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .h_full()
+                    .px(px(9.))
+                    .border_r_1()
+                    .border_color(gpui::white().opacity(0.06))
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                            this.project_page_open_in_menu_project_id = None;
+                            this.git_actions_menu_open = false;
+                            this.custom_actions_menu_open = false;
+                            if let Some(action) = selected_for_run.clone() {
+                                this.run_project_action(action, Some(window), cx);
+                            } else {
+                                this.open_custom_action_modal(None, cx);
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        svg()
+                            .path(icon_path)
+                            .size(px(14.))
+                            .text_color(gpui::white().opacity(0.92)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(gpui::white().opacity(0.86))
+                            .truncate()
+                            .child(label),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .w(px(26.))
+                    .h_full()
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                            this.project_page_open_in_menu_project_id = None;
+                            this.git_actions_menu_open = false;
+                            this.custom_actions_menu_open = !this.custom_actions_menu_open;
+                            if !has_actions && this.custom_actions_menu_open {
+                                this.open_custom_action_modal(None, cx);
+                                this.custom_actions_menu_open = false;
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__chevron-down.svg")
+                            .size(px(11.))
+                            .text_color(gpui::white().opacity(0.68)),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    pub fn titlebar_custom_actions_overlay(&self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.custom_actions_menu_open {
+            return div()
+                .id("titlebar-custom-actions-overlay")
+                .into_any_element();
+        }
+        let Some(project_id) = self.active_open_in_project_id(cx) else {
+            return div()
+                .id("titlebar-custom-actions-overlay")
+                .into_any_element();
+        };
+
+        let actions = self.project_store.project_actions(&project_id);
+        let bg = rgb(0x2b2d31);
+        let text_col = hsla(0., 0., 0.92, 1.);
+        let muted_text = hsla(0., 0., 0.54, 1.);
+        let hover_bg = gpui::white().opacity(0.06);
+        let divider = gpui::white().opacity(0.08);
+
+        let mut menu = div()
+            .id("titlebar-custom-actions-menu")
+            .absolute()
+            .right(px(TITLEBAR_RIGHT_TOGGLE_SPACE
+                + RESOURCE_INDICATOR_BUTTON_W
+                + TITLEBAR_GIT_ACTIONS_BUTTON_W
+                + TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT
+                + TITLEBAR_PULL_REQUEST_BUTTON_W
+                + TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT
+                + TITLEBAR_GITHUB_BUTTON_W
+                + TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT
+                + TITLEBAR_OPEN_IN_BUTTON_W
+                + TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT))
+            .top(px(TITLEBAR_MENU_OFFSET_TOP))
+            .w(px(TITLEBAR_CUSTOM_ACTIONS_MENU_W))
+            .rounded(px(12.))
+            .bg(bg)
+            .border_1()
+            .border_color(gpui::white().opacity(0.08))
+            .shadow_md()
+            .occlude()
+            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        for action in actions {
+            let run_action = action.clone();
+            let edit_action = action.clone();
+            let action_label = SharedString::from(action.display_name().to_string());
+            let is_global = action.scope == ProjectActionScope::Global;
+            menu = menu.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "titlebar-custom-action-{}",
+                        action.id
+                    )))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(36.))
+                    .px(px(10.))
+                    .hover(move |s| s.bg(hover_bg))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .items_center()
+                            .gap(px(8.))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                    this.custom_actions_menu_open = false;
+                                    this.run_project_action(run_action.clone(), Some(window), cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                svg()
+                                    .path(action.icon.icon_path())
+                                    .size(px(14.))
+                                    .text_color(text_col),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .truncate()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(text_col)
+                                    .child(action_label),
+                            ),
+                    )
+                    .when(is_global, |row| {
+                        row.child(
+                            div()
+                                .w(px(20.))
+                                .h(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    svg()
+                                        .path("assets/icons/icons__globe.svg")
+                                        .size(px(13.))
+                                        .text_color(muted_text),
+                                ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .w(px(24.))
+                            .h(px(24.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(gpui::white().opacity(0.08)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                    this.custom_actions_menu_open = false;
+                                    this.open_custom_action_modal(Some(edit_action.clone()), cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                svg()
+                                    .path("assets/icons/icons__settings.svg")
+                                    .size(px(13.))
+                                    .text_color(muted_text),
+                            ),
+                    ),
+            );
+        }
+
+        menu = menu.child(div().h(px(1.)).mx(px(8.)).bg(divider)).child(
+            div()
+                .id("titlebar-custom-action-add")
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .h(px(36.))
+                .px(px(12.))
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                        this.custom_actions_menu_open = false;
+                        this.open_custom_action_modal(None, cx);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    svg()
+                        .path("assets/icons/icons__plus.svg")
+                        .size(px(14.))
+                        .text_color(text_col),
+                )
+                .child(
+                    div()
+                        .text_size(rems(12. / 16.))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(text_col)
+                        .child("Add action"),
+                ),
+        );
+
+        div()
+            .id("titlebar-custom-actions-overlay")
+            .absolute()
+            .top(px(TITLEBAR_CHROME_H))
+            .left(px(0.))
+            .right(px(0.))
+            .bottom(px(0.))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.custom_actions_menu_open = false;
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .child(menu)
+            .into_any_element()
+    }
+
     pub fn titlebar_open_in_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(project_id) = self.active_open_in_project_id(cx) else {
             return div().into_any_element();
@@ -345,6 +677,10 @@ impl AnotherOneApp {
             + RESOURCE_INDICATOR_BUTTON_W
             + TITLEBAR_GIT_ACTIONS_BUTTON_W
             + TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT
+            + TITLEBAR_PULL_REQUEST_BUTTON_W
+            + TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT
+            + TITLEBAR_GITHUB_BUTTON_W
+            + TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT
             + TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT;
 
         let mut menu = div()
@@ -421,6 +757,120 @@ impl AnotherOneApp {
             .into_any_element()
     }
 
+    pub fn titlebar_github_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(project_id) = self.active_open_in_project_id(cx) else {
+            return div().into_any_element();
+        };
+        let Some(github_url) = self.project_github_links.get(&project_id).cloned() else {
+            return div().into_any_element();
+        };
+
+        div()
+            .id(SharedString::from(format!(
+                "titlebar-github-trigger-{project_id}"
+            )))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .w(px(TITLEBAR_GITHUB_BUTTON_W))
+            .h(px(28.))
+            .mr(px(TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT))
+            .rounded(px(11.))
+            .bg(gpui::white().opacity(0.05))
+            .border_1()
+            .border_color(gpui::white().opacity(0.08))
+            .cursor_pointer()
+            .hover(|style| style.bg(gpui::white().opacity(0.08)))
+            .tooltip(move |_window, cx| Self::action_tooltip_view("Open repository in GitHub", cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    this.project_page_open_in_menu_project_id = None;
+                    this.custom_actions_menu_open = false;
+                    this.git_actions_menu_open = false;
+                    if let Err(err) =
+                        crate::platform::CurrentPlatform::open_external_url(&github_url)
+                    {
+                        this.show_error_toast(err, cx);
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .child(
+                svg()
+                    .path("assets/icons/icons__github.svg")
+                    .size(px(15.))
+                    .text_color(gpui::white().opacity(0.88)),
+            )
+            .into_any_element()
+    }
+
+    pub fn titlebar_pull_request_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(pull_request) = self.active_project_pull_request(cx).cloned() else {
+            return div().into_any_element();
+        };
+
+        let (state_color, tooltip) = match pull_request.state {
+            crate::git_actions::PullRequestState::Open => (
+                hsla(160. / 360., 0.84, 0.35, 1.),
+                "Open pull request in GitHub",
+            ),
+            crate::git_actions::PullRequestState::Closed => (
+                hsla(240. / 360., 0.04, 0.46, 1.),
+                "Open closed pull request in GitHub",
+            ),
+            crate::git_actions::PullRequestState::Merged => (
+                hsla(262. / 360., 0.83, 0.58, 1.),
+                "Open merged pull request in GitHub",
+            ),
+        };
+        let pull_request_url = pull_request.url.clone();
+
+        div()
+            .id(SharedString::from(format!(
+                "titlebar-pull-request-trigger-{}",
+                pull_request.number
+            )))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .w(px(TITLEBAR_PULL_REQUEST_BUTTON_W))
+            .h(px(28.))
+            .mr(px(TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT))
+            .rounded(px(11.))
+            .bg(state_color.opacity(0.13))
+            .border_1()
+            .border_color(state_color.opacity(0.46))
+            .cursor_pointer()
+            .hover(move |style| style.bg(state_color.opacity(0.20)))
+            .tooltip(move |_window, cx| Self::action_tooltip_view(tooltip, cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    this.project_page_open_in_menu_project_id = None;
+                    this.custom_actions_menu_open = false;
+                    this.git_actions_menu_open = false;
+                    if let Err(err) =
+                        crate::platform::CurrentPlatform::open_external_url(&pull_request_url)
+                    {
+                        this.show_error_toast(err, cx);
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .child(
+                svg()
+                    .path("assets/icons/icons__pull-request.svg")
+                    .size(px(13.))
+                    .text_color(state_color),
+            )
+            .into_any_element()
+    }
+
     pub fn titlebar_git_actions_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let has_project = self.active_open_in_project_id(cx).is_some();
         if !has_project {
@@ -491,6 +941,7 @@ impl AnotherOneApp {
                                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
                                     this.project_page_open_in_menu_project_id = None;
                                     this.git_actions_menu_open = false;
+                                    this.custom_actions_menu_open = false;
                                     this.start_toolbar_git_action(
                                         primary_toolbar_action.clone(),
                                         cx,
@@ -535,6 +986,7 @@ impl AnotherOneApp {
                                 MouseButton::Left,
                                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                                     this.project_page_open_in_menu_project_id = None;
+                                    this.custom_actions_menu_open = false;
                                     let opening = !this.git_actions_menu_open;
                                     this.git_actions_menu_open = opening;
                                     if opening {
@@ -582,7 +1034,6 @@ impl AnotherOneApp {
         let has_existing_pull_request = pull_request_url.is_some();
         let can_create_pull_request =
             toolbar_enabled && pull_request_lookup_checked && !has_existing_pull_request;
-        let can_view_pull_request = toolbar_enabled && has_existing_pull_request;
 
         let menu = div()
             .id("titlebar-git-actions-menu")
@@ -972,57 +1423,6 @@ impl AnotherOneApp {
                             .text_color(text_col)
                             .child("Draft PR"),
                     ),
-            )
-            .child(
-                div()
-                    .id("titlebar-git-actions-view-pr")
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(34.))
-                    .px(px(12.))
-                    .opacity(if can_view_pull_request { 1. } else { 0.55 })
-                    .when(can_view_pull_request, |d| {
-                        let pull_request_url = pull_request_url.clone();
-                        d.cursor_pointer()
-                            .hover(move |s| s.bg(hover_bg))
-                            .tooltip(move |_window, cx| {
-                                Self::action_tooltip_view(
-                                    "Open the existing pull request in the browser",
-                                    cx,
-                                )
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                                    this.git_actions_menu_open = false;
-                                    if let Some(pull_request_url) = pull_request_url.clone() {
-                                        if let Err(err) =
-                                            crate::platform::CurrentPlatform::open_external_url(
-                                                &pull_request_url,
-                                            )
-                                        {
-                                            this.show_error_toast(err, cx);
-                                        }
-                                    }
-                                    cx.stop_propagation();
-                                    cx.notify();
-                                }),
-                            )
-                    })
-                    .child(
-                        svg()
-                            .path("assets/icons/icons__external-link.svg")
-                            .size(px(14.))
-                            .text_color(text_col),
-                    )
-                    .child(
-                        div()
-                            .text_size(rems(12. / 16.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(text_col)
-                            .child("View PR"),
-                    ),
             );
 
         div()
@@ -1129,7 +1529,10 @@ impl AnotherOneApp {
                     )
                     .on_mouse_move(cx.listener(Self::titlebar_background_mouse_move)),
             )
+            .child(self.titlebar_custom_actions_button(cx))
             .child(self.titlebar_open_in_button(cx))
+            .child(self.titlebar_github_button(cx))
+            .child(self.titlebar_pull_request_button(cx))
             .child(self.titlebar_git_actions_button(cx))
             .child(self.titlebar_pair_mobile_button(cx))
             .child(self.resource_indicator_button(window, cx))

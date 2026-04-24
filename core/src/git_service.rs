@@ -72,9 +72,9 @@ pub fn spawn_refresh(
         let commit_state = commit_limit.map(|requested_limit| {
             read_project_branch_commit_state(&project_path, requested_limit)
         });
-        let compare_state = compare_target_branch.as_deref().map(|target_branch| {
-            read_project_branch_compare_state(&project_path, target_branch)
-        });
+        let compare_state = compare_target_branch
+            .as_deref()
+            .map(|target_branch| read_project_branch_compare_state(&project_path, target_branch));
         let _ = tx.send(GitRefreshReply {
             project_id,
             include_metadata,
@@ -175,10 +175,14 @@ pub fn spawn_changed_files_mutation(
 ) {
     thread::spawn(move || {
         let result = match mutation {
-            ChangedFilesGitMutation::StageFile { changed } => stage_changed_file(&project_path, &changed)
-                .map(|_| read_project_git_state(&project_path, false)),
-            ChangedFilesGitMutation::UnstageFile { changed } => unstage_changed_file(&project_path, &changed)
-                .map(|_| read_project_git_state(&project_path, false)),
+            ChangedFilesGitMutation::StageFile { changed } => {
+                stage_changed_file(&project_path, &changed)
+                    .map(|_| read_project_git_state(&project_path, false))
+            }
+            ChangedFilesGitMutation::UnstageFile { changed } => {
+                unstage_changed_file(&project_path, &changed)
+                    .map(|_| read_project_git_state(&project_path, false))
+            }
             ChangedFilesGitMutation::StageAll => stage_all_changes(&project_path)
                 .map(|_| read_project_git_state(&project_path, false)),
             ChangedFilesGitMutation::UnstageAll => unstage_all_changes(&project_path)

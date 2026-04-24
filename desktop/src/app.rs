@@ -12,8 +12,9 @@ use gpui::{
     actions, div, hsla, img, prelude::*, px, rems, rgb, svg, AnyElement, AnyView, App, Bounds,
     ClipboardEntry, ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Image, InspectorElementId,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Point,
-    Render, ScrollDelta, ShapedLine, SharedString, Size, Timer, UTF16Selection, WeakEntity, Window,
+    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ObjectFit, Pixels, Point, Render, ScrollDelta, ShapedLine, SharedString, Size, Timer,
+    UTF16Selection, WeakEntity, Window,
 };
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
@@ -31,9 +32,9 @@ actions!(
 );
 
 use crate::agents::{
-    agent_id_for_provider, effective_enabled_agents, terminal_launch_config_for_selected_agent,
-    terminal_launch_config_for_selected_agents, AgentDef, AgentProviderKind, TerminalLaunchConfig,
-    TerminalRestoreStatus, TerminalSessionRef, AGENTS,
+    agent_id_for_provider, agent_output_indicates_missing_session, effective_enabled_agents,
+    terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
+    AgentDef, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
 use crate::layout::*;
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
@@ -41,16 +42,17 @@ use crate::panels::terminal_cell_width;
 use crate::platform::PlatformServices;
 use crate::project_store::{
     ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
-    ProjectBranchCommitState, ProjectBranchCompareState, ProjectBranchSettingField,
-    ProjectGitState, ProjectStore, RepoBranchRecord, RepoDefaultCommitAction, Task, TaskKind,
+    ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchCompareState,
+    ProjectBranchSettingField, ProjectGitState, ProjectStore, RepoBranchRecord,
+    RepoDefaultCommitAction, Task, TaskKind,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
 use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
 };
 use crate::terminal_runtime::{
-    LiveTerminalRuntime, TerminalGridSize, TerminalRuntimeKey, TerminalSurfaceSnapshot,
-    TERMINAL_LINE_HEIGHT_RATIO,
+    LiveTerminalRuntime, TerminalGridSize, TerminalRuntimeKey, TerminalRuntimeUpdate,
+    TerminalSurfaceSnapshot, TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
 pub use another_one_core::section::SectionId;
@@ -78,10 +80,6 @@ const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
 const TERMINAL_RECENT_OUTPUT_LIMIT: usize = 16 * 1024;
 pub(crate) const RECENT_COMMITS_PAGE_SIZE: usize = 20;
 
-fn output_mentions_missing_claude_conversation(text: &str) -> bool {
-    text.to_ascii_lowercase().contains("no conversation found")
-}
-
 fn trim_to_recent_output_limit(buffer: &mut String) {
     if buffer.len() <= TERMINAL_RECENT_OUTPUT_LIMIT {
         return;
@@ -97,10 +95,20 @@ fn trim_to_recent_output_limit(buffer: &mut String) {
     buffer.drain(..start);
 }
 
+fn new_tab_seed_agent_id(
+    state: Option<&SectionState>,
+    default_agent_id: Option<&str>,
+) -> Option<String> {
+    state?;
+    default_agent_id.map(str::to_string)
+}
+
 /// A single terminal tab within a section.
 pub struct TerminalTab {
     pub id: String,
     pub title: String,
+    pub pinned: bool,
+    pub fixed_title: Option<String>,
     pub launch_config: TerminalLaunchConfig,
     pub restore_status: TerminalRestoreStatus,
 }
@@ -110,6 +118,13 @@ pub(crate) struct TerminalSelectionRange {
     pub start_line: usize,
     pub start_column: usize,
     pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalLinkRange {
+    pub line: usize,
+    pub start_column: usize,
     pub end_column: usize,
 }
 
@@ -172,10 +187,14 @@ impl SectionState {
         }
     }
 
-    pub fn add_tab_with_launch_config(&mut self, launch_config: TerminalLaunchConfig) -> String {
+    pub fn add_tab_with_launch_config(
+        &mut self,
+        launch_config: TerminalLaunchConfig,
+        fixed_title: Option<String>,
+    ) -> String {
         let id = uuid::Uuid::new_v4().to_string();
         self.next_tab_id += 1;
-        let new_tab = TerminalTab::with_id(id.clone(), launch_config);
+        let new_tab = TerminalTab::with_id(id.clone(), launch_config, fixed_title);
         self.tabs.push(new_tab);
         self.active_tab = self.tabs.len() - 1;
         id
@@ -198,6 +217,34 @@ impl SectionState {
             }
         }
         Some(removed.id)
+    }
+
+    #[cfg(test)]
+    pub fn tab_is_pinned(&self, index: usize) -> bool {
+        self.tabs.get(index).is_some_and(|tab| tab.pinned)
+    }
+
+    pub fn set_tab_pinned(&mut self, index: usize, pinned: bool) -> bool {
+        if index >= self.tabs.len() {
+            return false;
+        }
+        if self.tabs[index].pinned == pinned {
+            return false;
+        }
+
+        let active_tab_id = self.active_tab_id();
+        self.tabs[index].pinned = pinned;
+        self.sort_tabs_by_pin();
+        self.active_tab = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == active_tab_id)
+            .unwrap_or_else(|| self.tabs.len().saturating_sub(1));
+        true
+    }
+
+    fn sort_tabs_by_pin(&mut self) {
+        self.tabs.sort_by_key(|tab| !tab.pinned);
     }
 
     pub fn activate_tab(&mut self, index: usize) -> bool {
@@ -242,6 +289,8 @@ impl SectionState {
             .into_iter()
             .map(TerminalTab::from_persisted)
             .collect::<Vec<_>>();
+        let mut tabs = tabs;
+        tabs.sort_by_key(|tab| !tab.pinned);
 
         let active_tab = if tabs.is_empty() {
             0
@@ -262,14 +311,22 @@ impl SectionState {
 
 impl TerminalTab {
     fn new(launch_config: TerminalLaunchConfig) -> Self {
-        Self::with_id(uuid::Uuid::new_v4().to_string(), launch_config)
+        Self::with_id(uuid::Uuid::new_v4().to_string(), launch_config, None)
     }
 
-    fn with_id(id: String, launch_config: TerminalLaunchConfig) -> Self {
-        let title = launch_config.default_title();
+    fn with_id(
+        id: String,
+        launch_config: TerminalLaunchConfig,
+        fixed_title: Option<String>,
+    ) -> Self {
+        let title = fixed_title
+            .clone()
+            .unwrap_or_else(|| launch_config.default_title());
         Self {
             id,
             title,
+            pinned: false,
+            fixed_title,
             launch_config,
             restore_status: TerminalRestoreStatus::NotStarted,
         }
@@ -279,6 +336,8 @@ impl TerminalTab {
         PersistedTerminalTab {
             id: self.id.clone(),
             title: self.title.clone(),
+            pinned: self.pinned,
+            fixed_title: self.fixed_title.clone(),
             provider: self.launch_config.provider,
             launch_config: Some(self.launch_config.clone()),
             restore_status: self.restore_status,
@@ -297,10 +356,33 @@ impl TerminalTab {
         Self {
             id: persisted.id,
             title: persisted.title,
+            pinned: persisted.pinned,
+            fixed_title: persisted.fixed_title,
             launch_config,
             restore_status: persisted.restore_status,
         }
     }
+}
+
+fn apply_terminal_title_update(tab: &mut TerminalTab, terminal_update: &TerminalRuntimeUpdate) {
+    if tab.fixed_title.is_some() {
+        return;
+    }
+
+    if terminal_update.reset_title {
+        tab.title = tab.launch_config.default_title();
+    } else if let Some(title) = &terminal_update.title {
+        tab.title = title.clone();
+    }
+}
+
+fn fixed_title_for_project_action(action: &ProjectAction) -> Option<String> {
+    if !matches!(&action.kind, ProjectActionKind::Shell { .. }) {
+        return None;
+    }
+
+    let name = action.name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 // Moved to `another_one_core::git_service::GitRefreshReply`; the
@@ -346,6 +428,7 @@ struct TerminalRuntimeRequest {
     key: TerminalRuntimeKey,
     cwd: std::path::PathBuf,
     launch_config: TerminalLaunchConfig,
+    restore_status: TerminalRestoreStatus,
     agent_launch_args: Vec<String>,
     size: TerminalGridSize,
 }
@@ -453,6 +536,21 @@ pub(crate) struct SidebarTaskMenuState {
     pub(crate) is_worktree: bool,
     pub(crate) anchor_x: f32,
     pub(crate) anchor_y: f32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TerminalTabMenuState {
+    pub(crate) section_id: SectionId,
+    pub(crate) tab_id: String,
+    pub(crate) anchor_x: f32,
+    pub(crate) anchor_y: f32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PinnedTabCloseConfirmState {
+    pub(crate) section_id: SectionId,
+    pub(crate) tab_id: String,
+    pub(crate) title: String,
 }
 
 #[derive(Debug, Clone)]
@@ -568,6 +666,10 @@ pub(crate) struct WorkspacePane {
     pub(crate) project_page_pr_query_draft: String,
     /// Per-section placeholder tab state.
     pub(crate) section_states: HashMap<SectionId, SectionState>,
+    /// Context menu for a terminal tab.
+    pub(crate) terminal_tab_menu: Option<TerminalTabMenuState>,
+    /// Confirmation state for closing a pinned terminal tab.
+    pub(crate) pinned_tab_close_confirm: Option<PinnedTabCloseConfirmState>,
 }
 
 impl WorkspacePane {
@@ -593,6 +695,8 @@ impl WorkspacePane {
             project_page_pr_query: String::new(),
             project_page_pr_query_draft: String::new(),
             section_states,
+            terminal_tab_menu: None,
+            pinned_tab_close_confirm: None,
         }
     }
 
@@ -815,12 +919,13 @@ impl WorkspacePane {
         &mut self,
         section_id: &SectionId,
         launch_config: TerminalLaunchConfig,
+        fixed_title: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<String> {
         let added_tab_id = self
             .section_states
             .get_mut(section_id)
-            .map(|state| state.add_tab_with_launch_config(launch_config.clone()));
+            .map(|state| state.add_tab_with_launch_config(launch_config.clone(), fixed_title));
         if added_tab_id.is_some() {
             self.persist_section_state(section_id, cx);
             cx.notify();
@@ -846,6 +951,65 @@ impl WorkspacePane {
             cx.notify();
         }
         removed_tab_id
+    }
+
+    pub(crate) fn request_close_tab(
+        &mut self,
+        section_id: &SectionId,
+        tab_index: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let confirm = self.section_states.get(section_id).and_then(|state| {
+            state.tabs.get(tab_index).and_then(|tab| {
+                tab.pinned.then(|| PinnedTabCloseConfirmState {
+                    section_id: section_id.clone(),
+                    tab_id: tab.id.clone(),
+                    title: tab.title.clone(),
+                })
+            })
+        });
+
+        if let Some(confirm) = confirm {
+            self.pinned_tab_close_confirm = Some(confirm);
+            cx.notify();
+            return None;
+        }
+
+        self.close_tab(section_id, tab_index, cx)
+    }
+
+    pub(crate) fn confirm_close_pinned_tab(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let confirm = self.pinned_tab_close_confirm.take()?;
+        let tab_index = self
+            .section_states
+            .get(&confirm.section_id)
+            .and_then(|state| state.tabs.iter().position(|tab| tab.id == confirm.tab_id));
+        let removed = tab_index.and_then(|index| self.close_tab(&confirm.section_id, index, cx));
+        cx.notify();
+        removed
+    }
+
+    pub(crate) fn toggle_tab_pinned(
+        &mut self,
+        section_id: &SectionId,
+        tab_id: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let changed = self
+            .section_states
+            .get_mut(section_id)
+            .is_some_and(|state| {
+                let Some(index) = state.tabs.iter().position(|tab| tab.id == tab_id) else {
+                    return false;
+                };
+                let pinned = !state.tabs[index].pinned;
+                state.set_tab_pinned(index, pinned)
+            });
+        if changed {
+            self.persist_section_state(section_id, cx);
+            cx.notify();
+        }
+        changed
     }
 
     pub(crate) fn show_error_toast(
@@ -926,21 +1090,16 @@ impl WorkspacePane {
 
     pub(crate) fn open_add_agent_modal(&self, section_id: &SectionId, cx: &mut Context<Self>) {
         let section_id = section_id.clone();
-        let selected_agent_id = self
-            .section_states
-            .get(&section_id)
-            .and_then(|state| state.tabs.get(state.active_tab))
-            .and_then(|tab| tab.launch_config.provider)
-            .and_then(|provider| {
-                AGENTS
-                    .iter()
-                    .find(|agent| agent.provider == Some(provider))
-                    .map(|agent| agent.id)
-            })
-            .map(str::to_string);
         let app = self.app.clone();
         cx.defer(move |cx| {
             let _ = app.update(cx, |app, app_cx| {
+                let selected_agent_id = {
+                    let workspace = app.workspace_pane.read(app_cx);
+                    new_tab_seed_agent_id(
+                        workspace.section_states.get(&section_id),
+                        app.default_agent_id(),
+                    )
+                };
                 app.open_add_agent_modal(section_id.clone(), selected_agent_id.clone(), app_cx);
                 app_cx.notify();
             });
@@ -968,6 +1127,10 @@ pub struct AnotherOneApp {
     pub(crate) expanded_commit_rows: HashSet<String>,
     /// Whether the right-sidebar git actions dropdown menu is open.
     pub(crate) git_actions_menu_open: bool,
+    /// Whether the titlebar custom actions dropdown menu is open.
+    pub(crate) custom_actions_menu_open: bool,
+    /// Last manually-run custom action id used to label and target the titlebar action button.
+    pub(crate) last_used_custom_action_id: Option<String>,
     /// Active transient notifications displayed above the app chrome.
     toasts: Vec<AppToast>,
     next_toast_id: u64,
@@ -1046,6 +1209,8 @@ pub struct AnotherOneApp {
     warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
     /// Live PTY-backed terminal runtimes keyed by section and tab id.
     live_terminal_runtimes: HashMap<TerminalRuntimeKey, LiveTerminalRuntime>,
+    /// Input to send once a newly launched action terminal is ready.
+    pending_post_launch_input: HashMap<TerminalRuntimeKey, Vec<u8>>,
     /// GPUI-free bookkeeping for per-tab terminal state: recent output,
     /// last error, tracked process, pending-launch flag. Backed by
     /// `another_one_core::terminal_manager::TerminalManager` so it can
@@ -1093,6 +1258,8 @@ pub struct AnotherOneApp {
     pub(crate) new_task_modal: Option<crate::new_task_modal::NewTaskModalState>,
     /// Add Agent modal state. Some when open, None when closed.
     pub(crate) add_agent_modal: Option<crate::add_agent_modal::AddAgentModalState>,
+    /// Add/Edit custom action modal state. Some when open, None when closed.
+    pub(crate) custom_action_modal: Option<crate::custom_actions_modal::CustomActionModalState>,
     /// Inline rename state for a direct task in the left sidebar.
     pub(crate) sidebar_task_rename: Option<SidebarTaskRenameState>,
     /// Most recent direct-task click used to detect double-click rename reliably.
@@ -1279,6 +1446,7 @@ impl Element for AppInputHost {
 enum TextInputTarget {
     NewTaskModal,
     SidebarTaskRename,
+    CustomActionModal,
     SettingsAgentInput,
     SettingsGitActionScript,
     Terminal,
@@ -1346,6 +1514,13 @@ impl EntityInputHandler for AnotherOneApp {
                 .sidebar_task_rename
                 .as_ref()
                 .map(|state| text_for_utf16_range(&state.task_name, range, adjusted_range)),
+            TextInputTarget::CustomActionModal => {
+                self.custom_action_modal.as_ref().and_then(|state| {
+                    state
+                        .focused_text_value()
+                        .map(|text| text_for_utf16_range(text, range, adjusted_range))
+                })
+            }
             TextInputTarget::SettingsAgentInput => self
                 .settings_agent_input
                 .focused_agent_id
@@ -1387,6 +1562,17 @@ impl EntityInputHandler for AnotherOneApp {
                     state.task_name_selection_anchor,
                 )
             }),
+            TextInputTarget::CustomActionModal => {
+                self.custom_action_modal.as_ref().and_then(|state| {
+                    state.focused_text_value().map(|text| {
+                        utf16_selection_for_text(
+                            text,
+                            state.text_cursor,
+                            state.text_selection_anchor,
+                        )
+                    })
+                })
+            }
             TextInputTarget::SettingsAgentInput => self
                 .settings_agent_input
                 .focused_agent_id
@@ -1441,6 +1627,7 @@ impl EntityInputHandler for AnotherOneApp {
                         &mut state.task_name_selection_anchor,
                         range,
                         text,
+                        false,
                     );
                     cx.notify();
                 }
@@ -1453,8 +1640,27 @@ impl EntityInputHandler for AnotherOneApp {
                         &mut state.task_name_selection_anchor,
                         range,
                         text,
+                        false,
                     );
                     cx.notify();
+                }
+            }
+            TextInputTarget::CustomActionModal => {
+                if let Some(state) = self.custom_action_modal.as_mut() {
+                    let preserve_newlines = state.focused_field_preserves_newlines();
+                    if let Some((current_text, cursor, selection_anchor)) =
+                        state.focused_text_parts()
+                    {
+                        replace_custom_text(
+                            current_text,
+                            cursor,
+                            selection_anchor,
+                            range,
+                            text,
+                            preserve_newlines,
+                        );
+                        cx.notify();
+                    }
                 }
             }
             TextInputTarget::SettingsAgentInput => {
@@ -1470,6 +1676,7 @@ impl EntityInputHandler for AnotherOneApp {
                         &mut self.settings_agent_input.selection_anchor,
                         range,
                         text,
+                        false,
                     );
                     cx.notify();
                 }
@@ -1484,6 +1691,7 @@ impl EntityInputHandler for AnotherOneApp {
                             &mut input.selection_anchor,
                             range,
                             text,
+                            true,
                         );
                         input.draft.clone()
                     };
@@ -1520,6 +1728,7 @@ impl EntityInputHandler for AnotherOneApp {
         match self.text_input_target(cx) {
             TextInputTarget::NewTaskModal
             | TextInputTarget::SidebarTaskRename
+            | TextInputTarget::CustomActionModal
             | TextInputTarget::SettingsAgentInput
             | TextInputTarget::SettingsGitActionScript => {
                 self.replace_text_in_range(range, new_text, _window, cx);
@@ -1653,8 +1862,13 @@ fn replace_custom_text(
     selection_anchor: &mut Option<usize>,
     range_utf16: Option<std::ops::Range<usize>>,
     new_text: &str,
+    preserve_newlines: bool,
 ) {
-    let replacement = sanitize_single_line_input(new_text);
+    let replacement = if preserve_newlines {
+        new_text.replace('\r', "")
+    } else {
+        sanitize_single_line_input(new_text)
+    };
     let current_selection = selection_anchor
         .map(|anchor| anchor.min(*cursor)..anchor.max(*cursor))
         .filter(|range| range.start != range.end)
@@ -1876,6 +2090,209 @@ fn terminal_line_selection_range(
     })
 }
 
+fn terminal_link_at_position(
+    snapshot: &TerminalSurfaceSnapshot,
+    position: TerminalCellPosition,
+) -> Option<String> {
+    let line = snapshot.lines.get(position.line)?;
+    let clicked_cell = line
+        .cells
+        .iter()
+        .find(|cell| cell.column <= position.column && position.column < cell.column + cell.width);
+
+    if let Some(link) = clicked_cell
+        .and_then(|cell| cell.hyperlink.as_deref())
+        .and_then(normalize_terminal_link)
+    {
+        return Some(link);
+    }
+
+    terminal_text_link_at_column(line, position.column)
+}
+
+pub(crate) fn terminal_link_ranges(snapshot: &TerminalSurfaceSnapshot) -> Vec<TerminalLinkRange> {
+    let mut ranges = Vec::new();
+
+    for (line_index, line) in snapshot.lines.iter().enumerate() {
+        let mut current_explicit: Option<(String, usize, usize)> = None;
+        for cell in &line.cells {
+            let link = cell.hyperlink.as_deref().and_then(normalize_terminal_link);
+            if let (Some((current_link, _, end_column)), Some(link)) =
+                (current_explicit.as_mut(), link.as_ref())
+            {
+                if current_link == link && cell.column <= *end_column {
+                    *end_column = (*end_column).max(cell.column + cell.width);
+                    continue;
+                }
+            }
+
+            if let Some((_, start_column, end_column)) = current_explicit.take() {
+                ranges.push(TerminalLinkRange {
+                    line: line_index,
+                    start_column,
+                    end_column,
+                });
+            }
+            if let Some(link) = link {
+                current_explicit = Some((link, cell.column, cell.column + cell.width));
+            }
+        }
+        if let Some((_, start_column, end_column)) = current_explicit.take() {
+            ranges.push(TerminalLinkRange {
+                line: line_index,
+                start_column,
+                end_column,
+            });
+        }
+
+        ranges.extend(terminal_text_link_ranges(line).into_iter().map(
+            |(start_column, end_column)| TerminalLinkRange {
+                line: line_index,
+                start_column,
+                end_column,
+            },
+        ));
+    }
+
+    ranges
+}
+
+fn terminal_text_link_at_column(
+    line: &crate::terminal_runtime::TerminalLineSnapshot,
+    column: usize,
+) -> Option<String> {
+    let mut text = String::new();
+    let mut clicked_byte = None;
+    let mut display_column = 0;
+
+    for cell in &line.cells {
+        while display_column < cell.column {
+            if display_column == column {
+                clicked_byte = Some(text.len());
+            }
+            text.push(' ');
+            display_column += 1;
+        }
+
+        let start = text.len();
+        text.push_str(&cell.copy_text);
+        let end = text.len();
+        if cell.column <= column && column < cell.column + cell.width {
+            clicked_byte = Some(start);
+        }
+        display_column = cell.column + cell.width;
+
+        if start == end && clicked_byte.is_some() {
+            break;
+        }
+    }
+
+    let clicked_byte = clicked_byte?;
+    terminal_text_link_at_byte(&text, clicked_byte)
+}
+
+fn terminal_text_link_ranges(
+    line: &crate::terminal_runtime::TerminalLineSnapshot,
+) -> Vec<(usize, usize)> {
+    let mut text = String::new();
+    let mut byte_columns = vec![0];
+    let mut display_column = 0;
+
+    for cell in &line.cells {
+        while display_column < cell.column {
+            text.push(' ');
+            display_column += 1;
+            byte_columns.push(display_column);
+        }
+
+        let cell_start = cell.column;
+        text.push_str(&cell.copy_text);
+        for _ in 0..cell.copy_text.len() {
+            byte_columns.push(cell_start);
+        }
+        display_column = cell.column + cell.width;
+        if let Some(last) = byte_columns.last_mut() {
+            *last = display_column;
+        }
+    }
+
+    terminal_text_link_byte_ranges(&text)
+        .into_iter()
+        .filter_map(|(start, end)| {
+            let start_column = byte_columns.get(start).copied()?;
+            let end_column = byte_columns.get(end).copied()?;
+            (start_column < end_column).then_some((start_column, end_column))
+        })
+        .collect()
+}
+
+fn terminal_text_link_at_byte(text: &str, clicked_byte: usize) -> Option<String> {
+    terminal_text_link_byte_ranges(text)
+        .into_iter()
+        .find_map(|(start, end)| {
+            if start <= clicked_byte && clicked_byte < end {
+                normalize_terminal_link(&text[start..end])
+            } else {
+                None
+            }
+        })
+}
+
+fn terminal_text_link_byte_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut search_start = 0;
+    while search_start < text.len() {
+        let Some((prefix_offset, prefix)) = terminal_link_prefix_after(text, search_start) else {
+            break;
+        };
+        let start = search_start + prefix_offset;
+        let mut end = start + prefix.len();
+        for (offset, ch) in text[end..].char_indices() {
+            if ch.is_whitespace() || ch.is_control() {
+                break;
+            }
+            end = start + prefix.len() + offset + ch.len_utf8();
+        }
+
+        let link = trim_terminal_link_suffix(&text[start..end]);
+        let link_end = start + link.len();
+        if normalize_terminal_link(link).is_some() {
+            ranges.push((start, link_end));
+        }
+        search_start = end.max(start + prefix.len());
+    }
+
+    ranges
+}
+
+fn terminal_link_prefix_after(text: &str, start: usize) -> Option<(usize, &'static str)> {
+    ["https://", "http://"]
+        .into_iter()
+        .filter_map(|prefix| text[start..].find(prefix).map(|offset| (offset, prefix)))
+        .min_by_key(|(offset, _)| *offset)
+}
+
+fn trim_terminal_link_suffix(link: &str) -> &str {
+    link.trim_end_matches(|ch: char| {
+        matches!(
+            ch,
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"'
+        )
+    })
+}
+
+fn normalize_terminal_link(link: &str) -> Option<String> {
+    let link = trim_terminal_link_suffix(link.trim());
+    if link.len() <= "http://".len() {
+        return None;
+    }
+    if link.starts_with("https://") || link.starts_with("http://") {
+        Some(link.to_string())
+    } else {
+        None
+    }
+}
+
 fn terminal_cell_category(
     cell: &crate::terminal_runtime::TerminalCellSnapshot,
 ) -> TerminalCellCategory {
@@ -1912,6 +2329,27 @@ impl AnotherOneApp {
         }
 
         if self.add_agent_modal.is_some() {
+            return TextInputTarget::Blocked;
+        }
+
+        if self
+            .custom_action_modal
+            .as_ref()
+            .is_some_and(|state| state.focused_text_value().is_some())
+        {
+            return TextInputTarget::CustomActionModal;
+        }
+
+        if self.custom_action_modal.is_some() {
+            return TextInputTarget::Blocked;
+        }
+
+        if self
+            .workspace_pane
+            .read(cx)
+            .pinned_tab_close_confirm
+            .is_some()
+        {
             return TextInputTarget::Blocked;
         }
 
@@ -2163,6 +2601,17 @@ impl AnotherOneApp {
                 Some(pull_request.number),
             );
         }
+    }
+
+    fn request_active_project_github_link_lookup(&mut self, cx: &App) {
+        let Some(project_id) = self.active_open_in_project_id(cx) else {
+            return;
+        };
+        let Some(project_path) = self.project_path(&project_id) else {
+            return;
+        };
+
+        self.request_project_github_link_lookup(&project_id, &project_path);
     }
 
     fn project_pull_request_lookup_is_fresh(&self, lookup_key: &str) -> bool {
@@ -2417,12 +2866,14 @@ impl AnotherOneApp {
     pub(crate) fn dismiss_titlebar_dropdowns(&mut self) -> bool {
         let had_open_in = self.project_page_open_in_menu_project_id.take().is_some();
         let had_git_actions = self.git_actions_menu_open;
+        let had_custom_actions = self.custom_actions_menu_open;
         self.git_actions_menu_open = false;
+        self.custom_actions_menu_open = false;
         let had_project_config = self.project_page_config_dropdown.take().is_some();
         if had_project_config {
             self.project_page_config_panel_targeted = false;
         }
-        had_open_in || had_git_actions || had_project_config
+        had_open_in || had_git_actions || had_custom_actions || had_project_config
     }
 
     pub(crate) fn toggle_project_page_config_panel(&mut self, cx: &mut Context<Self>) {
@@ -2442,6 +2893,7 @@ impl AnotherOneApp {
     ) {
         self.project_page_open_in_menu_project_id = None;
         self.git_actions_menu_open = false;
+        self.custom_actions_menu_open = false;
         self.project_page_config_panel_expanded = true;
         self.project_page_config_panel_targeted = false;
         self.project_page_config_dropdown = if self.project_page_config_dropdown == Some(field) {
@@ -2705,6 +3157,7 @@ impl AnotherOneApp {
             self.project_page_open_in_menu_project_id = Some(project_id.to_string());
         }
         self.git_actions_menu_open = false;
+        self.custom_actions_menu_open = false;
 
         cx.stop_propagation();
         cx.notify();
@@ -3034,6 +3487,8 @@ impl AnotherOneApp {
             collapsed_change_sections: HashSet::new(),
             expanded_commit_rows: HashSet::new(),
             git_actions_menu_open: false,
+            custom_actions_menu_open: false,
+            last_used_custom_action_id: None,
             toasts: Vec::new(),
             next_toast_id: 1,
             toast_drag: None,
@@ -3075,6 +3530,7 @@ impl AnotherOneApp {
             warm_terminal_launch_sender,
             warm_terminal_launch_receiver,
             live_terminal_runtimes: HashMap::new(),
+            pending_post_launch_input: HashMap::new(),
             terminal_manager: another_one_core::terminal_manager::TerminalManager::new(),
             terminal_surface_snapshots: HashMap::new(),
             terminal_scroll_remainder_lines: HashMap::new(),
@@ -3124,6 +3580,7 @@ impl AnotherOneApp {
             branch_compare_states: HashMap::new(),
             marked_text: None,
             add_agent_modal: None,
+            custom_action_modal: None,
             sidebar_task_last_click: None,
             font_size: initial_font_size,
             last_viewport_size: window.viewport_size(),
@@ -3345,6 +3802,7 @@ impl AnotherOneApp {
             key: key.clone(),
             cwd,
             launch_config: tab.launch_config.clone(),
+            restore_status: tab.restore_status,
             agent_launch_args: self.agent_launch_args_for_launch_config(&tab.launch_config),
             size: TerminalGridSize::default(),
         })
@@ -3377,10 +3835,10 @@ impl AnotherOneApp {
         let Some(request) = self.terminal_request_for_key(key, cx) else {
             return false;
         };
-        let is_claude_restore = request.launch_config.provider
-            == Some(AgentProviderKind::ClaudeCode)
-            && request.launch_config.session.is_some();
-        if !is_claude_restore {
+        let Some(provider) = request.launch_config.provider else {
+            return false;
+        };
+        if request.launch_config.session.is_none() {
             return false;
         }
 
@@ -3390,7 +3848,7 @@ impl AnotherOneApp {
             .get(key)
             .map(String::as_str)
             .unwrap_or_default();
-        if !output_mentions_missing_claude_conversation(recent_output) {
+        if !agent_output_indicates_missing_session(provider, recent_output) {
             return false;
         }
 
@@ -3432,6 +3890,7 @@ impl AnotherOneApp {
             },
             cwd,
             launch_config: tab.launch_config.clone(),
+            restore_status: tab.restore_status,
             agent_launch_args: self.agent_launch_args_for_launch_config(&tab.launch_config),
             size: self.terminal_panel_size(window),
         })
@@ -3677,6 +4136,7 @@ impl AnotherOneApp {
             self.terminal_surface_snapshots
                 .insert(key.clone(), runtime.snapshot());
             self.live_terminal_runtimes.insert(key.clone(), runtime);
+            self.send_pending_post_launch_input(&key);
             self.update_terminal_tab(&key, cx, |tab| {
                 tab.launch_config = launch_config.clone();
                 tab.restore_status = TerminalRestoreStatus::Ready;
@@ -3749,6 +4209,10 @@ impl AnotherOneApp {
             return;
         }
 
+        if request.restore_status == TerminalRestoreStatus::Failed {
+            return;
+        }
+
         self.terminal_manager
             .pending_launches
             .insert(request.key.clone());
@@ -3815,6 +4279,7 @@ impl AnotherOneApp {
                     self.terminal_surface_snapshots
                         .insert(key.clone(), runtime.snapshot());
                     self.live_terminal_runtimes.insert(key.clone(), runtime);
+                    self.send_pending_post_launch_input(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
                         tab.launch_config = launch_config.clone();
                         tab.restore_status = TerminalRestoreStatus::Ready;
@@ -3826,15 +4291,9 @@ impl AnotherOneApp {
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                         let terminal_update = runtime.apply_output(&bytes);
                         output_dirty_keys.insert(key.clone());
-                        if terminal_update.reset_title {
-                            self.update_terminal_tab(&key, cx, |tab| {
-                                tab.title = tab.launch_config.default_title();
-                            });
-                        } else if let Some(title) = terminal_update.title {
-                            self.update_terminal_tab(&key, cx, |tab| {
-                                tab.title = title.clone();
-                            });
-                        }
+                        self.update_terminal_tab(&key, cx, |tab| {
+                            apply_terminal_title_update(tab, &terminal_update);
+                        });
                         updated = true;
                     } else if self.maybe_retry_claude_restore(&key, cx) {
                         updated = true;
@@ -3977,6 +4436,7 @@ impl AnotherOneApp {
                         self.terminal_surface_snapshots
                             .insert(key.clone(), runtime.snapshot());
                         self.live_terminal_runtimes.insert(key.clone(), runtime);
+                        self.send_pending_post_launch_input(&key);
                         self.update_terminal_tab(&key, cx, |tab| {
                             tab.launch_config = launch_config.clone();
                             tab.restore_status = TerminalRestoreStatus::Ready;
@@ -4008,15 +4468,9 @@ impl AnotherOneApp {
                             let terminal_update = runtime.apply_output(&bytes);
                             self.terminal_surface_snapshots
                                 .insert(key.clone(), runtime.snapshot());
-                            if terminal_update.reset_title {
-                                self.update_terminal_tab(&key, cx, |tab| {
-                                    tab.title = tab.launch_config.default_title();
-                                });
-                            } else if let Some(title) = terminal_update.title {
-                                self.update_terminal_tab(&key, cx, |tab| {
-                                    tab.title = title.clone();
-                                });
-                            }
+                            self.update_terminal_tab(&key, cx, |tab| {
+                                apply_terminal_title_update(tab, &terminal_update);
+                            });
                             updated = true;
                         } else if self.maybe_retry_claude_restore(&key, cx) {
                             updated = true;
@@ -4391,6 +4845,111 @@ impl AnotherOneApp {
         runtime.write_input(bytes).is_ok()
     }
 
+    fn send_pending_post_launch_input(&mut self, key: &TerminalRuntimeKey) -> bool {
+        let Some(bytes) = self.pending_post_launch_input.remove(key) else {
+            return false;
+        };
+        let Some(runtime) = self.live_terminal_runtimes.get(key) else {
+            self.pending_post_launch_input.insert(key.clone(), bytes);
+            return false;
+        };
+        runtime.write_input(&bytes).is_ok()
+    }
+
+    pub(crate) fn run_project_action(
+        &mut self,
+        action: ProjectAction,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(section_id) = self.workspace_pane.read(cx).active_section.clone() else {
+            self.show_error_toast("Custom actions run inside an active task.", cx);
+            return;
+        };
+
+        let action_id = action.id.clone();
+        if let Err(error) = self.run_project_action_in_section(
+            &section_id,
+            action,
+            window.map(|window| self.terminal_panel_size(window)),
+            cx,
+        ) {
+            self.show_error_toast(error, cx);
+        } else {
+            self.last_used_custom_action_id = Some(action_id);
+        }
+    }
+
+    fn run_project_action_in_section(
+        &mut self,
+        section_id: &SectionId,
+        action: ProjectAction,
+        launch_size: Option<TerminalGridSize>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let cwd = self
+            .cwd_for_section(section_id, cx)
+            .ok_or_else(|| "Could not find the task worktree for this action.".to_string())?;
+        let (launch_config, post_launch_input, fixed_title) = match &action.kind {
+            ProjectActionKind::Shell { command } => {
+                let command = command.trim();
+                if command.is_empty() {
+                    return Err("Shell actions need a command before they can run.".to_string());
+                }
+                (
+                    TerminalLaunchConfig::default(),
+                    Some(format!("{command}\n").into_bytes()),
+                    fixed_title_for_project_action(&action),
+                )
+            }
+            ProjectActionKind::Agent { provider, .. } => {
+                let args = crate::project_store::project_action_agent_launch_args(&action)?;
+                (
+                    TerminalLaunchConfig::for_provider(*provider).with_extra_args(args),
+                    None,
+                    None,
+                )
+            }
+        };
+
+        let tab_id = self
+            .workspace_pane
+            .update(cx, |workspace, cx| {
+                workspace.add_tab_with_launch_config(
+                    section_id,
+                    launch_config.clone(),
+                    fixed_title.clone(),
+                    cx,
+                )
+            })
+            .ok_or_else(|| "Could not add an action tab for this task.".to_string())?;
+        let key = TerminalRuntimeKey {
+            section_id: section_id.clone(),
+            tab_id,
+        };
+        if let Some(input) = post_launch_input {
+            self.pending_post_launch_input.insert(key.clone(), input);
+        }
+
+        if let Some(size) = launch_size {
+            self.terminal_manager.pending_launches.insert(key.clone());
+            self.update_terminal_tab(&key, cx, |tab| {
+                tab.restore_status = TerminalRestoreStatus::Launching;
+            });
+            spawn_terminal_launch(
+                self.terminal_launch_sender.clone(),
+                key,
+                Some(cwd),
+                launch_config.clone(),
+                self.agent_launch_args_for_launch_config(&launch_config),
+                size,
+            );
+        }
+
+        cx.notify();
+        Ok(())
+    }
+
     pub(crate) fn paste_into_active_terminal(&mut self, cx: &App, text: &str) -> bool {
         let Some(key) = self.active_terminal_key(cx) else {
             return false;
@@ -4564,6 +5123,39 @@ impl AnotherOneApp {
                 dragging: true,
             })
         };
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn open_terminal_link_at_click(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !(ev.modifiers.control || ev.modifiers.platform) {
+            return false;
+        }
+
+        let Some(metrics) = self.terminal_panel_metrics_for_key(key, window) else {
+            return false;
+        };
+        let Some(position) = terminal_cell_position_from_mouse(ev.position, &metrics) else {
+            return false;
+        };
+        let Some(link) = self
+            .terminal_surface_snapshots
+            .get(key)
+            .and_then(|snapshot| terminal_link_at_position(snapshot, position))
+        else {
+            return false;
+        };
+
+        self.terminal_selection = None;
+        if let Err(err) = crate::platform::CurrentPlatform::open_external_url(&link) {
+            self.show_error_toast(err, cx);
+        }
         cx.notify();
         true
     }
@@ -4755,7 +5347,8 @@ impl AnotherOneApp {
             .unwrap_or_else(|| path.display().to_string());
         self.show_info_toast(format!("Adding {}...", project_label), cx);
 
-        self.project_add_receiver = Some(another_one_core::project_service::spawn_project_add(path));
+        self.project_add_receiver =
+            Some(another_one_core::project_service::spawn_project_add(path));
         cx.notify();
     }
 
@@ -4819,12 +5412,18 @@ impl AnotherOneApp {
         }
     }
 
-    fn navigation_shortcuts_blocked(&self) -> bool {
+    fn navigation_shortcuts_blocked(&self, cx: &App) -> bool {
         self.settings_open
             || self.new_task_modal.is_some()
             || self.add_agent_modal.is_some()
             || self.sidebar_task_rename.is_some()
             || self.sidebar_task_menu.is_some()
+            || self.workspace_pane.read(cx).terminal_tab_menu.is_some()
+            || self
+                .workspace_pane
+                .read(cx)
+                .pinned_tab_close_confirm
+                .is_some()
             || self.sidebar_task_delete_confirm.is_some()
             || self.project_remove_confirm.is_some()
             || self.discard_confirm.is_some()
@@ -4835,7 +5434,7 @@ impl AnotherOneApp {
         direction: NavigationDirection,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.navigation_shortcuts_blocked() {
+        if self.navigation_shortcuts_blocked(cx) {
             return false;
         }
 
@@ -4887,7 +5486,7 @@ impl AnotherOneApp {
         direction: NavigationDirection,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.navigation_shortcuts_blocked() {
+        if self.navigation_shortcuts_blocked(cx) {
             return false;
         }
 
@@ -4934,26 +5533,17 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn open_new_tab_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.navigation_shortcuts_blocked() {
+        if self.navigation_shortcuts_blocked(cx) {
             return false;
         }
 
         let shortcut_target = {
             let workspace = self.workspace_pane.read(cx);
             workspace.active_section.clone().map(|section_id| {
-                let selected_agent_id = workspace
-                    .section_states
-                    .get(&section_id)
-                    .and_then(|state| state.tabs.get(state.active_tab))
-                    .and_then(|tab| {
-                        tab.launch_config.provider.and_then(|provider| {
-                            AGENTS
-                                .iter()
-                                .find(|agent| agent.provider == Some(provider))
-                                .map(|agent| agent.id)
-                        })
-                    })
-                    .map(str::to_string);
+                let selected_agent_id = new_tab_seed_agent_id(
+                    workspace.section_states.get(&section_id),
+                    self.default_agent_id(),
+                );
                 (section_id, selected_agent_id)
             })
         };
@@ -4969,7 +5559,7 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn open_new_task_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.navigation_shortcuts_blocked() {
+        if self.navigation_shortcuts_blocked(cx) {
             return false;
         }
 
@@ -5001,7 +5591,7 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn close_active_tab_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.navigation_shortcuts_blocked() {
+        if self.navigation_shortcuts_blocked(cx) {
             return false;
         }
 
@@ -5024,13 +5614,13 @@ impl AnotherOneApp {
         }
 
         self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.close_tab(&section_id, active_tab, cx)
+            workspace.request_close_tab(&section_id, active_tab, cx)
         });
         true
     }
 
     pub(crate) fn navigate_project_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.navigation_shortcuts_blocked() {
+        if self.navigation_shortcuts_blocked(cx) {
             return false;
         }
 
@@ -6187,6 +6777,19 @@ impl AnotherOneApp {
                                 cx,
                             );
                         }
+                        let automatic_actions = self
+                            .project_store
+                            .automatic_project_actions(&success.original_project_id);
+                        for action in automatic_actions {
+                            if let Err(error) = self.run_project_action_in_section(
+                                &section_id,
+                                action,
+                                Some(TerminalGridSize::default()),
+                                cx,
+                            ) {
+                                self.show_error_toast(error, cx);
+                            }
+                        }
                         self.mark_git_refresh_stale();
 
                         self.new_task_modal = None;
@@ -6329,7 +6932,9 @@ impl AnotherOneApp {
                     // its project id in the set forever and
                     // `request_project_github_link_lookup` early-returns
                     // for that project until app restart.
-                    log::warn!("project_github_link drain lagged {n} messages; clearing in-flight set");
+                    log::warn!(
+                        "project_github_link drain lagged {n} messages; clearing in-flight set"
+                    );
                     self.project_github_link_requests.clear();
                     continue;
                 }
@@ -6471,7 +7076,9 @@ impl AnotherOneApp {
                     // See note on `drain_project_github_link_lookup`:
                     // wipe the in-flight set so dropped replies don't
                     // strand their lookup keys as permanent ghosts.
-                    log::warn!("project_pull_request drain lagged {n} messages; clearing in-flight set");
+                    log::warn!(
+                        "project_pull_request drain lagged {n} messages; clearing in-flight set"
+                    );
                     self.project_pull_request_requests.clear();
                     continue;
                 }
@@ -6552,7 +7159,9 @@ impl AnotherOneApp {
                     // See note on `drain_project_github_link_lookup`:
                     // wipe the in-flight set so dropped replies don't
                     // strand their lookup keys as permanent ghosts.
-                    log::warn!("project_check_runs drain lagged {n} messages; clearing in-flight set");
+                    log::warn!(
+                        "project_check_runs drain lagged {n} messages; clearing in-flight set"
+                    );
                     self.project_check_runs_requests.clear();
                     continue;
                 }
@@ -6809,6 +7418,11 @@ impl AnotherOneApp {
             return;
         }
 
+        let modifiers = window.modifiers();
+        if modifiers.control || modifiers.platform {
+            cx.notify();
+        }
+
         let Some((kind, last_x)) = self.drag else {
             return;
         };
@@ -6857,6 +7471,15 @@ impl AnotherOneApp {
         if had_toast_drag || had_terminal_selection || had_settings_selection || had_layout_drag {
             cx.notify();
         }
+    }
+
+    pub fn on_modifiers_changed(
+        &mut self,
+        _ev: &ModifiersChangedEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.notify();
     }
 
     fn footer_add_project_button(window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -8030,27 +8653,29 @@ fn remove_terminal_runtime_state<T>(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_terminal_session_backfill, choose_initial_section, global_tab_navigation_targets,
+        apply_terminal_session_backfill, apply_terminal_title_update, choose_initial_section,
+        fixed_title_for_project_action, global_tab_navigation_targets, new_tab_seed_agent_id,
         next_global_tab_navigation_target, next_project_navigation_target,
-        next_task_navigation_target, output_mentions_missing_claude_conversation,
-        persisted_active_section_key, remove_terminal_runtime_state,
+        next_task_navigation_target, persisted_active_section_key, remove_terminal_runtime_state,
         resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
         sidebar_task_navigation_target, sidebar_task_navigation_targets,
-        terminal_line_selection_range, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
-        AnotherOneApp, NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState,
-        TerminalCellPosition, TerminalSelectionRange, TERMINAL_RECENT_OUTPUT_LIMIT,
+        terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
+        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
+        terminal_word_selection_range, trim_to_recent_output_limit, AnotherOneApp,
+        NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition,
+        TerminalLinkRange, TerminalSelectionRange, TerminalTab, TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
-        AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
-        TerminalSessionRef,
+        agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
+        TerminalRestoreStatus, TerminalSessionKind, TerminalSessionRef,
     };
     use crate::project_store::{
-        PersistedSectionState, PersistedTerminalTab, Project, ProjectCheckoutState, ProjectKind,
-        Task, TaskKind,
+        PersistedSectionState, PersistedTerminalTab, Project, ProjectAction, ProjectActionIcon,
+        ProjectActionKind, ProjectActionScope, ProjectCheckoutState, ProjectKind, Task, TaskKind,
     };
     use crate::terminal_runtime::{
-        TerminalCellSnapshot, TerminalLineSnapshot, TerminalRuntimeKey, TerminalSurfaceSnapshot,
+        TerminalCellSnapshot, TerminalLineSnapshot, TerminalRuntimeKey, TerminalRuntimeUpdate,
+        TerminalSurfaceSnapshot,
     };
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, ScrollDelta};
     use std::collections::{HashMap, HashSet};
@@ -8060,6 +8685,8 @@ mod tests {
         PersistedTerminalTab {
             id: id.to_string(),
             title: title.to_string(),
+            pinned: false,
+            fixed_title: None,
             provider: None,
             launch_config: Some(TerminalLaunchConfig::default()),
             restore_status: TerminalRestoreStatus::NotStarted,
@@ -8070,6 +8697,8 @@ mod tests {
         PersistedTerminalTab {
             id: id.to_string(),
             title: title.to_string(),
+            pinned: false,
+            fixed_title: None,
             provider: Some(provider),
             launch_config: Some(TerminalLaunchConfig::for_provider(provider)),
             restore_status: TerminalRestoreStatus::NotStarted,
@@ -8089,6 +8718,7 @@ mod tests {
                 lines_removed: 0,
             },
             branch_settings: crate::project_store::ProjectBranchSettings::default(),
+            actions: Vec::new(),
             worktree_name: None,
             repo_common_dir: None,
         }
@@ -8132,6 +8762,29 @@ mod tests {
         }
     }
 
+    fn shell_action(name: &str, command: &str) -> ProjectAction {
+        ProjectAction {
+            id: "action-1".to_string(),
+            name: name.to_string(),
+            icon: ProjectActionIcon::default(),
+            run_on_worktree_create: false,
+            scope: ProjectActionScope::default(),
+            kind: ProjectActionKind::Shell {
+                command: command.to_string(),
+            },
+        }
+    }
+
+    fn terminal_cell(column: usize, ch: char) -> TerminalCellSnapshot {
+        TerminalCellSnapshot {
+            column,
+            width: 1,
+            text: ch.to_string(),
+            copy_text: ch.to_string(),
+            hyperlink: None,
+        }
+    }
+
     #[test]
     fn clipboard_image_returns_first_image_entry() {
         let image = Image::from_bytes(ImageFormat::Png, vec![1, 2, 3, 4]);
@@ -8159,6 +8812,8 @@ mod tests {
                     PersistedTerminalTab {
                         id: "4".to_string(),
                         title: "Codex".to_string(),
+                        pinned: false,
+                        fixed_title: None,
                         provider: Some(AgentProviderKind::Codex),
                         launch_config: Some(TerminalLaunchConfig::for_provider(
                             AgentProviderKind::Codex,
@@ -8209,6 +8864,164 @@ mod tests {
     }
 
     #[test]
+    fn new_tab_seed_agent_uses_default_when_section_has_no_tabs() {
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: String::new(),
+                next_tab_id: 1,
+                cwd: Some(PathBuf::from("/tmp/project")),
+                tabs: Vec::new(),
+            },
+            None,
+        );
+
+        assert_eq!(
+            new_tab_seed_agent_id(Some(&state), Some("codex")).as_deref(),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn new_tab_seed_agent_uses_default_when_active_tab_is_terminal() {
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "0".to_string(),
+                next_tab_id: 1,
+                cwd: Some(PathBuf::from("/tmp/project")),
+                tabs: vec![shell_tab(0, "Terminal")],
+            },
+            None,
+        );
+
+        assert_eq!(
+            new_tab_seed_agent_id(Some(&state), Some("codex")).as_deref(),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn new_tab_seed_agent_uses_default_when_active_tab_is_another_agent() {
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "claude".to_string(),
+                next_tab_id: 1,
+                cwd: Some(PathBuf::from("/tmp/project")),
+                tabs: vec![agent_tab(
+                    "claude",
+                    "Claude Code",
+                    AgentProviderKind::ClaudeCode,
+                )],
+            },
+            None,
+        );
+
+        assert_eq!(
+            new_tab_seed_agent_id(Some(&state), Some("codex")).as_deref(),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn section_state_pinning_moves_tab_before_unpinned_tabs() {
+        let mut state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "b".to_string(),
+                next_tab_id: 4,
+                cwd: None,
+                tabs: vec![
+                    shell_tab(0, "A"),
+                    PersistedTerminalTab {
+                        id: "b".to_string(),
+                        title: "B".to_string(),
+                        pinned: false,
+                        fixed_title: None,
+                        provider: None,
+                        launch_config: Some(TerminalLaunchConfig::default()),
+                        restore_status: TerminalRestoreStatus::NotStarted,
+                    },
+                    PersistedTerminalTab {
+                        id: "c".to_string(),
+                        title: "C".to_string(),
+                        pinned: false,
+                        fixed_title: None,
+                        provider: None,
+                        launch_config: Some(TerminalLaunchConfig::default()),
+                        restore_status: TerminalRestoreStatus::NotStarted,
+                    },
+                ],
+            },
+            None,
+        );
+
+        assert!(state.set_tab_pinned(1, true));
+
+        assert_eq!(
+            state
+                .tabs
+                .iter()
+                .map(|tab| tab.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b", "0", "c"]
+        );
+        assert_eq!(state.active_tab_id(), "b");
+        assert!(state.tab_is_pinned(0));
+    }
+
+    #[test]
+    fn section_state_unpinning_returns_tab_to_unpinned_group_and_preserves_active_tab() {
+        let mut state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "active".to_string(),
+                next_tab_id: 4,
+                cwd: None,
+                tabs: vec![
+                    PersistedTerminalTab {
+                        id: "pinned".to_string(),
+                        title: "Pinned".to_string(),
+                        pinned: true,
+                        fixed_title: None,
+                        provider: None,
+                        launch_config: Some(TerminalLaunchConfig::default()),
+                        restore_status: TerminalRestoreStatus::NotStarted,
+                    },
+                    PersistedTerminalTab {
+                        id: "active".to_string(),
+                        title: "Active".to_string(),
+                        pinned: true,
+                        fixed_title: None,
+                        provider: None,
+                        launch_config: Some(TerminalLaunchConfig::default()),
+                        restore_status: TerminalRestoreStatus::NotStarted,
+                    },
+                    PersistedTerminalTab {
+                        id: "plain".to_string(),
+                        title: "Plain".to_string(),
+                        pinned: false,
+                        fixed_title: None,
+                        provider: None,
+                        launch_config: Some(TerminalLaunchConfig::default()),
+                        restore_status: TerminalRestoreStatus::NotStarted,
+                    },
+                ],
+            },
+            None,
+        );
+
+        assert!(state.set_tab_pinned(1, false));
+
+        assert_eq!(
+            state
+                .tabs
+                .iter()
+                .map(|tab| tab.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pinned", "active", "plain"]
+        );
+        assert_eq!(state.active_tab_id(), "active");
+        assert!(!state.tab_is_pinned(state.active_tab));
+    }
+
+    #[test]
     fn section_state_add_tab_with_launch_config_continues_after_restored_next_tab_id() {
         let mut state = SectionState::from_persisted(
             PersistedSectionState {
@@ -8218,6 +9031,8 @@ mod tests {
                 tabs: vec![PersistedTerminalTab {
                     id: "0".to_string(),
                     title: "Pi".to_string(),
+                    pinned: false,
+                    fixed_title: None,
                     provider: Some(AgentProviderKind::Pi),
                     launch_config: Some(TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)),
                     restore_status: TerminalRestoreStatus::NotStarted,
@@ -8226,8 +9041,10 @@ mod tests {
             None,
         );
 
-        let id = state
-            .add_tab_with_launch_config(TerminalLaunchConfig::for_provider(AgentProviderKind::Pi));
+        let id = state.add_tab_with_launch_config(
+            TerminalLaunchConfig::for_provider(AgentProviderKind::Pi),
+            None,
+        );
 
         assert!(!id.is_empty());
         assert_eq!(state.next_tab_id, 8);
@@ -8241,9 +9058,10 @@ mod tests {
     fn section_state_add_tab_with_launch_config_uses_selected_agent() {
         let mut state = SectionState::with_cwd(Some(PathBuf::from("/tmp/project")));
 
-        let id = state.add_tab_with_launch_config(TerminalLaunchConfig::for_provider(
-            AgentProviderKind::ClaudeCode,
-        ));
+        let id = state.add_tab_with_launch_config(
+            TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode),
+            None,
+        );
 
         assert!(!id.is_empty());
         assert_eq!(state.active_tab, 1);
@@ -8252,6 +9070,74 @@ mod tests {
             state.tabs[1].launch_config,
             TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode)
         );
+    }
+
+    #[test]
+    fn shell_project_action_uses_action_name_as_fixed_tab_title() {
+        let action = shell_action("  Run tests  ", "cargo test");
+        let fixed_title = fixed_title_for_project_action(&action);
+        let mut state = SectionState::with_cwd(None);
+
+        let id = state.add_tab_with_launch_config(TerminalLaunchConfig::default(), fixed_title);
+        let tab = state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == id)
+            .expect("action tab should be added");
+
+        assert_eq!(tab.title, "Run tests");
+        assert_eq!(tab.fixed_title.as_deref(), Some("Run tests"));
+    }
+
+    #[test]
+    fn terminal_title_updates_do_not_replace_fixed_tab_title() {
+        let mut tab = TerminalTab::with_id(
+            "tab-1".to_string(),
+            TerminalLaunchConfig::default(),
+            Some("Run tests".to_string()),
+        );
+
+        apply_terminal_title_update(
+            &mut tab,
+            &TerminalRuntimeUpdate {
+                title: Some("cargo test".to_string()),
+                reset_title: false,
+            },
+        );
+        assert_eq!(tab.title, "Run tests");
+
+        apply_terminal_title_update(
+            &mut tab,
+            &TerminalRuntimeUpdate {
+                title: None,
+                reset_title: true,
+            },
+        );
+        assert_eq!(tab.title, "Run tests");
+    }
+
+    #[test]
+    fn terminal_title_updates_still_apply_to_normal_tabs() {
+        let mut tab =
+            TerminalTab::with_id("tab-1".to_string(), TerminalLaunchConfig::default(), None);
+
+        apply_terminal_title_update(
+            &mut tab,
+            &TerminalRuntimeUpdate {
+                title: Some("cargo test".to_string()),
+                reset_title: false,
+            },
+        );
+        assert_eq!(tab.title, "cargo test");
+
+        apply_terminal_title_update(
+            &mut tab,
+            &TerminalRuntimeUpdate {
+                title: None,
+                reset_title: true,
+            },
+        );
+        assert_eq!(tab.title, "Terminal");
     }
 
     #[test]
@@ -8310,6 +9196,8 @@ mod tests {
                             PersistedTerminalTab {
                                 id: "a1-tab-1".to_string(),
                                 title: "Codex".to_string(),
+                                pinned: false,
+                                fixed_title: None,
                                 provider: Some(AgentProviderKind::Codex),
                                 launch_config: Some(TerminalLaunchConfig::for_provider(
                                     AgentProviderKind::Codex,
@@ -8319,6 +9207,8 @@ mod tests {
                             PersistedTerminalTab {
                                 id: "a1-tab-2".to_string(),
                                 title: "Claude Code".to_string(),
+                                pinned: false,
+                                fixed_title: None,
                                 provider: Some(AgentProviderKind::ClaudeCode),
                                 launch_config: Some(TerminalLaunchConfig::for_provider(
                                     AgentProviderKind::ClaudeCode,
@@ -8340,6 +9230,8 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: "a2-tab-1".to_string(),
                             title: "Pi".to_string(),
+                            pinned: false,
+                            fixed_title: None,
                             provider: Some(AgentProviderKind::Pi),
                             launch_config: Some(TerminalLaunchConfig::for_provider(
                                 AgentProviderKind::Pi,
@@ -8360,6 +9252,8 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: "b1-tab-1".to_string(),
                             title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
                             provider: None,
                             launch_config: Some(TerminalLaunchConfig::default()),
                             restore_status: TerminalRestoreStatus::NotStarted,
@@ -8438,6 +9332,8 @@ mod tests {
                             PersistedTerminalTab {
                                 id: "a1-tab-1".to_string(),
                                 title: "Codex".to_string(),
+                                pinned: false,
+                                fixed_title: None,
                                 provider: Some(AgentProviderKind::Codex),
                                 launch_config: Some(TerminalLaunchConfig::for_provider(
                                     AgentProviderKind::Codex,
@@ -8447,6 +9343,8 @@ mod tests {
                             PersistedTerminalTab {
                                 id: "a1-tab-2".to_string(),
                                 title: "Claude Code".to_string(),
+                                pinned: false,
+                                fixed_title: None,
                                 provider: Some(AgentProviderKind::ClaudeCode),
                                 launch_config: Some(TerminalLaunchConfig::for_provider(
                                     AgentProviderKind::ClaudeCode,
@@ -8468,6 +9366,8 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: "b1-tab-1".to_string(),
                             title: "Pi".to_string(),
+                            pinned: false,
+                            fixed_title: None,
                             provider: Some(AgentProviderKind::Pi),
                             launch_config: Some(TerminalLaunchConfig::for_provider(
                                 AgentProviderKind::Pi,
@@ -8549,6 +9449,8 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: "a2-tab-1".to_string(),
                             title: "Codex".to_string(),
+                            pinned: false,
+                            fixed_title: None,
                             provider: Some(AgentProviderKind::Codex),
                             launch_config: Some(TerminalLaunchConfig::for_provider(
                                 AgentProviderKind::Codex,
@@ -8569,6 +9471,8 @@ mod tests {
                         tabs: vec![PersistedTerminalTab {
                             id: "b1-tab-1".to_string(),
                             title: "Pi".to_string(),
+                            pinned: false,
+                            fixed_title: None,
                             provider: Some(AgentProviderKind::Pi),
                             launch_config: Some(TerminalLaunchConfig::for_provider(
                                 AgentProviderKind::Pi,
@@ -9082,6 +9986,8 @@ mod tests {
                 tabs: vec![PersistedTerminalTab {
                     id: "tab-1".to_string(),
                     title: "Claude Code".to_string(),
+                    pinned: false,
+                    fixed_title: None,
                     provider: Some(AgentProviderKind::ClaudeCode),
                     launch_config: Some(TerminalLaunchConfig::for_provider(
                         AgentProviderKind::ClaudeCode,
@@ -9118,6 +10024,8 @@ mod tests {
                     tabs: vec![PersistedTerminalTab {
                         id: "tab-1".to_string(),
                         title: "Codex".to_string(),
+                        pinned: false,
+                        fixed_title: None,
                         provider: Some(AgentProviderKind::Codex),
                         launch_config: Some(TerminalLaunchConfig::for_provider(
                             AgentProviderKind::Codex,
@@ -9189,10 +10097,12 @@ mod tests {
 
     #[test]
     fn detects_missing_claude_restore_conversation_output() {
-        assert!(output_mentions_missing_claude_conversation(
+        assert!(agent_output_indicates_missing_session(
+            AgentProviderKind::ClaudeCode,
             "Error: No conversation found for session abc123"
         ));
-        assert!(!output_mentions_missing_claude_conversation(
+        assert!(!agent_output_indicates_missing_session(
+            AgentProviderKind::ClaudeCode,
             "Error: network request failed"
         ));
     }
@@ -9240,36 +10150,42 @@ mod tests {
                             width: 1,
                             text: "h".to_string(),
                             copy_text: "h".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 1,
                             width: 1,
                             text: "e".to_string(),
                             copy_text: "e".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 2,
                             width: 1,
                             text: "l".to_string(),
                             copy_text: "l".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 3,
                             width: 1,
                             text: "l".to_string(),
                             copy_text: "l".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 4,
                             width: 1,
                             text: "o".to_string(),
                             copy_text: "o".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 5,
                             width: 1,
                             text: " ".to_string(),
                             copy_text: " ".to_string(),
+                            hyperlink: None,
                         },
                     ],
                     runs: Vec::new(),
@@ -9283,36 +10199,42 @@ mod tests {
                             width: 1,
                             text: "w".to_string(),
                             copy_text: "w".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 1,
                             width: 1,
                             text: "o".to_string(),
                             copy_text: "o".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 2,
                             width: 1,
                             text: "r".to_string(),
                             copy_text: "r".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 3,
                             width: 1,
                             text: "l".to_string(),
                             copy_text: "l".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 4,
                             width: 1,
                             text: "d".to_string(),
                             copy_text: "d".to_string(),
+                            hyperlink: None,
                         },
                         TerminalCellSnapshot {
                             column: 5,
                             width: 1,
                             text: " ".to_string(),
                             copy_text: " ".to_string(),
+                            hyperlink: None,
                         },
                     ],
                     runs: Vec::new(),
@@ -9337,6 +10259,131 @@ mod tests {
     }
 
     #[test]
+    fn terminal_link_at_position_uses_explicit_hyperlink() {
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: 5,
+            lines: vec![TerminalLineSnapshot {
+                text: "click".to_string(),
+                cells: "click"
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| {
+                        let mut cell = terminal_cell(column, ch);
+                        cell.hyperlink = Some("https://example.com/from-osc8".to_string());
+                        cell
+                    })
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let link =
+            terminal_link_at_position(&snapshot, TerminalCellPosition { line: 0, column: 2 });
+
+        assert_eq!(link.as_deref(), Some("https://example.com/from-osc8"));
+    }
+
+    #[test]
+    fn terminal_link_at_position_detects_plain_text_url() {
+        let text = "visit https://example.com/path.";
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: text.len(),
+            lines: vec![TerminalLineSnapshot {
+                text: text.to_string(),
+                cells: text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| terminal_cell(column, ch))
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let link = terminal_link_at_position(
+            &snapshot,
+            TerminalCellPosition {
+                line: 0,
+                column: 12,
+            },
+        );
+
+        assert_eq!(link.as_deref(), Some("https://example.com/path"));
+    }
+
+    #[test]
+    fn terminal_link_ranges_include_explicit_hyperlinks() {
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: 5,
+            lines: vec![TerminalLineSnapshot {
+                text: "click".to_string(),
+                cells: "click"
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| {
+                        let mut cell = terminal_cell(column, ch);
+                        if (1..=3).contains(&column) {
+                            cell.hyperlink = Some("https://example.com/from-osc8".to_string());
+                        }
+                        cell
+                    })
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        assert_eq!(
+            terminal_link_ranges(&snapshot),
+            vec![TerminalLinkRange {
+                line: 0,
+                start_column: 1,
+                end_column: 4,
+            }]
+        );
+    }
+
+    #[test]
+    fn terminal_link_ranges_include_plain_text_urls() {
+        let text = "visit https://example.com/path.";
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: text.len(),
+            lines: vec![TerminalLineSnapshot {
+                text: text.to_string(),
+                cells: text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| terminal_cell(column, ch))
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        assert_eq!(
+            terminal_link_ranges(&snapshot),
+            vec![TerminalLinkRange {
+                line: 0,
+                start_column: 6,
+                end_column: 30,
+            }]
+        );
+    }
+
+    #[test]
     fn terminal_word_selection_range_selects_clicked_word() {
         let snapshot = TerminalSurfaceSnapshot {
             text: String::new(),
@@ -9351,6 +10398,7 @@ mod tests {
                         width: 1,
                         text: ch.to_string(),
                         copy_text: ch.to_string(),
+                        hyperlink: None,
                     })
                     .collect(),
                 runs: Vec::new(),
@@ -9389,6 +10437,7 @@ mod tests {
                         width: 1,
                         text: ch.to_string(),
                         copy_text: ch.to_string(),
+                        hyperlink: None,
                     })
                     .collect(),
                 runs: Vec::new(),
@@ -9507,6 +10556,7 @@ impl Render for AnotherOneApp {
                     .track_focus(&self.focus_handle)
                     .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
                     .on_mouse_move(cx.listener(Self::on_mouse_move))
+                    .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_key_down(cx.listener(Self::handle_global_key_down))
@@ -9531,6 +10581,7 @@ impl Render for AnotherOneApp {
         self.clamp_layout(window);
         self.sync_workspace_layout(cx);
         self.ensure_active_terminal_runtime(window, cx);
+        self.request_active_project_github_link_lookup(cx);
         let sw = self.sidebar_w;
         let rw = self.right_w;
         let open = self.sidebar_is_open();
@@ -9589,6 +10640,7 @@ impl Render for AnotherOneApp {
                 .track_focus(&self.focus_handle)
                 .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
                 .on_mouse_move(cx.listener(Self::on_mouse_move))
+                .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 .on_key_down(cx.listener(Self::handle_global_key_down))
@@ -9608,16 +10660,20 @@ impl Render for AnotherOneApp {
                 .child(main)
                 .child(footer)
                 .when(supports_custom_chrome, |d| {
-                    d.child(self.titlebar_open_in_overlay(cx))
+                    d.child(self.titlebar_custom_actions_overlay(cx))
+                        .child(self.titlebar_open_in_overlay(cx))
                         .child(self.titlebar_git_actions_overlay(cx))
                 })
                 .child(self.resource_indicator_overlay(window, cx))
                 .child(self.project_menu_overlay(sw, cx))
                 .child(self.sidebar_task_menu_overlay(window, cx))
+                .child(self.terminal_tab_menu_overlay(window, cx))
                 .child(self.new_task_modal_overlay(cx))
                 .child(self.add_agent_modal_overlay(cx))
+                .child(self.custom_action_modal_overlay(cx))
                 .child(self.project_remove_confirm_modal(cx))
                 .child(self.sidebar_task_delete_confirm_modal(cx))
+                .child(self.pinned_tab_close_confirm_modal(cx))
                 .child(self.pair_mobile_overlay(cx))
                 .child(self.toast_layer(cx)),
             self.focus_handle.clone(),

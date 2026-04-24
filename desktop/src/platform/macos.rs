@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use gpui::{point, px, App, TitlebarOptions, Window, WindowDecorations};
 
 use super::PlatformServices;
+use crate::assets::asset_root;
 use crate::open_in::{command_exists, OpenInAppKind};
 use crate::resource_usage::{RawProcessSample, TrackedProcess};
 
@@ -130,10 +131,11 @@ impl PlatformServices for MacPlatform {
         use cocoa::foundation::NSString;
         use objc::runtime::Object;
 
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let asset_root = asset_root();
         let icon_path = [
-            root.join("assets/app-icon/source/another-one.png"),
-            root.join("assets/app-icon/macos/AnotherOne.icns"),
+            asset_root.join("assets/app-icon/source/another-one.png"),
+            asset_root.join("assets/app-icon/macos/AnotherOne.icns"),
+            asset_root.join("AnotherOne.icns"),
         ]
         .into_iter()
         .find(|path| path.exists());

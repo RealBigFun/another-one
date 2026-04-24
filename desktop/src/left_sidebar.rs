@@ -650,6 +650,11 @@ impl AnotherOneApp {
             return;
         }
 
+        if self.custom_action_modal.is_some() {
+            self.handle_custom_action_modal_key_down(ev, cx);
+            return;
+        }
+
         if self.settings_open {
             self.handle_settings_key_down(ev, cx);
             cx.stop_propagation();
@@ -773,6 +778,32 @@ impl AnotherOneApp {
             self.sidebar_task_menu = None;
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+
+        let terminal_overlay_open = self.workspace_pane.read(cx).terminal_tab_menu.is_some();
+        if terminal_overlay_open && ev.keystroke.key.as_str() == "escape" {
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.terminal_tab_menu = None;
+                cx.notify();
+            });
+            cx.stop_propagation();
+            return;
+        }
+
+        let pinned_confirm_open = self
+            .workspace_pane
+            .read(cx)
+            .pinned_tab_close_confirm
+            .is_some();
+        if pinned_confirm_open {
+            if ev.keystroke.key.as_str() == "escape" {
+                self.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.pinned_tab_close_confirm = None;
+                    cx.notify();
+                });
+            }
+            cx.stop_propagation();
             return;
         }
 
@@ -2975,6 +3006,7 @@ mod tests {
             kind,
             checkout: crate::project_store::ProjectCheckoutState::default(),
             branch_settings: crate::project_store::ProjectBranchSettings::default(),
+            actions: Vec::new(),
             worktree_name: worktree_name.map(str::to_string),
             repo_common_dir: None,
         }
