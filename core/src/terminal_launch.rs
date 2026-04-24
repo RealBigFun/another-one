@@ -47,6 +47,7 @@ pub enum TerminalLaunchReply {
     Failed {
         key: TerminalRuntimeKey,
         message: String,
+        details: String,
     },
 }
 
@@ -72,6 +73,7 @@ pub enum WarmTerminalLaunchReply {
     Failed {
         launch_id: u64,
         message: String,
+        details: String,
     },
 }
 
@@ -95,6 +97,7 @@ pub fn spawn_terminal_launch(
             let _ = sender.send(TerminalLaunchReply::Failed {
                 key,
                 message: format_launch_error(&error),
+                details: format_launch_error_details(&error),
             });
         }
     });
@@ -120,6 +123,7 @@ pub fn spawn_warm_terminal_launch(
             let _ = sender.send(WarmTerminalLaunchReply::Failed {
                 launch_id,
                 message: format_launch_error(&error),
+                details: format_launch_error_details(&error),
             });
         }
     });
@@ -127,6 +131,10 @@ pub fn spawn_warm_terminal_launch(
 
 fn format_launch_error(error: &anyhow::Error) -> String {
     format!("{error:#}")
+}
+
+fn format_launch_error_details(error: &anyhow::Error) -> String {
+    format!("{error:?}")
 }
 
 fn launch_terminal(
