@@ -213,7 +213,13 @@ class _TaskPageState extends State<TaskPage> {
 
   void _wireTerminal() {
     _terminal.onOutput = (data) {
-      widget.transport.sendBytes(utf8.encode(data));
+      // Soft keyboards on iOS/Android emit LF (\n) when the user taps
+      // Enter, but agent CLIs (Claude Code, shells, REPLs) treat CR
+      // (\r) as "submit line" — bare LF lands in the prompt buffer as
+      // a continuation. Hardware Enter in xterm.dart already encodes
+      // as CR, so translating here affects only IME-delivered text.
+      final normalized = data.replaceAll('\n', '\r');
+      widget.transport.sendBytes(utf8.encode(normalized));
     };
     _terminal.onResize = (w, h, _, _) {
       widget.transport.tabResize(cols: w, rows: h);
@@ -334,6 +340,11 @@ class _TaskPageState extends State<TaskPage> {
                         autofocus: true,
                         backgroundOpacity: 1.0,
                         padding: const EdgeInsets.all(AppTokens.space2),
+                        // Recommended by xterm.dart for mobile: many soft
+                        // keyboards report backspace as a text-diff rather
+                        // than a hardware key event. Without this, tapping
+                        // delete on an empty-looking prompt sends nothing.
+                        deleteDetection: true,
                         textStyle: const TerminalStyle(
                           fontFamily: AppTokens.fontFamilyMono,
                           fontSize: AppTokens.fontBody,
@@ -556,6 +567,10 @@ class _ChordBar extends StatelessWidget {
   static const List<(String, List<int>)> _chords = [
     ('Esc', [0x1B]),
     ('Tab', [0x09]),
+    // Explicit CR submit — backup for the LF→CR translation in
+    // _wireTerminal; also useful when the IME is mid-composition and
+    // swallows the Enter tap.
+    ('⏎', [0x0D]),
     ('Ctrl-C', [0x03]),
     ('Ctrl-D', [0x04]),
     ('Ctrl-L', [0x0C]),
