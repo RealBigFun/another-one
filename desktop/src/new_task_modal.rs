@@ -952,7 +952,7 @@ impl AnotherOneApp {
                     .collect::<Vec<_>>();
                 let visible_rows = filtered_branches.len().min(7) as f32;
                 let list_height = px((visible_rows * 36.).max(36.));
-                let mut list = div()
+                let list = div()
                     .mt(px(4.))
                     .rounded_md()
                     .bg(rgb(CARD_BG))
