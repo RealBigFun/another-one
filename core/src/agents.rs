@@ -331,6 +331,17 @@ pub(crate) trait AgentHarness: Send + Sync {
     fn output_indicates_missing_session(&self, _recent_output: &str) -> bool {
         false
     }
+
+    /// Does this harness read an MCP client config file that the
+    /// registry can sync into? The actual read/write path lives in
+    /// `crate::mcp::adapters::<provider>`, keyed by `provider_kind`
+    /// — the trait intentionally doesn't own that logic so the
+    /// registry can orchestrate across providers without per-harness
+    /// state (like "previously owned ids") leaking onto the trait.
+    #[allow(dead_code)]
+    fn supports_mcp_client(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) struct ClaudeCodeHarness;
@@ -379,6 +390,9 @@ impl AgentHarness for ClaudeCodeHarness {
             .to_ascii_lowercase()
             .contains("no conversation found")
     }
+    fn supports_mcp_client(&self) -> bool {
+        true
+    }
 }
 
 impl AgentHarness for CursorAgentHarness {
@@ -410,6 +424,9 @@ impl AgentHarness for CursorAgentHarness {
         builder.args(agent_launch_args);
         builder.args(["--resume", session.id.as_str()]);
         Ok((builder, launch_config.with_session(Some(session)), None))
+    }
+    fn supports_mcp_client(&self) -> bool {
+        true
     }
 }
 
@@ -449,6 +466,9 @@ impl AgentHarness for CodexHarness {
             })
         };
         Ok((builder, launch_config, discovery))
+    }
+    fn supports_mcp_client(&self) -> bool {
+        true
     }
 }
 
@@ -500,6 +520,9 @@ impl AgentHarness for GeminiHarness {
     fn command(&self) -> &'static str {
         "gemini"
     }
+    fn supports_mcp_client(&self) -> bool {
+        true
+    }
 }
 
 impl AgentHarness for OpenCodeHarness {
@@ -512,6 +535,9 @@ impl AgentHarness for OpenCodeHarness {
     fn command(&self) -> &'static str {
         "opencode"
     }
+    fn supports_mcp_client(&self) -> bool {
+        true
+    }
 }
 
 impl AgentHarness for AmpHarness {
@@ -523,6 +549,9 @@ impl AgentHarness for AmpHarness {
     }
     fn command(&self) -> &'static str {
         "amp"
+    }
+    fn supports_mcp_client(&self) -> bool {
+        true
     }
 }
 

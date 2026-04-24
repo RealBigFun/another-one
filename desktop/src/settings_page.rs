@@ -28,6 +28,7 @@ pub enum SettingsSection {
     OpenIn,
     GitActions,
     Keybindings,
+    Mcp,
 }
 
 impl SettingsSection {
@@ -37,6 +38,7 @@ impl SettingsSection {
             Self::OpenIn => "Open In",
             Self::GitActions => "Git Actions",
             Self::Keybindings => "Keybindings",
+            Self::Mcp => "MCP",
         }
     }
 }
@@ -929,6 +931,7 @@ impl AnotherOneApp {
                 section_active_bg,
                 cx,
             ))
+            .child(self.settings_nav_item(SettingsSection::Mcp, active, section_active_bg, cx))
     }
 
     fn settings_nav_item(
@@ -997,6 +1000,7 @@ impl AnotherOneApp {
             SettingsSection::OpenIn => self.settings_open_in_content(cx),
             SettingsSection::GitActions => self.settings_git_actions_content(cx),
             SettingsSection::Keybindings => self.settings_keybindings_content(cx),
+            SettingsSection::Mcp => self.settings_mcp_content(cx),
         }
     }
 

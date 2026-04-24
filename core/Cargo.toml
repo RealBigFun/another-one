@@ -27,6 +27,11 @@ hotpath = "0.15"
 portable-pty = "0.9.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `toml_edit` preserves formatting and comments on write, which the
+# MCP registry's Codex adapter needs so replacing registry-owned
+# `[mcp_servers.*]` rows doesn't trash user-authored comments or
+# re-order sibling entries in `~/.codex/config.toml`.
+toml_edit = "0.22"
 # `sync` only — brings in `tokio::sync::broadcast`, which we use
 # with its synchronous `send` / `try_recv` surface. No runtime is
 # constructed in core; broadcast's send + try_recv do not require one.
