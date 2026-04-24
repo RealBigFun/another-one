@@ -37,6 +37,15 @@ dirs = "5"
 tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
+# Logging stack: `tracing-subscriber` consumes both the daemon's own
+# `tracing::info!` calls and (via `tracing-log::LogTracer`) the
+# `log::info!` calls scattered through desktop+core. Without this
+# subscriber, every diagnostic in the daemon path is a silent no-op —
+# which is how the embedded iroh endpoint hung at `online()` for an
+# unbounded amount of time before anyone noticed.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-log = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

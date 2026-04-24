@@ -51,8 +51,30 @@ use app::{AnotherOneApp, ZoomIn, ZoomOut, ZoomReset};
 use assets::{asset_root, ProjectAssets};
 use platform::{CurrentPlatform, PlatformServices};
 
+/// Bridge `log` records into the `tracing` subscriber and install a
+/// fmt subscriber that prints to stderr. Default filter keeps our
+/// crates + iroh at info, everything else at warn. Override with
+/// `RUST_LOG=…` (e.g. `RUST_LOG=iroh=debug` when chasing connection
+/// issues). Has to run before any thread that might log — including
+/// `leakscope::start_sampler` and the GPUI app — so it goes first
+/// in `main`.
+fn init_logging() {
+    // LogTracer is a global state; ignore the "already set" error so
+    // a hot-reload-style re-entry (tests, etc.) doesn't panic.
+    let _ = tracing_log::LogTracer::init();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| {
+            "another_one=info,another_one_core=info,daemon_sandbox=info,iroh=info,warn".into()
+        });
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 #[hotpath::main]
 fn main() {
+    init_logging();
     leakscope::start_sampler();
     let asset_root = asset_root();
     Application::new()
