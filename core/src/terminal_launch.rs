@@ -82,7 +82,7 @@ pub enum WarmTerminalLaunchReply {
 }
 
 pub fn spawn_terminal_launch(
-    sender: mpsc::Sender<TerminalLaunchReply>,
+    sender: mpsc::SyncSender<TerminalLaunchReply>,
     key: TerminalRuntimeKey,
     cwd: Option<PathBuf>,
     launch_config: TerminalLaunchConfig,
@@ -108,7 +108,7 @@ pub fn spawn_terminal_launch(
 }
 
 pub fn spawn_warm_terminal_launch(
-    sender: mpsc::Sender<WarmTerminalLaunchReply>,
+    sender: mpsc::SyncSender<WarmTerminalLaunchReply>,
     launch_id: u64,
     cwd: Option<PathBuf>,
     launch_config: TerminalLaunchConfig,
@@ -142,7 +142,7 @@ fn format_launch_error_details(error: &anyhow::Error) -> String {
 }
 
 fn launch_terminal(
-    sender: mpsc::Sender<TerminalLaunchReply>,
+    sender: mpsc::SyncSender<TerminalLaunchReply>,
     key: TerminalRuntimeKey,
     cwd: Option<PathBuf>,
     launch_config: TerminalLaunchConfig,
@@ -206,6 +206,7 @@ fn launch_terminal(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(count) => {
+                    crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
                     // Only clone + broadcast when a mobile viewer is
                     // actually subscribed. Zero-subscriber send()
@@ -260,7 +261,7 @@ fn launch_terminal(
 }
 
 fn launch_warm_terminal(
-    sender: mpsc::Sender<WarmTerminalLaunchReply>,
+    sender: mpsc::SyncSender<WarmTerminalLaunchReply>,
     launch_id: u64,
     cwd: Option<PathBuf>,
     launch_config: TerminalLaunchConfig,
@@ -317,6 +318,7 @@ fn launch_warm_terminal(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(count) => {
+                    crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
                     let _ = broadcast_for_reader.send(bytes.clone());
                     let _ =

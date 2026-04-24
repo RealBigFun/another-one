@@ -18,6 +18,7 @@
 pub mod agents;
 pub mod git_actions;
 pub mod git_service;
+pub mod leakscope;
 pub mod mcp;
 pub mod open_in;
 pub mod process;

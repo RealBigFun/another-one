@@ -9,6 +9,7 @@ mod create_branch_modal;
 mod custom_actions_modal;
 mod daemon_host;
 mod layout;
+mod leakscope;
 mod left_sidebar;
 mod mcp_orchestrator;
 mod mcp_page;
@@ -52,6 +53,7 @@ use platform::{CurrentPlatform, PlatformServices};
 
 #[hotpath::main]
 fn main() {
+    leakscope::start_sampler();
     let asset_root = asset_root();
     Application::new()
         .with_assets(ProjectAssets {

@@ -81,6 +81,27 @@ const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
 const TERMINAL_RECENT_OUTPUT_LIMIT: usize = 16 * 1024;
 pub(crate) const RECENT_COMMITS_PAGE_SIZE: usize = 20;
 
+/// Max queued `TerminalLaunchReply`s between PTY reader threads and
+/// the GPUI drain. PTY reader threads produce ~one 8 KiB chunk per
+/// successful `read()`, so this cap bounds the in-flight memory for
+/// terminal output at roughly `8 KiB × CAP`. At 2048 that's ~16 MiB
+/// per channel — enough that brief (≈2 s at 8 MiB/s steady output)
+/// UI stalls drain cleanly without blocking, but tight enough that a
+/// real stall applies backpressure instead of ballooning RSS.
+///
+/// This constant replaced an unbounded `mpsc::channel()`. With
+/// multiple chatty agent tabs producing bytes faster than the GPUI
+/// render thread could drain them, the unbounded version queued
+/// ~37 GiB of pending output before the kernel OOM-killed the
+/// process.
+const TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
+/// Same shape as [`TERMINAL_LAUNCH_QUEUE_CAP`] but for prewarmed-tab
+/// output. Prewarmed tabs emit far less output (they're idle at a
+/// shell prompt until attached), so a matching cap is plenty of
+/// headroom for the spiky-launch case and still keeps overall
+/// in-flight memory in the tens of MiB.
+const WARM_TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
+
 fn trim_to_recent_output_limit(buffer: &mut String) {
     if buffer.len() <= TERMINAL_RECENT_OUTPUT_LIMIT {
         return;
@@ -1254,11 +1275,23 @@ pub struct AnotherOneApp {
     /// Receiver for background PR check lookups.
     project_check_runs_receiver: broadcast::Receiver<ProjectCheckRunsReply>,
     /// Sender used by background terminal launch/resume work.
-    terminal_launch_sender: mpsc::Sender<TerminalLaunchReply>,
+    ///
+    /// Bounded (`sync_channel`) so PTY reader threads experience natural
+    /// backpressure when the GPUI drain falls behind: a full queue
+    /// blocks the reader on `.send()`, which in turn lets the kernel
+    /// PTY buffer fill and apply `write()` backpressure to the child
+    /// process — exactly how a real terminal emulator behaves. An
+    /// unbounded channel here produced the 37 GiB RSS leak that caused
+    /// this type to exist in its current shape. See
+    /// [`TERMINAL_LAUNCH_QUEUE_CAP`].
+    terminal_launch_sender: mpsc::SyncSender<TerminalLaunchReply>,
     /// Receiver for background terminal launch/resume work.
     terminal_launch_receiver: mpsc::Receiver<TerminalLaunchReply>,
     /// Sender used by hidden add-agent terminal prewarming work.
-    warm_terminal_launch_sender: mpsc::Sender<WarmTerminalLaunchReply>,
+    ///
+    /// Bounded for the same reason as `terminal_launch_sender`. See
+    /// [`WARM_TERMINAL_LAUNCH_QUEUE_CAP`].
+    warm_terminal_launch_sender: mpsc::SyncSender<WarmTerminalLaunchReply>,
     /// Receiver for hidden add-agent terminal prewarming work.
     warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
     /// Live PTY-backed terminal runtimes keyed by section and tab id.
@@ -3597,8 +3630,10 @@ impl AnotherOneApp {
         let (commit_file_changes_sender, commit_file_changes_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             broadcast::channel(64);
-        let (terminal_launch_sender, terminal_launch_receiver) = mpsc::channel();
-        let (warm_terminal_launch_sender, warm_terminal_launch_receiver) = mpsc::channel();
+        let (terminal_launch_sender, terminal_launch_receiver) =
+            mpsc::sync_channel(TERMINAL_LAUNCH_QUEUE_CAP);
+        let (warm_terminal_launch_sender, warm_terminal_launch_receiver) =
+            mpsc::sync_channel(WARM_TERMINAL_LAUNCH_QUEUE_CAP);
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
             let mut expanded = HashSet::new();
             if let Some(first) = store.projects.first() {
@@ -4495,6 +4530,7 @@ impl AnotherOneApp {
     }
 
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
+        crate::leakscope::note_drain_call();
         let mut updated = false;
         // Tracks tabs that accumulated VT output during this drain tick. We
         // used to rebuild + clone each tab's surface snapshot on *every*
@@ -4544,6 +4580,7 @@ impl AnotherOneApp {
                     updated = true;
                 }
                 Ok(TerminalLaunchReply::Output { key, bytes }) => {
+                    crate::leakscope::note_drain_output(bytes.len());
                     self.append_terminal_recent_output(&key, &bytes);
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                         let terminal_update = runtime.apply_output(&bytes);
@@ -4655,10 +4692,16 @@ impl AnotherOneApp {
             }
         }
 
+        crate::leakscope::set_live_counts(
+            self.live_terminal_runtimes.len(),
+            self.terminal_surface_snapshots.len(),
+        );
+
         updated
     }
 
     fn drain_warm_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
+        crate::leakscope::note_drain_call();
         let mut updated = false;
 
         loop {
@@ -4725,6 +4768,7 @@ impl AnotherOneApp {
                     }
                 }
                 Ok(WarmTerminalLaunchReply::Output { launch_id, bytes }) => {
+                    crate::leakscope::note_drain_output(bytes.len());
                     let attached_key = self
                         .prewarmed_terminal_launches
                         .get(&launch_id)
