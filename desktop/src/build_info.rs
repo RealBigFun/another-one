@@ -43,17 +43,25 @@ pub const fn is_dev_build() -> bool {
 }
 
 /// One-line summary suited for a chip label. Examples:
-/// `dev · 225a501`, `dev · 225a501·dirty`, `225a501`.
-pub fn chip_label() -> String {
-    let mut out = String::new();
-    if is_dev_build() {
-        out.push_str("dev · ");
-    }
-    out.push_str(GIT_SHA);
-    if is_dirty() {
-        out.push_str("·dirty");
-    }
-    out
+/// `dev · 225a501`, `dev · 225a501 · dirty`, `225a501`.
+///
+/// Returns `&'static str` (`LazyLock`-leaked) so the titlebar can
+/// render the chip without per-frame allocation, matching the
+/// pattern in [`tooltip_text`].
+pub fn chip_label() -> &'static str {
+    use std::sync::LazyLock;
+    static LABEL: LazyLock<String> = LazyLock::new(|| {
+        let mut out = String::new();
+        if is_dev_build() {
+            out.push_str("dev · ");
+        }
+        out.push_str(GIT_SHA);
+        if is_dirty() {
+            out.push_str(" · dirty");
+        }
+        out
+    });
+    LABEL.as_str()
 }
 
 /// Single-line tooltip string with profile, branch, full short SHA,
@@ -90,9 +98,12 @@ fn format_build_time() -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02} UTC")
 }
 
-/// Minimal civil-date conversion (Howard Hinnant's algorithm,
-/// trimmed to date+hour+minute). No crate dep, ~no perf cost since
-/// this runs once on tooltip hover.
+/// Minimal civil-date conversion based on Howard Hinnant's
+/// `days_from_civil` algorithm
+/// (<https://howardhinnant.github.io/date_algorithms.html>),
+/// trimmed to date+hour+minute. No crate dep, ~no perf cost since
+/// this runs once per program lifetime via `tooltip_text`'s
+/// `LazyLock`.
 fn unix_to_ymdhm(secs: i64) -> (i32, u32, u32, u32, u32) {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
@@ -109,4 +120,41 @@ fn unix_to_ymdhm(secs: i64) -> (i32, u32, u32, u32, u32) {
     let mo = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
     let y = (y + if mo <= 2 { 1 } else { 0 }) as i32;
     (y, mo, d, h, mi)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unix_to_ymdhm;
+
+    #[test]
+    fn unix_to_ymdhm_handles_unix_epoch() {
+        // 1970-01-01 00:00:00 UTC
+        assert_eq!(unix_to_ymdhm(0), (1970, 1, 1, 0, 0));
+    }
+
+    #[test]
+    fn unix_to_ymdhm_handles_known_timestamp() {
+        // 2026-04-24 23:35:59 UTC = 1777_073_759
+        // (the build timestamp from the smoke-test run that
+        // motivated this PR — concrete grounding so future drift
+        // in the algorithm gets caught)
+        let (y, mo, d, h, mi) = unix_to_ymdhm(1_777_073_759);
+        assert_eq!((y, mo, d, h, mi), (2026, 4, 24, 23, 35));
+    }
+
+    #[test]
+    fn unix_to_ymdhm_handles_year_boundary() {
+        // 2025-12-31 23:59:00 UTC = 1767_225_540
+        assert_eq!(unix_to_ymdhm(1_767_225_540), (2025, 12, 31, 23, 59));
+        // 2026-01-01 00:00:00 UTC = 1767_225_600
+        assert_eq!(unix_to_ymdhm(1_767_225_600), (2026, 1, 1, 0, 0));
+    }
+
+    #[test]
+    fn unix_to_ymdhm_handles_leap_day() {
+        // 2024-02-29 12:00:00 UTC = 1709_208_000
+        assert_eq!(unix_to_ymdhm(1_709_208_000), (2024, 2, 29, 12, 0));
+        // 2024-03-01 00:00:00 UTC = 1709_251_200
+        assert_eq!(unix_to_ymdhm(1_709_251_200), (2024, 3, 1, 0, 0));
+    }
 }

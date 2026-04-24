@@ -9,8 +9,19 @@
 //!
 //! Re-run triggers cover the cases where the answer would actually
 //! change: a new commit (HEAD moves), a different branch checked
-//! out (HEAD's contents change), or staged/unstaged changes (index
-//! moves). Touching unrelated files won't force a rebuild.
+//! out (HEAD's contents change), or *staged* changes (index moves).
+//! Two known caveats, both bounded:
+//!
+//! * Unstaged changes don't move `.git/index`, so the `·dirty` flag
+//!   may be stale until the next cargo invalidation. The SHA is
+//!   still correct in that window. `cargo clean -p another-one`
+//!   forces a refresh.
+//! * In git worktrees the `.git` entry is a file, not a directory,
+//!   and `.git/HEAD` doesn't exist as a literal filesystem path.
+//!   Cargo treats absent `rerun-if-changed` targets conservatively
+//!   (reruns every build), so worktree builds re-run this script
+//!   on every cargo invocation — over-triggering but never
+//!   under-triggering.
 
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
