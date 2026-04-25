@@ -30,6 +30,7 @@ import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/hover_icon_button.dart';
+import '../../widgets/run_mutation.dart';
 import '../new_task/new_task_modal.dart';
 
 class DesktopSidebar extends ConsumerWidget {
@@ -146,24 +147,18 @@ class _SidebarFooter extends ConsumerWidget {
       dialogTitle: 'Add Project Folder',
     );
     if (selectedPath == null || selectedPath.isEmpty) return;
+    if (!context.mounted) return;
     final transport = ref.read(localConnectionProvider);
-    try {
-      final inserted = await transport.addProject(selectedPath);
-      if (!context.mounted) return;
-      if (!inserted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Project already added at that path'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (e) {
-      if (!context.mounted) return;
+    final inserted = await runMutation(
+      context,
+      () => transport.addProject(selectedPath),
+      errorPrefix: 'Failed to add project',
+    );
+    if (inserted == false && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to add project: $e'),
-          backgroundColor: AppTokens.errorBg,
+        const SnackBar(
+          content: Text('Project already added at that path'),
+          duration: Duration(seconds: 3),
         ),
       );
     }
@@ -484,14 +479,11 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
     );
     if (confirmed != true || !mounted) return;
     final transport = ref.read(localConnectionProvider);
-    try {
-      await transport.removeProject(project.id);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to remove project: $e')),
-      );
-    }
+    await runMutation(
+      context,
+      () => transport.removeProject(project.id),
+      errorPrefix: 'Failed to remove project',
+    );
   }
 }
 
@@ -621,17 +613,14 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
     final transport = ref.read(localConnectionProvider);
     switch (value) {
       case 'pin':
-        try {
-          await transport.setTaskPinned(
+        await runMutation(
+          context,
+          () => transport.setTaskPinned(
             widget.task.id,
             !widget.task.pinned,
-          );
-        } catch (e) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to toggle pin: $e')),
-          );
-        }
+          ),
+          errorPrefix: 'Failed to toggle pin',
+        );
       case 'delete':
         await _confirmDelete();
       case 'rename':
@@ -652,14 +641,11 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
     final trimmed = newName.trim();
     if (trimmed.isEmpty || trimmed == widget.task.name) return;
     final transport = ref.read(localConnectionProvider);
-    try {
-      await transport.renameTask(widget.task.id, trimmed);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to rename task: $e')),
-      );
-    }
+    await runMutation(
+      context,
+      () => transport.renameTask(widget.task.id, trimmed),
+      errorPrefix: 'Failed to rename task',
+    );
   }
 
   void _cancelRename() {
@@ -700,19 +686,18 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
     );
     if (confirmed != true || !mounted) return;
     final transport = ref.read(localConnectionProvider);
-    try {
-      await transport.removeTask(widget.projectId, task.id);
+    final removed = await runMutation(
+      context,
+      () => transport.removeTask(widget.projectId, task.id),
+      errorPrefix: 'Failed to delete task',
+    );
+    if (removed != null) {
       // If the deleted task was the currently-selected one, clear
       // selection so the main pane drops back to the welcome state.
       final selection = ref.read(selectedTabProvider);
       if (selection?.sectionId == task.sectionId) {
         ref.read(selectedTabProvider.notifier).clear();
       }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to delete task: $e')),
-      );
     }
   }
 
