@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/build_info_provider.dart';
+import '../../state/left_sidebar_provider.dart';
 import '../../state/resource_sample_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
@@ -42,14 +43,8 @@ class DesktopTitlebar extends ConsumerWidget {
           _TitlebarIconButton(
             icon: 'layout-split',
             tooltip: 'Toggle sidebar',
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Sidebar toggle is not yet wired'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            },
+            onPressed: () =>
+                ref.read(leftSidebarOpenProvider.notifier).toggle(),
           ),
           const SizedBox(width: AppTokens.space2),
           // Draggable region — Flutter doesn't expose a native

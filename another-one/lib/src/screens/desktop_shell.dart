@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../state/left_sidebar_provider.dart';
 import '../state/local_connection_provider.dart';
 import '../state/tab_selection_provider.dart';
 import '../tokens.dart';
@@ -31,6 +32,7 @@ class DesktopShell extends ConsumerWidget {
     // Eagerly read the local connection so the daemon-backed
     // transport spins up before anything tries to render projects.
     ref.watch(localConnectionProvider);
+    final leftOpen = ref.watch(leftSidebarOpenProvider);
     final rightOpen = ref.watch(rightSidebarOpenProvider);
     return Scaffold(
       backgroundColor: AppTokens.terminalBg,
@@ -40,7 +42,7 @@ class DesktopShell extends ConsumerWidget {
           Expanded(
             child: Row(
               children: [
-                const DesktopSidebar(),
+                if (leftOpen) const DesktopSidebar(),
                 const Expanded(child: _MainArea()),
                 if (rightOpen) const DesktopRightSidebar(),
               ],
