@@ -82,4 +82,14 @@ pub trait HeadlessPlatform {
     /// migration; preserve them verbatim so existing screenshots
     /// and muscle memory don't drift.
     fn modifier_label() -> &'static str;
+
+    /// Open `url` in the system's default external handler.
+    ///
+    /// Side-effecting: spawns a child process (`open`, `xdg-open`,
+    /// `cmd /C start "" …` on the three desktop platforms). On
+    /// iOS and Android, where Rust can't directly invoke a URL
+    /// handler, this returns `Err` so callers can surface the
+    /// limitation; the future Flutter UI will route URL opens
+    /// through Dart platform channels and bypass this method.
+    fn open_external_url(url: &str) -> Result<(), String>;
 }
