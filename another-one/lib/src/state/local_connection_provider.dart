@@ -21,19 +21,22 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../connection.dart';
 import '../rust/api/iroh_client.dart';
 import '../transport.dart';
 import '../transport_local.dart';
 import 'connection_manager_provider.dart';
 
-/// The desktop's `LocalTransport`. Created lazily on first read,
-/// connected immediately, and registered in the
+/// The desktop's local-daemon connection, exposed as the abstract
+/// [`DaemonConnection`] so the UI doesn't depend on the concrete
+/// transport class. Created lazily on first read, connected
+/// immediately, and registered in the
 /// [`connectionManagerProvider`].
 ///
 /// Idempotent: a second read returns the same instance. The provider
 /// is `keepAlive` by default since it's read by the desktop shell
 /// for the entire app lifetime.
-final localConnectionProvider = Provider<LocalTransport>((ref) {
+final localConnectionProvider = Provider<DaemonConnection>((ref) {
   final transport = LocalTransport();
   ref.read(connectionManagerProvider).add(transport);
   transport.connect();

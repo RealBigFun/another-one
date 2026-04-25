@@ -99,6 +99,86 @@ abstract class DaemonConnection {
 
   /// Sends raw bytes to the currently-attached tab's PTY stdin.
   void sendBytes(List<int> bytes);
+
+  // ── Project mutation ────────────────────────────────────────────
+  //
+  // These verbs each have a corresponding `Control` wire variant on
+  // the iroh transport that hasn't landed yet (see migration plan
+  // §"Wire-protocol additions"). LocalTransport implements them
+  // directly against the in-process RegistryState; IrohTransport
+  // inherits the throwing defaults below until the wire grows. The
+  // throw message names the missing wire variant so the failure mode
+  // is "loud and self-documenting" rather than silent no-op when a
+  // remote-host UI tries to mutate.
+
+  /// Add an on-disk project directory to the daemon's project store.
+  /// Returns whether a new project was inserted (`false` means the
+  /// path was already known — idempotent).
+  Future<bool> addProject(String path) {
+    throw UnimplementedError(
+      'addProject: requires Control::AddProject wire variant on the '
+      'iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Remove a project from the daemon's store. Cascades to the
+  /// project's tasks + terminal sections.
+  Future<void> removeProject(String projectId) {
+    throw UnimplementedError(
+      'removeProject: requires Control::RemoveProject wire variant '
+      'on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Create a worktree task on `projectId`. Returns the new task's
+  /// `sectionId` so callers can navigate to it.
+  Future<String> createWorktreeTask({
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    AgentProvider? agentProvider,
+  }) {
+    throw UnimplementedError(
+      'createWorktreeTask: requires Control::CreateTask wire variant '
+      'on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Rename a task. Returns whether the on-disk store actually
+  /// changed (false on unknown id or no-op rename).
+  Future<bool> renameTask(String taskId, String newName) {
+    throw UnimplementedError(
+      'renameTask: requires Control::RenameTask wire variant on the '
+      'iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Pin or unpin a task. Returns whether state changed.
+  Future<bool> setTaskPinned(String taskId, bool pinned) {
+    throw UnimplementedError(
+      'setTaskPinned: requires Control::SetTaskPinned wire variant '
+      'on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Remove a task from the daemon's store. The on-disk worktree
+  /// branch is left untouched.
+  Future<bool> removeTask(String projectId, String taskId) {
+    throw UnimplementedError(
+      'removeTask: requires Control::DeleteTask wire variant on the '
+      'iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Resolve a project's GitHub remote URL (`git remote get-url
+  /// origin`, normalised). Returns `null` when not a github.com
+  /// remote.
+  Future<String?> readProjectGithubUrl(String projectId) {
+    throw UnimplementedError(
+      'readProjectGithubUrl: requires the iroh transport to expose '
+      'the project github link cache (not yet implemented).',
+    );
+  }
 }
 
 /// In-memory list of active [DaemonConnection]s. Holds N regardless

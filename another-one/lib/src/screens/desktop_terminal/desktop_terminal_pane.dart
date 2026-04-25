@@ -24,11 +24,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../../connection.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../transport.dart';
-import '../../transport_local.dart';
 
 class DesktopTerminalPane extends ConsumerWidget {
   const DesktopTerminalPane({super.key, required this.selection});
@@ -53,7 +53,7 @@ class _AttachedTerminal extends StatefulWidget {
     required this.selection,
   });
 
-  final LocalTransport transport;
+  final DaemonConnection transport;
   final TabSelection selection;
 
   @override

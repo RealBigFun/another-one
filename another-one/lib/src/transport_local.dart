@@ -19,7 +19,11 @@ import 'rust/api/iroh_client.dart' show AgentProvider, WorkerReply;
 import 'rust/api/local_session.dart';
 import 'transport.dart';
 
-class LocalTransport implements TerminalTransport, DaemonConnection {
+// Extends `DaemonConnection` so future trait-only methods with
+// default impls are inherited automatically; sibling
+// `IrohTransport` does the same. `TerminalTransport` is still an
+// `implements` since it's a separate abstract.
+class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// Stable identifier for this connection within a `ConnectionManager`.
   /// Today there's only ever one local connection (the desktop's own
   /// embedded daemon), so a constant is fine; switch to a uuid if/when
@@ -117,6 +121,7 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
   /// On success the daemon pushes a fresh ProjectList over
   /// [workerReplies], so callers don't need a follow-up
   /// [listProjects].
+  @override
   Future<bool> addProject(String path) async {
     final session = _session;
     if (session == null) {
@@ -129,6 +134,7 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
   /// to the project's tasks + terminal sections. Idempotent — an
   /// unknown id is a silent no-op. The daemon pushes a fresh
   /// ProjectList on completion.
+  @override
   Future<void> removeProject(String projectId) async {
     final session = _session;
     if (session == null) {
@@ -147,6 +153,7 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
   /// a plain shell tab. Any concrete provider value is propagated
   /// to `TerminalLaunchConfig::for_provider` so future `launch_tab`
   /// calls spawn the agent CLI.
+  @override
   Future<String> createWorktreeTask({
     required String projectId,
     required String taskName,
@@ -168,6 +175,7 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
   /// Rename a task. Empty/whitespace-only names are rejected. Returns
   /// whether the on-disk store actually changed (false for unknown
   /// ids or no-op renames).
+  @override
   Future<bool> renameTask(String taskId, String newName) async {
     final session = _session;
     if (session == null) {
@@ -179,6 +187,7 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
   /// Pin or unpin a task. Pinned tasks float to the top of their
   /// project's list. Returns whether state changed (false on
   /// idempotent re-set).
+  @override
   Future<bool> setTaskPinned(String taskId, bool pinned) async {
     final session = _session;
     if (session == null) {
@@ -190,6 +199,7 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
   /// Remove a task from the embedded daemon's store. The on-disk
   /// worktree branch is left untouched. Returns whether a task was
   /// actually removed (false on unknown id).
+  @override
   Future<bool> removeTask(String projectId, String taskId) async {
     final session = _session;
     if (session == null) {
@@ -203,6 +213,7 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
   /// path. Returns `null` when the project has no `origin` remote
   /// or the remote isn't a github.com URL. Stable across the
   /// project's lifetime; cache results aggressively.
+  @override
   Future<String?> readProjectGithubUrl(String projectId) async {
     final session = _session;
     if (session == null) {

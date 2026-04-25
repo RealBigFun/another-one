@@ -13,7 +13,14 @@ import 'connection.dart';
 import 'rust/api/iroh_client.dart';
 import 'transport.dart';
 
-class IrohTransport implements TerminalTransport, DaemonConnection {
+// Extends `DaemonConnection` (not `implements`) so the abstract
+// class's default mutation impls — which throw with a wire-variant-
+// specific message — are inherited unchanged. `implements
+// TerminalTransport` is still required because that's a separate
+// abstract class. When the iroh wire grows `Control::AddProject`
+// etc., override these methods to route through the new variants
+// instead of throwing.
+class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// Hex-encoded EndpointId of the daemon to dial.
   final String endpointId;
 
