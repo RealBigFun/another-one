@@ -216,6 +216,13 @@ class TaskSummary {
   /// sort to the top of the mobile projects drawer.
   final bool pinned;
 
+  /// "5 minutes ago"-style string for the task's branch last
+  /// commit. Empty when the project hasn't been git-refreshed
+  /// yet — UI joins this with the branch name (when it differs
+  /// from the task name) using `•` and drops empty segments,
+  /// mirroring `desktop/src/left_sidebar.rs::branch_row`'s `meta`.
+  final String lastCommitRelative;
+
   const TaskSummary({
     required this.id,
     required this.name,
@@ -224,6 +231,7 @@ class TaskSummary {
     required this.activeTabId,
     required this.tabs,
     required this.pinned,
+    required this.lastCommitRelative,
   });
 
   @override
@@ -234,7 +242,8 @@ class TaskSummary {
       branchName.hashCode ^
       activeTabId.hashCode ^
       tabs.hashCode ^
-      pinned.hashCode;
+      pinned.hashCode ^
+      lastCommitRelative.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -247,7 +256,8 @@ class TaskSummary {
           branchName == other.branchName &&
           activeTabId == other.activeTabId &&
           tabs == other.tabs &&
-          pinned == other.pinned;
+          pinned == other.pinned &&
+          lastCommitRelative == other.lastCommitRelative;
 }
 
 @freezed

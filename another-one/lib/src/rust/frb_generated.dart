@@ -1817,8 +1817,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskSummary dco_decode_task_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return TaskSummary(
       id: dco_decode_String(arr[0]),
       name: dco_decode_String(arr[1]),
@@ -1827,6 +1827,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       activeTabId: dco_decode_String(arr[4]),
       tabs: dco_decode_list_tab_summary(arr[5]),
       pinned: dco_decode_bool(arr[6]),
+      lastCommitRelative: dco_decode_String(arr[7]),
     );
   }
 
@@ -2225,6 +2226,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_activeTabId = sse_decode_String(deserializer);
     var var_tabs = sse_decode_list_tab_summary(deserializer);
     var var_pinned = sse_decode_bool(deserializer);
+    var var_lastCommitRelative = sse_decode_String(deserializer);
     return TaskSummary(
       id: var_id,
       name: var_name,
@@ -2233,6 +2235,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       activeTabId: var_activeTabId,
       tabs: var_tabs,
       pinned: var_pinned,
+      lastCommitRelative: var_lastCommitRelative,
     );
   }
 
@@ -2632,6 +2635,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.activeTabId, serializer);
     sse_encode_list_tab_summary(self.tabs, serializer);
     sse_encode_bool(self.pinned, serializer);
+    sse_encode_String(self.lastCommitRelative, serializer);
   }
 
   @protected

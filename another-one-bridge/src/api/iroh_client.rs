@@ -147,6 +147,13 @@ pub struct TaskSummary {
     /// Mirrors desktop's `UiState::pinned_task_ids`. Pinned tasks
     /// sort to the top of the mobile projects drawer.
     pub pinned: bool,
+    /// "5 minutes ago"-style string for the task's branch last
+    /// commit. Empty when the project hasn't been git-refreshed
+    /// yet — UI joins this with the branch name (when it differs
+    /// from the task name) using `•` and drops empty segments,
+    /// mirroring `desktop/src/left_sidebar.rs::branch_row`'s `meta`.
+    #[serde(default)]
+    pub last_commit_relative: String,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`

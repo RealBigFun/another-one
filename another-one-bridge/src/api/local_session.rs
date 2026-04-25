@@ -784,6 +784,10 @@ fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
                             }
                         })
                         .collect();
+                    let last_commit_relative = store
+                        .branch_view(&project.id, &task.branch_name)
+                        .map(|branch| branch.last_commit_relative)
+                        .unwrap_or_default();
                     TaskSummary {
                         id: task.id,
                         name: task.name,
@@ -792,6 +796,7 @@ fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
                         active_tab_id: task.active_tab_id,
                         tabs,
                         pinned: task_pinned,
+                        last_commit_relative,
                     }
                 })
                 .collect();

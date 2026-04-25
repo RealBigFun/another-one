@@ -156,6 +156,14 @@ pub struct TaskSummary {
     /// sort to the top of the sidebar; mirrored on mobile so the
     /// projects-drawer rendering matches.
     pub pinned: bool,
+    /// Human-readable "5 minutes ago" string for the task's branch
+    /// last commit. Populated from `branch.last_commit_relative` on
+    /// the desktop's `ProjectStore`. Empty when the project hasn't
+    /// been git-refreshed yet, so callers can join with `•` and
+    /// drop empty segments. Wire-additive: older daemons will
+    /// `serde(default)` this to `""`.
+    #[serde(default)]
+    pub last_commit_relative: String,
 }
 
 /// Lossy wire projection of

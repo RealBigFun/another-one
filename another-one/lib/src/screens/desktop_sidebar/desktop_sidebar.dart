@@ -926,6 +926,9 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
     if (task.branchName.isNotEmpty && task.branchName != task.name) {
       parts.add(task.branchName);
     }
+    if (task.lastCommitRelative.isNotEmpty) {
+      parts.add(task.lastCommitRelative);
+    }
     if (parts.isEmpty) return null;
     return parts.join(' • ');
   }
