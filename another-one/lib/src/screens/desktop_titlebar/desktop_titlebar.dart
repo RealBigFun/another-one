@@ -16,6 +16,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
 import '../pair_mobile/pair_mobile_modal.dart';
@@ -61,14 +62,8 @@ class DesktopTitlebar extends ConsumerWidget {
           _TitlebarIconButton(
             icon: 'layout-split',
             tooltip: 'Toggle right sidebar',
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Right sidebar is not yet ported'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            },
+            onPressed: () =>
+                ref.read(rightSidebarOpenProvider.notifier).toggle(),
           ),
         ],
       ),
