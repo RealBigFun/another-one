@@ -5,6 +5,7 @@
 
 import 'api/iroh_client.dart';
 import 'api/local_session.dart';
+import 'api/pair.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
@@ -89,6 +90,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw);
 
   @protected
+  PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -114,6 +118,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AgentProvider? dco_decode_opt_box_autoadd_agent_provider(dynamic raw);
+
+  @protected
+  PairingInfo? dco_decode_opt_box_autoadd_pairing_info(dynamic raw);
+
+  @protected
+  PairingInfo dco_decode_pairing_info(dynamic raw);
 
   @protected
   ProjectKind dco_decode_project_kind(dynamic raw);
@@ -206,6 +216,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  PairingInfo sse_decode_box_autoadd_pairing_info(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
@@ -235,6 +248,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider? sse_decode_opt_box_autoadd_agent_provider(
     SseDeserializer deserializer,
   );
+
+  @protected
+  PairingInfo? sse_decode_opt_box_autoadd_pairing_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PairingInfo sse_decode_pairing_info(SseDeserializer deserializer);
 
   @protected
   ProjectKind sse_decode_project_kind(SseDeserializer deserializer);
@@ -339,6 +360,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_pairing_info(
+    PairingInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
@@ -379,6 +406,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     AgentProvider? self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_opt_box_autoadd_pairing_info(
+    PairingInfo? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_pairing_info(PairingInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_project_kind(ProjectKind self, SseSerializer serializer);
