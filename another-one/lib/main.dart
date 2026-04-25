@@ -21,6 +21,7 @@ import 'src/benchmark_page.dart';
 import 'src/rust/api/embedded_daemon.dart' as embedded_daemon;
 import 'src/rust/api/iroh_client.dart';
 import 'src/rust/frb_generated.dart';
+import 'src/surface_router.dart';
 import 'src/theme.dart';
 
 /// Activated by `flutter run/build … --dart-define=BENCHMARK=true`.
@@ -61,9 +62,17 @@ class AnotherOneApp extends StatelessWidget {
   const AnotherOneApp({super.key});
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'AnotherOne',
-        theme: buildAppTheme(),
-        home: kBenchmarkMode ? const BenchmarkPage() : const AppRoot(),
-      );
+  Widget build(BuildContext context) {
+    // Surface flag wins over benchmark and the regular AppRoot — it
+    // exists for visual review, so a typo failing through to the
+    // shell would defeat the point.
+    final surface = surfaceFor(kSurface);
+    final home = surface ??
+        (kBenchmarkMode ? const BenchmarkPage() : const AppRoot());
+    return MaterialApp(
+      title: 'AnotherOne',
+      theme: buildAppTheme(),
+      home: home,
+    );
+  }
 }
