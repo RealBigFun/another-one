@@ -19,6 +19,7 @@ import '../../state/local_connection_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/agent_provider_icon.dart';
+import '../../widgets/pill.dart';
 
 Future<void> showNewTaskModal(
   BuildContext context, {
@@ -341,46 +342,26 @@ class _AgentChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: onTap == null
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppTokens.space4,
-            vertical: AppTokens.space2,
-          ),
-          decoration: BoxDecoration(
-            color: selected ? AppTokens.overlayActive : AppTokens.overlayRest,
-            borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-            border: Border.all(
-              color: selected ? AppTokens.focusRing : AppTokens.border,
+    return Pill(
+      label: label,
+      active: selected,
+      onTap: onTap,
+      iconWidget: value == null
+          ? null
+          : AgentProviderIcon(
+              provider: value,
+              size: 13,
+              color: AppTokens.textPrimary,
             ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (value != null) ...[
-                AgentProviderIcon(
-                  provider: value,
-                  size: 13,
-                  color: AppTokens.textPrimary,
-                ),
-                const SizedBox(width: AppTokens.space2),
-              ],
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: AppTokens.fontBodyLg,
-                  color: AppTokens.textPrimary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      // Filled at-rest with a border (matches GPUI's chip). Right-
+      // sidebar tabs override these to transparent + no border.
+      restBg: AppTokens.overlayRest,
+      borderColor: AppTokens.border,
+      activeBorderColor: AppTokens.focusRing,
+      activeColor: AppTokens.textPrimary,
+      inactiveColor: AppTokens.textPrimary,
+      horizontalPadding: AppTokens.space4,
+      iconSize: 13,
     );
   }
 }

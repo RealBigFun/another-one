@@ -28,6 +28,8 @@ import '../../state/rename_target_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/hover_icon_button.dart';
 import '../new_task/new_task_modal.dart';
 
 class DesktopSidebar extends ConsumerWidget {
@@ -52,7 +54,11 @@ class DesktopSidebar extends ConsumerWidget {
               data: _ProjectList.new,
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) =>
-                  _SidebarMessage(text: 'Project list error: $e'),
+                  EmptyState(
+                    text: 'Project list error: $e',
+                    padding: const EdgeInsets.all(AppTokens.space7),
+                    fontSize: AppTokens.fontBody,
+                  ),
             ),
           ),
           const _SidebarFooter(),
@@ -108,7 +114,8 @@ class _SidebarFooter extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          _FooterIconButton(
+          HoverIconButton(
+            size: 28,
             tooltip: 'Settings',
             icon: 'settings',
             onPressed: () {
@@ -123,7 +130,8 @@ class _SidebarFooter extends ConsumerWidget {
             },
           ),
           const SizedBox(width: AppTokens.space1),
-          _FooterIconButton(
+          HoverIconButton(
+            size: 28,
             tooltip: 'Add project',
             icon: 'folder-plus',
             onPressed: () => _addProject(context, ref),
@@ -162,55 +170,6 @@ class _SidebarFooter extends ConsumerWidget {
   }
 }
 
-class _FooterIconButton extends StatefulWidget {
-  const _FooterIconButton({
-    required this.tooltip,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final String tooltip;
-  final String icon;
-  final VoidCallback onPressed;
-
-  @override
-  State<_FooterIconButton> createState() => _FooterIconButtonState();
-}
-
-class _FooterIconButtonState extends State<_FooterIconButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: widget.tooltip,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onPressed,
-          child: Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: _hovered ? AppTokens.overlayHover : Colors.transparent,
-              borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-            ),
-            alignment: Alignment.center,
-            child: AppIcon(
-              widget.icon,
-              size: 15,
-              color: AppTokens.textMuted,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ProjectList extends StatelessWidget {
   const _ProjectList(this.projects);
 
@@ -219,8 +178,10 @@ class _ProjectList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (projects.isEmpty) {
-      return const _SidebarMessage(
+      return const EmptyState(
         text: 'No projects yet.\nUse the + at the bottom to add one.',
+        padding: EdgeInsets.all(AppTokens.space7),
+        fontSize: AppTokens.fontBody,
       );
     }
     return ListView.builder(
@@ -232,26 +193,6 @@ class _ProjectList extends StatelessWidget {
       ),
       itemCount: projects.length,
       itemBuilder: (_, i) => _ProjectRow(projects[i]),
-    );
-  }
-}
-
-class _SidebarMessage extends StatelessWidget {
-  const _SidebarMessage({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(AppTokens.space7),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: AppTokens.fontBody,
-          color: AppTokens.textMuted,
-        ),
-      ),
     );
   }
 }
@@ -334,7 +275,7 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                       color: AppTokens.chevron,
                     ),
                     const SizedBox(width: AppTokens.space2),
-                    _RowIconButton(
+                    HoverIconButton(
                       icon: 'ellipsis',
                       tooltip: 'More',
                       onPressed: () =>
@@ -348,7 +289,7 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                     // by reading the cached `projectGithubUrlProvider`
                     // for this project id.
                     _ProjectGithubButton(projectId: project.id),
-                    _RowIconButton(
+                    HoverIconButton(
                       icon: 'plus',
                       tooltip: 'New task',
                       onPressed: () =>
@@ -934,119 +875,33 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
   }
 }
 
-/// Compact icon button used for the inline ellipsis / plus / github
-/// controls on a project row. Mirrors GPUI's 24px square buttons.
-class _RowIconButton extends StatefulWidget {
-  const _RowIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final String icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  @override
-  State<_RowIconButton> createState() => _RowIconButtonState();
-}
-
-class _RowIconButtonState extends State<_RowIconButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: widget.tooltip,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onPressed,
-          child: Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: _hovered ? AppTokens.overlayHover : Colors.transparent,
-              borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-            ),
-            alignment: Alignment.center,
-            child: AppIcon(
-              widget.icon,
-              size: 13,
-              color: AppTokens.textMuted,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// GitHub-link slot for project rows. GPUI keeps the slot present
 /// in the row layout regardless of whether a URL resolves — when
 /// it doesn't, the icon is rendered transparently so widths stay
-/// stable as the cache populates. We mirror that by always
-/// occupying the 24×24 slot and only toggling opacity/click
-/// behaviour off the cached `projectGithubUrlProvider` state.
-class _ProjectGithubButton extends ConsumerStatefulWidget {
+/// stable as the cache populates. We mirror that with
+/// `HoverIconButton`'s `iconOpacity` and `onPressed: null` modes:
+/// the slot occupies the same 24×24 either way, and `onPressed`
+/// gates the hover bg + click handler.
+class _ProjectGithubButton extends ConsumerWidget {
   const _ProjectGithubButton({required this.projectId});
 
   final String projectId;
 
   @override
-  ConsumerState<_ProjectGithubButton> createState() =>
-      _ProjectGithubButtonState();
-}
-
-class _ProjectGithubButtonState extends ConsumerState<_ProjectGithubButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final url =
-        ref.watch(projectGithubUrlProvider(widget.projectId)).valueOrNull;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final url = ref.watch(projectGithubUrlProvider(projectId)).valueOrNull;
     final hasUrl = url != null && url.isNotEmpty;
-    final slot = Container(
-      width: 24,
-      height: 24,
-      decoration: BoxDecoration(
-        color: hasUrl && _hovered
-            ? AppTokens.overlayHover
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-      ),
-      alignment: Alignment.center,
-      child: Opacity(
-        opacity: hasUrl ? 1.0 : 0.0,
-        child: const AppIcon(
-          'github',
-          size: 13,
-          color: AppTokens.textMuted,
-        ),
-      ),
-    );
-    if (!hasUrl) {
-      return slot;
-    }
-    return Tooltip(
-      message: "Open this project's GitHub link",
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () async {
-            final uri = Uri.tryParse(url);
-            if (uri == null) return;
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          },
-          child: slot,
-        ),
-      ),
+    return HoverIconButton(
+      icon: 'github',
+      tooltip: "Open this project's GitHub link",
+      iconOpacity: hasUrl ? 1.0 : 0.0,
+      onPressed: hasUrl
+          ? () async {
+              final uri = Uri.tryParse(url);
+              if (uri == null) return;
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+          : null,
     );
   }
 }

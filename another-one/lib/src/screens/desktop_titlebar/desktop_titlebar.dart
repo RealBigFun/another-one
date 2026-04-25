@@ -25,7 +25,7 @@ import '../../state/left_sidebar_provider.dart';
 import '../../state/resource_sample_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
-import '../../widgets/app_icon.dart';
+import '../../widgets/hover_icon_button.dart';
 import '../pair_mobile/pair_mobile_modal.dart';
 
 class DesktopTitlebar extends ConsumerWidget {
@@ -44,7 +44,13 @@ class DesktopTitlebar extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: AppTokens.space2),
       child: Row(
         children: [
-          _TitlebarIconButton(
+          HoverIconButton(
+            size: 28,
+            iconSize: 15,
+            iconColor: AppTokens.textPrimary,
+            restBg: AppTokens.overlayRest,
+            hoverBg: AppTokens.overlayHoverStrong,
+            showBorder: true,
             icon: 'layout-split',
             tooltip: 'Toggle sidebar',
             onPressed: () =>
@@ -62,7 +68,13 @@ class DesktopTitlebar extends ConsumerWidget {
           const SizedBox(width: AppTokens.space2),
           const _ResourceIndicator(),
           const SizedBox(width: AppTokens.space2),
-          _TitlebarIconButton(
+          HoverIconButton(
+            size: 28,
+            iconSize: 15,
+            iconColor: AppTokens.textPrimary,
+            restBg: AppTokens.overlayRest,
+            hoverBg: AppTokens.overlayHoverStrong,
+            showBorder: true,
             icon: 'layout-split',
             tooltip: 'Toggle right sidebar',
             onPressed: () =>
@@ -180,20 +192,11 @@ class _BuildChip extends ConsumerWidget {
 /// URL — same gating GPUI applies (`titlebar.rs` only renders the
 /// github button when `active_open_in_project_id().is_some()` and
 /// `project_github_links.contains(project_id)`).
-class _ActiveProjectGithubButton extends ConsumerStatefulWidget {
+class _ActiveProjectGithubButton extends ConsumerWidget {
   const _ActiveProjectGithubButton();
 
   @override
-  ConsumerState<_ActiveProjectGithubButton> createState() =>
-      _ActiveProjectGithubButtonState();
-}
-
-class _ActiveProjectGithubButtonState
-    extends ConsumerState<_ActiveProjectGithubButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final projectId = ref.watch(activeProjectIdProvider);
     if (projectId == null) return const SizedBox.shrink();
     final url =
@@ -201,38 +204,20 @@ class _ActiveProjectGithubButtonState
     if (url == null || url.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(right: 6),
-      child: Tooltip(
-        message: 'View this project on GitHub',
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () async {
-              final uri = Uri.tryParse(url);
-              if (uri == null) return;
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            },
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: _hovered
-                    ? AppTokens.overlayHoverStrong
-                    : AppTokens.overlayRest,
-                borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-                border: Border.all(color: AppTokens.border),
-              ),
-              alignment: Alignment.center,
-              child: const AppIcon(
-                'github',
-                size: 14,
-                color: AppTokens.textSecondary,
-              ),
-            ),
-          ),
-        ),
+      child: HoverIconButton(
+        size: 28,
+        iconSize: 14,
+        iconColor: AppTokens.textSecondary,
+        restBg: AppTokens.overlayRest,
+        hoverBg: AppTokens.overlayHoverStrong,
+        showBorder: true,
+        icon: 'github',
+        tooltip: 'View this project on GitHub',
+        onPressed: () async {
+          final uri = Uri.tryParse(url);
+          if (uri == null) return;
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        },
       ),
     );
   }
@@ -243,62 +228,16 @@ class _PairMobileButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _TitlebarIconButton(
+    return HoverIconButton(
+      size: 28,
+      iconSize: 15,
+      iconColor: AppTokens.textPrimary,
+      restBg: AppTokens.overlayRest,
+      hoverBg: AppTokens.overlayHoverStrong,
+      showBorder: true,
       icon: 'qr-code',
       tooltip: 'Pair a mobile device with the embedded daemon',
       onPressed: () => showPairMobileModal(context),
-    );
-  }
-}
-
-class _TitlebarIconButton extends StatefulWidget {
-  const _TitlebarIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final String icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  @override
-  State<_TitlebarIconButton> createState() => _TitlebarIconButtonState();
-}
-
-class _TitlebarIconButtonState extends State<_TitlebarIconButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: widget.tooltip,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onPressed,
-          child: Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: _hovered
-                  ? AppTokens.overlayHoverStrong
-                  : AppTokens.overlayRest,
-              borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-              border: Border.all(color: AppTokens.border),
-            ),
-            alignment: Alignment.center,
-            child: AppIcon(
-              widget.icon,
-              size: 15,
-              color: AppTokens.textPrimary,
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

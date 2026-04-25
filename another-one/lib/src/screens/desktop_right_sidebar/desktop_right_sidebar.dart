@@ -22,7 +22,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
-import '../../widgets/app_icon.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/pill.dart';
 
 const double _rightSidebarWidth = 320;
 
@@ -75,7 +76,7 @@ class _RightTabStrip extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          _TabPill(
+          Pill(
             label: 'Changes',
             icon: 'file_icons__changes',
             tooltip: 'View working tree changes',
@@ -85,7 +86,7 @@ class _RightTabStrip extends ConsumerWidget {
                 .set(RightSidebarTab.changes),
           ),
           const SizedBox(width: AppTokens.space1),
-          _TabPill(
+          Pill(
             label: 'Commits',
             icon: 'git-commit',
             tooltip: 'View recent commits on the current branch',
@@ -95,7 +96,7 @@ class _RightTabStrip extends ConsumerWidget {
                 .set(RightSidebarTab.commits),
           ),
           const SizedBox(width: AppTokens.space1),
-          _TabPill(
+          Pill(
             label: 'Checks',
             icon: 'tool-check',
             tooltip: 'View CI checks for the current pull request',
@@ -110,82 +111,12 @@ class _RightTabStrip extends ConsumerWidget {
   }
 }
 
-class _TabPill extends StatefulWidget {
-  const _TabPill({
-    required this.label,
-    required this.icon,
-    required this.tooltip,
-    required this.active,
-    required this.onTap,
-  });
-
-  final String label;
-  final String icon;
-  final String tooltip;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  State<_TabPill> createState() => _TabPillState();
-}
-
-class _TabPillState extends State<_TabPill> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = widget.active
-        ? AppTokens.overlayActive
-        : (_hovered ? AppTokens.overlayHover : Colors.transparent);
-    final color = widget.active
-        ? AppTokens.textPrimary
-        : AppTokens.textSecondary;
-    return Tooltip(
-      message: widget.tooltip,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
-          child: Container(
-            height: 26,
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppTokens.space3,
-            ),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AppIcon(widget.icon, size: 12, color: color),
-                const SizedBox(width: AppTokens.space2),
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    fontSize: AppTokens.fontBodyLg,
-                    fontWeight: FontWeight.w500,
-                    color: color,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ChangesPane extends StatelessWidget {
   const _ChangesPane();
 
   @override
   Widget build(BuildContext context) {
-    return const _PaneEmptyState(text: 'Working tree clean');
+    return const EmptyState(text:'Working tree clean');
   }
 }
 
@@ -194,7 +125,7 @@ class _CommitsPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _PaneEmptyState(text: 'No commits to show');
+    return const EmptyState(text:'No commits to show');
   }
 }
 
@@ -203,28 +134,7 @@ class _ChecksPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _PaneEmptyState(text: 'No checks to show');
+    return const EmptyState(text:'No checks to show');
   }
 }
 
-/// Single centered line — matches GPUI's "Working tree clean"
-/// empty state shown by `right_sidebar.rs` when there are no
-/// changed files.
-class _PaneEmptyState extends StatelessWidget {
-  const _PaneEmptyState({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: AppTokens.fontBodyLg,
-          color: AppTokens.textMuted,
-        ),
-      ),
-    );
-  }
-}

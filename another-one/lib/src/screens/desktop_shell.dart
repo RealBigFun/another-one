@@ -18,6 +18,7 @@ import '../state/local_connection_provider.dart';
 import '../state/tab_selection_provider.dart';
 import '../tokens.dart';
 import '../state/right_sidebar_provider.dart';
+import '../widgets/empty_state.dart';
 import 'desktop_right_sidebar/desktop_right_sidebar.dart';
 import 'desktop_sidebar/desktop_sidebar.dart';
 import 'desktop_terminal/desktop_tab_strip.dart';
@@ -64,7 +65,10 @@ class _MainArea extends ConsumerWidget {
       return Container(
         color: AppTokens.terminalBg,
         alignment: Alignment.center,
-        child: const _WelcomePlaceholder(),
+        child: const EmptyState(
+          text: 'No project selected',
+          padding: EdgeInsets.all(AppTokens.space10),
+        ),
       );
     }
     return Column(
@@ -76,24 +80,3 @@ class _MainArea extends ConsumerWidget {
   }
 }
 
-/// Shown until a tab is selected — picks up the GPUI desktop's
-/// "no project active" empty state (project_page.rs renders a
-/// similarly-centred placeholder when its lookup fails). Mirrors the
-/// "Project not found" copy + dark background.
-class _WelcomePlaceholder extends StatelessWidget {
-  const _WelcomePlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.all(AppTokens.space10),
-      child: Text(
-        'No project selected',
-        style: TextStyle(
-          fontSize: AppTokens.fontBodyLg,
-          color: AppTokens.textMuted,
-        ),
-      ),
-    );
-  }
-}
