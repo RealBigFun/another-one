@@ -27,6 +27,7 @@ pub mod project_service;
 pub mod project_store;
 pub mod section;
 pub mod shortcuts;
+pub mod task_launcher;
 pub mod terminal_launch;
 pub mod terminal_manager;
 pub mod terminal_types;
