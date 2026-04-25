@@ -34,14 +34,8 @@ pub fn set_local_registry(registry: Arc<Mutex<RegistryState>>) {
 
 /// Borrow the registered registry, if any. Returns `None` until
 /// [`set_local_registry`] has been called — which `LocalSession`
-/// surfaces to Dart as a clear error rather than silently
-/// returning empty data.
-///
-/// `#[allow(dead_code)]` until the first `LocalSession` method
-/// actually reads from the registry — landing in the next commit
-/// that replaces `synthetic_project_list` with a real
-/// `ProjectStore` flatten.
-#[allow(dead_code)]
+/// methods like `list_projects` treat as "no projects yet"
+/// rather than an error.
 pub(crate) fn local_registry() -> Option<&'static Arc<Mutex<RegistryState>>> {
     LOCAL_REGISTRY.get()
 }

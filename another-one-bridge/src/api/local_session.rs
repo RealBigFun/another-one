@@ -16,11 +16,19 @@
 
 use std::sync::Mutex;
 
+use another_one_core::agents::AgentProviderKind;
+use another_one_core::daemon_embed::RegistryState;
+use another_one_core::project_store::ProjectKind as CoreProjectKind;
+use another_one_core::section::SectionId;
+use another_one_core::terminal_types::TerminalRuntimeKey;
 use flutter_rust_bridge::frb;
 use tokio::sync::mpsc;
 
-use super::iroh_client::{tokio_rt, ProjectSummary, WorkerReply};
+use super::iroh_client::{
+    tokio_rt, AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary, WorkerReply,
+};
 use crate::frb_generated::StreamSink;
+use crate::local_registry::local_registry;
 
 /// Opaque handle to an in-process daemon session. Dart holds it and
 /// calls methods; Rust will eventually proxy those calls to a
@@ -67,24 +75,37 @@ impl LocalSession {
 
     /// Push a project list through [`Self::subscribe_worker_replies`].
     ///
-    /// Today the list is a synthetic empty `Vec<ProjectSummary>` —
-    /// just enough for Dart-side consumers to validate the
-    /// round-trip end-to-end. The real implementation reads from
-    /// `core::daemon_embed::RegistryState::project_store` and
-    /// flattens it into `ProjectSummary` / `TaskSummary` /
-    /// `TabSummary` exactly the way the iroh side does.
+    /// Reads from the host-registered [`RegistryState::project_store`]
+    /// and flattens it into the bridge's `ProjectSummary` / `TaskSummary` /
+    /// `TabSummary` shape — same projection
+    /// `desktop/src/daemon_host.rs::project_summaries` produces for
+    /// the iroh wire path. If [`crate::local_registry::set_local_registry`]
+    /// hasn't been called yet (host binary boot ordering issue), the
+    /// reply carries an empty list rather than erroring; that matches
+    /// what Dart's pair-and-attach UI expects when no projects are
+    /// configured yet.
     pub async fn list_projects(&self) -> anyhow::Result<()> {
         let tx = {
-            let guard = self.worker_replies_tx.lock().expect("worker_replies_tx mutex poisoned");
+            let guard = self
+                .worker_replies_tx
+                .lock()
+                .expect("worker_replies_tx mutex poisoned");
             guard
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("session closed"))?
                 .clone()
         };
-        tx.send(WorkerReply::ProjectList {
-            projects: synthetic_project_list(),
-        })
-        .map_err(|_| anyhow::anyhow!("worker-replies receiver dropped"))?;
+
+        let projects = match local_registry() {
+            Some(registry) => match registry.lock() {
+                Ok(state) => flatten_project_store(&state),
+                Err(_) => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+
+        tx.send(WorkerReply::ProjectList { projects })
+            .map_err(|_| anyhow::anyhow!("worker-replies receiver dropped"))?;
         Ok(())
     }
 
@@ -165,11 +186,93 @@ fn unimplemented_err(method: &str) -> anyhow::Error {
     )
 }
 
-/// Placeholder project list used by [`LocalSession::list_projects`]
-/// until `RegistryState` plumbing lands. Returns an empty `Vec` —
-/// Dart consumers can already test their wiring (subscribe →
-/// receive `WorkerReply::ProjectList { projects: [] }` → render
-/// "no projects yet" empty state).
-fn synthetic_project_list() -> Vec<ProjectSummary> {
-    Vec::new()
+/// Flatten the desktop's `RegistryState` into the bridge's
+/// `ProjectSummary` / `TaskSummary` / `TabSummary` shape. Mirrors
+/// `desktop/src/daemon_host.rs::project_summaries` so the LocalSession
+/// path matches what iroh clients see.
+///
+/// Worktree-kind projects are filtered out — they're nested under
+/// their root via `Task.worktree_project_id` and shouldn't appear at
+/// the top level of the mobile drawer / desktop sidebar.
+fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
+    let store = &state.project_store;
+    store
+        .projects
+        .iter()
+        .filter(|project| matches!(project.kind, CoreProjectKind::Root))
+        .map(|project| {
+            let tasks = store
+                .tasks
+                .get(&project.id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|task| {
+                    let section_key = task.section_id.clone();
+                    let parsed_section = SectionId::from_store_key(&section_key);
+                    let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
+                    let tabs = task
+                        .tabs
+                        .into_iter()
+                        .map(|tab| {
+                            let running = parsed_section
+                                .as_ref()
+                                .map(|section| TerminalRuntimeKey {
+                                    section_id: section.clone(),
+                                    tab_id: tab.id.clone(),
+                                })
+                                .map(|key| state.broadcasts.contains_key(&key))
+                                .unwrap_or(false);
+                            TabSummary {
+                                id: tab.id,
+                                title: tab.title,
+                                provider: tab.provider.map(map_agent_provider),
+                                running,
+                                pinned: tab.pinned,
+                                fixed_title: tab.fixed_title,
+                            }
+                        })
+                        .collect();
+                    TaskSummary {
+                        id: task.id,
+                        name: task.name,
+                        section_id: section_key,
+                        branch_name: task.branch_name,
+                        active_tab_id: task.active_tab_id,
+                        tabs,
+                        pinned: task_pinned,
+                    }
+                })
+                .collect();
+            ProjectSummary {
+                id: project.id.clone(),
+                name: project.name.clone(),
+                path: project.path.to_string_lossy().into_owned(),
+                kind: map_project_kind(project.kind),
+                current_branch: project.checkout.current_branch.clone(),
+                tasks,
+            }
+        })
+        .collect()
+}
+
+fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {
+    match kind {
+        CoreProjectKind::Root => ProjectKind::Root,
+        CoreProjectKind::Worktree => ProjectKind::Worktree,
+    }
+}
+
+fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
+    match kind {
+        AgentProviderKind::ClaudeCode => AgentProvider::ClaudeCode,
+        AgentProviderKind::CursorAgent => AgentProvider::CursorAgent,
+        AgentProviderKind::Codex => AgentProvider::Codex,
+        AgentProviderKind::Pi => AgentProvider::Pi,
+        AgentProviderKind::Gemini => AgentProvider::Gemini,
+        AgentProviderKind::OpenCode => AgentProvider::OpenCode,
+        AgentProviderKind::Amp => AgentProvider::Amp,
+        AgentProviderKind::RovoDev => AgentProvider::RovoDev,
+        AgentProviderKind::Forge => AgentProvider::Forge,
+    }
 }
