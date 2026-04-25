@@ -10,6 +10,7 @@
 //   - `qr_scan_page.dart` — pairing QR scanner, pushed from either.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'src/app_root.dart';
@@ -32,7 +33,7 @@ Future<void> main() async {
   // app restart generates a new EndpointId and breaks TOFU pairing.
   final supportDir = await getApplicationSupportDirectory();
   setDataDir(path: supportDir.path);
-  runApp(const AnotherOneApp());
+  runApp(const ProviderScope(child: AnotherOneApp()));
 }
 
 class AnotherOneApp extends StatelessWidget {

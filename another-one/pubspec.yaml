@@ -48,6 +48,19 @@ dependencies:
   # Required for FRB's generated Dart tagged-union classes (one per
   # Rust enum passed across the bridge — e.g. `WorkerReply`).
   freezed_annotation: ^3.1.0
+  # State management: riverpod 2.5+. Plain `setState` doesn't scale
+  # to a 30k-LOC desktop app with multi-connection lifecycles,
+  # modal stacks, and per-tab attach scopes. See
+  # `~/.claude/plans/flutter-gui-architecture.md` §3 for the
+  # provider taxonomy this scaffolds.
+  #
+  # Codegen (`riverpod_annotation` + `riverpod_generator`) is
+  # currently held back: `riverpod_generator` 2.6.x requires
+  # `source_gen ^2.0.0`, but `freezed` 3.2.x (used by FRB) needs
+  # `source_gen >=3.0.0`. Once a riverpod_generator release pins
+  # source_gen 3 (tracked upstream), wire codegen in. Until then
+  # the providers are written by hand — that's fine.
+  flutter_riverpod: ^2.6.1
 
 dev_dependencies:
   flutter_test:
