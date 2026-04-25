@@ -21,6 +21,7 @@ pub mod git_service;
 pub mod leakscope;
 pub mod mcp;
 pub mod open_in;
+pub mod platform;
 pub mod process;
 pub mod project_service;
 pub mod project_store;
