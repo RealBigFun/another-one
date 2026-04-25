@@ -14,6 +14,7 @@ import '../rust/api/iroh_client.dart';
 import '../state/local_connection_provider.dart';
 import '../state/tab_selection_provider.dart';
 import '../tokens.dart';
+import 'desktop_terminal/desktop_terminal_pane.dart';
 import 'pair_mobile/pair_mobile_modal.dart';
 
 const double _titlebarHeight = 32;
@@ -389,59 +390,7 @@ class _MainArea extends ConsumerWidget {
       alignment: Alignment.center,
       child: selection == null
           ? const _WelcomePlaceholder()
-          : _TabPlaceholder(selection: selection),
-    );
-  }
-}
-
-/// Stand-in for the terminal pane until Phase 3 #1 lands the xterm
-/// embed. Renders the selected tab's identifiers so the wiring is
-/// observable end-to-end.
-class _TabPlaceholder extends StatelessWidget {
-  const _TabPlaceholder({required this.selection});
-
-  final TabSelection selection;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(AppTokens.space10),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.terminal,
-            size: 48,
-            color: AppTokens.accent,
-          ),
-          const SizedBox(height: AppTokens.space5),
-          const Text(
-            'Tab selected',
-            style: TextStyle(
-              fontSize: AppTokens.fontHeading,
-              color: AppTokens.textPrimary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: AppTokens.space3),
-          SelectableText(
-            'section: ${selection.sectionId}\ntab:     ${selection.tabId}',
-            style: const TextStyle(
-              fontFamily: AppTokens.fontFamilyMono,
-              fontSize: AppTokens.fontBody,
-              color: AppTokens.textMuted,
-            ),
-          ),
-          const SizedBox(height: AppTokens.space5),
-          const Text(
-            'Terminal embed lands in Phase 3 #1.',
-            style: TextStyle(
-              fontSize: AppTokens.fontBody,
-              color: AppTokens.textPlaceholder,
-            ),
-          ),
-        ],
-      ),
+          : DesktopTerminalPane(selection: selection),
     );
   }
 }
