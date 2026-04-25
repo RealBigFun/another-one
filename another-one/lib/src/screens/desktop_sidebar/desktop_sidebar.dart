@@ -306,10 +306,7 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // The bridge sorts pinned-first before sending,
-                  // so the UI just renders in order — no Dart-side
-                  // resort.
-                  for (final task in project.tasks)
+                  for (final task in _orderedTasks(project.tasks))
                     _TaskRow(task: task, projectId: project.id),
                 ],
               ),
@@ -317,6 +314,19 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
         ],
       ),
     );
+  }
+
+  /// Pinned tasks float to the top, mirroring the GPUI sidebar's
+  /// `child_entries.sort_by_key(|e| !e.is_pinned)` behaviour.
+  /// Sort lives display-side so the bridge data stays raw — the
+  /// daemon doesn't need to know the UI's preferred render order.
+  List<TaskSummary> _orderedTasks(List<TaskSummary> tasks) {
+    final pinned = <TaskSummary>[];
+    final rest = <TaskSummary>[];
+    for (final task in tasks) {
+      (task.pinned ? pinned : rest).add(task);
+    }
+    return [...pinned, ...rest];
   }
 
   Future<void> _showProjectMenu(Offset globalPosition) async {
@@ -752,10 +762,7 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                   pinned: false,
                 ),
         ).fixedTitle ?? task.name;
-    // Pre-composed by the bridge in `compose_task_subtitle`. Empty
-    // string means "no subtitle row" — the conditional render below
-    // skips it.
-    final subtitle = task.subtitle.isEmpty ? null : task.subtitle;
+    final subtitle = _buildSubtitle(task);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -857,6 +864,23 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
     );
   }
 
+  /// Compose the row subtitle from raw bridge fields. GPUI's
+  /// `branch_row` does the same join (`branch.name (when !=
+  /// task.name) • last_commit_relative`, drop empty segments) —
+  /// keeping it here means the bridge ships raw data and the UI
+  /// formats per-render, no interop tax for sub-second display
+  /// updates.
+  String? _buildSubtitle(TaskSummary task) {
+    final parts = <String>[];
+    if (task.branchName.isNotEmpty && task.branchName != task.name) {
+      parts.add(task.branchName);
+    }
+    if (task.lastCommitRelative.isNotEmpty) {
+      parts.add(task.lastCommitRelative);
+    }
+    if (parts.isEmpty) return null;
+    return parts.join(' • ');
+  }
 }
 
 /// GitHub-link slot for project rows. GPUI keeps the slot present

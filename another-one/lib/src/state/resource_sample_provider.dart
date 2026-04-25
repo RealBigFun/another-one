@@ -1,6 +1,9 @@
 // Polls the FRB-exposed `read_app_resource_sample` every 1.5s and
-// computes CPU% from cumulative-time deltas — same shape the GPUI
-// desktop's titlebar resource indicator uses.
+// computes CPU% from cumulative-time deltas. Stays in Dart on
+// purpose: the Rust layer is meant to be runnable as a headless
+// daemon, and the delta math + label rounding are display-layer
+// concerns that don't need to cross the interop boundary on every
+// tick.
 
 import 'dart:async';
 

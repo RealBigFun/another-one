@@ -149,17 +149,11 @@ pub struct TaskSummary {
     pub pinned: bool,
     /// "5 minutes ago"-style string for the task's branch last
     /// commit. Empty when the project hasn't been git-refreshed
-    /// yet. Kept exposed for callers that want raw access; the
-    /// pre-composed [`subtitle`] field below is what the sidebar
-    /// renders.
+    /// yet — UI joins this with the branch name (when it differs
+    /// from the task name) using `•` and drops empty segments,
+    /// mirroring `desktop/src/left_sidebar.rs::branch_row`'s `meta`.
     #[serde(default)]
     pub last_commit_relative: String,
-    /// Pre-formatted sidebar subtitle ready for the UI to paint:
-    /// `branch.name (if != task.name) • last_commit_relative`,
-    /// with empty segments dropped. Composed Rust-side so the Dart
-    /// layer stays a pure renderer.
-    #[serde(default)]
-    pub subtitle: String,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`

@@ -788,11 +788,6 @@ fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
                         .branch_view(&project.id, &task.branch_name)
                         .map(|branch| branch.last_commit_relative)
                         .unwrap_or_default();
-                    let subtitle = compose_task_subtitle(
-                        &task.name,
-                        &task.branch_name,
-                        &last_commit_relative,
-                    );
                     TaskSummary {
                         id: task.id,
                         name: task.name,
@@ -802,18 +797,9 @@ fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
                         tabs,
                         pinned: task_pinned,
                         last_commit_relative,
-                        subtitle,
                     }
                 })
-                .collect::<Vec<_>>();
-            // Pinned-first sort, stable on the original order so
-            // unpinned tasks preserve insertion order.
-            // Mirrors the GPUI sidebar's
-            // `child_entries.sort_by_key(|e| !e.is_pinned)` —
-            // moving the sort here keeps Dart a pure renderer
-            // that paints whatever order it receives.
-            let mut tasks = tasks;
-            tasks.sort_by_key(|task| !task.pinned);
+                .collect();
             ProjectSummary {
                 id: project.id.clone(),
                 name: project.name.clone(),
@@ -824,30 +810,6 @@ fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
             }
         })
         .collect()
-}
-
-/// Build the sidebar's task subtitle on the daemon side so the UI
-/// stays a pure renderer.
-///
-/// Format mirrors `desktop/src/left_sidebar.rs::branch_row`'s `meta`
-/// join: include `branch_name` only when it differs from the task
-/// name, include `last_commit_relative` only when non-empty, then
-/// join the surviving segments with `•`. Returns an empty string
-/// when both segments are empty so the UI can omit the subtitle
-/// row entirely.
-fn compose_task_subtitle(
-    task_name: &str,
-    branch_name: &str,
-    last_commit_relative: &str,
-) -> String {
-    let mut parts: Vec<&str> = Vec::with_capacity(2);
-    if !branch_name.is_empty() && branch_name != task_name {
-        parts.push(branch_name);
-    }
-    if !last_commit_relative.is_empty() {
-        parts.push(last_commit_relative);
-    }
-    parts.join(" • ")
 }
 
 fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {

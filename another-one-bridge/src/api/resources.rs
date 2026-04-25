@@ -6,7 +6,9 @@
 //! The Dart caller polls on a timer and computes CPU% from
 //! cumulative-time deltas (`cpu_time_ns` over `timestamp_ms`); we
 //! deliberately don't keep state on the Rust side so multiple
-//! pollers (tests, future multi-window UIs) don't collide.
+//! pollers (tests, future multi-window UIs) don't collide. The
+//! delta math + label formatting are display-layer concerns and
+//! live in Dart.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
