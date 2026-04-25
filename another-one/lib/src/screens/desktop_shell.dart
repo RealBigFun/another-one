@@ -17,6 +17,7 @@ import '../state/local_connection_provider.dart';
 import '../state/tab_selection_provider.dart';
 import '../tokens.dart';
 import 'desktop_sidebar/desktop_sidebar.dart';
+import 'desktop_terminal/desktop_tab_strip.dart';
 import 'desktop_terminal/desktop_terminal_pane.dart';
 import 'desktop_titlebar/desktop_titlebar.dart';
 
@@ -53,12 +54,18 @@ class _MainArea extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selection = ref.watch(selectedTabProvider);
-    return Container(
-      color: AppTokens.terminalBg,
-      alignment: Alignment.center,
-      child: selection == null
-          ? const _WelcomePlaceholder()
-          : DesktopTerminalPane(selection: selection),
+    if (selection == null) {
+      return Container(
+        color: AppTokens.terminalBg,
+        alignment: Alignment.center,
+        child: const _WelcomePlaceholder(),
+      );
+    }
+    return Column(
+      children: [
+        DesktopTabStrip(selection: selection),
+        Expanded(child: DesktopTerminalPane(selection: selection)),
+      ],
     );
   }
 }
