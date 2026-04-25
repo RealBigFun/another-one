@@ -29,7 +29,8 @@ impl PlatformServices for WindowsPlatform {
     }
 
     fn total_system_memory_bytes() -> Option<u64> {
-        None
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::total_system_memory_bytes()
     }
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool {

@@ -23,6 +23,13 @@ impl HeadlessPlatform for IosPlatform {
         // trait shape is the same on every target.
         Err("open_external_url not supported from Rust on iOS; use a Dart platform channel".into())
     }
+
+    fn total_system_memory_bytes() -> Option<u64> {
+        // iOS exposes `sysctlbyname("hw.memsize")` via libc just
+        // like macOS. Reuse the same helper so any future fix
+        // applies to both Apple platforms.
+        super::macos::sysctl_hw_memsize()
+    }
 }
 
 #[cfg(test)]
@@ -47,6 +54,17 @@ mod tests {
             result.as_ref().unwrap_err().contains("Dart platform channel"),
             "expected the error to point at the Dart-side workaround, got: {:?}",
             result.unwrap_err()
+        );
+    }
+
+    #[test]
+    fn total_system_memory_bytes_is_positive() {
+        let memory = IosPlatform::total_system_memory_bytes();
+        assert!(memory.is_some(), "expected sysctlbyname to succeed on iOS");
+        assert!(
+            memory.unwrap() > 0,
+            "expected total memory > 0, got {:?}",
+            memory
         );
     }
 }

@@ -25,6 +25,14 @@ impl HeadlessPlatform for AndroidPlatform {
         // shape is the same on every target.
         Err("open_external_url not supported from Rust on Android; use a Dart platform channel".into())
     }
+
+    fn total_system_memory_bytes() -> Option<u64> {
+        // Android's procfs layout matches Linux's for `/proc/meminfo`,
+        // so reuse the same parser. Reads may fail on locked-down
+        // OEM builds; `Option` lets the resource indicator just
+        // hide the total in that case.
+        super::linux::proc_meminfo_total_bytes()
+    }
 }
 
 #[cfg(test)]

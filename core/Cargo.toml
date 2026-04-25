@@ -46,3 +46,9 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+# `libc` is only used by `core::platform::{macos,ios}::total_system_memory_bytes`
+# for `sysctlbyname("hw.memsize")`. Target-gated so Linux/Windows/Android
+# builds don't pull it in.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+libc = "0.2"
