@@ -51,6 +51,12 @@ dependencies:
   # qr-code, etc.) render bit-identically across both UIs.
   flutter_svg: ^2.0.10
   mobile_scanner: ^5.2.0
+  # External-URL launcher — opens GitHub project links from the
+  # sidebar/titlebar/project page. Mirrors the desktop's
+  # `core::platform::HeadlessPlatform::open_external_url` →
+  # `xdg-open` / `open` / `start` flow without re-implementing the
+  # platform-specific dance per OS.
+  url_launcher: ^6.2.0
   another_one_bridge:
     path: rust_builder
   flutter_rust_bridge: 2.12.0

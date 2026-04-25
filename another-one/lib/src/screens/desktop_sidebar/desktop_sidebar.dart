@@ -19,7 +19,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:url_launcher/url_launcher.dart';
+
 import '../../rust/api/iroh_client.dart';
+import '../../state/github_url_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/rename_target_provider.dart';
 import '../../state/tab_selection_provider.dart';
@@ -337,27 +340,14 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                       onPressed: () =>
                           _showProjectMenu(_globalCenterOf(context)),
                     ),
-                    // GitHub link button (the GPUI sidebar shows a
-                    // GitHub glyph for projects with a remote on
-                    // github.com). The bridge doesn't yet expose
-                    // GitHub-association on `ProjectSummary` so this
-                    // renders as a placeholder, hidden by default
-                    // and revealed on row hover, matching GPUI's
-                    // "invisible until hover unless link exists".
-                    if (_rowHovered)
-                      _RowIconButton(
-                        icon: 'github',
-                        tooltip: 'Open on GitHub',
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content:
-                                  Text('GitHub link is not yet wired'),
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        },
-                      ),
+                    // GitHub link slot — GPUI keeps the slot in the
+                    // row layout always (so widths stay stable) and
+                    // toggles visibility/clickability based on
+                    // whether the project's `origin` remote
+                    // resolves to a github.com URL. We mirror that
+                    // by reading the cached `projectGithubUrlProvider`
+                    // for this project id.
+                    _ProjectGithubButton(projectId: project.id),
                     _RowIconButton(
                       icon: 'plus',
                       tooltip: 'New task',
@@ -986,6 +976,72 @@ class _RowIconButtonState extends State<_RowIconButton> {
               color: AppTokens.textMuted,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// GitHub-link slot for project rows. GPUI keeps the slot present
+/// in the row layout regardless of whether a URL resolves — when
+/// it doesn't, the icon is rendered transparently so widths stay
+/// stable as the cache populates. We mirror that by always
+/// occupying the 24×24 slot and only toggling opacity/click
+/// behaviour off the cached `projectGithubUrlProvider` state.
+class _ProjectGithubButton extends ConsumerStatefulWidget {
+  const _ProjectGithubButton({required this.projectId});
+
+  final String projectId;
+
+  @override
+  ConsumerState<_ProjectGithubButton> createState() =>
+      _ProjectGithubButtonState();
+}
+
+class _ProjectGithubButtonState extends ConsumerState<_ProjectGithubButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final url =
+        ref.watch(projectGithubUrlProvider(widget.projectId)).valueOrNull;
+    final hasUrl = url != null && url.isNotEmpty;
+    final slot = Container(
+      width: 24,
+      height: 24,
+      decoration: BoxDecoration(
+        color: hasUrl && _hovered
+            ? AppTokens.overlayHover
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      ),
+      alignment: Alignment.center,
+      child: Opacity(
+        opacity: hasUrl ? 1.0 : 0.0,
+        child: const AppIcon(
+          'github',
+          size: 13,
+          color: AppTokens.textMuted,
+        ),
+      ),
+    );
+    if (!hasUrl) {
+      return slot;
+    }
+    return Tooltip(
+      message: "Open this project's GitHub link",
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () async {
+            final uri = Uri.tryParse(url);
+            if (uri == null) return;
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          },
+          child: slot,
         ),
       ),
     );

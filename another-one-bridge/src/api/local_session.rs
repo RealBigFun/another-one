@@ -461,6 +461,47 @@ impl LocalSession {
         Ok(inserted)
     }
 
+    /// Resolve the GitHub remote URL for a project by shelling out to
+    /// `git remote get-url origin` and normalising the result through
+    /// [`another_one_core::git_actions::find_github_repo_url`].
+    /// Returns `None` if the project isn't tracked, has no `origin`
+    /// remote, or the remote isn't a github.com URL.
+    ///
+    /// The blocking git invocation runs in `spawn_blocking` so the
+    /// FRB caller's tokio runtime stays free. Dart caches the
+    /// result per-project — there's no expectation of liveness if
+    /// the user changes the remote at runtime, matching the GPUI
+    /// build's "look up once at boot" behaviour
+    /// (`spawn_github_link_lookup` in `core::git_service`).
+    pub async fn read_project_github_url(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Option<String>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("read_project_github_url: set_local_registry not called")
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!("read_project_github_url: RegistryState mutex poisoned")
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        };
+        let Some(project_path) = project_path else {
+            return Ok(None);
+        };
+        let url = tokio::task::spawn_blocking(move || {
+            another_one_core::git_actions::find_github_repo_url(&project_path)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("github url lookup join: {e}"))?;
+        Ok(url)
+    }
+
     /// Subscribe to live PTY bytes for `(section_id, tab_id)`.
     ///
     /// Replaces any previous attachment: aborts the previous

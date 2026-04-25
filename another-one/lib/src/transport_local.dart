@@ -198,6 +198,19 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
     return session.removeTask(projectId: projectId, taskId: taskId);
   }
 
+  /// Resolve the project's GitHub remote URL by shelling out (in a
+  /// blocking task) to `git remote get-url origin` on the project
+  /// path. Returns `null` when the project has no `origin` remote
+  /// or the remote isn't a github.com URL. Stable across the
+  /// project's lifetime; cache results aggressively.
+  Future<String?> readProjectGithubUrl(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readProjectGithubUrl: LocalTransport not connected');
+    }
+    return session.readProjectGithubUrl(projectId: projectId);
+  }
+
   @override
   Future<void> attachTab({
     required String sectionId,

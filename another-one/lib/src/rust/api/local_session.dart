@@ -86,6 +86,20 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// hasn't been registered yet, sends an empty list.
   Future<void> listProjects();
 
+  /// Resolve the GitHub remote URL for a project by shelling out to
+  /// `git remote get-url origin` and normalising the result through
+  /// [`another_one_core::git_actions::find_github_repo_url`].
+  /// Returns `None` if the project isn't tracked, has no `origin`
+  /// remote, or the remote isn't a github.com URL.
+  ///
+  /// The blocking git invocation runs in `spawn_blocking` so the
+  /// FRB caller's tokio runtime stays free. Dart caches the
+  /// result per-project — there's no expectation of liveness if
+  /// the user changes the remote at runtime, matching the GPUI
+  /// build's "look up once at boot" behaviour
+  /// (`spawn_github_link_lookup` in `core::git_service`).
+  Future<String?> readProjectGithubUrl({required String projectId});
+
   /// Remove a project from the embedded daemon's store. Cascades
   /// to the project's tasks + terminal sections (see
   /// [`another_one_core::project_store::ProjectStore::remove_project`]).
