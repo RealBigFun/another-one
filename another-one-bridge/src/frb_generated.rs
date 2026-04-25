@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2075498519;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1273193698;
 
 // Section: executor
 
@@ -1782,6 +1782,38 @@ fn wire__crate__api__resources__read_app_resource_sample_impl(
         },
     )
 }
+fn wire__crate__api__build_info__read_build_info_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "read_build_info",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok(crate::api::build_info::read_build_info())?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__pair__regenerate_local_pairing_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1962,6 +1994,26 @@ impl SseDecode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u8().unwrap() != 0
+    }
+}
+
+impl SseDecode for crate::api::build_info::BuildInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_isDev = <bool>::sse_decode(deserializer);
+        let mut var_isDirty = <bool>::sse_decode(deserializer);
+        let mut var_gitSha = <String>::sse_decode(deserializer);
+        let mut var_gitBranch = <String>::sse_decode(deserializer);
+        let mut var_chipLabel = <String>::sse_decode(deserializer);
+        let mut var_tooltip = <String>::sse_decode(deserializer);
+        return crate::api::build_info::BuildInfo {
+            is_dev: var_isDev,
+            is_dirty: var_isDirty,
+            git_sha: var_gitSha,
+            git_branch: var_gitBranch,
+            chip_label: var_chipLabel,
+            tooltip: var_tooltip,
+        };
     }
 }
 
@@ -2410,10 +2462,11 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        32 => {
+        32 => wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len),
+        33 => {
             wire__crate__api__pair__regenerate_local_pairing_impl(port, ptr, rust_vec_len, data_len)
         }
-        33 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2488,6 +2541,31 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::AgentProvider>
     for crate::api::iroh_client::AgentProvider
 {
     fn into_into_dart(self) -> crate::api::iroh_client::AgentProvider {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::build_info::BuildInfo {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.is_dev.into_into_dart().into_dart(),
+            self.is_dirty.into_into_dart().into_dart(),
+            self.git_sha.into_into_dart().into_dart(),
+            self.git_branch.into_into_dart().into_dart(),
+            self.chip_label.into_into_dart().into_dart(),
+            self.tooltip.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::build_info::BuildInfo
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::build_info::BuildInfo>
+    for crate::api::build_info::BuildInfo
+{
+    fn into_into_dart(self) -> crate::api::build_info::BuildInfo {
         self
     }
 }
@@ -2751,6 +2829,18 @@ impl SseEncode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u8(self as _).unwrap();
+    }
+}
+
+impl SseEncode for crate::api::build_info::BuildInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_dev, serializer);
+        <bool>::sse_encode(self.is_dirty, serializer);
+        <String>::sse_encode(self.git_sha, serializer);
+        <String>::sse_encode(self.git_branch, serializer);
+        <String>::sse_encode(self.chip_label, serializer);
+        <String>::sse_encode(self.tooltip, serializer);
     }
 }
 

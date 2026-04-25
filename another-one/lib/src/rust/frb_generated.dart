@@ -3,6 +3,7 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/build_info.dart';
 import 'api/embedded_daemon.dart';
 import 'api/iroh_client.dart';
 import 'api/local_session.dart';
@@ -70,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 2075498519;
+  int get rustContentHash => 1273193698;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -224,6 +225,8 @@ abstract class RustLibApi extends BaseApi {
   Future<PairingInfo?> crateApiPairPairingInfo();
 
   Future<ResourceSample> crateApiResourcesReadAppResourceSample();
+
+  Future<BuildInfo> crateApiBuildInfoReadBuildInfo();
 
   Future<void> crateApiPairRegenerateLocalPairing();
 
@@ -1410,7 +1413,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "read_app_resource_sample", argNames: []);
 
   @override
-  Future<void> crateApiPairRegenerateLocalPairing() {
+  Future<BuildInfo> crateApiBuildInfoReadBuildInfo() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -1419,6 +1422,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 32,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_build_info,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiBuildInfoReadBuildInfoConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiBuildInfoReadBuildInfoConstMeta =>
+      const TaskConstMeta(debugName: "read_build_info", argNames: []);
+
+  @override
+  Future<void> crateApiPairRegenerateLocalPairing() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 33,
             port: port_,
           );
         },
@@ -1446,7 +1476,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 33,
+            funcId: 34,
             port: port_,
           );
         },
@@ -1590,6 +1620,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_u_64(raw);
+  }
+
+  @protected
+  BuildInfo dco_decode_build_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return BuildInfo(
+      isDev: dco_decode_bool(arr[0]),
+      isDirty: dco_decode_bool(arr[1]),
+      gitSha: dco_decode_String(arr[2]),
+      gitBranch: dco_decode_String(arr[3]),
+      chipLabel: dco_decode_String(arr[4]),
+      tooltip: dco_decode_String(arr[5]),
+    );
   }
 
   @protected
@@ -1917,6 +1963,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_u_64(deserializer));
+  }
+
+  @protected
+  BuildInfo sse_decode_build_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_isDev = sse_decode_bool(deserializer);
+    var var_isDirty = sse_decode_bool(deserializer);
+    var var_gitSha = sse_decode_String(deserializer);
+    var var_gitBranch = sse_decode_String(deserializer);
+    var var_chipLabel = sse_decode_String(deserializer);
+    var var_tooltip = sse_decode_String(deserializer);
+    return BuildInfo(
+      isDev: var_isDev,
+      isDirty: var_isDirty,
+      gitSha: var_gitSha,
+      gitBranch: var_gitBranch,
+      chipLabel: var_chipLabel,
+      tooltip: var_tooltip,
+    );
   }
 
   @protected
@@ -2330,6 +2395,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_64(self, serializer);
+  }
+
+  @protected
+  void sse_encode_build_info(BuildInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.isDev, serializer);
+    sse_encode_bool(self.isDirty, serializer);
+    sse_encode_String(self.gitSha, serializer);
+    sse_encode_String(self.gitBranch, serializer);
+    sse_encode_String(self.chipLabel, serializer);
+    sse_encode_String(self.tooltip, serializer);
   }
 
   @protected

@@ -16,6 +16,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../state/build_info_provider.dart';
 import '../../state/resource_sample_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
@@ -56,6 +57,7 @@ class DesktopTitlebar extends ConsumerWidget {
           // which lands in Phase 4. Empty Spacer keeps the layout
           // stable until then.
           const Spacer(),
+          const _BuildChip(),
           const _PairMobileButton(),
           const SizedBox(width: AppTokens.space2),
           const _ResourceIndicator(),
@@ -110,6 +112,64 @@ class _ResourceIndicator extends ConsumerWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Build-identity chip — small pill between drag region and the
+/// pair-mobile button. Mirrors the GPUI titlebar's
+/// `titlebar_build_chip`: dev+dirty=red, dev+clean=amber,
+/// release=subtle. Tooltip surfaces profile, branch, sha, dirty
+/// flag, and build time.
+class _BuildChip extends ConsumerWidget {
+  const _BuildChip();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final info = ref.watch(buildInfoProvider).valueOrNull;
+    if (info == null) {
+      return const SizedBox.shrink();
+    }
+    final (Color bg, Color border, Color text) = switch ((info.isDev, info.isDirty)) {
+      (true, true) => (
+          const Color(0x8CB23232),
+          const Color(0xD9F25656),
+          const Color(0xFFF7F7F7),
+        ),
+      (true, false) => (
+          const Color(0x73E68A1F),
+          const Color(0xBFFFB347),
+          const Color(0xFFFAF0E6),
+        ),
+      _ => (
+          const Color(0x14FFFFFF),
+          const Color(0x29FFFFFF),
+          const Color(0x8CFFFFFF),
+        ),
+    };
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Tooltip(
+        message: info.tooltip,
+        child: Container(
+          height: 20,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: border),
+          ),
+          child: Text(
+            info.chipLabel,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: text,
+            ),
+          ),
+        ),
       ),
     );
   }
