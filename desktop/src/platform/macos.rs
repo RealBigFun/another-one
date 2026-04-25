@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::process::Command;
 
 use another_one_core::platform::{CurrentPlatform as CorePlatform, HeadlessPlatform};
 use gpui::{point, px, App, TitlebarOptions, Window, WindowDecorations};
@@ -101,5 +102,4 @@ impl PlatformServices for MacPlatform {
         true
     }
 }
-
 
