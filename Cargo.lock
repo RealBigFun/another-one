@@ -219,6 +219,7 @@ version = "0.1.0"
 name = "another_one_bridge"
 version = "0.1.0"
 dependencies = [
+ "another-one-core",
  "anyhow",
  "flutter_rust_bridge",
  "iroh",

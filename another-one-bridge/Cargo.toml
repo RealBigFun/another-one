@@ -9,6 +9,13 @@ description = "Shared Rust bridge crate consumed by both desktop and mobile Anot
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
+# `another-one-core` is the leaf crate housing the headless half of
+# the desktop's domain logic. Bridge needs it for `RegistryState`
+# (the in-process daemon's project + tab state that
+# `LocalSession` reads), `ProjectStore`, and the `HeadlessPlatform`
+# trait. No cycle: core depends on neither bridge nor
+# daemon-sandbox.
+another-one-core = { path = "../core" }
 flutter_rust_bridge = "=2.12.0"
 iroh = "0.98.1"
 anyhow = "1"
