@@ -5,15 +5,18 @@
 //! (`core::daemon_embed::RegistryState`), so for local-host
 //! operations there's no need to round-trip through QUIC. The Dart
 //! `LocalConnection` (a future implementor of `DaemonConnection`)
-//! will hold a `LocalSession` and call its methods directly.
+//! holds a `LocalSession` and calls its methods directly.
 //!
-//! This commit wires the worker-replies stream end-to-end and a
-//! synthetic `list_projects` so Dart consumers can validate the
-//! round-trip. The other methods are stubs returning
-//! "unimplemented" errors — they get wired one at a time as Phase 2
-//! work progresses, with each commit hooking one verb into the
-//! shared `RegistryState` (kept in `core::daemon_embed`).
+//! Lifecycle: `local_connect` allocates the session and its two
+//! channels (worker replies + per-tab incoming bytes). The host
+//! binary registers its `Arc<Mutex<RegistryState>>` once at boot via
+//! `crate::local_registry::set_local_registry`. Method calls then
+//! translate Dart-side intents (list_projects, attach_tab, send,
+//! etc.) into reads/writes against `RegistryState`.
 
+use std::collections::HashMap;
+use std::io::Write;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use another_one_core::agents::AgentProviderKind;
@@ -22,7 +25,8 @@ use another_one_core::project_store::ProjectKind as CoreProjectKind;
 use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 use flutter_rust_bridge::frb;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::AbortHandle;
 
 use super::iroh_client::{
     tokio_rt, AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary, WorkerReply,
@@ -30,60 +34,122 @@ use super::iroh_client::{
 use crate::frb_generated::StreamSink;
 use crate::local_registry::local_registry;
 
-/// Opaque handle to an in-process daemon session. Dart holds it and
-/// calls methods; Rust will eventually proxy those calls to a
-/// shared `RegistryState`. Today the worker-replies channel is real
-/// and `list_projects` pushes a synthetic empty list through it; the
-/// rest are stubs.
-#[frb(opaque)]
-pub struct LocalSession {
-    /// Producer side of the worker-replies stream. Cloned into
-    /// every method that wants to push a reply (today: just
-    /// `list_projects`). Dropped on `close`.
-    worker_replies_tx: Mutex<Option<mpsc::UnboundedSender<WorkerReply>>>,
-    /// Receiver kept until [`Self::subscribe_worker_replies`] takes
-    /// it; one-shot subscription, same shape as `IrohSession`.
-    worker_replies_rx: Mutex<Option<mpsc::UnboundedReceiver<WorkerReply>>>,
+/// Tracks the currently-attached tab on a `LocalSession`. Reset on
+/// `attach_tab` (replaces existing) and on `detach_tab` / `close`.
+struct AttachedTab {
+    key: TerminalRuntimeKey,
+    /// Aborts the tokio task that drains the tab's broadcast into
+    /// `incoming_tx`. Dropped on detach so the task stops pushing
+    /// bytes; the channel-receiver side cleans itself up when the
+    /// session drops.
+    forwarder: AbortHandle,
 }
 
+/// Opaque handle to an in-process daemon session.
+#[frb(opaque)]
+pub struct LocalSession {
+    /// Stable identifier for this session inside `RegistryState`'s
+    /// per-viewer maps (`active_viewers`, `viewer_focus`). Format
+    /// `"local-<n>"` where `<n>` is a process-monotonic counter.
+    /// The value is opaque; consumers MUST NOT depend on the format.
+    viewer_id: String,
+    /// Currently-attached tab + its forwarder abort handle.
+    attached: Mutex<Option<AttachedTab>>,
+    /// Producer side of the worker-replies stream. Cloned into every
+    /// method that pushes a reply (today: `list_projects`). Dropped
+    /// on `close` so any active forwarder exits cleanly.
+    worker_replies_tx: Mutex<Option<mpsc::UnboundedSender<WorkerReply>>>,
+    /// Held until `subscribe_worker_replies` takes it; one-shot
+    /// subscription, same shape as `IrohSession`.
+    worker_replies_rx: Mutex<Option<mpsc::UnboundedReceiver<WorkerReply>>>,
+    /// Producer side of the per-tab PTY-byte stream. Cloned into the
+    /// per-attach forwarder task. Dropped on `close`.
+    incoming_tx: Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>,
+    /// Held until `subscribe` takes it; one-shot.
+    incoming_rx: Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>,
+}
+
+/// Process-wide counter for `LocalSession::viewer_id`. Two parallel
+/// `local_connect` calls (test harnesses, hot-restart) get
+/// distinct ids so their `RegistryState::active_viewers` entries
+/// don't collide.
+static VIEWER_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// Construct a session bound to the desktop's in-process daemon.
-///
-/// Today this allocates the worker-replies channel and returns a
-/// session whose data-streaming methods are stubs. The eventual
-/// implementation will look up the active `RegistryState`
-/// (initialized when the desktop binary boots and calls
-/// `daemon_embed::run` on its dedicated thread) and clone an `Arc`
-/// of it into the session for the read methods to consult.
 pub async fn local_connect() -> anyhow::Result<LocalSession> {
-    let (tx, rx) = mpsc::unbounded_channel();
+    let (worker_tx, worker_rx) = mpsc::unbounded_channel();
+    let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+    let viewer_id = format!(
+        "local-{}",
+        VIEWER_COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
     Ok(LocalSession {
-        worker_replies_tx: Mutex::new(Some(tx)),
-        worker_replies_rx: Mutex::new(Some(rx)),
+        viewer_id,
+        attached: Mutex::new(None),
+        worker_replies_tx: Mutex::new(Some(worker_tx)),
+        worker_replies_rx: Mutex::new(Some(worker_rx)),
+        incoming_tx: Mutex::new(Some(incoming_tx)),
+        incoming_rx: Mutex::new(Some(incoming_rx)),
     })
 }
 
 impl LocalSession {
     /// Send raw PTY stdin bytes to the currently-attached tab.
-    pub async fn send(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
-        Err(unimplemented_err("send"))
+    ///
+    /// Looks up the tab's writer in `RegistryState::writers` and
+    /// writes synchronously. Errors if no tab is attached or the
+    /// writer has been dropped (tab exited / runtime gone).
+    pub async fn send(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        let key = self.attached_key()?;
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("send: set_local_registry not called"))?;
+        let writer = {
+            let state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("send: RegistryState mutex poisoned"))?;
+            state
+                .writers
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("send: no writer for attached tab"))?
+        };
+        let mut writer = writer
+            .lock()
+            .map_err(|_| anyhow::anyhow!("send: writer mutex poisoned"))?;
+        writer
+            .write_all(&bytes)
+            .map_err(|err| anyhow::anyhow!("send: PTY write failed: {err}"))?;
+        Ok(())
     }
 
     /// Resize the currently-attached tab's PTY.
-    pub async fn tab_resize(&self, _cols: u16, _rows: u16) -> anyhow::Result<()> {
-        Err(unimplemented_err("tab_resize"))
+    ///
+    /// Updates this viewer's entry in `RegistryState::active_viewers`
+    /// and asks the registry to recompute the effective
+    /// (min-across-viewers) size. The desktop UI render tick drains
+    /// the resulting `pending_resizes` queue.
+    pub async fn tab_resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        let key = self.attached_key()?;
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("tab_resize: set_local_registry not called"))?;
+        let mut state = registry
+            .lock()
+            .map_err(|_| anyhow::anyhow!("tab_resize: RegistryState mutex poisoned"))?;
+        state
+            .active_viewers
+            .entry(key.clone())
+            .or_insert_with(HashMap::new)
+            .insert(self.viewer_id.clone(), (cols, rows));
+        state.recompute_effective_size(&key);
+        Ok(())
     }
 
     /// Push a project list through [`Self::subscribe_worker_replies`].
     ///
     /// Reads from the host-registered [`RegistryState::project_store`]
     /// and flattens it into the bridge's `ProjectSummary` / `TaskSummary` /
-    /// `TabSummary` shape — same projection
-    /// `desktop/src/daemon_host.rs::project_summaries` produces for
-    /// the iroh wire path. If [`crate::local_registry::set_local_registry`]
-    /// hasn't been called yet (host binary boot ordering issue), the
-    /// reply carries an empty list rather than erroring; that matches
-    /// what Dart's pair-and-attach UI expects when no projects are
-    /// configured yet.
+    /// `TabSummary` shape. Boot-order forgiving — if the registry
+    /// hasn't been registered yet, sends an empty list.
     pub async fn list_projects(&self) -> anyhow::Result<()> {
         let tx = {
             let guard = self
@@ -109,70 +175,144 @@ impl LocalSession {
         Ok(())
     }
 
-    /// Subscribe to live PTY bytes for a specific tab. At most one
-    /// attachment per session.
+    /// Subscribe to live PTY bytes for `(section_id, tab_id)`.
+    ///
+    /// Replaces any previous attachment: aborts the previous
+    /// forwarder, clears this viewer's entry from the previous
+    /// tab's `active_viewers`, then subscribes to the new tab's
+    /// broadcast and spawns a forwarder that drains it into
+    /// `incoming_tx`. The new viewport size has to be set via
+    /// [`Self::tab_resize`] after attach — bytes start flowing
+    /// immediately, but no resize is implied.
+    ///
+    /// Errors if the tab isn't running (no `broadcasts` entry); the
+    /// caller should `launch_tab` first.
     pub async fn attach_tab(
         &self,
-        _section_id: String,
-        _tab_id: String,
+        section_id: String,
+        tab_id: String,
     ) -> anyhow::Result<()> {
-        Err(unimplemented_err("attach_tab"))
+        let key = key_from_wire(&section_id, &tab_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "attach_tab: malformed section_id `{section_id}` — expected SectionId::store_key()"
+            )
+        })?;
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("attach_tab: set_local_registry not called"))?;
+
+        // Tear down any previous attachment first so its forwarder
+        // stops pushing bytes from the old tab into the shared
+        // incoming channel.
+        self.detach_internal();
+
+        // Subscribe to the new tab's broadcast under a brief lock so
+        // we can safely both read `broadcasts` and update viewer
+        // tracking in one critical section.
+        let mut broadcast_rx = {
+            let mut state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("attach_tab: RegistryState mutex poisoned"))?;
+            let sender = state.broadcasts.get(&key).cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "attach_tab: tab is not running yet — call launch_tab first"
+                )
+            })?;
+            state.viewer_focus.insert(self.viewer_id.clone(), key.clone());
+            sender.subscribe()
+        };
+
+        let incoming_tx = {
+            let guard = self
+                .incoming_tx
+                .lock()
+                .expect("incoming_tx mutex poisoned");
+            guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("attach_tab: session closed"))?
+                .clone()
+        };
+
+        // Drain the broadcast into the session's incoming channel.
+        // `Lagged` is treated as a skip (matches iroh side); `Closed`
+        // ends the loop, which happens when the tab's PTY exits and
+        // the broadcast sender is dropped.
+        let join = tokio_rt().spawn(async move {
+            loop {
+                match broadcast_rx.recv().await {
+                    Ok(bytes) => {
+                        if incoming_tx.send(bytes).is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
+        let mut attached = self.attached.lock().expect("attached mutex poisoned");
+        *attached = Some(AttachedTab {
+            key,
+            forwarder: join.abort_handle(),
+        });
+        Ok(())
     }
 
     /// Stop forwarding PTY bytes for the currently-attached tab.
+    /// Idempotent.
     pub async fn detach_tab(&self) -> anyhow::Result<()> {
-        Err(unimplemented_err("detach_tab"))
+        self.detach_internal();
+        Ok(())
     }
 
     /// Ask the daemon to spawn the given tab's PTY if it isn't
-    /// already running.
-    ///
-    /// Idempotent: queues a [`TabLaunchRequest`] on
-    /// `RegistryState::pending_tab_launches`. The UI render tick
-    /// drains the queue, dedupes against `in_flight_launches` /
-    /// `broadcasts`, and either resolves the launch config from the
-    /// project store + spawns the PTY or no-ops if the tab is
-    /// already running. Same shape the iroh side uses in
-    /// `daemon_sandbox::transport_iroh`'s `LaunchTab` handler.
-    ///
-    /// Returns silently if the registry isn't registered yet — same
-    /// "boot-order forgiving" stance as `list_projects`.
+    /// already running. See [`Self`] doc for the launch flow.
     pub async fn launch_tab(
         &self,
         section_id: String,
         tab_id: String,
     ) -> anyhow::Result<()> {
-        let key = match key_from_wire(&section_id, &tab_id) {
-            Some(key) => key,
-            None => {
-                return Err(anyhow::anyhow!(
-                    "launch_tab: malformed section_id `{section_id}` — \
-                     expected a SectionId::store_key()"
-                ));
-            }
-        };
+        let key = key_from_wire(&section_id, &tab_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "launch_tab: malformed section_id `{section_id}` — expected SectionId::store_key()"
+            )
+        })?;
         let registry = match local_registry() {
             Some(r) => r,
             None => return Ok(()),
         };
         let mut state = registry
             .lock()
-            .map_err(|_| anyhow::anyhow!("RegistryState mutex poisoned"))?;
+            .map_err(|_| anyhow::anyhow!("launch_tab: RegistryState mutex poisoned"))?;
         state.pending_tab_launches.push(TabLaunchRequest { key });
         Ok(())
     }
 
     /// Stream PTY bytes for the attached tab into a Dart sink.
-    pub async fn subscribe(&self, _sink: StreamSink<Vec<u8>>) -> anyhow::Result<()> {
-        Err(unimplemented_err("subscribe"))
+    /// One-shot subscription; the second call returns
+    /// "already subscribed".
+    pub async fn subscribe(&self, sink: StreamSink<Vec<u8>>) -> anyhow::Result<()> {
+        let mut rx = {
+            let mut guard = self
+                .incoming_rx
+                .lock()
+                .expect("incoming_rx mutex poisoned");
+            guard
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("already subscribed"))?
+        };
+
+        tokio_rt().spawn(async move {
+            while let Some(bytes) = rx.recv().await {
+                if sink.add(bytes).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(())
     }
 
-    /// Stream worker replies (project list, future: git refresh,
-    /// MCP tool results) into a Dart sink.
-    ///
-    /// One-shot: the second call returns an "already subscribed"
-    /// error. Replies arrive in the order they were pushed by
-    /// methods like [`Self::list_projects`].
+    /// Stream worker replies into a Dart sink. One-shot.
     pub async fn subscribe_worker_replies(
         &self,
         sink: StreamSink<WorkerReply>,
@@ -197,21 +337,53 @@ impl LocalSession {
         Ok(())
     }
 
-    /// Close the session. Drops the worker-replies sender (so any
-    /// active subscription's forwarder loop exits) and is
-    /// idempotent on subsequent calls.
+    /// Close the session: detaches any attached tab, drops both
+    /// channel senders so active subscriptions exit, and clears
+    /// per-viewer state on the registry. Idempotent.
     pub async fn close(&self) {
+        self.detach_internal();
         if let Ok(mut guard) = self.worker_replies_tx.lock() {
             guard.take();
         }
+        if let Ok(mut guard) = self.incoming_tx.lock() {
+            guard.take();
+        }
     }
-}
 
-fn unimplemented_err(method: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "LocalSession::{method} is not yet implemented; tracking issue: \
-         wire to core::daemon_embed::RegistryState in a follow-up commit"
-    )
+    /// Synchronous half of `detach_tab` — also called by `attach_tab`
+    /// (to replace a previous attachment) and `close`. Best-effort:
+    /// poisoned mutexes silently no-op rather than propagate.
+    fn detach_internal(&self) {
+        let prev = match self.attached.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => return,
+        };
+        let Some(prev) = prev else {
+            return;
+        };
+        prev.forwarder.abort();
+        let Some(registry) = local_registry() else {
+            return;
+        };
+        if let Ok(mut state) = registry.lock() {
+            state.viewer_focus.remove(&self.viewer_id);
+            if let Some(viewers) = state.active_viewers.get_mut(&prev.key) {
+                viewers.remove(&self.viewer_id);
+            }
+            state.recompute_effective_size(&prev.key);
+        }
+    }
+
+    fn attached_key(&self) -> anyhow::Result<TerminalRuntimeKey> {
+        let attached = self
+            .attached
+            .lock()
+            .map_err(|_| anyhow::anyhow!("attached mutex poisoned"))?;
+        attached
+            .as_ref()
+            .map(|a| a.key.clone())
+            .ok_or_else(|| anyhow::anyhow!("no tab attached"))
+    }
 }
 
 /// Flatten the desktop's `RegistryState` into the bridge's
