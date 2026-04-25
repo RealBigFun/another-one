@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `detach_internal`, `flatten_project_store`, `map_agent_provider`, `map_project_kind`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
 
 /// Construct a session bound to the desktop's in-process daemon.
@@ -46,6 +46,29 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// channel senders so active subscriptions exit, and clears
   /// per-viewer state on the registry. Idempotent.
   Future<void> close();
+
+  /// Create a worktree task on `project_id`. Spawns a fresh git
+  /// worktree from `source_branch` (the new branch is named after
+  /// the slugified `task_name`), prepares the project, and inserts
+  /// both the worktree project and the task into the daemon's
+  /// store. Returns the new task's `section_id` so the caller can
+  /// navigate to it.
+  ///
+  /// `agent_provider` is optional; `None` means launch a plain
+  /// shell (matches `TerminalLaunchConfig::default()`). When set,
+  /// future `launch_tab` calls on the new task's section spawn
+  /// the agent CLI with its standard arguments.
+  ///
+  /// Heavy filesystem work (`create_task_worktree` →
+  /// `prepare_project`) runs on a dedicated thread inside
+  /// `spawn_task_creation`. We await its broadcast channel reply,
+  /// then mutate the registry under one lock.
+  Future<String> createWorktreeTask({
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    AgentProvider? agentProvider,
+  });
 
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent.

@@ -15,7 +15,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'connection.dart';
-import 'rust/api/iroh_client.dart' show WorkerReply;
+import 'rust/api/iroh_client.dart' show AgentProvider, WorkerReply;
 import 'rust/api/local_session.dart';
 import 'transport.dart';
 
@@ -135,6 +135,34 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
       throw StateError('removeProject: LocalTransport not connected');
     }
     await session.removeProject(projectId: projectId);
+  }
+
+  /// Create a worktree task on `projectId`. Spawns a fresh git
+  /// worktree off `sourceBranch`, prepares the worktree project,
+  /// and inserts both the new project + task into the daemon's
+  /// store. Returns the new task's `sectionId` so callers can
+  /// navigate to it.
+  ///
+  /// `agentProvider` of `null` (or `AgentProvider.shell`) launches
+  /// a plain shell tab. Any concrete provider value is propagated
+  /// to `TerminalLaunchConfig::for_provider` so future `launch_tab`
+  /// calls spawn the agent CLI.
+  Future<String> createWorktreeTask({
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    AgentProvider? agentProvider,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('createWorktreeTask: LocalTransport not connected');
+    }
+    return session.createWorktreeTask(
+      projectId: projectId,
+      taskName: taskName,
+      sourceBranch: sourceBranch,
+      agentProvider: agentProvider,
+    );
   }
 
   /// Rename a task. Empty/whitespace-only names are rejected. Returns

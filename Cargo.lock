@@ -230,6 +230,7 @@ dependencies = [
  "tracing",
  "tracing-android",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

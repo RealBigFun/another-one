@@ -25,6 +25,7 @@ import '../../state/rename_target_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
+import '../new_task/new_task_modal.dart';
 
 class DesktopSidebar extends ConsumerWidget {
   const DesktopSidebar({super.key});
@@ -360,15 +361,8 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                     _RowIconButton(
                       icon: 'plus',
                       tooltip: 'New task',
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content:
-                                Text('New-task modal is not yet ported'),
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
-                      },
+                      onPressed: () =>
+                          showNewTaskModal(context, project: project),
                     ),
                   ],
                 ),

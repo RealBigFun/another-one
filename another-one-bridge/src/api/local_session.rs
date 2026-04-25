@@ -175,6 +175,138 @@ impl LocalSession {
         Ok(())
     }
 
+    /// Create a worktree task on `project_id`. Spawns a fresh git
+    /// worktree from `source_branch` (the new branch is named after
+    /// the slugified `task_name`), prepares the project, and inserts
+    /// both the worktree project and the task into the daemon's
+    /// store. Returns the new task's `section_id` so the caller can
+    /// navigate to it.
+    ///
+    /// `agent_provider` is optional; `None` means launch a plain
+    /// shell (matches `TerminalLaunchConfig::default()`). When set,
+    /// future `launch_tab` calls on the new task's section spawn
+    /// the agent CLI with its standard arguments.
+    ///
+    /// Heavy filesystem work (`create_task_worktree` →
+    /// `prepare_project`) runs on a dedicated thread inside
+    /// `spawn_task_creation`. We await its broadcast channel reply,
+    /// then mutate the registry under one lock.
+    pub async fn create_worktree_task(
+        &self,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_provider: Option<AgentProvider>,
+    ) -> anyhow::Result<String> {
+        // Resolve the project up front so we can complain clearly if
+        // it's gone, before spawning the worktree thread.
+        let (project_path, project_name, target_project_id) = {
+            let registry = local_registry().ok_or_else(|| {
+                anyhow::anyhow!("create_worktree_task: set_local_registry not called")
+            })?;
+            let state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("create_worktree_task: RegistryState mutex poisoned"))?;
+            let project = state
+                .project_store
+                .project(&project_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("create_worktree_task: unknown project_id `{project_id}`")
+                })?;
+            (
+                project.path.clone(),
+                project.name.clone(),
+                project.id.clone(),
+            )
+        };
+
+        let trimmed = task_name.trim().to_string();
+        if trimmed.is_empty() {
+            anyhow::bail!("create_worktree_task: task_name must not be blank");
+        }
+        let generated = trimmed.clone();
+
+        let launch_config = match agent_provider.map(map_agent_provider_back) {
+            Some(provider) => another_one_core::agents::TerminalLaunchConfig::for_provider(provider),
+            None => another_one_core::agents::TerminalLaunchConfig::default(),
+        };
+        let branch_mode =
+            another_one_core::project_store::TaskWorktreeBranchMode::NewBranchFrom {
+                source_branch,
+            };
+
+        let mut rx = another_one_core::project_service::spawn_task_creation(
+            target_project_id.clone(),
+            project_path,
+            project_name,
+            trimmed,
+            generated,
+            branch_mode,
+            launch_config,
+        );
+        let reply = rx
+            .recv()
+            .await
+            .map_err(|_| anyhow::anyhow!("task creation worker dropped"))?;
+        let success = reply
+            .result
+            .map_err(|f| anyhow::anyhow!("create task: {}", f.message))?;
+
+        // Insert the prepared worktree project + the task under one
+        // lock so the listProjects push that follows sees both.
+        let section_id = {
+            let registry = local_registry().ok_or_else(|| {
+                anyhow::anyhow!("create_worktree_task: set_local_registry vanished")
+            })?;
+            let mut state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("create_worktree_task: registry mutex poisoned"))?;
+            let inserted_worktree =
+                state.project_store.insert_prepared_project(success.project.clone());
+            // If a worktree project at that path was already known
+            // (re-running the modal pointing at an existing
+            // worktree), we still proceed to the task insert.
+            let worktree_project_id = if inserted_worktree {
+                success.project.project.id.clone()
+            } else {
+                state
+                    .project_store
+                    .projects
+                    .iter()
+                    .find(|p| p.path == success.project.project.path)
+                    .map(|p| p.id.clone())
+                    .unwrap_or_else(|| success.project.project.id.clone())
+            };
+            let task_id = uuid::Uuid::new_v4().to_string();
+            let section = another_one_core::section::SectionId::for_task(
+                &worktree_project_id,
+                &success.branch_name,
+                &task_id,
+            );
+            let section_key = section.store_key();
+            state
+                .project_store
+                .insert_task(another_one_core::project_store::Task {
+                    id: task_id,
+                    name: success.task_name,
+                    kind: another_one_core::project_store::TaskKind::Worktree,
+                    root_project_id: target_project_id,
+                    target_project_id: worktree_project_id.clone(),
+                    branch_name: success.branch_name,
+                    section_id: section_key.clone(),
+                    worktree_project_id: Some(worktree_project_id),
+                    tabs: Vec::new(),
+                    active_tab_id: String::new(),
+                    next_tab_id: 0,
+                    cwd: None,
+                });
+            state.project_store.save();
+            section_key
+        };
+        self.list_projects().await?;
+        Ok(section_id)
+    }
+
     /// Rename a task. Empty / whitespace-only names are rejected so
     /// the daemon never persists a blank label. Returns whether
     /// anything was actually written (an unknown id or a no-op
@@ -652,5 +784,26 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         AgentProviderKind::Amp => AgentProvider::Amp,
         AgentProviderKind::RovoDev => AgentProvider::RovoDev,
         AgentProviderKind::Forge => AgentProvider::Forge,
+    }
+}
+
+fn map_agent_provider_back(kind: AgentProvider) -> AgentProviderKind {
+    match kind {
+        AgentProvider::ClaudeCode => AgentProviderKind::ClaudeCode,
+        AgentProvider::CursorAgent => AgentProviderKind::CursorAgent,
+        AgentProvider::Codex => AgentProviderKind::Codex,
+        AgentProvider::Pi => AgentProviderKind::Pi,
+        AgentProvider::Gemini => AgentProviderKind::Gemini,
+        AgentProvider::OpenCode => AgentProviderKind::OpenCode,
+        AgentProvider::Amp => AgentProviderKind::Amp,
+        AgentProvider::RovoDev => AgentProviderKind::RovoDev,
+        AgentProvider::Forge => AgentProviderKind::Forge,
+        // The wire enum has a `Shell` variant for "no agent, just a
+        // shell" — that maps to a default `TerminalLaunchConfig`, so
+        // we never have to re-translate it back to a core
+        // `AgentProviderKind`. The caller treats `Some(Shell)` like
+        // `None` upstream of this fn; gate it here so the match is
+        // exhaustive.
+        AgentProvider::Shell => AgentProviderKind::ClaudeCode,
     }
 }

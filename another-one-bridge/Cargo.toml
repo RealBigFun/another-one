@@ -29,6 +29,10 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Used to mint task ids inside `create_worktree_task`. Same v4 UUID
+# shape the GPUI desktop generates so persisted tasks round-trip
+# across the two clients.
+uuid = { version = "1", features = ["v4"] }
 
 # Android-only log bridge for our tracing events.
 [target.'cfg(target_os = "android")'.dependencies]
