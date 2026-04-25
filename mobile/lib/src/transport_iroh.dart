@@ -9,10 +9,11 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'connection.dart';
 import 'rust/api/iroh_client.dart';
 import 'transport.dart';
 
-class IrohTransport implements TerminalTransport {
+class IrohTransport implements TerminalTransport, DaemonConnection {
   /// Hex-encoded EndpointId of the daemon to dial.
   final String endpointId;
 
@@ -71,7 +72,22 @@ class IrohTransport implements TerminalTransport {
 
   /// Daemon-pushed worker replies. Today the only variant is
   /// `ProjectList`, pushed in response to [listProjects].
+  @override
   Stream<WorkerReply> get workerReplies => _workerReplies.stream;
+
+  // ── DaemonConnection identity ───────────────────────────────────
+
+  /// Remote endpoint id is a stable opaque value within the
+  /// `ConnectionManager`'s lifetime — same daemon → same id.
+  @override
+  String get id => endpointId;
+
+  /// Renders as the truncated endpoint id for now. Future: pull a
+  /// human-set name from `paired_peers` so the UI shows
+  /// `"laptop@home"` instead of hex.
+  @override
+  String get displayName =>
+      endpointId.length > 12 ? '${endpointId.substring(0, 12)}…' : endpointId;
 
   @override
   void connect() {
@@ -134,6 +150,7 @@ class IrohTransport implements TerminalTransport {
   /// [workerReplies] as a `WorkerReply_ProjectList`. Returns a
   /// future for callers that want to surface send errors; most call
   /// sites can ignore it (the list will simply not arrive).
+  @override
   Future<void> listProjects() async {
     final session = _session;
     if (session == null) return;
@@ -147,6 +164,7 @@ class IrohTransport implements TerminalTransport {
   /// After calling, subscribe to [incoming] to receive bytes for the
   /// attached tab. Calling [attachTab] again with a different tab
   /// implicitly detaches the previous one.
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,
@@ -158,6 +176,7 @@ class IrohTransport implements TerminalTransport {
 
   /// Stop receiving PTY bytes for the currently-attached tab. Safe to
   /// call without an active attachment (no-op).
+  @override
   Future<void> detachTab() async {
     final session = _session;
     if (session == null) return;
@@ -168,6 +187,7 @@ class IrohTransport implements TerminalTransport {
   /// this targets the tab on the daemon's side, not a single-session
   /// PTY — required when the daemon is bridging into a
   /// desktop-hosted live tab.
+  @override
   Future<void> tabResize({required int cols, required int rows}) async {
     final session = _session;
     if (session == null) return;
@@ -177,6 +197,7 @@ class IrohTransport implements TerminalTransport {
   /// Ask the daemon to launch this tab's PTY if it isn't already live.
   /// Safe to call unconditionally before [attachTab] — it's a no-op on
   /// the daemon side when the tab is already running.
+  @override
   Future<void> launchTab({
     required String sectionId,
     required String tabId,
