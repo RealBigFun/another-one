@@ -46,6 +46,23 @@ impl HeadlessPlatform for AndroidPlatform {
         // what the resource indicator wants anyway.
         super::linux::procfs_read_process_samples()
     }
+
+    fn is_open_in_app_available(_app: crate::open_in::OpenInAppKind) -> bool {
+        // Android's open-in story is driven by `Intent.ACTION_VIEW`,
+        // which is reachable from Java/Kotlin only. The future
+        // Flutter UI will route any "open in" through a Dart
+        // platform channel; from Rust we always report unavailable.
+        false
+    }
+
+    fn command_for_open_in(
+        _app: crate::open_in::OpenInAppKind,
+        _path: &std::path::Path,
+    ) -> std::process::Command {
+        // See [`Self::is_open_in_app_available`]. Placeholder so
+        // the trait shape is uniform; should never be invoked.
+        std::process::Command::new("/dev/null")
+    }
 }
 
 #[cfg(test)]

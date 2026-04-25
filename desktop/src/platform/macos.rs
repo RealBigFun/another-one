@@ -1,12 +1,11 @@
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 use another_one_core::platform::{CurrentPlatform as CorePlatform, HeadlessPlatform};
 use gpui::{point, px, App, TitlebarOptions, Window, WindowDecorations};
 
 use super::PlatformServices;
 use crate::assets::asset_root;
-use crate::open_in::{command_exists, OpenInAppKind};
+use crate::open_in::OpenInAppKind;
 use crate::resource_usage::{RawProcessSample, TrackedProcess};
 
 pub struct MacPlatform;
@@ -40,35 +39,13 @@ impl PlatformServices for MacPlatform {
     }
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool {
-        match app {
-            OpenInAppKind::Cursor => {
-                macos_app_exists("Cursor") || command_exists(&["cursor", "cursor-cli"])
-            }
-            OpenInAppKind::Zed => macos_app_exists("Zed") || command_exists(&["zed"]),
-            OpenInAppKind::VsCode => {
-                macos_app_exists("Visual Studio Code") || command_exists(&["code"])
-            }
-            OpenInAppKind::FileManager => macos_app_exists("Finder"),
-        }
+        // See the matching comment in this file's `open_external_url`.
+        CorePlatform::is_open_in_app_available(app)
     }
 
     fn command_for_open_in(app: OpenInAppKind, path: &Path) -> Command {
-        let mut command = Command::new("open");
-        match app {
-            OpenInAppKind::Cursor => {
-                command.args(["-a", "Cursor"]).arg(path);
-            }
-            OpenInAppKind::Zed => {
-                command.args(["-a", "Zed"]).arg(path);
-            }
-            OpenInAppKind::VsCode => {
-                command.args(["-a", "Visual Studio Code"]).arg(path);
-            }
-            OpenInAppKind::FileManager => {
-                command.arg(path);
-            }
-        }
-        command
+        // See the matching comment in this file's `open_external_url`.
+        CorePlatform::command_for_open_in(app, path)
     }
 
     fn titlebar_options(_title: &str) -> TitlebarOptions {
@@ -125,24 +102,4 @@ impl PlatformServices for MacPlatform {
     }
 }
 
-fn macos_app_exists(app_name: &str) -> bool {
-    macos_app_candidates(app_name)
-        .into_iter()
-        .any(|path| path.exists())
-}
-
-fn macos_app_candidates(app_name: &str) -> Vec<PathBuf> {
-    let bundle_name = format!("{app_name}.app");
-    let mut candidates = vec![
-        PathBuf::from("/Applications").join(&bundle_name),
-        PathBuf::from("/System/Applications").join(&bundle_name),
-        PathBuf::from("/System/Library/CoreServices").join(&bundle_name),
-    ];
-
-    if let Some(home_dir) = dirs::home_dir() {
-        candidates.push(home_dir.join("Applications").join(bundle_name));
-    }
-
-    candidates
-}
 
