@@ -20,7 +20,8 @@ impl PlatformServices for LinuxPlatform {
     }
 
     fn platform_modifier_label() -> &'static str {
-        "Super"
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        <another_one_core::platform::CurrentPlatform as another_one_core::platform::HeadlessPlatform>::modifier_label()
     }
 
     fn read_process_samples(

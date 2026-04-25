@@ -20,7 +20,8 @@ impl PlatformServices for WindowsPlatform {
     }
 
     fn platform_modifier_label() -> &'static str {
-        "Win"
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        <another_one_core::platform::CurrentPlatform as another_one_core::platform::HeadlessPlatform>::modifier_label()
     }
 
     fn read_process_samples(
