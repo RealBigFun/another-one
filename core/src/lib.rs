@@ -16,6 +16,7 @@
 //! zero-intra-crate-dep files.
 
 pub mod agents;
+pub mod daemon_embed;
 pub mod git_actions;
 pub mod git_service;
 pub mod leakscope;
