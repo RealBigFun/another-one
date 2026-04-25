@@ -120,6 +120,46 @@ class AppTokens {
   /// Padding inside the terminal view (mirrors `TERMINAL_VIEW_PADDING`).
   static const double terminalViewPadding = 12;
 
+  // ── Desktop layout constants (mirror desktop/src/layout.rs) ────────
+  /// Titlebar height — `TITLEBAR_CHROME_H`.
+  static const double titlebarHeight = 38;
+
+  /// Project row height — `PROJECT_ROW_H` (left_sidebar.rs).
+  static const double projectRowHeight = 34;
+
+  /// Task ("branch") row height — `BRANCH_ROW_H` (left_sidebar.rs).
+  static const double taskRowHeight = 44;
+
+  /// Top padding inside the sidebar list — `LIST_TOP_PAD`.
+  static const double sidebarListTopPad = 4;
+
+  /// Gap between sidebar rows — `LIST_GAP`.
+  static const double sidebarListGap = 2;
+
+  /// Project context-menu width — `MENU_W`.
+  static const double projectMenuWidth = 316;
+
+  /// Task context-menu width — `TASK_MENU_W`.
+  static const double taskMenuWidth = 248;
+
+  /// Default sidebar width.
+  static const double sidebarWidth = 280;
+
+  /// Project avatar size + corner radius (left_sidebar.rs).
+  static const double avatarSize = 24;
+  static const double avatarRadius = 5;
+
+  // ── Active row chrome (left_sidebar.rs) ────────────────────────────
+  /// Active row background — white().opacity(0.03).
+  static const Color rowActiveBg = Color(0x08FFFFFF);
+
+  /// Active row border — white().opacity(0.18).
+  static const Color rowActiveBorder = Color(0x2EFFFFFF);
+
+  // ── Destructive button colours (matches GPUI delete buttons) ────────
+  static const Color dangerBg = Color(0xFF8A2A2A);
+  static const Color dangerHover = Color(0xFFA03A3A);
+
   // ── Project-avatar palette (from `desktop/src/theme.rs`) ───────────
   static const List<Color> projectColors = [
     Color(0xFF5B4A9E), // purple

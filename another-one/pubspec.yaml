@@ -46,6 +46,10 @@ dependencies:
   # is the cross-platform equivalent (GTK on Linux, NSOpenPanel on
   # macOS, IFileDialog on Windows).
   file_picker: ^8.0.0
+  # SVG renderer — bundles the same `assets/icons/icons__*.svg`
+  # set the GPUI desktop ships so glyphs (pin, chevron, github,
+  # qr-code, etc.) render bit-identically across both UIs.
+  flutter_svg: ^2.0.10
   mobile_scanner: ^5.2.0
   another_one_bridge:
     path: rust_builder
@@ -92,6 +96,12 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    # GPUI-shipped icon set — copied verbatim from
+    # `desktop/assets/icons/` so sidebar + titlebar glyphs render
+    # bit-identically across the two UIs.
+    - assets/icons/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
