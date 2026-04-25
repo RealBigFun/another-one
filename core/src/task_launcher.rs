@@ -3,7 +3,7 @@ use crate::project_store::{Project, ProjectKind, Task, TaskKind, TaskWorktreeBra
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
-pub(crate) enum TaskLaunchRequest {
+pub enum TaskLaunchRequest {
     Direct {
         project_id: String,
         task_name: String,
@@ -29,21 +29,21 @@ pub(crate) enum TaskLaunchRequest {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PendingTaskLaunch {
+pub enum PendingTaskLaunch {
     NewTaskModal,
     Review,
 }
 
-pub(crate) fn review_task_title(pull_request_number: u64) -> String {
+pub fn review_task_title(pull_request_number: u64) -> String {
     format!("Review #{pull_request_number}")
 }
 
-pub(crate) fn review_worktree_name_prefix(pull_request_number: u64) -> String {
+pub fn review_worktree_name_prefix(pull_request_number: u64) -> String {
     format!("review-{pull_request_number}-wt")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TaskWorkspaceTarget {
+pub struct TaskWorkspaceTarget {
     pub root_project_id: String,
     pub project_id: String,
     pub task_id: String,
@@ -51,7 +51,7 @@ pub(crate) struct TaskWorkspaceTarget {
     pub project_path: PathBuf,
 }
 
-pub(crate) fn task_workspace_target(
+pub fn task_workspace_target(
     projects: &[Project],
     root_project: &Project,
     task: &Task,
@@ -83,7 +83,7 @@ pub(crate) fn task_workspace_target(
     })
 }
 
-pub(crate) fn existing_review_worktree_project<'a>(
+pub fn existing_review_worktree_project<'a>(
     projects: &'a [Project],
     root_project: &Project,
     pull_request_number: u64,

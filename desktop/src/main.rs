@@ -25,7 +25,6 @@ mod resource_usage;
 mod right_sidebar;
 mod settings_page;
 mod shortcuts;
-mod task_launcher;
 mod terminal_runtime;
 mod theme;
 mod titlebar;
@@ -42,7 +41,7 @@ mod tokens;
 // desktop (the GPUI/platform-coupled halves) that internally re-export
 // the core-side pure types, so `crate::open_in::OpenInAppKind` still
 // resolves via those local modules.
-pub(crate) use another_one_core::{agents, git_actions, project_store, terminal_launch};
+pub(crate) use another_one_core::{agents, git_actions, project_store, task_launcher, terminal_launch};
 
 use gpui::{
     px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions,
