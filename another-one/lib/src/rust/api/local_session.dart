@@ -7,8 +7,9 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -86,6 +87,37 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// hasn't been registered yet, sends an empty list.
   Future<void> listProjects();
 
+  /// Snapshot of the host's "Open In" configuration: which apps
+  /// are enabled (intersection of installed-on-host with the user's
+  /// configured set) and which one was last picked as the
+  /// preferred default.
+  ///
+  /// The titlebar split-button uses `preferred_app_id` for its
+  /// primary-action icon and `enabled_apps` for the chevron
+  /// dropdown. Both are global across projects — `project_id` only
+  /// matters when actually launching, not when rendering the
+  /// chrome.
+  ///
+  /// Cheap to call repeatedly: the install detection runs through
+  /// `<CurrentPlatform as HeadlessPlatform>::is_open_in_app_available`
+  /// (a `$PATH` walk on Linux/Windows, bundle existence on macOS),
+  /// and the project store read is a single mutex acquisition.
+  Future<OpenInState> openInState();
+
+  /// Open a project's directory in the named app and record it as
+  /// the user's preferred default. Mirrors GPUI's
+  /// `App::open_project_directory_in_app`: spawn the platform
+  /// command, then on success persist `preferred_open_in_app` so
+  /// the next titlebar click goes there directly.
+  ///
+  /// The "spawn first, save preferred only on success" ordering
+  /// matches GPUI — a failed spawn doesn't leave the preferred
+  /// pointing at a broken target.
+  Future<void> openProjectInApp({
+    required String projectId,
+    required String appId,
+  });
+
   /// Resolve the GitHub remote URL for a project by shelling out to
   /// `git remote get-url origin` and normalising the result through
   /// [`another_one_core::git_actions::find_github_repo_url`].
@@ -152,4 +184,74 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// (min-across-viewers) size. The desktop UI render tick drains
   /// the resulting `pending_resizes` queue.
   Future<void> tabResize({required int cols, required int rows});
+}
+
+/// FRB-friendly mirror of [`OpenInAppKind`] with the
+/// pre-computed display strings. Lives here (not in core) because
+/// FRB's binding generator only walks bridge crate types — we'd
+/// need a re-export shim either way and the mapping is one-to-one.
+class OpenInAppDto {
+  /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
+  /// `"zed"`, `"vscode"`, `"file-manager"`. Round-trips through
+  /// [`LocalSession::open_project_in_app`].
+  final String id;
+
+  /// Human-readable label rendered in the dropdown. Localised at
+  /// the platform level (Finder vs File Manager vs File Explorer).
+  final String label;
+
+  /// Tooltip text — same copy GPUI's titlebar dropdown uses.
+  final String description;
+
+  /// Asset path for the app's glyph, relative to the app bundle's
+  /// asset root. Both the GPUI and Flutter UIs ship the same
+  /// `assets/icons/open_in__*.svg` files, so the path is valid
+  /// on either side without translation.
+  final String iconPath;
+
+  const OpenInAppDto({
+    required this.id,
+    required this.label,
+    required this.description,
+    required this.iconPath,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ label.hashCode ^ description.hashCode ^ iconPath.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OpenInAppDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          description == other.description &&
+          iconPath == other.iconPath;
+}
+
+/// Snapshot returned by [`LocalSession::open_in_state`].
+class OpenInState {
+  /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
+  /// declares them — Cursor, Zed, VS Code, File Manager.
+  final List<OpenInAppDto> enabledApps;
+
+  /// Id of the app the titlebar's primary action launches. `None`
+  /// when no app is enabled at all (a fresh install on a host with
+  /// none of the editors detected).
+  final String? preferredAppId;
+
+  const OpenInState({required this.enabledApps, this.preferredAppId});
+
+  @override
+  int get hashCode => enabledApps.hashCode ^ preferredAppId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OpenInState &&
+          runtimeType == other.runtimeType &&
+          enabledApps == other.enabledApps &&
+          preferredAppId == other.preferredAppId;
 }

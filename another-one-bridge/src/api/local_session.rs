@@ -21,6 +21,8 @@ use std::sync::Mutex;
 
 use another_one_core::agents::AgentProviderKind;
 use another_one_core::daemon_embed::{key_from_wire, RegistryState, TabLaunchRequest};
+use another_one_core::open_in::OpenInAppKind;
+use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
 use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
@@ -502,6 +504,101 @@ impl LocalSession {
         Ok(url)
     }
 
+    /// Snapshot of the host's "Open In" configuration: which apps
+    /// are enabled (intersection of installed-on-host with the user's
+    /// configured set) and which one was last picked as the
+    /// preferred default.
+    ///
+    /// The titlebar split-button uses `preferred_app_id` for its
+    /// primary-action icon and `enabled_apps` for the chevron
+    /// dropdown. Both are global across projects — `project_id` only
+    /// matters when actually launching, not when rendering the
+    /// chrome.
+    ///
+    /// Cheap to call repeatedly: the install detection runs through
+    /// `<CurrentPlatform as HeadlessPlatform>::is_open_in_app_available`
+    /// (a `$PATH` walk on Linux/Windows, bundle existence on macOS),
+    /// and the project store read is a single mutex acquisition.
+    pub async fn open_in_state(&self) -> anyhow::Result<OpenInState> {
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("open_in_state: set_local_registry not called"))?;
+        let state = registry
+            .lock()
+            .map_err(|_| anyhow::anyhow!("open_in_state: RegistryState mutex poisoned"))?;
+
+        let available = available_open_in_apps();
+        let enabled_apps = state
+            .project_store
+            .enabled_open_in_apps(&available)
+            .into_iter()
+            .map(open_in_app_to_dto)
+            .collect();
+        let preferred_app_id = state
+            .project_store
+            .preferred_open_in_app(&available)
+            .map(|app| app.id().to_string());
+
+        Ok(OpenInState {
+            enabled_apps,
+            preferred_app_id,
+        })
+    }
+
+    /// Open a project's directory in the named app and record it as
+    /// the user's preferred default. Mirrors GPUI's
+    /// `App::open_project_directory_in_app`: spawn the platform
+    /// command, then on success persist `preferred_open_in_app` so
+    /// the next titlebar click goes there directly.
+    ///
+    /// The "spawn first, save preferred only on success" ordering
+    /// matches GPUI — a failed spawn doesn't leave the preferred
+    /// pointing at a broken target.
+    pub async fn open_project_in_app(
+        &self,
+        project_id: String,
+        app_id: String,
+    ) -> anyhow::Result<()> {
+        let app = parse_open_in_app_id(&app_id).ok_or_else(|| {
+            anyhow::anyhow!("open_project_in_app: unknown app id `{app_id}`")
+        })?;
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("open_project_in_app: set_local_registry not called")
+        })?;
+
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!("open_project_in_app: RegistryState mutex poisoned")
+            })?;
+            state
+                .project_store
+                .project(&project_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "open_project_in_app: unknown project_id `{project_id}`"
+                    )
+                })?
+                .path
+                .clone()
+        };
+
+        let mut command = <CurrentPlatform as HeadlessPlatform>::command_for_open_in(
+            app,
+            &project_path,
+        );
+        command
+            .spawn()
+            .map_err(|err| anyhow::anyhow!("open in {}: {err}", app.label()))?;
+
+        let available = available_open_in_apps();
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("open_project_in_app: RegistryState mutex poisoned")
+        })?;
+        state
+            .project_store
+            .set_preferred_open_in_app(app, &available);
+        Ok(())
+    }
+
     /// Subscribe to live PTY bytes for `(section_id, tab_id)`.
     ///
     /// Replaces any previous attachment: aborts the previous
@@ -845,6 +942,72 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         AgentProviderKind::Amp => AgentProvider::Amp,
         AgentProviderKind::RovoDev => AgentProvider::RovoDev,
         AgentProviderKind::Forge => AgentProvider::Forge,
+    }
+}
+
+/// FRB-friendly mirror of [`OpenInAppKind`] with the
+/// pre-computed display strings. Lives here (not in core) because
+/// FRB's binding generator only walks bridge crate types — we'd
+/// need a re-export shim either way and the mapping is one-to-one.
+#[derive(Debug, Clone)]
+pub struct OpenInAppDto {
+    /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
+    /// `"zed"`, `"vscode"`, `"file-manager"`. Round-trips through
+    /// [`LocalSession::open_project_in_app`].
+    pub id: String,
+    /// Human-readable label rendered in the dropdown. Localised at
+    /// the platform level (Finder vs File Manager vs File Explorer).
+    pub label: String,
+    /// Tooltip text — same copy GPUI's titlebar dropdown uses.
+    pub description: String,
+    /// Asset path for the app's glyph, relative to the app bundle's
+    /// asset root. Both the GPUI and Flutter UIs ship the same
+    /// `assets/icons/open_in__*.svg` files, so the path is valid
+    /// on either side without translation.
+    pub icon_path: String,
+}
+
+/// Snapshot returned by [`LocalSession::open_in_state`].
+#[derive(Debug, Clone)]
+pub struct OpenInState {
+    /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
+    /// declares them — Cursor, Zed, VS Code, File Manager.
+    pub enabled_apps: Vec<OpenInAppDto>,
+    /// Id of the app the titlebar's primary action launches. `None`
+    /// when no app is enabled at all (a fresh install on a host with
+    /// none of the editors detected).
+    pub preferred_app_id: Option<String>,
+}
+
+/// Filter [`OpenInAppKind::all`] down to what the host says is
+/// installed, preserving the canonical order.
+fn available_open_in_apps() -> Vec<OpenInAppKind> {
+    OpenInAppKind::all()
+        .into_iter()
+        .filter(|app| {
+            <CurrentPlatform as HeadlessPlatform>::is_open_in_app_available(*app)
+        })
+        .collect()
+}
+
+fn open_in_app_to_dto(app: OpenInAppKind) -> OpenInAppDto {
+    OpenInAppDto {
+        id: app.id().to_string(),
+        label: app.label().to_string(),
+        description: app.description().to_string(),
+        icon_path: app.icon_path().to_string(),
+    }
+}
+
+/// Inverse of [`OpenInAppKind::id`]. Kept local — only the bridge
+/// round-trips ids over FRB; no other consumer needs it.
+fn parse_open_in_app_id(id: &str) -> Option<OpenInAppKind> {
+    match id {
+        "cursor" => Some(OpenInAppKind::Cursor),
+        "zed" => Some(OpenInAppKind::Zed),
+        "vscode" => Some(OpenInAppKind::VsCode),
+        "file-manager" => Some(OpenInAppKind::FileManager),
+        _ => None,
     }
 }
 

@@ -31,6 +31,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'rust/api/iroh_client.dart';
+import 'rust/api/local_session.dart' show OpenInState;
 import 'transport.dart';
 
 /// Unified interface for any daemon — local FFI or remote iroh —
@@ -177,6 +178,36 @@ abstract class DaemonConnection {
     throw UnimplementedError(
       'readProjectGithubUrl: requires the iroh transport to expose '
       'the project github link cache (not yet implemented).',
+    );
+  }
+
+  /// Snapshot of the host's "Open In" config — installed-and-enabled
+  /// apps + the preferred default. Used by the titlebar split-button
+  /// to render its primary icon and the chevron dropdown.
+  ///
+  /// Open-In is currently a desktop-host-local concern and not
+  /// remoted: the iroh transport throws by design until a remote
+  /// client gets a "launch app on the host you're connected to"
+  /// surface (out of scope for the migration).
+  Future<OpenInState> openInState() {
+    throw UnimplementedError(
+      'openInState: Open-In is host-local; remote daemons do not '
+      'expose installed-app detection (out of migration scope).',
+    );
+  }
+
+  /// Open `projectId`'s directory in the named app and persist that
+  /// app as the user's preferred default. `appId` matches
+  /// `OpenInAppKind::id()` — `"cursor"`, `"zed"`, `"vscode"`, or
+  /// `"file-manager"`. Throws if `appId` is unknown or the spawn
+  /// fails.
+  Future<void> openProjectInApp({
+    required String projectId,
+    required String appId,
+  }) {
+    throw UnimplementedError(
+      'openProjectInApp: Open-In is host-local; remote daemons do '
+      'not launch apps on a remote host (out of migration scope).',
     );
   }
 }

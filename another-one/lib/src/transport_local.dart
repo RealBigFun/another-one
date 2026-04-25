@@ -222,6 +222,36 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     return session.readProjectGithubUrl(projectId: projectId);
   }
 
+  /// Read the host's enabled-and-installed Open-In apps + the
+  /// preferred default. Powers the titlebar split-button: primary
+  /// icon comes from `preferredAppId`, dropdown rows from
+  /// `enabledApps`. Cheap to call repeatedly so callers can
+  /// `ref.refresh` after mutating actions instead of subscribing.
+  @override
+  Future<OpenInState> openInState() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('openInState: LocalTransport not connected');
+    }
+    return session.openInState();
+  }
+
+  /// Open the project's directory in the named app and record that
+  /// app as the new preferred default. Spawns the platform-specific
+  /// command via the embedded daemon's host process — only valid on
+  /// the local connection.
+  @override
+  Future<void> openProjectInApp({
+    required String projectId,
+    required String appId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('openProjectInApp: LocalTransport not connected');
+    }
+    await session.openProjectInApp(projectId: projectId, appId: appId);
+  }
+
   @override
   Future<void> attachTab({
     required String sectionId,
