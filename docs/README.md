@@ -5,7 +5,7 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
 
 ## Layout
 
-- [[apps/desktop]] · [[apps/daemon-sandbox]] · [[apps/mobile]] · [[apps/mobile-core]]
+- [[apps/desktop]] · [[apps/daemon-sandbox]] · [[apps/mobile]] · [[apps/another-one-bridge]]
   — one doc per workspace member: what it is, how to run, key files.
 - `architecture/` — reusable patterns that have proved out in the codebase.
   Currently: [[architecture/terminal-wrapping-principle]],

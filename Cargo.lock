@@ -216,6 +216,21 @@ name = "another-one-mcp-shim"
 version = "0.1.0"
 
 [[package]]
+name = "another_one_bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flutter_rust_bridge",
+ "iroh",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-android",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4758,21 +4773,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
 dependencies = [
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "mobile_core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flutter_rust_bridge",
- "iroh",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-android",
- "tracing-subscriber",
 ]
 
 [[package]]

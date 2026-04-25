@@ -31,7 +31,7 @@ UDP sockets and spawned actor tasks need tokio. Calling iroh from an
 FRB async fn means `tokio::spawn` succeeds but the spawned work is
 never polled. Outer awaits hang with nothing scheduled.
 
-**Fix**: `mobile-core` builds its own `tokio::runtime::Runtime`
+**Fix**: `another-one-bridge` (then named `mobile-core`) builds its own `tokio::runtime::Runtime`
 (multi-thread, 2 workers) as a `OnceLock` static and delegates
 `iroh_connect_inner` onto it with `tokio_rt().spawn(async move {
   ... }).await`. See [[../architecture/frb-tokio-runtime]].

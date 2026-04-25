@@ -1,9 +1,9 @@
 [package]
-name = "mobile_core"
+name = "another_one_bridge"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Mobile-side Rust core — Iroh client for the AnotherOne companion app, exposed to Dart via flutter_rust_bridge"
+description = "Shared Rust bridge crate consumed by both desktop and mobile AnotherOne clients via flutter_rust_bridge"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

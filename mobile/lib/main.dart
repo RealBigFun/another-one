@@ -20,7 +20,7 @@ import 'src/theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
-  // Point mobile-core at a persistent location for the iroh secret
+  // Point another-one-bridge at a persistent location for the iroh secret
   // key before any `ironConnect` can be called. Without this, every
   // app restart generates a new EndpointId and breaks TOFU pairing.
   final supportDir = await getApplicationSupportDirectory();

@@ -37,12 +37,12 @@ dependencies:
   web_socket_channel: ^3.0.3
   xterm: ^4.0.0
   shared_preferences: ^2.2.0
-  # Resolves platform-appropriate paths for mobile-core to persist the
+  # Resolves platform-appropriate paths for another-one-bridge to persist the
   # iroh secret key. Without stable storage, the phone's EndpointId
   # would regenerate on every app restart, breaking TOFU pairing.
   path_provider: ^2.1.3
   mobile_scanner: ^5.2.0
-  mobile_core:
+  another_one_bridge:
     path: rust_builder
   flutter_rust_bridge: 2.12.0
   # Required for FRB's generated Dart tagged-union classes (one per

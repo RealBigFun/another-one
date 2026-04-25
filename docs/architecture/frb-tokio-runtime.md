@@ -35,7 +35,7 @@ fn tokio_rt() -> &'static Runtime {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
-            .thread_name("mobile_core-tokio")
+            .thread_name("another_one_bridge-tokio")
             .build()
             .expect("build tokio runtime")
     })
@@ -100,4 +100,4 @@ does not wire `tracing` anywhere, so any library using `tracing`
 
 - [[../postmortems/2026-04-23-iroh-android-hang]] — discovery path that
   led to this pattern.
-- [[../apps/mobile-core]] — current implementation.
+- [[../apps/another-one-bridge]] — current implementation.

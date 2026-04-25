@@ -32,7 +32,7 @@ Build-time config worth knowing:
 
 - `gpui` 0.2 — Zed's UI framework.
 - `alacritty_terminal` 0.26 — VT emulator; same crate used by
-  [[mobile-core]] (so desktop and mobile agree on parsing).
+  [[another-one-bridge]] (so desktop and mobile agree on parsing).
 - `portable-pty` 0.9 — cross-platform PTY spawning. Also used by
   [[daemon-sandbox]].
 

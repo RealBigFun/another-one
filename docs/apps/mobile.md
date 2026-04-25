@@ -1,7 +1,7 @@
 # `mobile/` — Flutter sandbox client
 
 Minimal Flutter app that talks to [[daemon-sandbox]] over WebSocket or Iroh
-QUIC (via [[mobile-core]]) and renders the PTY byte stream with
+QUIC (via [[another-one-bridge]]) and renders the PTY byte stream with
 `xterm.dart`. Android + iOS targets scaffolded; only Android verified
 so far.
 
@@ -9,7 +9,7 @@ so far.
 
 - `lib/main.dart` — `TerminalPage` state, `_buildTransport` dispatches by
   URL scheme (`ws://` → WebSocket, `iroh://<id>?direct=host:port` →
-  Iroh). Init calls `RustLib.init()` to bring [[mobile-core]] online.
+  Iroh). Init calls `RustLib.init()` to bring [[another-one-bridge]] online.
 - `lib/src/transport.dart` — `TerminalTransport` interface (see
   [[../architecture/transport-abstraction]]).
 - `lib/src/transport_websocket.dart` — WS implementation (web_socket_channel).
@@ -17,7 +17,7 @@ so far.
   FRB-generated `IrohSession`.
 - `lib/src/rust/` — FRB-generated bindings, do not edit.
 - `rust_builder/` — cargokit-backed Flutter plugin that cross-compiles
-  [[mobile-core]] for every target as part of `flutter build`.
+  [[another-one-bridge]] for every target as part of `flutter build`.
 
 ## Running
 

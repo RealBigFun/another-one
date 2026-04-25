@@ -316,7 +316,7 @@ fn tokio_rt() -> &'static Runtime {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
-            .thread_name("mobile_core-tokio")
+            .thread_name("another_one_bridge-tokio")
             .build()
             .expect("build tokio runtime")
     })
@@ -348,10 +348,10 @@ fn setup_tracing() {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("warn,mobile_core=info,iroh=warn"));
+        .unwrap_or_else(|_| EnvFilter::new("warn,another_one_bridge=info,iroh=warn"));
 
     #[cfg(target_os = "android")]
-    let layer = tracing_android::layer("mobile_core").expect("tracing-android layer");
+    let layer = tracing_android::layer("another_one_bridge").expect("tracing-android layer");
 
     #[cfg(not(target_os = "android"))]
     let layer = tracing_subscriber::fmt::layer();

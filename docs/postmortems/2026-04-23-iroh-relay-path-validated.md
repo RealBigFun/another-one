@@ -31,7 +31,7 @@ Two commits' worth of diff:
 ticket file only carried direct addrs, so off-LAN clients had no way to
 learn the relay URL.
 
-**Mobile-core** (`mobile-core/src/api/iroh_client.rs`) — `iroh_connect`
+**Bridge crate** (`another-one-bridge/src/api/iroh_client.rs`, formerly `mobile-core/`) — `iroh_connect`
 now takes `relay_urls: Vec<String>` in addition to `direct_addrs`.
 Relay mode flips from `Disabled` to `Default` whenever at least one
 relay URL is supplied (no relay URL → stay on the LAN-only direct
