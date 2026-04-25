@@ -14,9 +14,11 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'layout/breakpoints.dart';
 import 'pair_device_page.dart';
 import 'projects_drawer_page.dart';
 import 'rust/api/iroh_client.dart';
+import 'screens/desktop_shell.dart';
 import 'settings_page.dart';
 import 'transport.dart';
 import 'transport_iroh.dart';
@@ -239,6 +241,14 @@ class _AppRootState extends State<AppRoot> {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       );
+    }
+
+    // Desktop breakpoints don't pair to a remote daemon — they run
+    // their own embedded one (booted in main.dart). Skip the pair
+    // flow entirely and drop into the desktop shell. The shell's
+    // titlebar pair-mobile button is for inviting *mobile* peers.
+    if (!Breakpoint.of(context).isPhone) {
+      return const DesktopShell();
     }
 
     if (_endpoint.isEmpty) {
