@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../rust/api/iroh_client.dart';
 import '../state/local_connection_provider.dart';
+import '../state/tab_selection_provider.dart';
 import '../tokens.dart';
 import 'pair_mobile/pair_mobile_modal.dart';
 
@@ -88,71 +89,272 @@ class _ProjectList extends StatelessWidget {
   }
 }
 
-class _ProjectRow extends StatelessWidget {
+class _ProjectRow extends StatefulWidget {
   const _ProjectRow(this.project);
 
   final ProjectSummary project;
 
   @override
+  State<_ProjectRow> createState() => _ProjectRowState();
+}
+
+class _ProjectRowState extends State<_ProjectRow> {
+  bool _expanded = true;
+
+  @override
   Widget build(BuildContext context) {
+    final project = widget.project;
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppTokens.space5,
+        horizontal: AppTokens.space3,
         vertical: AppTokens.space1,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: AppTokens.projectColor(project.id),
-                  borderRadius: BorderRadius.circular(AppTokens.radiusXs),
+          _SidebarRowButton(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Row(
+              children: [
+                Icon(
+                  _expanded ? Icons.expand_more : Icons.chevron_right,
+                  size: 16,
+                  color: AppTokens.chevron,
                 ),
-              ),
-              const SizedBox(width: AppTokens.space3),
-              Expanded(
-                child: Text(
-                  project.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: AppTokens.fontBodyLg,
-                    color: AppTokens.textPrimary,
-                    fontWeight: FontWeight.w500,
+                const SizedBox(width: 2),
+                Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: AppTokens.projectColor(project.id),
+                    borderRadius: BorderRadius.circular(AppTokens.radiusXs),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(width: AppTokens.space3),
+                Expanded(
+                  child: Text(
+                    project.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: AppTokens.fontBodyLg,
+                      color: AppTokens.textPrimary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                if (project.currentBranch != null &&
+                    project.currentBranch!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: AppTokens.space2),
+                    child: Text(
+                      project.currentBranch!,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: AppTokens.fontFamilyMono,
+                        fontSize: AppTokens.fontCaption,
+                        color: AppTokens.textPlaceholder,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
-          if (project.tasks.isNotEmpty)
+          if (_expanded)
             Padding(
               padding: const EdgeInsets.only(
-                left: 22,
+                left: 18,
                 top: AppTokens.space1,
-                bottom: AppTokens.space2,
+                bottom: AppTokens.space1,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final task in project.tasks)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 1),
-                      child: Text(
-                        task.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: AppTokens.fontBody,
-                          color: AppTokens.textSecondary,
-                        ),
-                      ),
+                  for (final task in project.tasks) _TaskRow(task: task),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskRow extends ConsumerWidget {
+  const _TaskRow({required this.task});
+
+  final TaskSummary task;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selection = ref.watch(selectedTabProvider);
+    final taskHasActive = selection != null &&
+        selection.sectionId == task.sectionId &&
+        task.tabs.any((t) => t.id == selection.tabId);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SidebarRowButton(
+            onTap: () {
+              if (task.activeTabId.isEmpty) return;
+              ref.read(selectedTabProvider.notifier).state = TabSelection(
+                sectionId: task.sectionId,
+                tabId: task.activeTabId,
+              );
+            },
+            highlighted: taskHasActive,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    task.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: AppTokens.fontBody,
+                      color: AppTokens.textSecondary,
+                    ),
+                  ),
+                ),
+                if (task.pinned)
+                  const Padding(
+                    padding: EdgeInsets.only(left: AppTokens.space1),
+                    child: Icon(Icons.push_pin,
+                        size: 11, color: AppTokens.accent),
+                  ),
+              ],
+            ),
+          ),
+          if (task.tabs.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(
+                left: AppTokens.space3,
+                top: 1,
+                bottom: 1,
+              ),
+              child: Wrap(
+                spacing: AppTokens.space1,
+                runSpacing: AppTokens.space1,
+                children: [
+                  for (final tab in task.tabs)
+                    _TabChip(
+                      sectionId: task.sectionId,
+                      tab: tab,
+                      selected: selection?.sectionId == task.sectionId &&
+                          selection?.tabId == tab.id,
                     ),
                 ],
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _TabChip extends ConsumerWidget {
+  const _TabChip({
+    required this.sectionId,
+    required this.tab,
+    required this.selected,
+  });
+
+  final String sectionId;
+  final TabSummary tab;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final label = tab.fixedTitle ?? tab.title;
+    return _SidebarRowButton(
+      onTap: () {
+        ref.read(selectedTabProvider.notifier).state = TabSelection(
+          sectionId: sectionId,
+          tabId: tab.id,
+        );
+      },
+      highlighted: selected,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTokens.space2,
+        vertical: 2,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (tab.running)
+            Container(
+              width: 6,
+              height: 6,
+              margin: const EdgeInsets.only(right: AppTokens.space1),
+              decoration: BoxDecoration(
+                color: AppTokens.successIcon,
+                borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+              ),
+            ),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 140),
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: AppTokens.fontCaption,
+                color:
+                    selected ? AppTokens.textPrimary : AppTokens.textMuted,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Reusable click target with hover/selection backgrounds. Centralised
+/// so every sidebar row treats interaction identically — no rogue
+/// hover effects, no clicks-without-cursor.
+class _SidebarRowButton extends StatefulWidget {
+  const _SidebarRowButton({
+    required this.onTap,
+    required this.child,
+    this.highlighted = false,
+    this.padding = const EdgeInsets.symmetric(
+      horizontal: AppTokens.space2,
+      vertical: 3,
+    ),
+  });
+
+  final VoidCallback onTap;
+  final Widget child;
+  final bool highlighted;
+  final EdgeInsets padding;
+
+  @override
+  State<_SidebarRowButton> createState() => _SidebarRowButtonState();
+}
+
+class _SidebarRowButtonState extends State<_SidebarRowButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = widget.highlighted
+        ? AppTokens.overlayActive
+        : (_hovered ? AppTokens.overlayHover : Colors.transparent);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Container(
+          padding: widget.padding,
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+          ),
+          child: widget.child,
+        ),
       ),
     );
   }
@@ -178,13 +380,68 @@ class _SidebarMessage extends StatelessWidget {
   }
 }
 
-class _MainArea extends StatelessWidget {
+class _MainArea extends ConsumerWidget {
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selection = ref.watch(selectedTabProvider);
     return Container(
       color: AppTokens.terminalBg,
       alignment: Alignment.center,
-      child: const _WelcomePlaceholder(),
+      child: selection == null
+          ? const _WelcomePlaceholder()
+          : _TabPlaceholder(selection: selection),
+    );
+  }
+}
+
+/// Stand-in for the terminal pane until Phase 3 #1 lands the xterm
+/// embed. Renders the selected tab's identifiers so the wiring is
+/// observable end-to-end.
+class _TabPlaceholder extends StatelessWidget {
+  const _TabPlaceholder({required this.selection});
+
+  final TabSelection selection;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(AppTokens.space10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.terminal,
+            size: 48,
+            color: AppTokens.accent,
+          ),
+          const SizedBox(height: AppTokens.space5),
+          const Text(
+            'Tab selected',
+            style: TextStyle(
+              fontSize: AppTokens.fontHeading,
+              color: AppTokens.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: AppTokens.space3),
+          SelectableText(
+            'section: ${selection.sectionId}\ntab:     ${selection.tabId}',
+            style: const TextStyle(
+              fontFamily: AppTokens.fontFamilyMono,
+              fontSize: AppTokens.fontBody,
+              color: AppTokens.textMuted,
+            ),
+          ),
+          const SizedBox(height: AppTokens.space5),
+          const Text(
+            'Terminal embed lands in Phase 3 #1.',
+            style: TextStyle(
+              fontSize: AppTokens.fontBody,
+              color: AppTokens.textPlaceholder,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
