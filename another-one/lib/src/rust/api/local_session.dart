@@ -63,6 +63,14 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// hasn't been registered yet, sends an empty list.
   Future<void> listProjects();
 
+  /// Remove a project from the embedded daemon's store. Cascades
+  /// to the project's tasks + terminal sections (see
+  /// [`another_one_core::project_store::ProjectStore::remove_project`]).
+  /// Idempotent — passing an unknown id is silently a no-op.
+  /// Pushes a fresh `ProjectList` reply on completion so
+  /// subscribers refresh.
+  Future<void> removeProject({required String projectId});
+
   /// Send raw PTY stdin bytes to the currently-attached tab.
   ///
   /// Looks up the tab's writer in `RegistryState::writers` and

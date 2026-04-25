@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1713005831;
+  int get rustContentHash => -61974602;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -155,6 +155,11 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiLocalSessionLocalSessionListProjects({
     required LocalSession that,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionRemoveProject({
+    required LocalSession that,
+    required String projectId,
   });
 
   Future<void> crateApiLocalSessionLocalSessionSend({
@@ -829,6 +834,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiLocalSessionLocalSessionRemoveProject({
+    required LocalSession that,
+    required String projectId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 17,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionRemoveProjectConstMeta,
+        argValues: [that, projectId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionRemoveProjectConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_remove_project",
+        argNames: ["that", "projectId"],
+      );
+
+  @override
   Future<void> crateApiLocalSessionLocalSessionSend({
     required LocalSession that,
     required List<int> bytes,
@@ -845,7 +888,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 18,
             port: port_,
           );
         },
@@ -884,7 +927,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 18,
+              funcId: 19,
               port: port_,
             );
           },
@@ -925,7 +968,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 19,
+              funcId: 20,
               port: port_,
             );
           },
@@ -969,7 +1012,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 21,
             port: port_,
           );
         },
@@ -999,7 +1042,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 22,
             port: port_,
           );
         },
@@ -1026,7 +1069,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 23,
             port: port_,
           );
         },
@@ -1062,7 +1105,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1093,7 +1136,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 25,
             port: port_,
           );
         },
@@ -1121,7 +1164,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1148,7 +1191,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 27,
             port: port_,
           );
         },
@@ -1176,7 +1219,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 28,
             port: port_,
           );
         },
@@ -2348,6 +2391,18 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
   /// hasn't been registered yet, sends an empty list.
   Future<void> listProjects() => RustLib.instance.api
       .crateApiLocalSessionLocalSessionListProjects(that: this);
+
+  /// Remove a project from the embedded daemon's store. Cascades
+  /// to the project's tasks + terminal sections (see
+  /// [`another_one_core::project_store::ProjectStore::remove_project`]).
+  /// Idempotent — passing an unknown id is silently a no-op.
+  /// Pushes a fresh `ProjectList` reply on completion so
+  /// subscribers refresh.
+  Future<void> removeProject({required String projectId}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionRemoveProject(
+        that: this,
+        projectId: projectId,
+      );
 
   /// Send raw PTY stdin bytes to the currently-attached tab.
   ///

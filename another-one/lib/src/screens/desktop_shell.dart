@@ -179,17 +179,61 @@ class _ProjectList extends StatelessWidget {
   }
 }
 
-class _ProjectRow extends StatefulWidget {
+class _ProjectRow extends ConsumerStatefulWidget {
   const _ProjectRow(this.project);
 
   final ProjectSummary project;
 
   @override
-  State<_ProjectRow> createState() => _ProjectRowState();
+  ConsumerState<_ProjectRow> createState() => _ProjectRowState();
 }
 
-class _ProjectRowState extends State<_ProjectRow> {
+class _ProjectRowState extends ConsumerState<_ProjectRow> {
   bool _expanded = true;
+
+  Future<void> _confirmRemove() async {
+    final project = widget.project;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTokens.cardBg,
+        title: const Text(
+          'Remove project?',
+          style: TextStyle(color: AppTokens.textPrimary),
+        ),
+        content: Text(
+          'Remove "${project.name}" from AnotherOne. The folder on disk '
+          'is left untouched, but its tasks and terminal history disappear '
+          'from the sidebar.',
+          style: const TextStyle(color: AppTokens.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF8A2A2A),
+              foregroundColor: AppTokens.textPrimary,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final transport = ref.read(localConnectionProvider);
+    try {
+      await transport.removeProject(project.id);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove project: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -204,6 +248,8 @@ class _ProjectRowState extends State<_ProjectRow> {
         children: [
           _SidebarRowButton(
             onTap: () => setState(() => _expanded = !_expanded),
+            onSecondaryTapDown: (details) =>
+                _showProjectContextMenu(context, details.globalPosition),
             child: Row(
               children: [
                 Icon(
@@ -411,12 +457,14 @@ class _SidebarRowButton extends StatefulWidget {
       horizontal: AppTokens.space2,
       vertical: 3,
     ),
+    this.onSecondaryTapDown,
   });
 
   final VoidCallback onTap;
   final Widget child;
   final bool highlighted;
   final EdgeInsets padding;
+  final GestureTapDownCallback? onSecondaryTapDown;
 
   @override
   State<_SidebarRowButton> createState() => _SidebarRowButtonState();
@@ -437,6 +485,7 @@ class _SidebarRowButtonState extends State<_SidebarRowButton> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
+        onSecondaryTapDown: widget.onSecondaryTapDown,
         child: Container(
           padding: widget.padding,
           decoration: BoxDecoration(
@@ -447,6 +496,37 @@ class _SidebarRowButtonState extends State<_SidebarRowButton> {
         ),
       ),
     );
+  }
+}
+
+extension _ProjectRowMenu on _ProjectRowState {
+  Future<void> _showProjectContextMenu(
+    BuildContext context,
+    Offset globalPosition,
+  ) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final value = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        overlay.size.width - globalPosition.dx,
+        overlay.size.height - globalPosition.dy,
+      ),
+      color: AppTokens.cardBg,
+      items: const [
+        PopupMenuItem<String>(
+          value: 'remove',
+          child: Text(
+            'Remove project',
+            style: TextStyle(color: AppTokens.textPrimary),
+          ),
+        ),
+      ],
+    );
+    if (value == 'remove') {
+      await _confirmRemove();
+    }
   }
 }
 

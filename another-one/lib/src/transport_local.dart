@@ -125,6 +125,18 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
     return session.addProject(path: path);
   }
 
+  /// Remove a project from the embedded daemon's store. Cascades
+  /// to the project's tasks + terminal sections. Idempotent — an
+  /// unknown id is a silent no-op. The daemon pushes a fresh
+  /// ProjectList on completion.
+  Future<void> removeProject(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('removeProject: LocalTransport not connected');
+    }
+    await session.removeProject(projectId: projectId);
+  }
+
   @override
   Future<void> attachTab({
     required String sectionId,

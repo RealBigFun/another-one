@@ -175,6 +175,25 @@ impl LocalSession {
         Ok(())
     }
 
+    /// Remove a project from the embedded daemon's store. Cascades
+    /// to the project's tasks + terminal sections (see
+    /// [`another_one_core::project_store::ProjectStore::remove_project`]).
+    /// Idempotent — passing an unknown id is silently a no-op.
+    /// Pushes a fresh `ProjectList` reply on completion so
+    /// subscribers refresh.
+    pub async fn remove_project(&self, project_id: String) -> anyhow::Result<()> {
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("remove_project: set_local_registry not called"))?;
+        {
+            let mut state = registry.lock().map_err(|_| {
+                anyhow::anyhow!("remove_project: RegistryState mutex poisoned")
+            })?;
+            state.project_store.remove_project(&project_id);
+        }
+        self.list_projects().await?;
+        Ok(())
+    }
+
     /// Add an existing on-disk project to the embedded daemon's
     /// project store. Returns `Ok(true)` if the project was inserted,
     /// `Ok(false)` if a project at the same path already existed
