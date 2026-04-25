@@ -164,6 +164,14 @@ pub struct TaskSummary {
     /// `serde(default)` this to `""`.
     #[serde(default)]
     pub last_commit_relative: String,
+    /// Pre-formatted sidebar subtitle: `branch.name (if !=
+    /// task.name) • last_commit_relative`, with empty segments
+    /// dropped. Composed daemon-side so the UI stays a pure
+    /// renderer — Dart just paints this string under the task name.
+    /// Empty when both segments are empty (UI omits the subtitle
+    /// row in that case). Wire-additive default `""`.
+    #[serde(default)]
+    pub subtitle: String,
 }
 
 /// Lossy wire projection of

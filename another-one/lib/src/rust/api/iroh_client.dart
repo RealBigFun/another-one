@@ -218,10 +218,16 @@ class TaskSummary {
 
   /// "5 minutes ago"-style string for the task's branch last
   /// commit. Empty when the project hasn't been git-refreshed
-  /// yet — UI joins this with the branch name (when it differs
-  /// from the task name) using `•` and drops empty segments,
-  /// mirroring `desktop/src/left_sidebar.rs::branch_row`'s `meta`.
+  /// yet. Kept exposed for callers that want raw access; the
+  /// pre-composed [`subtitle`] field below is what the sidebar
+  /// renders.
   final String lastCommitRelative;
+
+  /// Pre-formatted sidebar subtitle ready for the UI to paint:
+  /// `branch.name (if != task.name) • last_commit_relative`,
+  /// with empty segments dropped. Composed Rust-side so the Dart
+  /// layer stays a pure renderer.
+  final String subtitle;
 
   const TaskSummary({
     required this.id,
@@ -232,6 +238,7 @@ class TaskSummary {
     required this.tabs,
     required this.pinned,
     required this.lastCommitRelative,
+    required this.subtitle,
   });
 
   @override
@@ -243,7 +250,8 @@ class TaskSummary {
       activeTabId.hashCode ^
       tabs.hashCode ^
       pinned.hashCode ^
-      lastCommitRelative.hashCode;
+      lastCommitRelative.hashCode ^
+      subtitle.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -257,7 +265,8 @@ class TaskSummary {
           activeTabId == other.activeTabId &&
           tabs == other.tabs &&
           pinned == other.pinned &&
-          lastCommitRelative == other.lastCommitRelative;
+          lastCommitRelative == other.lastCommitRelative &&
+          subtitle == other.subtitle;
 }
 
 @freezed

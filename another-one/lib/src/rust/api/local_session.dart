@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `compose_task_subtitle`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
 
 /// Construct a session bound to the desktop's in-process daemon.
