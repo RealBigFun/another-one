@@ -22,33 +22,11 @@ impl PlatformServices for LinuxPlatform {
     }
 
     fn read_process_samples(
-        _app_pid: u32,
-        _tracked_processes: &[TrackedProcess],
+        app_pid: u32,
+        tracked_processes: &[TrackedProcess],
     ) -> Vec<RawProcessSample> {
-        let clock_ticks_per_second = match sysconf_u64(libc::_SC_CLK_TCK) {
-            Some(value) if value > 0 => value,
-            _ => return Vec::new(),
-        };
-        let page_size = match sysconf_u64(libc::_SC_PAGESIZE) {
-            Some(value) if value > 0 => value,
-            _ => return Vec::new(),
-        };
-
-        let Ok(entries) = std::fs::read_dir("/proc") else {
-            return Vec::new();
-        };
-
-        entries
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let file_name = entry.file_name();
-                let file_name = file_name.to_str()?;
-                let pid = file_name.parse::<u32>().ok()?;
-                let stat_path = entry.path().join("stat");
-                let stat = std::fs::read_to_string(stat_path).ok()?;
-                parse_linux_process_sample(&stat, pid, clock_ticks_per_second, page_size)
-            })
-            .collect()
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::read_process_samples(app_pid, tracked_processes)
     }
 
     fn total_system_memory_bytes() -> Option<u64> {
@@ -210,54 +188,13 @@ fn flatpak_app_installed(app_id: &str) -> bool {
     user.is_dir() || system.is_dir()
 }
 
-fn parse_linux_process_sample(
-    stat_line: &str,
-    pid: u32,
-    clock_ticks_per_second: u64,
-    page_size: u64,
-) -> Option<RawProcessSample> {
-    let comm_end = stat_line.rfind(") ")?;
-    let fields = stat_line
-        .get(comm_end + 2..)?
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    let ppid = fields.get(1)?.parse::<u32>().ok()?;
-    let utime_ticks = fields.get(11)?.parse::<u64>().ok()?;
-    let stime_ticks = fields.get(12)?.parse::<u64>().ok()?;
-    let rss_pages = fields.get(21)?.parse::<i64>().ok()?.max(0) as u64;
-
-    Some(RawProcessSample {
-        pid,
-        ppid,
-        total_cpu_time_ns: ticks_to_nanos(
-            utime_ticks.saturating_add(stime_ticks),
-            clock_ticks_per_second,
-        ),
-        memory_bytes: rss_pages.saturating_mul(page_size),
-    })
-}
-
-fn ticks_to_nanos(ticks: u64, clock_ticks_per_second: u64) -> u64 {
-    ticks.saturating_mul(1_000_000_000) / clock_ticks_per_second
-}
-
-fn sysconf_u64(name: libc::c_int) -> Option<u64> {
-    let value = unsafe { libc::sysconf(name) };
-    (value > 0).then_some(value as u64)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{find_launcher_in_dirs, ticks_to_nanos, LinuxLauncher};
+    use super::{find_launcher_in_dirs, LinuxLauncher};
     use crate::open_in::OpenInAppKind;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
-
-    #[test]
-    fn converts_linux_ticks_to_nanoseconds() {
-        assert_eq!(ticks_to_nanos(250, 100), 2_500_000_000);
-    }
 
     fn make_exec(dir: &PathBuf, name: &str) -> PathBuf {
         fs::create_dir_all(dir).unwrap();

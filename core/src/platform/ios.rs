@@ -30,6 +30,18 @@ impl HeadlessPlatform for IosPlatform {
         // applies to both Apple platforms.
         super::macos::sysctl_hw_memsize()
     }
+
+    fn read_process_samples(
+        app_pid: u32,
+        tracked_processes: &[crate::process::TrackedProcess],
+    ) -> Vec<crate::process::RawProcessSample> {
+        // iOS uses the same Darwin `proc_pidinfo` / `proc_pid_rusage`
+        // interfaces as macOS, so reuse the macOS impl. Note that
+        // the iOS sandbox may hide processes outside the app's own
+        // tree; that's expected and the caller already treats the
+        // returned vec as best-effort rather than authoritative.
+        super::macos::darwin_read_process_samples(app_pid, tracked_processes)
+    }
 }
 
 #[cfg(test)]

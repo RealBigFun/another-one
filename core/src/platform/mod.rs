@@ -103,4 +103,21 @@ pub trait HeadlessPlatform {
     /// once at startup and don't update — so a syscall per call
     /// is fine; no caching layer is warranted.
     fn total_system_memory_bytes() -> Option<u64>;
+
+    /// Sample CPU + memory for the given process tree.
+    ///
+    /// `app_pid` is the host UI process; `tracked_processes` are
+    /// child processes the UI is interested in by name (PTY-spawned
+    /// agents, etc.). The implementation walks descendants of each
+    /// root and returns one [`RawProcessSample`] per process it
+    /// can read.
+    ///
+    /// macOS / iOS go through `proc_pidinfo` + `proc_pid_rusage`;
+    /// Linux / Android parse `/proc/<pid>/stat`. Windows returns
+    /// an empty vec — the desktop's resource indicator hides
+    /// per-process rows when the sampler returns nothing.
+    fn read_process_samples(
+        app_pid: u32,
+        tracked_processes: &[crate::process::TrackedProcess],
+    ) -> Vec<crate::process::RawProcessSample>;
 }
