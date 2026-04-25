@@ -33,6 +33,19 @@ impl HeadlessPlatform for AndroidPlatform {
         // hide the total in that case.
         super::linux::proc_meminfo_total_bytes()
     }
+
+    fn read_process_samples(
+        _app_pid: u32,
+        _tracked_processes: &[crate::process::TrackedProcess],
+    ) -> Vec<crate::process::RawProcessSample> {
+        // Same procfs layout as Linux. Note that on modern Android
+        // the SELinux policy + per-app sandboxing severely restricts
+        // which `/proc/<pid>` directories the app can read — the
+        // returned vec on Android will typically only contain the
+        // app's own process and its descendants, which is exactly
+        // what the resource indicator wants anyway.
+        super::linux::procfs_read_process_samples()
+    }
 }
 
 #[cfg(test)]

@@ -34,6 +34,19 @@ impl HeadlessPlatform for WindowsPlatform {
         // when this is `None`.
         None
     }
+
+    fn read_process_samples(
+        _app_pid: u32,
+        _tracked_processes: &[crate::process::TrackedProcess],
+    ) -> Vec<crate::process::RawProcessSample> {
+        // Matches existing desktop behaviour. Windows process
+        // enumeration via `CreateToolhelp32Snapshot` +
+        // `Process32NextW` is straightforward but again wants
+        // `windows-sys`; deferred until Windows becomes a real
+        // target. The resource indicator hides per-process rows
+        // when this is empty.
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -53,5 +66,10 @@ mod tests {
     #[test]
     fn total_system_memory_bytes_returns_none() {
         assert!(WindowsPlatform::total_system_memory_bytes().is_none());
+    }
+
+    #[test]
+    fn read_process_samples_returns_empty() {
+        assert!(WindowsPlatform::read_process_samples(0, &[]).is_empty());
     }
 }

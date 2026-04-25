@@ -22,10 +22,11 @@ impl PlatformServices for WindowsPlatform {
     }
 
     fn read_process_samples(
-        _app_pid: u32,
-        _tracked_processes: &[TrackedProcess],
+        app_pid: u32,
+        tracked_processes: &[TrackedProcess],
     ) -> Vec<RawProcessSample> {
-        Vec::new()
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::read_process_samples(app_pid, tracked_processes)
     }
 
     fn total_system_memory_bytes() -> Option<u64> {
