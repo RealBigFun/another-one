@@ -71,12 +71,27 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// subscribers refresh.
   Future<void> removeProject({required String projectId});
 
+  /// Remove a task (and its terminal sections) from the embedded
+  /// daemon's store. The on-disk worktree branch is left
+  /// untouched — the GPUI side has the same semantics. Returns
+  /// `Ok(true)` if a task was removed, `Ok(false)` for an unknown
+  /// id (idempotent).
+  Future<bool> removeTask({required String projectId, required String taskId});
+
   /// Send raw PTY stdin bytes to the currently-attached tab.
   ///
   /// Looks up the tab's writer in `RegistryState::writers` and
   /// writes synchronously. Errors if no tab is attached or the
   /// writer has been dropped (tab exited / runtime gone).
   Future<void> send({required List<int> bytes});
+
+  /// Pin or unpin a task. Pinned tasks float to the top of their
+  /// project's task list (mirrors `child_entries.sort_by_key(!is_pinned)`
+  /// in the GPUI sidebar). Returns whether the pin state actually
+  /// changed; an idempotent re-set is `Ok(false)`. Pushes a fresh
+  /// `ProjectList` reply on every call so the sort updates
+  /// immediately.
+  Future<bool> setTaskPinned({required String taskId, required bool pinned});
 
   /// Stream PTY bytes for the attached tab into a Dart sink.
   /// One-shot subscription; the second call returns

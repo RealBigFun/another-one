@@ -175,6 +175,62 @@ impl LocalSession {
         Ok(())
     }
 
+    /// Pin or unpin a task. Pinned tasks float to the top of their
+    /// project's task list (mirrors `child_entries.sort_by_key(!is_pinned)`
+    /// in the GPUI sidebar). Returns whether the pin state actually
+    /// changed; an idempotent re-set is `Ok(false)`. Pushes a fresh
+    /// `ProjectList` reply on every call so the sort updates
+    /// immediately.
+    pub async fn set_task_pinned(
+        &self,
+        task_id: String,
+        pinned: bool,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("set_task_pinned: set_local_registry not called"))?;
+        let changed = {
+            let mut state = registry.lock().map_err(|_| {
+                anyhow::anyhow!("set_task_pinned: RegistryState mutex poisoned")
+            })?;
+            let changed = state.project_store.set_task_pinned(&task_id, pinned);
+            if changed {
+                state.project_store.save();
+            }
+            changed
+        };
+        if changed {
+            self.list_projects().await?;
+        }
+        Ok(changed)
+    }
+
+    /// Remove a task (and its terminal sections) from the embedded
+    /// daemon's store. The on-disk worktree branch is left
+    /// untouched — the GPUI side has the same semantics. Returns
+    /// `Ok(true)` if a task was removed, `Ok(false)` for an unknown
+    /// id (idempotent).
+    pub async fn remove_task(
+        &self,
+        project_id: String,
+        task_id: String,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("remove_task: set_local_registry not called"))?;
+        let removed = {
+            let mut state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("remove_task: RegistryState mutex poisoned"))?;
+            state
+                .project_store
+                .remove_task(&project_id, &task_id)
+                .is_some()
+        };
+        if removed {
+            self.list_projects().await?;
+        }
+        Ok(removed)
+    }
+
     /// Remove a project from the embedded daemon's store. Cascades
     /// to the project's tasks + terminal sections (see
     /// [`another_one_core::project_store::ProjectStore::remove_project`]).

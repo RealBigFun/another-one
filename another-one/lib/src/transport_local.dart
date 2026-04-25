@@ -137,6 +137,28 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
     await session.removeProject(projectId: projectId);
   }
 
+  /// Pin or unpin a task. Pinned tasks float to the top of their
+  /// project's list. Returns whether state changed (false on
+  /// idempotent re-set).
+  Future<bool> setTaskPinned(String taskId, bool pinned) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setTaskPinned: LocalTransport not connected');
+    }
+    return session.setTaskPinned(taskId: taskId, pinned: pinned);
+  }
+
+  /// Remove a task from the embedded daemon's store. The on-disk
+  /// worktree branch is left untouched. Returns whether a task was
+  /// actually removed (false on unknown id).
+  Future<bool> removeTask(String projectId, String taskId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('removeTask: LocalTransport not connected');
+    }
+    return session.removeTask(projectId: projectId, taskId: taskId);
+  }
+
   @override
   Future<void> attachTab({
     required String sectionId,

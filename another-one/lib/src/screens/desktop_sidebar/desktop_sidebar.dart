@@ -380,7 +380,7 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   for (final task in _orderedTasks(project.tasks))
-                    _TaskRow(task: task),
+                    _TaskRow(task: task, projectId: project.id),
                 ],
               ),
             ),
@@ -597,9 +597,10 @@ class _ProjectAvatar extends StatelessWidget {
 }
 
 class _TaskRow extends ConsumerWidget {
-  const _TaskRow({required this.task});
+  const _TaskRow({required this.task, required this.projectId});
 
   final TaskSummary task;
+  final String projectId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -610,6 +611,7 @@ class _TaskRow extends ConsumerWidget {
       padding: const EdgeInsets.only(left: AppTokens.space3),
       child: _TaskRowBody(
         task: task,
+        projectId: projectId,
         isActive: isActive,
       ),
     );
@@ -617,9 +619,14 @@ class _TaskRow extends ConsumerWidget {
 }
 
 class _TaskRowBody extends ConsumerStatefulWidget {
-  const _TaskRowBody({required this.task, required this.isActive});
+  const _TaskRowBody({
+    required this.task,
+    required this.projectId,
+    required this.isActive,
+  });
 
   final TaskSummary task;
+  final String projectId;
   final bool isActive;
 
   @override
@@ -682,15 +689,88 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
       ],
     );
     if (!mounted || value == null) return;
-    // Functional verbs (pin, rename, delete-task, new-task-from-branch)
-    // require additional bridge methods. Surface a placeholder until
-    // those land.
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Task mutation verbs are not yet wired through the daemon'),
-        duration: Duration(seconds: 2),
+    final transport = ref.read(localConnectionProvider);
+    switch (value) {
+      case 'pin':
+        try {
+          await transport.setTaskPinned(
+            widget.task.id,
+            !widget.task.pinned,
+          );
+        } catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to toggle pin: $e')),
+          );
+        }
+      case 'delete':
+        await _confirmDelete();
+      case 'new-task':
+      case 'rename':
+        // Verbs not yet wired — these land alongside the new-task
+        // modal port + inline-rename UI.
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              value == 'rename'
+                  ? 'Inline rename UI is not yet ported'
+                  : 'New-task modal is not yet ported',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+    }
+  }
+
+  Future<void> _confirmDelete() async {
+    final task = widget.task;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTokens.cardBg,
+        title: const Text(
+          'Delete task?',
+          style: TextStyle(color: AppTokens.textPrimary),
+        ),
+        content: Text(
+          'Delete "${task.name}" from AnotherOne. The on-disk worktree '
+          'branch is left untouched, but the task and its terminal '
+          'history disappear from the sidebar.',
+          style: const TextStyle(color: AppTokens.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTokens.dangerBg,
+              foregroundColor: AppTokens.textPrimary,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+    final transport = ref.read(localConnectionProvider);
+    try {
+      await transport.removeTask(widget.projectId, task.id);
+      // If the deleted task was the currently-selected one, clear
+      // selection so the main pane drops back to the welcome state.
+      final selection = ref.read(selectedTabProvider);
+      if (selection?.sectionId == task.sectionId) {
+        ref.read(selectedTabProvider.notifier).clear();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete task: $e')),
+      );
+    }
   }
 
   PopupMenuItem<String> _menuItem({

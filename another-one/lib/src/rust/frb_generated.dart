@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -61974602;
+  int get rustContentHash => 1999592597;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -162,9 +162,21 @@ abstract class RustLibApi extends BaseApi {
     required String projectId,
   });
 
+  Future<bool> crateApiLocalSessionLocalSessionRemoveTask({
+    required LocalSession that,
+    required String projectId,
+    required String taskId,
+  });
+
   Future<void> crateApiLocalSessionLocalSessionSend({
     required LocalSession that,
     required List<int> bytes,
+  });
+
+  Future<bool> crateApiLocalSessionLocalSessionSetTaskPinned({
+    required LocalSession that,
+    required String taskId,
+    required bool pinned,
   });
 
   Stream<Uint8List> crateApiLocalSessionLocalSessionSubscribe({
@@ -872,6 +884,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<bool> crateApiLocalSessionLocalSessionRemoveTask({
+    required LocalSession that,
+    required String projectId,
+    required String taskId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(taskId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 18,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionRemoveTaskConstMeta,
+        argValues: [that, projectId, taskId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionRemoveTaskConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_remove_task",
+        argNames: ["that", "projectId", "taskId"],
+      );
+
+  @override
   Future<void> crateApiLocalSessionLocalSessionSend({
     required LocalSession that,
     required List<int> bytes,
@@ -888,7 +940,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 19,
             port: port_,
           );
         },
@@ -910,6 +962,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<bool> crateApiLocalSessionLocalSessionSetTaskPinned({
+    required LocalSession that,
+    required String taskId,
+    required bool pinned,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(taskId, serializer);
+          sse_encode_bool(pinned, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 20,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionSetTaskPinnedConstMeta,
+        argValues: [that, taskId, pinned],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionSetTaskPinnedConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_set_task_pinned",
+        argNames: ["that", "taskId", "pinned"],
+      );
+
+  @override
   Stream<Uint8List> crateApiLocalSessionLocalSessionSubscribe({
     required LocalSession that,
   }) {
@@ -927,7 +1019,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 19,
+              funcId: 21,
               port: port_,
             );
           },
@@ -968,7 +1060,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 20,
+              funcId: 22,
               port: port_,
             );
           },
@@ -1012,7 +1104,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 23,
             port: port_,
           );
         },
@@ -1042,7 +1134,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1069,7 +1161,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 25,
             port: port_,
           );
         },
@@ -1105,7 +1197,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1136,7 +1228,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 27,
             port: port_,
           );
         },
@@ -1164,7 +1256,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1191,7 +1283,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 29,
             port: port_,
           );
         },
@@ -1219,7 +1311,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -2404,6 +2496,20 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
         projectId: projectId,
       );
 
+  /// Remove a task (and its terminal sections) from the embedded
+  /// daemon's store. The on-disk worktree branch is left
+  /// untouched — the GPUI side has the same semantics. Returns
+  /// `Ok(true)` if a task was removed, `Ok(false)` for an unknown
+  /// id (idempotent).
+  Future<bool> removeTask({
+    required String projectId,
+    required String taskId,
+  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionRemoveTask(
+    that: this,
+    projectId: projectId,
+    taskId: taskId,
+  );
+
   /// Send raw PTY stdin bytes to the currently-attached tab.
   ///
   /// Looks up the tab's writer in `RegistryState::writers` and
@@ -2411,6 +2517,19 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
   /// writer has been dropped (tab exited / runtime gone).
   Future<void> send({required List<int> bytes}) => RustLib.instance.api
       .crateApiLocalSessionLocalSessionSend(that: this, bytes: bytes);
+
+  /// Pin or unpin a task. Pinned tasks float to the top of their
+  /// project's task list (mirrors `child_entries.sort_by_key(!is_pinned)`
+  /// in the GPUI sidebar). Returns whether the pin state actually
+  /// changed; an idempotent re-set is `Ok(false)`. Pushes a fresh
+  /// `ProjectList` reply on every call so the sort updates
+  /// immediately.
+  Future<bool> setTaskPinned({required String taskId, required bool pinned}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionSetTaskPinned(
+        that: this,
+        taskId: taskId,
+        pinned: pinned,
+      );
 
   /// Stream PTY bytes for the attached tab into a Dart sink.
   /// One-shot subscription; the second call returns
