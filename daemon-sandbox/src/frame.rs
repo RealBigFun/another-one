@@ -164,6 +164,17 @@ pub struct TaskSummary {
     /// `serde(default)` this to `""`.
     #[serde(default)]
     pub last_commit_relative: String,
+    /// Lines added on the task's working-tree branch since its
+    /// merge base. Populated from `branch.lines_added` (only set
+    /// when the branch is the worktree's current branch — by
+    /// definition true for AnotherOne tasks). Wire-additive,
+    /// defaults to `0`.
+    #[serde(default)]
+    pub lines_added: i32,
+    /// Lines removed on the task's working-tree branch since its
+    /// merge base. Wire-additive, defaults to `0`.
+    #[serde(default)]
+    pub lines_removed: i32,
 }
 
 /// Lossy wire projection of

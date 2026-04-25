@@ -317,16 +317,53 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                   ],
                 ],
               ),
-              if (subtitle != null)
+              if (subtitle != null || _hasDiff(task))
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    subtitle,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: AppTokens.fontCaption,
-                      color: AppTokens.textPlaceholder,
-                    ),
+                  child: Row(
+                    children: [
+                      if (subtitle != null)
+                        Flexible(
+                          child: Text(
+                            subtitle,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: AppTokens.fontCaption,
+                              color: AppTokens.textPlaceholder,
+                            ),
+                          ),
+                        ),
+                      if (subtitle != null && _hasDiff(task))
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 4),
+                          child: Text(
+                            '•',
+                            style: TextStyle(
+                              fontSize: AppTokens.fontCaption,
+                              color: AppTokens.textPlaceholder,
+                            ),
+                          ),
+                        ),
+                      if (_hasDiff(task)) ...[
+                        Text(
+                          '+${task.linesAdded}',
+                          style: const TextStyle(
+                            fontSize: AppTokens.fontCaption,
+                            fontWeight: FontWeight.w600,
+                            color: AppTokens.diffAdded,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '-${task.linesRemoved}',
+                          style: const TextStyle(
+                            fontSize: AppTokens.fontCaption,
+                            fontWeight: FontWeight.w600,
+                            color: AppTokens.diffRemoved,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
             ],
@@ -353,6 +390,14 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
     if (parts.isEmpty) return null;
     return parts.join(' • ');
   }
+
+  /// True when at least one of the diff-stat counters is non-zero —
+  /// matches GPUI's `has_diff` gate. Branch refresh hasn't run, or
+  /// the working tree is clean against the merge base, when both
+  /// are zero; in that case we omit the +/- pair entirely so the
+  /// subtitle row doesn't carry empty noise.
+  bool _hasDiff(TaskSummary task) =>
+      task.linesAdded > 0 || task.linesRemoved > 0;
 }
 
 /// Inline editor swapped in for the task name when the row is the

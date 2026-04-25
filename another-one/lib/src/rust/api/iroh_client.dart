@@ -223,6 +223,15 @@ class TaskSummary {
   /// mirroring `desktop/src/left_sidebar.rs::branch_row`'s `meta`.
   final String lastCommitRelative;
 
+  /// Lines added on the task's working-tree branch since its
+  /// merge base. UI renders `+N` in green next to the subtitle
+  /// when non-zero. Mirrors GPUI's `branch.lines_added`.
+  final int linesAdded;
+
+  /// Lines removed on the task's working-tree branch since its
+  /// merge base. UI renders `-N` in red next to `+N`.
+  final int linesRemoved;
+
   const TaskSummary({
     required this.id,
     required this.name,
@@ -232,6 +241,8 @@ class TaskSummary {
     required this.tabs,
     required this.pinned,
     required this.lastCommitRelative,
+    required this.linesAdded,
+    required this.linesRemoved,
   });
 
   @override
@@ -243,7 +254,9 @@ class TaskSummary {
       activeTabId.hashCode ^
       tabs.hashCode ^
       pinned.hashCode ^
-      lastCommitRelative.hashCode;
+      lastCommitRelative.hashCode ^
+      linesAdded.hashCode ^
+      linesRemoved.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -257,7 +270,9 @@ class TaskSummary {
           activeTabId == other.activeTabId &&
           tabs == other.tabs &&
           pinned == other.pinned &&
-          lastCommitRelative == other.lastCommitRelative;
+          lastCommitRelative == other.lastCommitRelative &&
+          linesAdded == other.linesAdded &&
+          linesRemoved == other.linesRemoved;
 }
 
 @freezed

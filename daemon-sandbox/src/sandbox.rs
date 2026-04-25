@@ -99,6 +99,8 @@ impl TerminalRegistry for SandboxRegistry {
                 }],
                 pinned: false,
                 last_commit_relative: String::new(),
+                lines_added: 0,
+                lines_removed: 0,
             }],
         }]
     }

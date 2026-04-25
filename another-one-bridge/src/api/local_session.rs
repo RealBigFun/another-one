@@ -784,10 +784,23 @@ fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
                             }
                         })
                         .collect();
-                    let last_commit_relative = store
-                        .branch_view(&project.id, &task.branch_name)
-                        .map(|branch| branch.last_commit_relative)
+                    // Diff stats + last_commit_relative come from
+                    // `branch_view`, which only fills the lines_added/
+                    // lines_removed pair when the queried branch is
+                    // the *project's* current branch. For a worktree
+                    // task that's the worktree project, not the root —
+                    // so query against `target_project_id` (which
+                    // points at the worktree project for worktree
+                    // tasks and at the root for non-worktree tasks).
+                    let branch_view =
+                        store.branch_view(&task.target_project_id, &task.branch_name);
+                    let last_commit_relative = branch_view
+                        .as_ref()
+                        .map(|branch| branch.last_commit_relative.clone())
                         .unwrap_or_default();
+                    let (lines_added, lines_removed) = branch_view
+                        .map(|branch| (branch.lines_added, branch.lines_removed))
+                        .unwrap_or((0, 0));
                     TaskSummary {
                         id: task.id,
                         name: task.name,
@@ -797,6 +810,8 @@ fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
                         tabs,
                         pinned: task_pinned,
                         last_commit_relative,
+                        lines_added,
+                        lines_removed,
                     }
                 })
                 .collect();

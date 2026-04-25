@@ -2289,6 +2289,8 @@ impl SseDecode for crate::api::iroh_client::TaskSummary {
         let mut var_tabs = <Vec<crate::api::iroh_client::TabSummary>>::sse_decode(deserializer);
         let mut var_pinned = <bool>::sse_decode(deserializer);
         let mut var_lastCommitRelative = <String>::sse_decode(deserializer);
+        let mut var_linesAdded = <i32>::sse_decode(deserializer);
+        let mut var_linesRemoved = <i32>::sse_decode(deserializer);
         return crate::api::iroh_client::TaskSummary {
             id: var_id,
             name: var_name,
@@ -2298,6 +2300,8 @@ impl SseDecode for crate::api::iroh_client::TaskSummary {
             tabs: var_tabs,
             pinned: var_pinned,
             last_commit_relative: var_lastCommitRelative,
+            lines_added: var_linesAdded,
+            lines_removed: var_linesRemoved,
         };
     }
 }
@@ -2762,6 +2766,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::TaskSummary {
             self.tabs.into_into_dart().into_dart(),
             self.pinned.into_into_dart().into_dart(),
             self.last_commit_relative.into_into_dart().into_dart(),
+            self.lines_added.into_into_dart().into_dart(),
+            self.lines_removed.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3080,6 +3086,8 @@ impl SseEncode for crate::api::iroh_client::TaskSummary {
         <Vec<crate::api::iroh_client::TabSummary>>::sse_encode(self.tabs, serializer);
         <bool>::sse_encode(self.pinned, serializer);
         <String>::sse_encode(self.last_commit_relative, serializer);
+        <i32>::sse_encode(self.lines_added, serializer);
+        <i32>::sse_encode(self.lines_removed, serializer);
     }
 }
 

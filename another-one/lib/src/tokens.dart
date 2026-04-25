@@ -55,6 +55,12 @@ class AppTokens {
   /// `const` so widgets can inline it.
   static const Color accent = Color(0xFF7B8FD9);
 
+  /// Diff-stat colours — match the GPUI sidebar's `+N -N` badges
+  /// (`hsla(138/360, 0.50, 0.74)` green and `hsla(352/360, 0.52,
+  /// 0.76)` red, computed once into the equivalent sRGB constants).
+  static const Color diffAdded = Color(0xFFA0D9B4);
+  static const Color diffRemoved = Color(0xFFEBA8B0);
+
   // ── Semantic chrome (subset used by mobile) ────────────────────────
   static Color successIcon =
       HSLColor.fromAHSL(1.0, 138, 0.52, 0.66).toColor();

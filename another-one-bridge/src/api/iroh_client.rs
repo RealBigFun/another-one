@@ -154,6 +154,15 @@ pub struct TaskSummary {
     /// mirroring `desktop/src/left_sidebar.rs::branch_row`'s `meta`.
     #[serde(default)]
     pub last_commit_relative: String,
+    /// Lines added on the task's working-tree branch since its
+    /// merge base. UI renders `+N` in green next to the subtitle
+    /// when non-zero. Mirrors GPUI's `branch.lines_added`.
+    #[serde(default)]
+    pub lines_added: i32,
+    /// Lines removed on the task's working-tree branch since its
+    /// merge base. UI renders `-N` in red next to `+N`.
+    #[serde(default)]
+    pub lines_removed: i32,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
