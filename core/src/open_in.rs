@@ -11,6 +11,8 @@
 //! `desktop/src/open_in.rs`.
 
 use std::collections::HashSet;
+use std::env;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -98,11 +100,15 @@ const fn file_manager_label() -> &'static str {
         "File Explorer"
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    compile_error!(
-        "another-one-core only supports macos, linux, and windows; \
-         add a file-manager label for this target."
-    );
+    #[cfg(target_os = "ios")]
+    {
+        "Files"
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        "Files"
+    }
 }
 
 const fn file_manager_description() -> &'static str {
@@ -121,11 +127,54 @@ const fn file_manager_description() -> &'static str {
         "Open the project directory in File Explorer."
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    compile_error!(
-        "another-one-core only supports macos, linux, and windows; \
-         add a file-manager description for this target."
-    );
+    #[cfg(target_os = "ios")]
+    {
+        "Open the project directory in the Files app."
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        "Open the project directory in Files."
+    }
+}
+
+/// Returns `true` if any of `commands` is in the user's `$PATH`.
+/// Lifted from desktop because every platform's
+/// `is_open_in_app_available` impl needs it; pure Rust, no
+/// platform-specific syscalls.
+pub fn command_exists(commands: &[&str]) -> bool {
+    commands
+        .iter()
+        .any(|command| command_in_path(command).is_some())
+}
+
+/// Returns the absolute path to `command` if it's found in `$PATH`,
+/// honouring Windows's `.exe` suffix convention. Used by Linux's
+/// flatpak/snap launcher discovery and by every desktop platform's
+/// "open in app" availability check.
+pub fn command_in_path(command: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+
+    env::split_paths(&path).find_map(|dir| {
+        let candidate = dir.join(command);
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let candidate = dir.join(format!("{command}.exe"));
+            if is_executable(&candidate) {
+                return Some(candidate);
+            }
+        }
+
+        None
+    })
+}
+
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }
 
 #[cfg(test)]

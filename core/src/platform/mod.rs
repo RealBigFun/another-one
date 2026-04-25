@@ -120,4 +120,30 @@ pub trait HeadlessPlatform {
         app_pid: u32,
         tracked_processes: &[crate::process::TrackedProcess],
     ) -> Vec<crate::process::RawProcessSample>;
+
+    /// Whether `app` looks installed on the current host — i.e.
+    /// whether the "Open in …" menu should offer it.
+    ///
+    /// Detection is best-effort and platform-specific:
+    ///   * macOS — checks `/Applications`-style bundle paths plus
+    ///     `$PATH` for the CLI shim.
+    ///   * Linux — checks `$PATH`, snap (`/snap/bin`), and flatpak
+    ///     install dirs.
+    ///   * Windows — `$PATH` only.
+    ///   * iOS / Android — always `false`; the future Flutter UI
+    ///     will route "open in" through Dart platform channels.
+    fn is_open_in_app_available(app: crate::open_in::OpenInAppKind) -> bool;
+
+    /// A `Command` ready to spawn that opens `path` in `app`.
+    ///
+    /// Caller spawns and handles errors; this method just builds
+    /// the invocation. iOS / Android return a placeholder
+    /// `Command` that won't successfully spawn (matches the
+    /// "always unavailable" contract from
+    /// [`Self::is_open_in_app_available`]); the future Flutter UI
+    /// won't reach this method on those platforms.
+    fn command_for_open_in(
+        app: crate::open_in::OpenInAppKind,
+        path: &std::path::Path,
+    ) -> std::process::Command;
 }

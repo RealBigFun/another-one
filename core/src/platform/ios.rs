@@ -1,3 +1,8 @@
+use std::path::Path;
+use std::process::Command;
+
+use crate::open_in::OpenInAppKind;
+
 use super::HeadlessPlatform;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -41,6 +46,24 @@ impl HeadlessPlatform for IosPlatform {
         // tree; that's expected and the caller already treats the
         // returned vec as best-effort rather than authoritative.
         super::macos::darwin_read_process_samples(app_pid, tracked_processes)
+    }
+
+    fn is_open_in_app_available(_app: OpenInAppKind) -> bool {
+        // iOS doesn't have an "open in arbitrary app" primitive
+        // accessible to a sandboxed Rust library; the future
+        // Flutter UI will route any "open in" gesture through a
+        // Dart platform channel that talks directly to UIKit.
+        false
+    }
+
+    fn command_for_open_in(_app: OpenInAppKind, _path: &Path) -> Command {
+        // Placeholder so the trait shape is uniform across targets;
+        // [`Self::is_open_in_app_available`] always returns `false`
+        // on iOS so callers shouldn't reach this. If they do, the
+        // path is intentionally nonexistent so the spawn fails with
+        // ENOENT and the error message points at the right
+        // diagnosis ("not supported on this platform").
+        Command::new("/nonexistent/another-one-unsupported-on-this-platform")
     }
 }
 

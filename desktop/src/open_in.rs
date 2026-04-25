@@ -15,8 +15,7 @@
 //! how they're detected or launched — so the enum + filter moved to
 //! core while the detection + exec stayed here.
 
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 pub use another_one_core::open_in::OpenInAppKind;
@@ -46,33 +45,3 @@ fn command_for_app(app: OpenInAppKind, path: &Path) -> Command {
     CurrentPlatform::command_for_open_in(app, path)
 }
 
-pub(crate) fn command_exists(commands: &[&str]) -> bool {
-    commands
-        .iter()
-        .any(|command| command_in_path(command).is_some())
-}
-
-pub(crate) fn command_in_path(command: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-
-    env::split_paths(&path).find_map(|dir| {
-        let candidate = dir.join(command);
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            let candidate = dir.join(format!("{command}.exe"));
-            if is_executable(&candidate) {
-                return Some(candidate);
-            }
-        }
-
-        None
-    })
-}
-
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
-}

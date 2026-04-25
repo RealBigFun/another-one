@@ -5,7 +5,7 @@ use another_one_core::platform::{CurrentPlatform as CorePlatform, HeadlessPlatfo
 use gpui::{App, TitlebarOptions, Window, WindowDecorations};
 
 use super::PlatformServices;
-use crate::open_in::{command_exists, OpenInAppKind};
+use crate::open_in::OpenInAppKind;
 use crate::resource_usage::{RawProcessSample, TrackedProcess};
 
 pub struct WindowsPlatform;
@@ -35,23 +35,13 @@ impl PlatformServices for WindowsPlatform {
     }
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool {
-        match app {
-            OpenInAppKind::Cursor => command_exists(&["cursor"]),
-            OpenInAppKind::Zed => command_exists(&["zed"]),
-            OpenInAppKind::VsCode => command_exists(&["code"]),
-            OpenInAppKind::FileManager => true,
-        }
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::is_open_in_app_available(app)
     }
 
     fn command_for_open_in(app: OpenInAppKind, path: &Path) -> Command {
-        let mut command = match app {
-            OpenInAppKind::Cursor => Command::new("cursor"),
-            OpenInAppKind::Zed => Command::new("zed"),
-            OpenInAppKind::VsCode => Command::new("code"),
-            OpenInAppKind::FileManager => Command::new("explorer"),
-        };
-        command.arg(path);
-        command
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::command_for_open_in(app, path)
     }
 
     fn titlebar_options(title: &str) -> TitlebarOptions {
