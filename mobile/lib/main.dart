@@ -13,9 +13,16 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'src/app_root.dart';
+import 'src/benchmark_page.dart';
 import 'src/rust/api/iroh_client.dart';
 import 'src/rust/frb_generated.dart';
 import 'src/theme.dart';
+
+/// Activated by `flutter run/build … --dart-define=BENCHMARK=true`.
+/// Launches the standalone xterm.dart throughput benchmark instead
+/// of the normal pair-and-attach flow. Phase 0 de-risk gate; off in
+/// every regular build.
+const bool kBenchmarkMode = bool.fromEnvironment('BENCHMARK');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +42,6 @@ class AnotherOneApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
         title: 'AnotherOne',
         theme: buildAppTheme(),
-        home: const AppRoot(),
+        home: kBenchmarkMode ? const BenchmarkPage() : const AppRoot(),
       );
 }
