@@ -632,9 +632,11 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
   void _selectTask() {
     final task = widget.task;
     if (task.activeTabId.isEmpty) return;
-    ref.read(selectedTabProvider.notifier).state = TabSelection(
-      sectionId: task.sectionId,
-      tabId: task.activeTabId,
+    ref.read(selectedTabProvider.notifier).set(
+      TabSelection(
+        sectionId: task.sectionId,
+        tabId: task.activeTabId,
+      ),
     );
   }
 

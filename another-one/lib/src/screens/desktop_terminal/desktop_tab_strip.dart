@@ -47,7 +47,7 @@ class DesktopTabStrip extends ConsumerWidget {
           _TabChip(
             tab: tab,
             title: title,
-            onClose: () => ref.read(selectedTabProvider.notifier).state = null,
+            onClose: () => ref.read(selectedTabProvider.notifier).clear(),
           ),
           const Spacer(),
         ],
