@@ -7,47 +7,50 @@
 //! `LocalConnection` (a future implementor of `DaemonConnection`)
 //! will hold a `LocalSession` and call its methods directly.
 //!
-//! This commit ships the API surface as stubs only — every method
-//! returns an `unimplemented` error so the FRB-generated Dart
-//! bindings have something to bind against. Subsequent commits wire
-//! each method to `RegistryState` (project-list reads, terminal
-//! launch/attach, PTY stdin send, worker-reply broadcasts).
-//!
-//! Why surface-only first: the alternative — landing one FFI verb
-//! at a time fully wired — requires plumbing the daemon's
-//! `RegistryState` into the bridge crate before anything can work,
-//! which means a bigger first PR. Stub-first lets the Dart side
-//! migrate to a `DaemonConnection`-shaped consumer without waiting
-//! for the Rust plumbing, and the stubs fail loudly enough at
-//! runtime that callers know they're not ready yet.
+//! This commit wires the worker-replies stream end-to-end and a
+//! synthetic `list_projects` so Dart consumers can validate the
+//! round-trip. The other methods are stubs returning
+//! "unimplemented" errors — they get wired one at a time as Phase 2
+//! work progresses, with each commit hooking one verb into the
+//! shared `RegistryState` (kept in `core::daemon_embed`).
 
 use std::sync::Mutex;
 
 use flutter_rust_bridge::frb;
+use tokio::sync::mpsc;
 
-use super::iroh_client::WorkerReply;
+use super::iroh_client::{tokio_rt, ProjectSummary, WorkerReply};
 use crate::frb_generated::StreamSink;
 
 /// Opaque handle to an in-process daemon session. Dart holds it and
 /// calls methods; Rust will eventually proxy those calls to a
-/// shared `RegistryState`. Today every method returns an error.
+/// shared `RegistryState`. Today the worker-replies channel is real
+/// and `list_projects` pushes a synthetic empty list through it; the
+/// rest are stubs.
 #[frb(opaque)]
 pub struct LocalSession {
-    /// One-shot guard so [`Self::close`] is idempotent. Subsequent
-    /// commits will hold the actual daemon-handle here.
-    _closed: Mutex<bool>,
+    /// Producer side of the worker-replies stream. Cloned into
+    /// every method that wants to push a reply (today: just
+    /// `list_projects`). Dropped on `close`.
+    worker_replies_tx: Mutex<Option<mpsc::UnboundedSender<WorkerReply>>>,
+    /// Receiver kept until [`Self::subscribe_worker_replies`] takes
+    /// it; one-shot subscription, same shape as `IrohSession`.
+    worker_replies_rx: Mutex<Option<mpsc::UnboundedReceiver<WorkerReply>>>,
 }
 
 /// Construct a session bound to the desktop's in-process daemon.
 ///
-/// Today this just allocates the handle — the eventual
+/// Today this allocates the worker-replies channel and returns a
+/// session whose data-streaming methods are stubs. The eventual
 /// implementation will look up the active `RegistryState`
 /// (initialized when the desktop binary boots and calls
-/// `daemon_embed::run` on its dedicated thread) and clone an
-/// `Arc` of it into the session.
+/// `daemon_embed::run` on its dedicated thread) and clone an `Arc`
+/// of it into the session for the read methods to consult.
 pub async fn local_connect() -> anyhow::Result<LocalSession> {
+    let (tx, rx) = mpsc::unbounded_channel();
     Ok(LocalSession {
-        _closed: Mutex::new(false),
+        worker_replies_tx: Mutex::new(Some(tx)),
+        worker_replies_rx: Mutex::new(Some(rx)),
     })
 }
 
@@ -62,11 +65,27 @@ impl LocalSession {
         Err(unimplemented_err("tab_resize"))
     }
 
-    /// Ask the daemon to send its full project tree as a
-    /// `WorkerReply::ProjectList`. The reply arrives via
-    /// [`Self::subscribe_worker_replies`].
+    /// Push a project list through [`Self::subscribe_worker_replies`].
+    ///
+    /// Today the list is a synthetic empty `Vec<ProjectSummary>` —
+    /// just enough for Dart-side consumers to validate the
+    /// round-trip end-to-end. The real implementation reads from
+    /// `core::daemon_embed::RegistryState::project_store` and
+    /// flattens it into `ProjectSummary` / `TaskSummary` /
+    /// `TabSummary` exactly the way the iroh side does.
     pub async fn list_projects(&self) -> anyhow::Result<()> {
-        Err(unimplemented_err("list_projects"))
+        let tx = {
+            let guard = self.worker_replies_tx.lock().expect("worker_replies_tx mutex poisoned");
+            guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("session closed"))?
+                .clone()
+        };
+        tx.send(WorkerReply::ProjectList {
+            projects: synthetic_project_list(),
+        })
+        .map_err(|_| anyhow::anyhow!("worker-replies receiver dropped"))?;
+        Ok(())
     }
 
     /// Subscribe to live PTY bytes for a specific tab. At most one
@@ -101,17 +120,40 @@ impl LocalSession {
 
     /// Stream worker replies (project list, future: git refresh,
     /// MCP tool results) into a Dart sink.
+    ///
+    /// One-shot: the second call returns an "already subscribed"
+    /// error. Replies arrive in the order they were pushed by
+    /// methods like [`Self::list_projects`].
     pub async fn subscribe_worker_replies(
         &self,
-        _sink: StreamSink<WorkerReply>,
+        sink: StreamSink<WorkerReply>,
     ) -> anyhow::Result<()> {
-        Err(unimplemented_err("subscribe_worker_replies"))
+        let mut rx = {
+            let mut guard = self
+                .worker_replies_rx
+                .lock()
+                .expect("worker_replies_rx mutex poisoned");
+            guard
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("already subscribed to worker replies"))?
+        };
+
+        tokio_rt().spawn(async move {
+            while let Some(reply) = rx.recv().await {
+                if sink.add(reply).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(())
     }
 
-    /// Close the session. Idempotent.
+    /// Close the session. Drops the worker-replies sender (so any
+    /// active subscription's forwarder loop exits) and is
+    /// idempotent on subsequent calls.
     pub async fn close(&self) {
-        if let Ok(mut closed) = self._closed.lock() {
-            *closed = true;
+        if let Ok(mut guard) = self.worker_replies_tx.lock() {
+            guard.take();
         }
     }
 }
@@ -119,6 +161,15 @@ impl LocalSession {
 fn unimplemented_err(method: &str) -> anyhow::Error {
     anyhow::anyhow!(
         "LocalSession::{method} is not yet implemented; tracking issue: \
-         wire to core::daemon_embed::RegistryState in a follow-up PR"
+         wire to core::daemon_embed::RegistryState in a follow-up commit"
     )
+}
+
+/// Placeholder project list used by [`LocalSession::list_projects`]
+/// until `RegistryState` plumbing lands. Returns an empty `Vec` —
+/// Dart consumers can already test their wiring (subscribe →
+/// receive `WorkerReply::ProjectList { projects: [] }` → render
+/// "no projects yet" empty state).
+fn synthetic_project_list() -> Vec<ProjectSummary> {
+    Vec::new()
 }

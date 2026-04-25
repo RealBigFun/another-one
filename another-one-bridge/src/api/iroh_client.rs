@@ -307,10 +307,14 @@ fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
     Ok(out)
 }
 
-/// Dedicated tokio runtime for all iroh work. FRB's default async executor
-/// is not a tokio runtime, so iroh's network actors never get polled if we
-/// run them on the calling task. Everything below shuffles work onto here.
-fn tokio_rt() -> &'static Runtime {
+/// Dedicated tokio runtime for all iroh + local-session work. FRB's
+/// default async executor is not a tokio runtime, so iroh's network
+/// actors never get polled if we run them on the calling task — and
+/// `LocalSession`'s subscription forwarders share the same need to
+/// keep producing on a real runtime. `pub(crate)` so sibling
+/// modules under `api/` can reuse it without each spinning up its
+/// own runtime.
+pub(crate) fn tokio_rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
     RT.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
