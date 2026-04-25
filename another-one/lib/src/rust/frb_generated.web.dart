@@ -6,6 +6,7 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/embedded_daemon.dart';
 import 'api/iroh_client.dart';
 import 'api/local_session.dart';
 import 'api/pair.dart';

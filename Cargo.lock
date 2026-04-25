@@ -221,6 +221,7 @@ version = "0.1.0"
 dependencies = [
  "another-one-core",
  "anyhow",
+ "daemon-sandbox",
  "flutter_rust_bridge",
  "iroh",
  "serde",

@@ -16,6 +16,11 @@ crate-type = ["cdylib", "staticlib"]
 # trait. No cycle: core depends on neither bridge nor
 # daemon-sandbox.
 another-one-core = { path = "../core" }
+# Boot path: the bridge spawns `run_endpoint` in-process for desktop
+# Flutter, replacing the GPUI binary's `daemon_host`. daemon-sandbox
+# already depends on `another-one-core`, and the bridge does too —
+# they're sibling leaves on the same trunk, no cycle.
+daemon-sandbox = { path = "../daemon-sandbox" }
 flutter_rust_bridge = "=2.12.0"
 iroh = "0.98.1"
 anyhow = "1"

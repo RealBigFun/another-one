@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1743429725;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1842057412;
 
 // Section: executor
 
@@ -1197,6 +1197,38 @@ fn wire__crate__api__local_session__LocalSession_tab_resize_impl(
         },
     )
 }
+fn wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "boot_embedded_daemon",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::embedded_daemon::boot_embedded_daemon()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__iroh_client__init_app_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1883,16 +1915,22 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
-        22 => {
+        20 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        21 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
+        23 => {
             wire__crate__api__local_session__local_connect_impl(port, ptr, rust_vec_len, data_len)
         }
-        23 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
-        24 => {
+        24 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
+        25 => {
             wire__crate__api__pair__regenerate_local_pairing_impl(port, ptr, rust_vec_len, data_len)
         }
-        25 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
