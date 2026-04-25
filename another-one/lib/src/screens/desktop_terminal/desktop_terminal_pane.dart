@@ -122,11 +122,11 @@ class _AttachedTerminalState extends State<_AttachedTerminal> {
       widget.transport.sendBytes(utf8.encode(normalized));
     };
     _terminal.onResize = (w, h, _, _) {
-      // tabResize on LocalTransport throws if no tab is attached
-      // yet (xterm's first onResize can fire before _openTab
-      // finishes). Suppress — the next onResize after attach will
-      // carry the same dimensions. The mobile path silently drops
-      // these on the iroh wire too.
+      // tabResize throws if no tab is attached yet (xterm's first
+      // onResize can fire before _openTab finishes). Suppress —
+      // the next onResize after attach will carry the same
+      // dimensions. The mobile path silently drops these on the
+      // iroh wire too.
       widget.transport.tabResize(cols: w, rows: h).catchError((_) {});
     };
   }

@@ -7,8 +7,10 @@
 // toggle, prewarm, automatic actions, advanced collapsible) lands
 // in subsequent commits as the supporting bridge verbs come online.
 //
-// Submission calls `LocalTransport.createWorktreeTask`. On success
-// the modal closes and the new task's section is selected so the
+// Submission calls `DaemonConnection.createWorktreeTask` (today
+// served by `LocalTransport`; remote daemons get the same surface
+// once the iroh wire grows `Control::CreateTask`). On success the
+// modal closes and the new task's section is selected so the
 // terminal pane drops the user straight into it.
 
 import 'package:flutter/material.dart';
