@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/iroh_client.dart';
+import 'api/local_session.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -66,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1905892342;
+  int get rustContentHash => -762780906;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -125,6 +126,49 @@ abstract class RustLibApi extends BaseApi {
     required int rows,
   });
 
+  Future<void> crateApiLocalSessionLocalSessionAttachTab({
+    required LocalSession that,
+    required String sectionId,
+    required String tabId,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionClose({
+    required LocalSession that,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionDetachTab({
+    required LocalSession that,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionLaunchTab({
+    required LocalSession that,
+    required String sectionId,
+    required String tabId,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionListProjects({
+    required LocalSession that,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionSend({
+    required LocalSession that,
+    required List<int> bytes,
+  });
+
+  Stream<Uint8List> crateApiLocalSessionLocalSessionSubscribe({
+    required LocalSession that,
+  });
+
+  Stream<WorkerReply> crateApiLocalSessionLocalSessionSubscribeWorkerReplies({
+    required LocalSession that,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionTabResize({
+    required LocalSession that,
+    required int cols,
+    required int rows,
+  });
+
   Future<void> crateApiIrohClientInitApp();
 
   Future<IrohSession> crateApiIrohClientIrohConnect({
@@ -133,6 +177,8 @@ abstract class RustLibApi extends BaseApi {
     required List<String> relayUrls,
     String? pairToken,
   });
+
+  Future<LocalSession> crateApiLocalSessionLocalConnect();
 
   Future<void> crateApiIrohClientSetDataDir({required String path});
 
@@ -143,6 +189,14 @@ abstract class RustLibApi extends BaseApi {
   get rust_arc_decrement_strong_count_IrohSession;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_IrohSessionPtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_LocalSession;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_LocalSession;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_LocalSessionPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -539,6 +593,353 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiLocalSessionLocalSessionAttachTab({
+    required LocalSession that,
+    required String sectionId,
+    required String tabId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(sectionId, serializer);
+          sse_encode_String(tabId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionAttachTabConstMeta,
+        argValues: [that, sectionId, tabId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionAttachTabConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_attach_tab",
+        argNames: ["that", "sectionId", "tabId"],
+      );
+
+  @override
+  Future<void> crateApiLocalSessionLocalSessionClose({
+    required LocalSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionCloseConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionCloseConstMeta =>
+      const TaskConstMeta(debugName: "LocalSession_close", argNames: ["that"]);
+
+  @override
+  Future<void> crateApiLocalSessionLocalSessionDetachTab({
+    required LocalSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 13,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionDetachTabConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionDetachTabConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_detach_tab",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<void> crateApiLocalSessionLocalSessionLaunchTab({
+    required LocalSession that,
+    required String sectionId,
+    required String tabId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(sectionId, serializer);
+          sse_encode_String(tabId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionLaunchTabConstMeta,
+        argValues: [that, sectionId, tabId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionLaunchTabConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_launch_tab",
+        argNames: ["that", "sectionId", "tabId"],
+      );
+
+  @override
+  Future<void> crateApiLocalSessionLocalSessionListProjects({
+    required LocalSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 15,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionListProjectsConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionListProjectsConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_list_projects",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<void> crateApiLocalSessionLocalSessionSend({
+    required LocalSession that,
+    required List<int> bytes,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 16,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionSendConstMeta,
+        argValues: [that, bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionSendConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_send",
+        argNames: ["that", "bytes"],
+      );
+
+  @override
+  Stream<Uint8List> crateApiLocalSessionLocalSessionSubscribe({
+    required LocalSession that,
+  }) {
+    final sink = RustStreamSink<Uint8List>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+              that,
+              serializer,
+            );
+            sse_encode_StreamSink_list_prim_u_8_strict_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 17,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta: kCrateApiLocalSessionLocalSessionSubscribeConstMeta,
+          argValues: [that, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionSubscribeConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_subscribe",
+        argNames: ["that", "sink"],
+      );
+
+  @override
+  Stream<WorkerReply> crateApiLocalSessionLocalSessionSubscribeWorkerReplies({
+    required LocalSession that,
+  }) {
+    final sink = RustStreamSink<WorkerReply>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+              that,
+              serializer,
+            );
+            sse_encode_StreamSink_worker_reply_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 18,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta:
+              kCrateApiLocalSessionLocalSessionSubscribeWorkerRepliesConstMeta,
+          argValues: [that, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionSubscribeWorkerRepliesConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_subscribe_worker_replies",
+        argNames: ["that", "sink"],
+      );
+
+  @override
+  Future<void> crateApiLocalSessionLocalSessionTabResize({
+    required LocalSession that,
+    required int cols,
+    required int rows,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_16(cols, serializer);
+          sse_encode_u_16(rows, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 19,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionTabResizeConstMeta,
+        argValues: [that, cols, rows],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionTabResizeConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_tab_resize",
+        argNames: ["that", "cols", "rows"],
+      );
+
+  @override
   Future<void> crateApiIrohClientInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -547,7 +948,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 20,
             port: port_,
           );
         },
@@ -583,7 +984,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 21,
             port: port_,
           );
         },
@@ -606,6 +1007,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<LocalSession> crateApiLocalSessionLocalConnect() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 22,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalConnectConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalConnectConstMeta =>
+      const TaskConstMeta(debugName: "local_connect", argNames: []);
+
+  @override
   Future<void> crateApiIrohClientSetDataDir({required String path}) {
     return handler.executeNormal(
       NormalTask(
@@ -615,7 +1044,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 23,
             port: port_,
           );
         },
@@ -641,6 +1070,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get rust_arc_decrement_strong_count_IrohSession => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession;
 
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_LocalSession => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_LocalSession => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession;
+
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -657,6 +1094,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocalSession
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return LocalSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   IrohSession
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     dynamic raw,
@@ -666,12 +1112,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocalSession
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return LocalSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   IrohSession
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return IrohSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  LocalSession
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return LocalSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -880,6 +1344,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocalSession
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return LocalSessionImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   IrohSession
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     SseDeserializer deserializer,
@@ -892,12 +1368,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocalSession
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return LocalSessionImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   IrohSession
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return IrohSessionImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  LocalSession
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return LocalSessionImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -1168,6 +1668,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    LocalSession self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as LocalSessionImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     IrohSession self,
     SseSerializer serializer,
@@ -1181,6 +1694,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    LocalSession self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as LocalSessionImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     IrohSession self,
     SseSerializer serializer,
@@ -1188,6 +1714,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as IrohSessionImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    LocalSession self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as LocalSessionImpl).frbInternalSseEncode(move: null),
       serializer,
     );
   }
@@ -1510,6 +2049,105 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
   Future<void> tabResize({required int cols, required int rows}) =>
       RustLib.instance.api.crateApiIrohClientIrohSessionTabResize(
+        that: this,
+        cols: cols,
+        rows: rows,
+      );
+}
+
+@sealed
+class LocalSessionImpl extends RustOpaque implements LocalSession {
+  // Not to be used by end users
+  LocalSessionImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  LocalSessionImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_LocalSession,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_LocalSession,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_LocalSessionPtr,
+  );
+
+  /// Subscribe to live PTY bytes for `(section_id, tab_id)`.
+  ///
+  /// Replaces any previous attachment: aborts the previous
+  /// forwarder, clears this viewer's entry from the previous
+  /// tab's `active_viewers`, then subscribes to the new tab's
+  /// broadcast and spawns a forwarder that drains it into
+  /// `incoming_tx`. The new viewport size has to be set via
+  /// [`Self::tab_resize`] after attach — bytes start flowing
+  /// immediately, but no resize is implied.
+  ///
+  /// Errors if the tab isn't running (no `broadcasts` entry); the
+  /// caller should `launch_tab` first.
+  Future<void> attachTab({required String sectionId, required String tabId}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionAttachTab(
+        that: this,
+        sectionId: sectionId,
+        tabId: tabId,
+      );
+
+  /// Close the session: detaches any attached tab, drops both
+  /// channel senders so active subscriptions exit, and clears
+  /// per-viewer state on the registry. Idempotent.
+  Future<void> close() =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionClose(that: this);
+
+  /// Stop forwarding PTY bytes for the currently-attached tab.
+  /// Idempotent.
+  Future<void> detachTab() => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionDetachTab(that: this);
+
+  /// Ask the daemon to spawn the given tab's PTY if it isn't
+  /// already running. See [`Self`] doc for the launch flow.
+  Future<void> launchTab({required String sectionId, required String tabId}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionLaunchTab(
+        that: this,
+        sectionId: sectionId,
+        tabId: tabId,
+      );
+
+  /// Push a project list through [`Self::subscribe_worker_replies`].
+  ///
+  /// Reads from the host-registered [`RegistryState::project_store`]
+  /// and flattens it into the bridge's `ProjectSummary` / `TaskSummary` /
+  /// `TabSummary` shape. Boot-order forgiving — if the registry
+  /// hasn't been registered yet, sends an empty list.
+  Future<void> listProjects() => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionListProjects(that: this);
+
+  /// Send raw PTY stdin bytes to the currently-attached tab.
+  ///
+  /// Looks up the tab's writer in `RegistryState::writers` and
+  /// writes synchronously. Errors if no tab is attached or the
+  /// writer has been dropped (tab exited / runtime gone).
+  Future<void> send({required List<int> bytes}) => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionSend(that: this, bytes: bytes);
+
+  /// Stream PTY bytes for the attached tab into a Dart sink.
+  /// One-shot subscription; the second call returns
+  /// "already subscribed".
+  Stream<Uint8List> subscribe() => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionSubscribe(that: this);
+
+  /// Stream worker replies into a Dart sink. One-shot.
+  Stream<WorkerReply> subscribeWorkerReplies() => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionSubscribeWorkerReplies(that: this);
+
+  /// Resize the currently-attached tab's PTY.
+  ///
+  /// Updates this viewer's entry in `RegistryState::active_viewers`
+  /// and asks the registry to recompute the effective
+  /// (min-across-viewers) size. The desktop UI render tick drains
+  /// the resulting `pending_resizes` queue.
+  Future<void> tabResize({required int cols, required int rows}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionTabResize(
         that: this,
         cols: cols,
         rows: rows,
