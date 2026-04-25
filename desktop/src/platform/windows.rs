@@ -12,12 +12,8 @@ pub struct WindowsPlatform;
 
 impl PlatformServices for WindowsPlatform {
     fn open_external_url(url: &str) -> Result<(), String> {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", url]);
-        command
-            .spawn()
-            .map(|_| ())
-            .map_err(|err| format!("Could not open the GitHub link: {err}"))
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::open_external_url(url)
     }
 
     fn platform_modifier_label() -> &'static str {

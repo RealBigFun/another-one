@@ -15,12 +15,8 @@ pub struct MacPlatform;
 
 impl PlatformServices for MacPlatform {
     fn open_external_url(url: &str) -> Result<(), String> {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-            .spawn()
-            .map(|_| ())
-            .map_err(|err| format!("Could not open the GitHub link: {err}"))
+        // Single source of truth lives in `core::platform::HeadlessPlatform`.
+        CorePlatform::open_external_url(url)
     }
 
     fn platform_modifier_label() -> &'static str {

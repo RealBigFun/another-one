@@ -12,12 +12,8 @@ pub struct LinuxPlatform;
 
 impl PlatformServices for LinuxPlatform {
     fn open_external_url(url: &str) -> Result<(), String> {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-            .spawn()
-            .map(|_| ())
-            .map_err(|err| format!("Could not open the GitHub link: {err}"))
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::open_external_url(url)
     }
 
     fn platform_modifier_label() -> &'static str {

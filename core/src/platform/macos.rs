@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use super::HeadlessPlatform;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -10,6 +12,14 @@ impl HeadlessPlatform for MacosPlatform {
 
     fn modifier_label() -> &'static str {
         "Cmd"
+    }
+
+    fn open_external_url(url: &str) -> Result<(), String> {
+        Command::new("open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| format!("Could not open URL externally: {err}"))
     }
 }
 
