@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+use another_one_core::platform::{CurrentPlatform as CorePlatform, HeadlessPlatform};
 use gpui::{point, px, App, TitlebarOptions, Window, WindowDecorations};
 
 use super::PlatformServices;
@@ -23,7 +24,11 @@ impl PlatformServices for MacPlatform {
     }
 
     fn platform_modifier_label() -> &'static str {
-        "Cmd"
+        // Single source of truth lives in `core::platform::HeadlessPlatform`.
+        // This wrapper exists only because the desktop `PlatformServices`
+        // trait predates the core abstraction; it'll be removed when the
+        // GPUI binary is deleted in the Flutter migration's Phase 6.
+        CorePlatform::modifier_label()
     }
 
     fn read_process_samples(

@@ -72,4 +72,14 @@ pub trait HeadlessPlatform {
     /// but stable; today's targets return `"macos"`, `"linux"`,
     /// `"windows"`, `"ios"`, `"android"`.
     fn name() -> &'static str;
+
+    /// Display label for the platform's primary keyboard-shortcut
+    /// modifier key, as shown to the user in keybinding UI.
+    ///
+    /// Examples: macOS → `"Cmd"`, Linux → `"Super"`, Windows →
+    /// `"Win"`. The strings are exactly what the desktop UI has
+    /// rendered in the keybindings list since before the Flutter
+    /// migration; preserve them verbatim so existing screenshots
+    /// and muscle memory don't drift.
+    fn modifier_label() -> &'static str;
 }

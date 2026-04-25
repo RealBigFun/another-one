@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use another_one_core::platform::{CurrentPlatform as CorePlatform, HeadlessPlatform};
 use gpui::{App, TitlebarOptions, Window, WindowDecorations};
 
 use super::PlatformServices;
@@ -20,7 +21,8 @@ impl PlatformServices for WindowsPlatform {
     }
 
     fn platform_modifier_label() -> &'static str {
-        "Win"
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::modifier_label()
     }
 
     fn read_process_samples(
