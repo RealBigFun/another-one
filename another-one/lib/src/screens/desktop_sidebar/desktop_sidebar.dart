@@ -61,15 +61,18 @@ class _SidebarHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return Container(
+      width: double.infinity,
       padding: const EdgeInsets.fromLTRB(
         AppTokens.space4,
-        AppTokens.space5,
+        AppTokens.space3,
         AppTokens.space4,
         AppTokens.space2,
       ),
+      alignment: Alignment.centerLeft,
       child: const Text(
         'PROJECTS',
+        textAlign: TextAlign.left,
         style: TextStyle(
           fontSize: AppTokens.fontCaption,
           fontWeight: FontWeight.w600,
@@ -330,6 +333,40 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                       tooltip: 'More',
                       onPressed: () =>
                           _showProjectMenu(_globalCenterOf(context)),
+                    ),
+                    // GitHub link button (the GPUI sidebar shows a
+                    // GitHub glyph for projects with a remote on
+                    // github.com). The bridge doesn't yet expose
+                    // GitHub-association on `ProjectSummary` so this
+                    // renders as a placeholder, hidden by default
+                    // and revealed on row hover, matching GPUI's
+                    // "invisible until hover unless link exists".
+                    if (_rowHovered)
+                      _RowIconButton(
+                        icon: 'github',
+                        tooltip: 'Open on GitHub',
+                        onPressed: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content:
+                                  Text('GitHub link is not yet wired'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      ),
+                    _RowIconButton(
+                      icon: 'plus',
+                      tooltip: 'New task',
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content:
+                                Text('New-task modal is not yet ported'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
