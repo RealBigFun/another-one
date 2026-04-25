@@ -16,6 +16,18 @@ Future<LocalSession> localConnect() =>
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LocalSession>>
 abstract class LocalSession implements RustOpaqueInterface {
+  /// Add an existing on-disk project to the embedded daemon's
+  /// project store. Returns `Ok(true)` if the project was inserted,
+  /// `Ok(false)` if a project at the same path already existed
+  /// (idempotent — re-adding is a no-op, not an error).
+  ///
+  /// Heavy `prepare_project` work runs on a dedicated thread (see
+  /// [`another_one_core::project_service::spawn_project_add`]) so
+  /// the FRB caller doesn't block. On success, pushes a fresh
+  /// `ProjectList` reply so listeners refresh without a follow-up
+  /// `list_projects()` round-trip.
+  Future<bool> addProject({required String path});
+
   /// Subscribe to live PTY bytes for `(section_id, tab_id)`.
   ///
   /// Replaces any previous attachment: aborts the previous

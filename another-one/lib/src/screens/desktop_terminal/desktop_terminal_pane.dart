@@ -122,7 +122,12 @@ class _AttachedTerminalState extends State<_AttachedTerminal> {
       widget.transport.sendBytes(utf8.encode(normalized));
     };
     _terminal.onResize = (w, h, _, _) {
-      widget.transport.tabResize(cols: w, rows: h);
+      // tabResize on LocalTransport throws if no tab is attached
+      // yet (xterm's first onResize can fire before _openTab
+      // finishes). Suppress — the next onResize after attach will
+      // carry the same dimensions. The mobile path silently drops
+      // these on the iroh wire too.
+      widget.transport.tabResize(cols: w, rows: h).catchError((_) {});
     };
   }
 
@@ -178,17 +183,27 @@ class _AttachedTerminalState extends State<_AttachedTerminal> {
         tabId: widget.selection.tabId,
       ),
     );
-    await widget.transport.attachTab(
-      sectionId: widget.selection.sectionId,
-      tabId: widget.selection.tabId,
-    );
-    _attachRetry?.cancel();
-    _attachRetry = Timer(const Duration(milliseconds: 400), () async {
-      if (!mounted || _gotFirstByte) return;
+    // First attach: tolerate "tab not running yet" — LaunchTab
+    // populates the broadcast asynchronously, and on the local FFI
+    // path the race window is real (no QUIC RTT to absorb it). The
+    // 400ms retry below catches up. iroh's wire-level attach drops
+    // the race silently, so this matches mobile's effective
+    // behaviour.
+    try {
       await widget.transport.attachTab(
         sectionId: widget.selection.sectionId,
         tabId: widget.selection.tabId,
       );
+    } catch (_) {}
+    _attachRetry?.cancel();
+    _attachRetry = Timer(const Duration(milliseconds: 400), () async {
+      if (!mounted || _gotFirstByte) return;
+      try {
+        await widget.transport.attachTab(
+          sectionId: widget.selection.sectionId,
+          tabId: widget.selection.tabId,
+        );
+      } catch (_) {}
     });
   }
 

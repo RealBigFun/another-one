@@ -175,6 +175,43 @@ impl LocalSession {
         Ok(())
     }
 
+    /// Add an existing on-disk project to the embedded daemon's
+    /// project store. Returns `Ok(true)` if the project was inserted,
+    /// `Ok(false)` if a project at the same path already existed
+    /// (idempotent — re-adding is a no-op, not an error).
+    ///
+    /// Heavy `prepare_project` work runs on a dedicated thread (see
+    /// [`another_one_core::project_service::spawn_project_add`]) so
+    /// the FRB caller doesn't block. On success, pushes a fresh
+    /// `ProjectList` reply so listeners refresh without a follow-up
+    /// `list_projects()` round-trip.
+    pub async fn add_project(&self, path: String) -> anyhow::Result<bool> {
+        let mut rx = another_one_core::project_service::spawn_project_add(
+            std::path::PathBuf::from(path),
+        );
+        let reply = rx
+            .recv()
+            .await
+            .map_err(|_| anyhow::anyhow!("project add worker dropped"))?;
+        let prepared = reply
+            .result
+            .map_err(|e| anyhow::anyhow!("prepare project: {e}"))?;
+
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("add_project: set_local_registry not called"))?;
+        let inserted = {
+            let mut state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("add_project: RegistryState mutex poisoned"))?;
+            state.project_store.insert_prepared_project(prepared)
+        };
+
+        if inserted {
+            self.list_projects().await?;
+        }
+        Ok(inserted)
+    }
+
     /// Subscribe to live PTY bytes for `(section_id, tab_id)`.
     ///
     /// Replaces any previous attachment: aborts the previous
@@ -208,16 +245,40 @@ impl LocalSession {
         // Subscribe to the new tab's broadcast under a brief lock so
         // we can safely both read `broadcasts` and update viewer
         // tracking in one critical section.
+        //
+        // Race tolerance: a callsite that fires `launch_tab` and
+        // immediately `attach_tab` can arrive here before the
+        // pending-launch queue has been drained and the broadcast
+        // sender published. Poll briefly (~500ms total, 25ms
+        // intervals) before giving up so a normal launch+attach
+        // pair on the in-process FFI path doesn't race-fail. iroh
+        // peers absorb this delay in QUIC RTT; local callers don't.
         let mut broadcast_rx = {
-            let mut state = registry
-                .lock()
-                .map_err(|_| anyhow::anyhow!("attach_tab: RegistryState mutex poisoned"))?;
-            let sender = state.broadcasts.get(&key).cloned().ok_or_else(|| {
+            let mut sender_opt = None;
+            for _ in 0..20 {
+                // Tight scope: the MutexGuard must drop *before* the
+                // `.await` below, otherwise the enclosing future
+                // becomes !Send (std::sync::MutexGuard is !Send) and
+                // FRB's tokio executor refuses to schedule it.
+                {
+                    let mut state = registry.lock().map_err(|_| {
+                        anyhow::anyhow!("attach_tab: RegistryState mutex poisoned")
+                    })?;
+                    if let Some(s) = state.broadcasts.get(&key).cloned() {
+                        state
+                            .viewer_focus
+                            .insert(self.viewer_id.clone(), key.clone());
+                        sender_opt = Some(s);
+                        break;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            let sender = sender_opt.ok_or_else(|| {
                 anyhow::anyhow!(
                     "attach_tab: tab is not running yet — call launch_tab first"
                 )
             })?;
-            state.viewer_focus.insert(self.viewer_id.clone(), key.clone());
             sender.subscribe()
         };
 

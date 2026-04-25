@@ -41,6 +41,11 @@ dependencies:
   # iroh secret key. Without stable storage, the phone's EndpointId
   # would regenerate on every app restart, breaking TOFU pairing.
   path_provider: ^2.1.3
+  # Native folder picker for the desktop "Add project" affordance.
+  # GPUI uses `cx.prompt_for_paths` for the same flow; file_picker
+  # is the cross-platform equivalent (GTK on Linux, NSOpenPanel on
+  # macOS, IFileDialog on Windows).
+  file_picker: ^8.0.0
   mobile_scanner: ^5.2.0
   another_one_bridge:
     path: rust_builder

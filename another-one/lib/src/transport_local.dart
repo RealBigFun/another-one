@@ -111,6 +111,20 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
     await session.listProjects();
   }
 
+  /// Add an on-disk project directory to the embedded daemon's
+  /// store. Returns whether a new project was inserted (`false`
+  /// means the same path was already registered — idempotent).
+  /// On success the daemon pushes a fresh ProjectList over
+  /// [workerReplies], so callers don't need a follow-up
+  /// [listProjects].
+  Future<bool> addProject(String path) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('addProject: LocalTransport not connected');
+    }
+    return session.addProject(path: path);
+  }
+
   @override
   Future<void> attachTab({
     required String sectionId,

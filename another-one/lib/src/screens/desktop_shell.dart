@@ -7,6 +7,7 @@
 // land in Phase 3 #2; the placeholder "Welcome" body keeps the
 // shell shippable in the meantime.
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -61,12 +62,100 @@ class _Sidebar extends ConsumerWidget {
           right: BorderSide(color: AppTokens.divider, width: 0.5),
         ),
       ),
-      child: projects.when(
-        data: _ProjectList.new,
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _SidebarMessage(text: 'Project list error: $e'),
+      child: Column(
+        children: [
+          const _SidebarHeader(),
+          Expanded(
+            child: projects.when(
+              data: _ProjectList.new,
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) =>
+                  _SidebarMessage(text: 'Project list error: $e'),
+            ),
+          ),
+        ],
       ),
     );
+  }
+}
+
+class _SidebarHeader extends ConsumerWidget {
+  const _SidebarHeader();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppTokens.space5,
+        AppTokens.space3,
+        AppTokens.space2,
+        AppTokens.space2,
+      ),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'Projects',
+              style: TextStyle(
+                fontSize: AppTokens.fontCaption,
+                fontWeight: FontWeight.w600,
+                color: AppTokens.textPlaceholder,
+                letterSpacing: 0.6,
+              ),
+            ),
+          ),
+          _SidebarRowButton(
+            onTap: () => _addProject(context, ref),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTokens.space2,
+              vertical: 2,
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.add, size: 14, color: AppTokens.textSecondary),
+                SizedBox(width: 2),
+                Text(
+                  'Add',
+                  style: TextStyle(
+                    fontSize: AppTokens.fontCaption,
+                    color: AppTokens.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _addProject(BuildContext context, WidgetRef ref) async {
+    final selectedPath = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Add Project Folder',
+    );
+    if (selectedPath == null || selectedPath.isEmpty) return;
+    final transport = ref.read(localConnectionProvider);
+    try {
+      final inserted = await transport.addProject(selectedPath);
+      if (!context.mounted) return;
+      if (!inserted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Project already added at that path'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to add project: $e'),
+          backgroundColor: AppTokens.errorBg,
+        ),
+      );
+    }
   }
 }
 
