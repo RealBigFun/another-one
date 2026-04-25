@@ -78,6 +78,13 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// id (idempotent).
   Future<bool> removeTask({required String projectId, required String taskId});
 
+  /// Rename a task. Empty / whitespace-only names are rejected so
+  /// the daemon never persists a blank label. Returns whether
+  /// anything was actually written (an unknown id or a no-op
+  /// rename returns `Ok(false)`). Pushes a fresh `ProjectList`
+  /// reply on success so the sidebar redraws.
+  Future<bool> renameTask({required String taskId, required String newName});
+
   /// Send raw PTY stdin bytes to the currently-attached tab.
   ///
   /// Looks up the tab's writer in `RegistryState::writers` and

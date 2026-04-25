@@ -175,6 +175,48 @@ impl LocalSession {
         Ok(())
     }
 
+    /// Rename a task. Empty / whitespace-only names are rejected so
+    /// the daemon never persists a blank label. Returns whether
+    /// anything was actually written (an unknown id or a no-op
+    /// rename returns `Ok(false)`). Pushes a fresh `ProjectList`
+    /// reply on success so the sidebar redraws.
+    pub async fn rename_task(
+        &self,
+        task_id: String,
+        new_name: String,
+    ) -> anyhow::Result<bool> {
+        let trimmed = new_name.trim().to_string();
+        if trimmed.is_empty() {
+            return Ok(false);
+        }
+        let registry = local_registry()
+            .ok_or_else(|| anyhow::anyhow!("rename_task: set_local_registry not called"))?;
+        let changed = {
+            let mut state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("rename_task: RegistryState mutex poisoned"))?;
+            let Some(task) = state.project_store.task_mut(&task_id) else {
+                return Ok(false);
+            };
+            if task.name == trimmed {
+                false
+            } else {
+                task.name = trimmed;
+                true
+            }
+        };
+        if changed {
+            // Re-acquire the lock for save (rebuild_runtime_views +
+            // disk write); `task_mut` only mutates in-memory state
+            // and the GPUI desktop persists explicitly after.
+            if let Ok(state) = registry.lock() {
+                state.project_store.save();
+            }
+            self.list_projects().await?;
+        }
+        Ok(changed)
+    }
+
     /// Pin or unpin a task. Pinned tasks float to the top of their
     /// project's task list (mirrors `child_entries.sort_by_key(!is_pinned)`
     /// in the GPUI sidebar). Returns whether the pin state actually

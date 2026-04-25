@@ -16,10 +16,12 @@
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../rust/api/iroh_client.dart';
 import '../../state/local_connection_provider.dart';
+import '../../state/rename_target_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
@@ -705,22 +707,36 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
         }
       case 'delete':
         await _confirmDelete();
-      case 'new-task':
       case 'rename':
-        // Verbs not yet wired — these land alongside the new-task
-        // modal port + inline-rename UI.
+        ref.read(renameTargetTaskIdProvider.notifier).state = widget.task.id;
+      case 'new-task':
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              value == 'rename'
-                  ? 'Inline rename UI is not yet ported'
-                  : 'New-task modal is not yet ported',
-            ),
-            duration: const Duration(seconds: 2),
+          const SnackBar(
+            content: Text('New-task modal is not yet ported'),
+            duration: Duration(seconds: 2),
           ),
         );
     }
+  }
+
+  Future<void> _commitRename(String newName) async {
+    ref.read(renameTargetTaskIdProvider.notifier).state = null;
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty || trimmed == widget.task.name) return;
+    final transport = ref.read(localConnectionProvider);
+    try {
+      await transport.renameTask(widget.task.id, trimmed);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to rename task: $e')),
+      );
+    }
+  }
+
+  void _cancelRename() {
+    ref.read(renameTargetTaskIdProvider.notifier).state = null;
   }
 
   Future<void> _confirmDelete() async {
@@ -857,15 +873,31 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      taskName,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: AppTokens.fontBodyLg,
-                        fontWeight: FontWeight.w500,
-                        color: AppTokens.textSecondary,
-                      ),
-                    ),
+                    child: ref.watch(renameTargetTaskIdProvider) == task.id
+                        ? _TaskRenameField(
+                            task: task,
+                            onCommit: _commitRename,
+                            onCancel: _cancelRename,
+                          )
+                        : GestureDetector(
+                            // Double-click to enter rename mode —
+                            // matches GPUI's left_sidebar.rs:
+                            // "Double-click: enter rename mode".
+                            onDoubleTap: () {
+                              ref
+                                  .read(renameTargetTaskIdProvider.notifier)
+                                  .state = task.id;
+                            },
+                            child: Text(
+                              taskName,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: AppTokens.fontBodyLg,
+                                fontWeight: FontWeight.w500,
+                                color: AppTokens.textSecondary,
+                              ),
+                            ),
+                          ),
                   ),
                   const SizedBox(width: 4),
                   // Worktree marker — every task in AnotherOne is a
@@ -964,6 +996,121 @@ class _RowIconButtonState extends State<_RowIconButton> {
       ),
     );
   }
+}
+
+/// Inline editor swapped in for the task name when the row is the
+/// current `renameTargetTaskIdProvider` target. Auto-focuses,
+/// pre-selects the existing name (so typing replaces it), commits
+/// on Enter or blur, cancels on Esc — matches GPUI's task rename
+/// editor in `left_sidebar.rs`.
+class _TaskRenameField extends StatefulWidget {
+  const _TaskRenameField({
+    required this.task,
+    required this.onCommit,
+    required this.onCancel,
+  });
+
+  final TaskSummary task;
+  final ValueChanged<String> onCommit;
+  final VoidCallback onCancel;
+
+  @override
+  State<_TaskRenameField> createState() => _TaskRenameFieldState();
+}
+
+class _TaskRenameFieldState extends State<_TaskRenameField> {
+  late final TextEditingController _controller;
+  late final FocusNode _focus;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.task.name);
+    _focus = FocusNode()..addListener(_onFocusChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _focus.requestFocus();
+      // Select all so typing replaces the existing name in one go,
+      // matching GPUI's rename-on-double-click behaviour.
+      _controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _controller.text.length,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _focus.removeListener(_onFocusChanged);
+    _focus.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChanged() {
+    if (!_focus.hasFocus && mounted) {
+      // Blur commits — matches the GPUI editor.
+      widget.onCommit(_controller.text);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.escape): _CancelIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          _CancelIntent: CallbackAction<_CancelIntent>(
+            onInvoke: (_) {
+              widget.onCancel();
+              return null;
+            },
+          ),
+        },
+        child: TextField(
+          controller: _controller,
+          focusNode: _focus,
+          autocorrect: false,
+          enableSuggestions: false,
+          smartDashesType: SmartDashesType.disabled,
+          smartQuotesType: SmartQuotesType.disabled,
+          style: const TextStyle(
+            fontSize: AppTokens.fontBodyLg,
+            fontWeight: FontWeight.w500,
+            color: AppTokens.textPrimary,
+          ),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: AppTokens.space2,
+              vertical: 2,
+            ),
+            filled: true,
+            fillColor: const Color(0x24000000),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+              borderSide: BorderSide(color: AppTokens.focusRing),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+              borderSide: BorderSide(color: AppTokens.focusRing),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+              borderSide: BorderSide(color: AppTokens.focusRing, width: 1.5),
+            ),
+          ),
+          onSubmitted: widget.onCommit,
+        ),
+      ),
+    );
+  }
+}
+
+class _CancelIntent extends Intent {
+  const _CancelIntent();
 }
 
 /// Approximates the global-coords centre of `context`'s render box —

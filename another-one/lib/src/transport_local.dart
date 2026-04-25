@@ -137,6 +137,17 @@ class LocalTransport implements TerminalTransport, DaemonConnection {
     await session.removeProject(projectId: projectId);
   }
 
+  /// Rename a task. Empty/whitespace-only names are rejected. Returns
+  /// whether the on-disk store actually changed (false for unknown
+  /// ids or no-op renames).
+  Future<bool> renameTask(String taskId, String newName) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('renameTask: LocalTransport not connected');
+    }
+    return session.renameTask(taskId: taskId, newName: newName);
+  }
+
   /// Pin or unpin a task. Pinned tasks float to the top of their
   /// project's list. Returns whether state changed (false on
   /// idempotent re-set).
