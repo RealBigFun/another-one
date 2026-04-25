@@ -17,7 +17,7 @@
 use std::sync::Mutex;
 
 use another_one_core::agents::AgentProviderKind;
-use another_one_core::daemon_embed::RegistryState;
+use another_one_core::daemon_embed::{key_from_wire, RegistryState, TabLaunchRequest};
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
 use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
@@ -126,12 +126,40 @@ impl LocalSession {
 
     /// Ask the daemon to spawn the given tab's PTY if it isn't
     /// already running.
+    ///
+    /// Idempotent: queues a [`TabLaunchRequest`] on
+    /// `RegistryState::pending_tab_launches`. The UI render tick
+    /// drains the queue, dedupes against `in_flight_launches` /
+    /// `broadcasts`, and either resolves the launch config from the
+    /// project store + spawns the PTY or no-ops if the tab is
+    /// already running. Same shape the iroh side uses in
+    /// `daemon_sandbox::transport_iroh`'s `LaunchTab` handler.
+    ///
+    /// Returns silently if the registry isn't registered yet — same
+    /// "boot-order forgiving" stance as `list_projects`.
     pub async fn launch_tab(
         &self,
-        _section_id: String,
-        _tab_id: String,
+        section_id: String,
+        tab_id: String,
     ) -> anyhow::Result<()> {
-        Err(unimplemented_err("launch_tab"))
+        let key = match key_from_wire(&section_id, &tab_id) {
+            Some(key) => key,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "launch_tab: malformed section_id `{section_id}` — \
+                     expected a SectionId::store_key()"
+                ));
+            }
+        };
+        let registry = match local_registry() {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+        let mut state = registry
+            .lock()
+            .map_err(|_| anyhow::anyhow!("RegistryState mutex poisoned"))?;
+        state.pending_tab_launches.push(TabLaunchRequest { key });
+        Ok(())
     }
 
     /// Stream PTY bytes for the attached tab into a Dart sink.
