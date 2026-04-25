@@ -92,4 +92,15 @@ pub trait HeadlessPlatform {
     /// limitation; the future Flutter UI will route URL opens
     /// through Dart platform channels and bypass this method.
     fn open_external_url(url: &str) -> Result<(), String>;
+
+    /// Total physical RAM in bytes, or `None` if the platform
+    /// doesn't expose a cheap query for it.
+    ///
+    /// macOS / iOS use `sysctlbyname("hw.memsize")`; Linux /
+    /// Android parse `/proc/meminfo`. Windows currently returns
+    /// `None` (the desktop UI's resource indicator hides the
+    /// total when this is missing). The values are reported
+    /// once at startup and don't update — so a syscall per call
+    /// is fine; no caching layer is warranted.
+    fn total_system_memory_bytes() -> Option<u64>;
 }

@@ -52,13 +52,8 @@ impl PlatformServices for LinuxPlatform {
     }
 
     fn total_system_memory_bytes() -> Option<u64> {
-        let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-        let line = meminfo.lines().find(|line| line.starts_with("MemTotal:"))?;
-        let kib = line
-            .split_whitespace()
-            .nth(1)
-            .and_then(|value| value.parse::<u64>().ok())?;
-        Some(kib.saturating_mul(1024))
+        // See the matching comment in `desktop/src/platform/macos.rs`.
+        CorePlatform::total_system_memory_bytes()
     }
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool {

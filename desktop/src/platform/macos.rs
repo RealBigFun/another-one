@@ -59,19 +59,9 @@ impl PlatformServices for MacPlatform {
     }
 
     fn total_system_memory_bytes() -> Option<u64> {
-        let mut bytes = 0_u64;
-        let mut size = std::mem::size_of::<u64>();
-        let name = std::ffi::CString::new("hw.memsize").ok()?;
-        let result = unsafe {
-            libc::sysctlbyname(
-                name.as_ptr(),
-                (&mut bytes as *mut u64).cast(),
-                &mut size,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        (result == 0).then_some(bytes)
+        // See the matching comment in `desktop/src/platform/macos.rs`'s
+        // `open_external_url` impl. Single source of truth in core.
+        CorePlatform::total_system_memory_bytes()
     }
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool {

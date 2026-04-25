@@ -201,6 +201,7 @@ dependencies = [
  "anyhow",
  "dirs 5.0.1",
  "hotpath",
+ "libc",
  "portable-pty",
  "serde",
  "serde_json",
