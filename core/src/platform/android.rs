@@ -1,3 +1,8 @@
+use std::path::Path;
+use std::process::Command;
+
+use crate::open_in::OpenInAppKind;
+
 use super::HeadlessPlatform;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -47,7 +52,7 @@ impl HeadlessPlatform for AndroidPlatform {
         super::linux::procfs_read_process_samples()
     }
 
-    fn is_open_in_app_available(_app: crate::open_in::OpenInAppKind) -> bool {
+    fn is_open_in_app_available(_app: OpenInAppKind) -> bool {
         // Android's open-in story is driven by `Intent.ACTION_VIEW`,
         // which is reachable from Java/Kotlin only. The future
         // Flutter UI will route any "open in" through a Dart
@@ -55,13 +60,13 @@ impl HeadlessPlatform for AndroidPlatform {
         false
     }
 
-    fn command_for_open_in(
-        _app: crate::open_in::OpenInAppKind,
-        _path: &std::path::Path,
-    ) -> std::process::Command {
+    fn command_for_open_in(_app: OpenInAppKind, _path: &Path) -> Command {
         // See [`Self::is_open_in_app_available`]. Placeholder so
         // the trait shape is uniform; should never be invoked.
-        std::process::Command::new("/dev/null")
+        // The path is intentionally nonexistent so the spawn fails
+        // with ENOENT and the error message points at the right
+        // diagnosis ("not supported on this platform").
+        Command::new("/nonexistent/another-one-unsupported-on-this-platform")
     }
 }
 
