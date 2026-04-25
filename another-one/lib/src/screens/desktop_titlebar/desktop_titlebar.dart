@@ -16,6 +16,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../state/resource_sample_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
@@ -71,30 +72,38 @@ class DesktopTitlebar extends ConsumerWidget {
   }
 }
 
-/// Resource-usage indicator: CPU% + memory MB. The GPUI version
-/// reads from `core::platform::HeadlessPlatform::read_process_samples`
-/// via a poll timer; wiring that through FRB is a follow-up. For
-/// now this renders an em-dash placeholder so the layout footprint
-/// matches the GPUI titlebar.
-class _ResourceIndicator extends StatelessWidget {
+/// Resource-usage indicator: CPU% + memory MB. Reads the
+/// `resourceUsageProvider`, which polls
+/// `core::platform::HeadlessPlatform::read_process_samples` every
+/// 1.5s through the FRB bridge and derives CPU% from cumulative-
+/// time deltas. Em-dashes show until the second sample arrives
+/// (CPU% needs a delta).
+class _ResourceIndicator extends ConsumerWidget {
   const _ResourceIndicator();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final usage = ref.watch(resourceUsageProvider);
+    final cpuLabel = usage?.cpuPercent != null
+        ? '${usage!.cpuPercent!.toStringAsFixed(1)}%'
+        : '— %';
+    final memLabel = usage != null && usage.memoryMib > 0
+        ? '${usage.memoryMib.toStringAsFixed(1)} MB'
+        : '— MB';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppTokens.space2),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          AppIcon(
-            'big-plus',
+          const Icon(
+            Icons.public,
             size: 12,
-            color: AppTokens.textPlaceholder.withValues(alpha: 0.4),
+            color: AppTokens.textPlaceholder,
           ),
           const SizedBox(width: AppTokens.space1),
-          const Text(
-            '— %  |  — MB',
-            style: TextStyle(
+          Text(
+            '$cpuLabel  |  $memLabel',
+            style: const TextStyle(
               fontFamily: AppTokens.fontFamilyMono,
               fontSize: AppTokens.fontCaption,
               color: AppTokens.textPlaceholder,
