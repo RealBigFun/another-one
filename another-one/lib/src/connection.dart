@@ -202,14 +202,15 @@ abstract class DaemonConnection {
   /// apps + the preferred default. Used by the titlebar split-button
   /// to render its primary icon and the chevron dropdown.
   ///
-  /// Open-In is currently a desktop-host-local concern and not
-  /// remoted: the iroh transport throws by design until a remote
-  /// client gets a "launch app on the host you're connected to"
-  /// surface (out of scope for the migration).
+  /// Per ADR another-one-67l this is a remote-able read: the *display*
+  /// of installed apps is fine to surface against any daemon, only
+  /// the actual launch ([openProjectInApp]) stays host-local. Both
+  /// `IrohTransport` and `LocalTransport` implement this; the default
+  /// here only fires for connection types that haven't overridden it.
   Future<OpenInState> openInState() {
     throw UnimplementedError(
-      'openInState: Open-In is host-local; remote daemons do not '
-      'expose installed-app detection (out of migration scope).',
+      'openInState: this DaemonConnection variant has not implemented '
+      'open_in_state.',
     );
   }
 
@@ -475,8 +476,8 @@ abstract class DaemonConnection {
   /// project is unknown — matches `ProjectStore::project_actions`.
   Future<List<ProjectActionDto>> listProjectActions(String projectId) {
     throw UnimplementedError(
-      'listProjectActions: requires Control::ListProjectActions wire '
-      'variant on the iroh transport (not yet implemented).',
+      'listProjectActions: this DaemonConnection variant has not '
+      'implemented list_project_actions.',
     );
   }
 
@@ -511,14 +512,21 @@ abstract class DaemonConnection {
   /// terminal tab, queues its PTY launch, and (for shell actions)
   /// records the command bytes to write once the PTY is up. Returns
   /// the new tab id.
+  ///
+  /// Single-shot Ack: callers should `attachTab` to the returned
+  /// tab id (or rely on the active-tab-changed event the desktop UI
+  /// emits) to receive the action's PTY output. There is no
+  /// per-step streaming progress; the wire match for that lives
+  /// only as a future `Control::Subscribe` hatch behind ADR
+  /// another-one-67l's push channel (`request_id == 0`).
   Future<String> runProjectAction({
     required String projectId,
     required String sectionId,
     required String actionId,
   }) {
     throw UnimplementedError(
-      'runProjectAction: requires Control::RunProjectAction wire '
-      'variant on the iroh transport (not yet implemented).',
+      'runProjectAction: this DaemonConnection variant has not '
+      'implemented run_project_action.',
     );
   }
 
@@ -546,8 +554,8 @@ abstract class DaemonConnection {
   /// preferred default. Drives the new-task modal's multi-select.
   Future<EnabledAgentsView> readEnabledAgents() {
     throw UnimplementedError(
-      'readEnabledAgents: requires Control::ReadEnabledAgents wire '
-      'variant on the iroh transport (not yet implemented).',
+      'readEnabledAgents: this DaemonConnection variant has not '
+      'implemented read_enabled_agents.',
     );
   }
 
@@ -623,8 +631,8 @@ abstract class DaemonConnection {
   /// Drives the Settings → Agents page.
   Future<AgentSettingsView> readAgentSettings() {
     throw UnimplementedError(
-      'readAgentSettings: requires Control::ReadAgentSettings wire '
-      'variant on the iroh transport (not yet implemented).',
+      'readAgentSettings: this DaemonConnection variant has not '
+      'implemented read_agent_settings.',
     );
   }
 

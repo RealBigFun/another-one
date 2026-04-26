@@ -3447,7 +3447,11 @@ fn changed_file_to_dto(
 /// pre-computed display strings. Lives here (not in core) because
 /// FRB's binding generator only walks bridge crate types — we'd
 /// need a re-export shim either way and the mapping is one-to-one.
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` exists so the iroh transport can decode the wire
+/// payload (`OpenInAppWire` from `daemon-sandbox`) straight into this
+/// type — the field names match by design. FRB ignores extra derives.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenInAppDto {
     /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
     /// `"zed"`, `"vscode"`, `"file-manager"`. Round-trips through
@@ -3466,7 +3470,11 @@ pub struct OpenInAppDto {
 }
 
 /// Snapshot returned by [`LocalSession::open_in_state`].
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` exists for the iroh transport; field names match
+/// `daemon-sandbox::frame::OpenInStateWire` so the wire JSON decodes
+/// directly into this DTO without a per-field map step.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenInState {
     /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
     /// declares them — Cursor, Zed, VS Code, File Manager.
@@ -3534,7 +3542,10 @@ fn map_agent_provider_back(kind: AgentProvider) -> AgentProviderKind {
 /// [`another_one_core::agents::AGENTS`]. Carries everything the
 /// new-task modal's agent multi-select needs to render a chip
 /// (label + icon path) without the UI side hard-coding a copy.
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `AgentSummaryWire` directly into this DTO.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct AgentSummaryDto {
     /// Stable id used by the bridge's `submit_new_task` verb.
     pub id: String,
@@ -3546,7 +3557,9 @@ pub struct AgentSummaryDto {
 /// Snapshot returned by [`LocalSession::read_enabled_agents`].
 /// Pairs the enabled-agents list with the user's preferred default
 /// (the chip the modal pre-checks on open).
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` shape matches `daemon-sandbox::frame::EnabledAgentsViewWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct EnabledAgentsView {
     pub agents: Vec<AgentSummaryDto>,
     pub default_agent_id: Option<String>,
@@ -3556,7 +3569,11 @@ pub struct EnabledAgentsView {
 /// page renders (label + icon + enabled / default flags +
 /// per-agent launch args list) so the UI can update its state
 /// without re-issuing reads after every toggle.
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` mirrors `daemon-sandbox::frame::AgentSettingsRowWire`
+/// so the iroh transport decodes the wire JSON straight into this
+/// DTO.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct AgentSettingsRow {
     pub id: String,
     pub label: String,
@@ -3568,7 +3585,7 @@ pub struct AgentSettingsRow {
 }
 
 /// Snapshot returned by [`LocalSession::read_agent_settings`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct AgentSettingsView {
     /// Every agent in `AGENTS` (canonical order), enabled-or-not.
     pub agents: Vec<AgentSettingsRow>,
@@ -3807,7 +3824,13 @@ fn agent_def_to_dto(
 /// kebab-case ids round-trip the GPUI on-disk format
 /// (`projects.json`) so a user can switch desktop binaries without
 /// the icon picker resetting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Deserialize` exists so the iroh transport can decode the wire
+/// payload (`ProjectActionIconWire` from `daemon-sandbox`) directly
+/// into this DTO. Wire form is kebab-case to match
+/// `core::project_store::ProjectActionIcon`'s on-disk shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ProjectActionIconDto {
     Play,
     Test,
@@ -3823,7 +3846,8 @@ pub enum ProjectActionIconDto {
 /// "project first, global last" because that's how the dropdown row
 /// order treats them — global rows render with a globe glyph beside
 /// the action label.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ProjectActionScopeDto {
     Project,
     Global,
@@ -3834,7 +3858,8 @@ pub enum ProjectActionScopeDto {
 /// the agent-mode CLI's permission flag — `default` passes nothing
 /// extra, the other three map to `--read-only`, `--workspace-write`,
 /// `--full-access` (Claude Code today; other providers ignore).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ProjectActionAccessDto {
     Default,
     ReadOnly,
@@ -3846,7 +3871,11 @@ pub enum ProjectActionAccessDto {
 /// [`another_one_core::project_store::ProjectActionKind`]. The Dart
 /// side discriminates on the variant; FRB emits a sealed-class
 /// hierarchy with `Shell` and `Agent` subclasses.
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `ProjectActionKindWire` (externally-tagged via serde default)
+/// directly into this enum.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub enum ProjectActionKindDto {
     /// A shell command typed verbatim into a freshly-spawned PTY.
     /// `command` is run as `<command>\n` so multi-line input works
@@ -3871,7 +3900,11 @@ pub enum ProjectActionKindDto {
 /// run-on-worktree-create flag, scope, and the kind-specific
 /// payload. UI maps `icon` to its asset path via
 /// `ProjectActionIconDto.icon_path` (Dart-side helper).
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `ProjectActionWire` shape directly into this DTO; field names
+/// align by design.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct ProjectActionDto {
     pub id: String,
     pub name: String,

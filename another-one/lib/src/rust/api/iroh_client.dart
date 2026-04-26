@@ -9,9 +9,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
+// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `decode_ack_field`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `request_and_await`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`, `PendingTable`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -59,35 +60,19 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab();
 
-  /// Issue [`Control::FindProjectPullRequests`] under `request_id`.
-  /// The matching [`WorkerReply::ProjectPullRequestsAck`] (or
-  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`.
-  Future<void> findProjectPullRequests({
-    required BigInt requestId,
-    required String projectId,
-    required int filterIndex,
-    required String query,
-  });
-
-  /// Issue [`Control::FindPullRequestStatus`] under `request_id`.
-  /// The matching [`WorkerReply::PullRequestStatusAck`] (or
-  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
-  /// keyed by the same id; Dart's `IrohTransport` dispatches it
-  /// against its completer table.
-  ///
-  /// Caller-supplied `request_id` lets the Dart side allocate
-  /// the id via [`Self::next_request_id`] *before* registering
-  /// its completer, eliminating the race where a fast daemon
-  /// reply could arrive before the completer entry exists.
-  Future<void> findPullRequestStatus({
-    required BigInt requestId,
-    required String projectId,
-  });
-
   /// Ask the daemon to launch the tab's PTY if it isn't already
   /// live. No-op on the daemon side if the tab is already running.
   /// After this, a subsequent `attach_tab` will receive bytes.
   Future<void> launchTab({required String sectionId, required String tabId});
+
+  /// Project + global custom actions for `project_id`, in the same
+  /// order GPUI's titlebar split-button dropdown renders. Empty
+  /// list when the project is unknown — matches
+  /// `ProjectStore::project_actions` behaviour. Daemon-side mirror
+  /// is `LocalSession::list_project_actions`.
+  Future<List<ProjectActionDto>> listProjectActions({
+    required String projectId,
+  });
 
   /// Ask the daemon to send back its current project list as a
   /// [`WorkerReply::ProjectList`] frame. The reply arrives on
@@ -105,21 +90,49 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
-  /// Issue [`Control::ReadPullRequestChecks`] under `request_id`.
-  /// The matching [`WorkerReply::PullRequestChecksAck`] (or
-  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
-  /// keyed by the same id. Same caller-allocates-id contract as
-  /// [`Self::find_pull_request_status`].
-  Future<void> readPullRequestChecks({
-    required BigInt requestId,
-    required String projectId,
-  });
+  /// Snapshot of the host's "Open In" config — installed-and-enabled
+  /// apps + preferred default. Daemon-side mirror is
+  /// `LocalSession::open_in_state`; the wire shape (`OpenInStateAck`)
+  /// is field-name-compatible with the FRB-bound [`OpenInState`] DTO,
+  /// so this method decodes the daemon's reply directly into it.
+  ///
+  /// The actual app launch (e.g. `xdg-open` / `cursor <path>`) stays
+  /// host-local on the daemon — see `connection.dart::openProjectInApp`.
+  Future<OpenInState> openInState();
+
+  /// Full agent registry — every entry in `core::agents::AGENTS`
+  /// paired with per-host enabled / default / launch-args.
+  /// Drives the Settings → Agents page on a remote client.
+  /// Daemon-side mirror is `LocalSession::read_agent_settings`.
+  Future<AgentSettingsView> readAgentSettings();
+
+  /// Snapshot of agents the user has enabled on this host plus
+  /// the preferred default. Drives the new-task modal's agent
+  /// multi-select. Daemon-side mirror is
+  /// `LocalSession::read_enabled_agents`.
+  Future<EnabledAgentsView> readEnabledAgents();
 
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
   /// uses a fresh request_id but no caller correlates against it.
   Future<void> resize({required int cols, required int rows});
+
+  /// Run a custom action inside `section_id`'s task. The daemon
+  /// commits a new tab to the persistent project store + queues
+  /// its PTY launch; the returned `tab_id` lets the caller
+  /// `attach_tab` and watch the action's PTY output flow.
+  ///
+  /// **Single-shot Ack** by design (resolved in ojm.7's bd body):
+  /// no per-step streaming events, matching the GPUI desktop's
+  /// `LocalSession::run_project_action` contract. The action's
+  /// stdout/stderr arrives over the existing data-frame pipeline
+  /// once the daemon's drain spawns the queued tab.
+  Future<String> runProjectAction({
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  });
 
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
@@ -365,33 +378,6 @@ sealed class WorkerReply with _$WorkerReply {
     required String message,
     required ErrKind kind,
   }) = WorkerReply_Err;
-
-  /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
-  /// when the project has no PR for its current branch (or the
-  /// project id is unknown). Mirror of
-  /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestStatusAck`.
-  /// The payload reuses `local_session::PullRequestStatusDto`
-  /// directly — see the comment above on parallel-mirror-avoidance.
-  const factory WorkerReply.pullRequestStatusAck({
-    PullRequestStatusDto? status,
-  }) = WorkerReply_PullRequestStatusAck;
-
-  /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
-  /// payload: `Some(list)` = PR exists (list may be empty),
-  /// `None` = no PR or unknown project. Mirror of
-  /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestChecksAck`.
-  /// Reuses `local_session::CheckDto` directly so FRB produces a
-  /// single Dart class regardless of transport.
-  const factory WorkerReply.pullRequestChecksAck({List<CheckDto>? checks}) =
-      WorkerReply_PullRequestChecksAck;
-
-  /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
-  /// covers the unknown-project case. Mirror of
-  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectPullRequestsAck`.
-  /// Reuses `local_session::ProjectPagePullRequestDto` directly.
-  const factory WorkerReply.projectPullRequestsAck({
-    List<ProjectPagePullRequestDto>? prs,
-  }) = WorkerReply_ProjectPullRequestsAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

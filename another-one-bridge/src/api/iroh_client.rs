@@ -14,15 +14,17 @@
 //! UDP sockets and internal actor tasks require tokio specifically, and
 //! without this indirection `Endpoint::bind()` hangs forever on Android.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
 use anyhow::Context;
 use flutter_rust_bridge::frb;
 use tokio::runtime::Runtime;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
+use super::local_session::{AgentSettingsView, EnabledAgentsView, OpenInState};
 use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
@@ -134,6 +136,34 @@ enum Control {
     /// unknown ids. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::RemoveProject`.
     RemoveProject { project_id: String },
+    /// Snapshot the host's "Open In" config — installed-and-enabled
+    /// apps + preferred default. Reply: `WorkerReply::OpenInStateAck`.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::OpenInState`.
+    OpenInState,
+    /// List the merged project + global custom actions for `project_id`.
+    /// Reply: `WorkerReply::ProjectActionsAck`. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ListProjectActions`.
+    ListProjectActions { project_id: String },
+    /// Snapshot of agents the user has enabled on this host plus
+    /// the preferred default. Reply:
+    /// `WorkerReply::EnabledAgentsAck`. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadEnabledAgents`.
+    ReadEnabledAgents,
+    /// Full agent registry (every entry in `core::agents::AGENTS`,
+    /// enabled or not) for the Settings → Agents page. Reply:
+    /// `WorkerReply::AgentSettingsAck`. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadAgentSettings`.
+    ReadAgentSettings,
+    /// Run one custom action inside `section_id`'s task — appends a
+    /// fresh tab + queues its PTY launch. **Single-shot Ack**: the
+    /// reply carries only the new tab id; PTY output flows over
+    /// the existing `Control::AttachTab` pipeline. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::RunProjectAction`.
+    RunProjectAction {
+        project_id: String,
+        section_id: String,
+        action_id: String,
+    },
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
@@ -425,6 +455,30 @@ pub enum WorkerReply {
     ProjectPullRequestsAck {
         prs: Option<Vec<crate::api::local_session::ProjectPagePullRequestDto>>,
     },
+    /// Reply to [`Control::OpenInState`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::OpenInStateAck`.
+    /// Reuses `local_session::OpenInState` directly.
+    OpenInStateAck {
+        state: crate::api::local_session::OpenInState,
+    },
+    /// Reply to [`Control::ListProjectActions`]. Reuses
+    /// `local_session::ProjectActionDto` directly.
+    ProjectActionsAck {
+        actions: Vec<crate::api::local_session::ProjectActionDto>,
+    },
+    /// Reply to [`Control::ReadEnabledAgents`]. Reuses
+    /// `local_session::EnabledAgentsView` directly.
+    EnabledAgentsAck {
+        view: crate::api::local_session::EnabledAgentsView,
+    },
+    /// Reply to [`Control::ReadAgentSettings`]. Reuses
+    /// `local_session::AgentSettingsView` directly.
+    AgentSettingsAck {
+        view: crate::api::local_session::AgentSettingsView,
+    },
+    /// Reply to [`Control::RunProjectAction`]. Single-shot Ack —
+    /// `tab_id` is the freshly-minted uuid for the spawned tab.
+    RunProjectActionAck { tab_id: String },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
@@ -836,6 +890,33 @@ pub struct IrohSession {
     /// a `(request_id, reply)` pair so the Dart layer can dispatch via
     /// its `Map<int, Completer<WorkerReply>>` rather than stream order.
     worker_replies_rx: Mutex<Option<mpsc::Receiver<WorkerReplyMessage>>>,
+    /// Per-verb pending-reply table for calls that the bridge fully
+    /// resolves (decoded JSON → typed DTO → return-to-Dart) without
+    /// going through the FRB-bound `WorkerReply` enum.
+    ///
+    /// The recv loop checks `pending` before attempting to decode the
+    /// payload as a `WorkerReply` variant: if a oneshot is registered
+    /// for the frame's `request_id`, the raw JSON `Value` is delivered
+    /// there and the payload skips the broadcast stream. Per-verb
+    /// methods (e.g. [`Self::open_in_state`]) register a oneshot
+    /// before sending the control and await the resolved JSON.
+    ///
+    /// Why split this from `worker_replies_rx`:
+    ///   - Keeps the FRB-bound `WorkerReply` enum small (no
+    ///     OpenInStateAck / EnabledAgentsAck etc. variants leaking
+    ///     into Dart's freezed surface), since most ojm.7 verbs need
+    ///     no Dart-side broadcast subscriber — the calling provider
+    ///     awaits a single typed reply and discards.
+    ///   - Lets per-verb methods return typed DTOs (e.g.
+    ///     `Result<OpenInState>`) directly, instead of forcing the
+    ///     Dart side to pattern-match on a sealed `WorkerReply`
+    ///     subclass per verb.
+    ///
+    /// `ListProjects` keeps the broadcast path because the Dart UI
+    /// fans the result out to multiple listeners (project drawer,
+    /// titlebar, status header).
+    #[frb(ignore)]
+    pending: Arc<StdMutex<PendingTable>>,
     /// Monotonic per-session request id allocator. Starts at 1 because
     /// `0` is reserved for daemon-pushed (unsolicited) frames — see
     /// [`PUSH_REQUEST_ID`]. Wraps at u64::MAX which is effectively
@@ -843,6 +924,22 @@ pub struct IrohSession {
     next_request_id: AtomicU64,
     /// Closes the underlying connection when invoked.
     closer: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+/// Map of `request_id` → oneshot waiter for the recv loop to deliver
+/// the raw JSON payload of a worker-reply frame. Populated by
+/// per-verb FRB methods before sending; drained by the recv loop on
+/// matching reply or by `IrohSession::close` when the session ends.
+///
+/// `#[frb(ignore)]` keeps this off the FRB-bound surface — it's an
+/// internal book-keeping type with no Dart equivalent. Without the
+/// ignore, FRB picks it up via the `pub`-walked iroh_client module
+/// and tries to emit Dart bindings for `HashMap<u64, oneshot::Sender>`,
+/// which it can't represent.
+#[frb(ignore)]
+#[derive(Default)]
+struct PendingTable {
+    waiters: HashMap<u64, oneshot::Sender<serde_json::Value>>,
 }
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`.
@@ -1021,6 +1118,8 @@ async fn iroh_connect_inner(
     let (incoming_tx, incoming_rx) = mpsc::channel::<Vec<u8>>(128);
     let (worker_replies_tx, worker_replies_rx) = mpsc::channel::<WorkerReplyMessage>(64);
     let (close_tx, mut close_rx) = tokio::sync::oneshot::channel::<()>();
+    let pending = Arc::new(StdMutex::new(PendingTable::default()));
+    let pending_for_recv = pending.clone();
     let conn_for_close = conn.clone();
     tokio_rt().spawn(async move {
         loop {
@@ -1053,6 +1152,32 @@ async fn iroh_connect_inner(
                                     .get("request_id")
                                     .and_then(|v| v.as_u64())
                                     .unwrap_or(PUSH_REQUEST_ID);
+                                // First check the per-verb pending
+                                // table. Per-verb FRB methods (e.g.
+                                // `open_in_state`) register a oneshot
+                                // keyed on the request_id they sent.
+                                // If matched, the raw JSON goes
+                                // straight to the awaiter — skip the
+                                // broadcast path entirely so the
+                                // Dart-bound `WorkerReply` enum
+                                // doesn't have to grow per-verb
+                                // variants nobody else listens to.
+                                if request_id != PUSH_REQUEST_ID {
+                                    let waiter = pending_for_recv
+                                        .lock()
+                                        .unwrap_or_else(|p| p.into_inner())
+                                        .waiters
+                                        .remove(&request_id);
+                                    if let Some(tx) = waiter {
+                                        // oneshot send fails only if the
+                                        // receiver was dropped (caller
+                                        // cancelled / session closed). Drop
+                                        // silently — the caller already
+                                        // unblocked with an error of its own.
+                                        let _ = tx.send(value);
+                                        continue;
+                                    }
+                                }
                                 // Clone the discriminator before the
                                 // strict decode moves `value` —
                                 // otherwise we'd have no way to log
@@ -1120,6 +1245,7 @@ async fn iroh_connect_inner(
         send_tx: Mutex::new(Some(send_tx)),
         incoming_rx: Mutex::new(Some(incoming_rx)),
         worker_replies_rx: Mutex::new(Some(worker_replies_rx)),
+        pending,
         // Start at 1: id 0 is reserved for daemon-pushed frames so
         // the Dart layer can distinguish "reply to my call" from
         // "unsolicited update" without inspecting variant kinds.
@@ -1584,6 +1710,52 @@ impl IrohSession {
         .await
     }
 
+    // ── Custom actions + Open In + agents read verbs (`another-one-ojm.7`) ───
+
+    /// Issue [`Control::OpenInState`] under `request_id`.
+    pub async fn open_in_state(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::OpenInState).await
+    }
+
+    /// Issue [`Control::ListProjectActions`] under `request_id`.
+    pub async fn list_project_actions(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ListProjectActions { project_id })
+            .await
+    }
+
+    /// Issue [`Control::ReadEnabledAgents`] under `request_id`.
+    pub async fn read_enabled_agents(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadEnabledAgents).await
+    }
+
+    /// Issue [`Control::ReadAgentSettings`] under `request_id`.
+    pub async fn read_agent_settings(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadAgentSettings).await
+    }
+
+    /// Issue [`Control::RunProjectAction`] under `request_id`.
+    pub async fn run_project_action(
+        &self,
+        request_id: u64,
+        project_id: String,
+        section_id: String,
+        action_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::RunProjectAction {
+                project_id,
+                section_id,
+                action_id,
+            },
+        )
+        .await
+    }
+
     /// Wrap a `Control` in the `request_id`-tagged envelope and push
     /// it to the writer task. Internal to the existing per-verb
     /// helpers above; future per-verb additions in `ojm.2..8` can
@@ -1661,5 +1833,64 @@ impl IrohSession {
         if let Some(close_tx) = self.closer.lock().await.take() {
             let _ = close_tx.send(());
         }
+        // Wake any per-verb callers blocked on a pending oneshot —
+        // dropping the senders surfaces as `RecvError` on the awaiter
+        // side, which `request_and_await` translates into a
+        // session-closed error.
+        let mut guard = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+        guard.waiters.clear();
     }
+}
+
+/// Decode a worker-reply JSON value as an Ack of the named `kind`,
+/// returning the strongly-typed payload nested at `field`.
+///
+/// Two failure modes:
+///   - The daemon emitted `WorkerReply::Err` instead of the expected
+///     ack: surface the message + classification as the Result error
+///     so the caller's UI can branch on retry vs. degrade.
+///   - The daemon emitted some unrelated variant or the payload
+///     shape doesn't match: surface a "verb_name: …" anyhow error
+///     for the call site's tracing layer to log.
+///
+/// `verb_name` is included in the error so a log line points at the
+/// originating call without the call site having to wrap on its own.
+fn decode_ack_field<T: for<'de> serde::Deserialize<'de>>(
+    value: serde_json::Value,
+    expected_kind: &str,
+    field: &str,
+    verb_name: &str,
+) -> anyhow::Result<T> {
+    let kind = value
+        .get("kind")
+        .and_then(|k| k.as_str())
+        .unwrap_or("<missing>");
+    if kind == "err" {
+        let message = value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("daemon returned err with no message")
+            .to_string();
+        let err_kind = value
+            .get("err_kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or("internal")
+            .to_string();
+        anyhow::bail!("{verb_name}: daemon err ({err_kind}): {message}");
+    }
+    if kind != expected_kind {
+        anyhow::bail!(
+            "{verb_name}: unexpected reply kind `{kind}` (expected `{expected_kind}`)"
+        );
+    }
+    let payload = value
+        .get(field)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{verb_name}: missing `{field}` field on `{expected_kind}` reply"
+            )
+        })?
+        .clone();
+    serde_json::from_value::<T>(payload)
+        .with_context(|| format!("{verb_name}: decode `{expected_kind}.{field}`"))
 }

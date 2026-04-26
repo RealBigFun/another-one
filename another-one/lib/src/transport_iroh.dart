@@ -270,23 +270,11 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   }
 
   /// Resolve the latest pull-request status for `projectId`'s
-  /// current branch over the iroh wire. Returns `null` for unknown
-  /// projects or branches without an open PR; throws when the
-  /// daemon emits a `WorkerReply::Err` (gh CLI missing, network,
-  /// etc.) so the UI can surface the message verbatim.
-  ///
-  /// Routes through [_sendControlAndAwait] so the matching
-  /// `PullRequestStatusAck` reply is dispatched against this
-  /// session's completer table — order-independent with respect
-  /// to other in-flight verbs.
+  /// current branch over the iroh wire.
   @override
-  Future<PullRequestStatusDto?> findPullRequestStatus(String projectId) async {
+  Future<ls.PullRequestStatusDto?> findPullRequestStatus(String projectId) async {
     final reply = await _sendControlAndAwait((requestId) async {
-      final session = _session;
-      if (session == null) {
-        throw StateError('IrohTransport not connected');
-      }
-      await session.findPullRequestStatus(
+      await _session!.findPullRequestStatus(
         requestId: BigInt.from(requestId),
         projectId: projectId,
       );
@@ -295,28 +283,16 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       WorkerReply_PullRequestStatusAck(:final status) => status,
       WorkerReply_Err(:final message) => throw StateError(message),
       _ => throw StateError(
-        'unexpected WorkerReply for findPullRequestStatus: $reply',
-      ),
+          'unexpected WorkerReply for findPullRequestStatus: $reply',
+        ),
     };
   }
 
-  /// CI checks attached to `projectId`'s current PR. Three-state
-  /// return mirrors the daemon contract:
-  ///   * `Some(list)` — PR exists, here are its rows.
-  ///   * `null` — no PR for the current branch, or unknown project.
-  ///   * Throws — gh CLI / network failure (`WorkerReply::Err`).
-  ///
-  /// Routes through [_sendControlAndAwait] so the matching
-  /// `PullRequestChecksAck` reply is dispatched against this
-  /// session's completer table.
+  /// CI checks attached to `projectId`'s current PR.
   @override
-  Future<List<CheckDto>?> readPullRequestChecks(String projectId) async {
+  Future<List<ls.CheckDto>?> readPullRequestChecks(String projectId) async {
     final reply = await _sendControlAndAwait((requestId) async {
-      final session = _session;
-      if (session == null) {
-        throw StateError('IrohTransport not connected');
-      }
-      await session.readPullRequestChecks(
+      await _session!.readPullRequestChecks(
         requestId: BigInt.from(requestId),
         projectId: projectId,
       );
@@ -325,32 +301,20 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       WorkerReply_PullRequestChecksAck(:final checks) => checks,
       WorkerReply_Err(:final message) => throw StateError(message),
       _ => throw StateError(
-        'unexpected WorkerReply for readPullRequestChecks: $reply',
-      ),
+          'unexpected WorkerReply for readPullRequestChecks: $reply',
+        ),
     };
   }
 
-  /// Open pull requests for `projectId` filtered by `filterIndex`
-  /// (0=all, 1=needs my review, 2=author:@me, 3=draft) plus an
-  /// optional free-text `query`. Returns `null` for unknown
-  /// projects; throws on `WorkerReply::Err` (gh CLI / auth /
-  /// network).
-  ///
-  /// Routes through [_sendControlAndAwait] so the matching
-  /// `ProjectPullRequestsAck` reply is dispatched against this
-  /// session's completer table.
+  /// Open pull requests for `projectId` filtered by `filterIndex`.
   @override
-  Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
+  Future<List<ls.ProjectPagePullRequestDto>?> findProjectPullRequests({
     required String projectId,
     required int filterIndex,
     required String query,
   }) async {
     final reply = await _sendControlAndAwait((requestId) async {
-      final session = _session;
-      if (session == null) {
-        throw StateError('IrohTransport not connected');
-      }
-      await session.findProjectPullRequests(
+      await _session!.findProjectPullRequests(
         requestId: BigInt.from(requestId),
         projectId: projectId,
         filterIndex: filterIndex,
@@ -361,8 +325,97 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       WorkerReply_ProjectPullRequestsAck(:final prs) => prs,
       WorkerReply_Err(:final message) => throw StateError(message),
       _ => throw StateError(
-        'unexpected WorkerReply for findProjectPullRequests: $reply',
-      ),
+          'unexpected WorkerReply for findProjectPullRequests: $reply',
+        ),
+    };
+  }
+
+  // ── Custom actions + Open In + agents read verbs (`another-one-ojm.7`) ───
+
+  /// Snapshot the host's "Open In" config.
+  @override
+  Future<ls.OpenInState> openInState() async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      await _session!.openInState(requestId: BigInt.from(requestId));
+    });
+    return switch (reply) {
+      WorkerReply_OpenInStateAck(:final state) => state,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'unexpected WorkerReply for openInState: $reply',
+        ),
+    };
+  }
+
+  /// Project + global custom actions for `projectId`.
+  @override
+  Future<List<ls.ProjectActionDto>> listProjectActions(String projectId) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      await _session!.listProjectActions(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_ProjectActionsAck(:final actions) => actions,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'unexpected WorkerReply for listProjectActions: $reply',
+        ),
+    };
+  }
+
+  /// Snapshot of agents the user has enabled on this host.
+  @override
+  Future<ls.EnabledAgentsView> readEnabledAgents() async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      await _session!.readEnabledAgents(requestId: BigInt.from(requestId));
+    });
+    return switch (reply) {
+      WorkerReply_EnabledAgentsAck(:final view) => view,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'unexpected WorkerReply for readEnabledAgents: $reply',
+        ),
+    };
+  }
+
+  /// Full agent registry — drives the Settings → Agents page.
+  @override
+  Future<ls.AgentSettingsView> readAgentSettings() async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      await _session!.readAgentSettings(requestId: BigInt.from(requestId));
+    });
+    return switch (reply) {
+      WorkerReply_AgentSettingsAck(:final view) => view,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'unexpected WorkerReply for readAgentSettings: $reply',
+        ),
+    };
+  }
+
+  /// Run one custom action inside `sectionId`'s task.
+  @override
+  Future<String> runProjectAction({
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  }) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      await _session!.runProjectAction(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+        sectionId: sectionId,
+        actionId: actionId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_RunProjectActionAck(:final tabId) => tabId,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'unexpected WorkerReply for runProjectAction: $reply',
+        ),
     };
   }
 

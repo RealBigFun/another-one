@@ -719,6 +719,10 @@ class ActiveGitStateDto {
 /// page renders (label + icon + enabled / default flags +
 /// per-agent launch args list) so the UI can update its state
 /// without re-issuing reads after every toggle.
+///
+/// `Deserialize` mirrors `daemon-sandbox::frame::AgentSettingsRowWire`
+/// so the iroh transport decodes the wire JSON straight into this
+/// DTO.
 class AgentSettingsRow {
   final String id;
   final String label;
@@ -786,6 +790,9 @@ class AgentSettingsView {
 /// [`another_one_core::agents::AGENTS`]. Carries everything the
 /// new-task modal's agent multi-select needs to render a chip
 /// (label + icon path) without the UI side hard-coding a copy.
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `AgentSummaryWire` directly into this DTO.
 class AgentSummaryDto {
   /// Stable id used by the bridge's `submit_new_task` verb.
   final String id;
@@ -1083,6 +1090,8 @@ class CommitDto {
 /// Snapshot returned by [`LocalSession::read_enabled_agents`].
 /// Pairs the enabled-agents list with the user's preferred default
 /// (the chip the modal pre-checks on open).
+///
+/// `Deserialize` shape matches `daemon-sandbox::frame::EnabledAgentsViewWire`.
 class EnabledAgentsView {
   final List<AgentSummaryDto> agents;
   final String? defaultAgentId;
@@ -1250,6 +1259,10 @@ enum McpTransportKindDto { stdio, http }
 /// pre-computed display strings. Lives here (not in core) because
 /// FRB's binding generator only walks bridge crate types — we'd
 /// need a re-export shim either way and the mapping is one-to-one.
+///
+/// `Deserialize` exists so the iroh transport can decode the wire
+/// payload (`OpenInAppWire` from `daemon-sandbox`) straight into this
+/// type — the field names match by design. FRB ignores extra derives.
 class OpenInAppDto {
   /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
   /// `"zed"`, `"vscode"`, `"file-manager"`. Round-trips through
@@ -1353,6 +1366,10 @@ class OpenInSettingsView {
 }
 
 /// Snapshot returned by [`LocalSession::open_in_state`].
+///
+/// `Deserialize` exists for the iroh transport; field names match
+/// `daemon-sandbox::frame::OpenInStateWire` so the wire JSON decodes
+/// directly into this DTO without a per-field map step.
 class OpenInState {
   /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
   /// declares them — Cursor, Zed, VS Code, File Manager.
@@ -1390,6 +1407,10 @@ enum ProjectActionAccessDto { default_, readOnly, workspaceWrite, fullAccess }
 /// run-on-worktree-create flag, scope, and the kind-specific
 /// payload. UI maps `icon` to its asset path via
 /// `ProjectActionIconDto.icon_path` (Dart-side helper).
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `ProjectActionWire` shape directly into this DTO; field names
+/// align by design.
 class ProjectActionDto {
   final String id;
   final String name;
@@ -1434,6 +1455,11 @@ class ProjectActionDto {
 /// kebab-case ids round-trip the GPUI on-disk format
 /// (`projects.json`) so a user can switch desktop binaries without
 /// the icon picker resetting.
+///
+/// `Deserialize` exists so the iroh transport can decode the wire
+/// payload (`ProjectActionIconWire` from `daemon-sandbox`) directly
+/// into this DTO. Wire form is kebab-case to match
+/// `core::project_store::ProjectActionIcon`'s on-disk shape.
 enum ProjectActionIconDto { play, test, lint, configure, build, debug, agent }
 
 @freezed

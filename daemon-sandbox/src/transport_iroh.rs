@@ -405,6 +405,55 @@ async fn handle_control(
             let wire = WorkerReply::ProjectList { projects };
             send_worker_reply(outbound_tx, request_id, &wire).await?;
         }
+        Control::OpenInState => {
+            let reply = match registry.open_in_state() {
+                Some(state) => WorkerReply::OpenInStateAck { state },
+                None => WorkerReply::Err {
+                    message: "open_in_state: registry does not surface \
+                              Open-In on this host"
+                        .to_string(),
+                    kind: ErrKind::Unsupported,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ListProjectActions { project_id } => {
+            let actions = registry.list_project_actions(&project_id);
+            let reply = WorkerReply::ProjectActionsAck { actions };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadEnabledAgents => {
+            let view = registry.read_enabled_agents();
+            let reply = WorkerReply::EnabledAgentsAck { view };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadAgentSettings => {
+            let view = registry.read_agent_settings();
+            let reply = WorkerReply::AgentSettingsAck { view };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::RunProjectAction {
+            project_id,
+            section_id,
+            action_id,
+        } => {
+            let reply = match registry.run_project_action(&project_id, &section_id, &action_id) {
+                Ok(tab_id) => WorkerReply::RunProjectActionAck { tab_id },
+                Err(message) => WorkerReply::Err {
+                    message,
+                    // `Internal` covers the diverse failure surface
+                    // (unknown ids, malformed section, command
+                    // empty, project store mutex poisoned). The
+                    // bridge already classifies "unknown id" cases
+                    // by message wording; we keep the wire kind
+                    // coarse here rather than threading a parsed
+                    // failure type all the way through. UI should
+                    // surface the message verbatim in a toast.
+                    kind: ErrKind::Internal,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
         Control::AttachTab { section_id, tab_id } => {
             // Drop any prior attachment on this connection.
             if let Some(prev) = attached.take() {

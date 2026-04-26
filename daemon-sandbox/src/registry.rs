@@ -13,7 +13,8 @@ use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
 use crate::frame::{
-    ActiveGitStateWire, AgentProvider, ChangedFileWire, Check, ProjectPagePullRequest,
+    ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, ChangedFileWire, Check,
+    EnabledAgentsViewWire, OpenInStateWire, ProjectActionWire, ProjectPagePullRequest,
     ProjectSummary, PullRequestStatus, RecentCommitsWire, TaskSummary, ToolbarActionOutcome,
 };
 
@@ -529,6 +530,71 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         _query: &str,
     ) -> Result<Option<Vec<ProjectPagePullRequest>>, String> {
         Ok(None)
+    }
+
+    // ── Custom actions + Open In + agents (another-one-ojm.7) ─────
+
+    /// Snapshot of the host's "Open In" config — installed-and-enabled
+    /// apps + preferred default. Read-only (the actual `xdg-open`
+    /// spawn stays host-local on the daemon, by design — see
+    /// `connection.dart::openProjectInApp` for why). Default impl
+    /// returns `None` for registries that don't surface Open-In
+    /// (the sandbox binary has no host editor detection).
+    fn open_in_state(&self) -> Option<OpenInStateWire> {
+        None
+    }
+
+    /// Project + global custom actions for `project_id`, in the same
+    /// dropdown order GPUI's titlebar split-button renders. Empty
+    /// list when the project is unknown. Default impl returns empty
+    /// (the sandbox binary has no project store).
+    fn list_project_actions(&self, _project_id: &str) -> Vec<ProjectActionWire> {
+        Vec::new()
+    }
+
+    /// Snapshot of agents the user has enabled on this host plus
+    /// the id of the one they've picked as default. Drives the
+    /// new-task modal's agent multi-select; the order is the
+    /// canonical `core::agents::AGENTS` order so the UI can render
+    /// without re-sorting. Default impl returns an empty view —
+    /// the sandbox binary has no agents config to surface.
+    fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
+        EnabledAgentsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        }
+    }
+
+    /// Full agent registry — every entry in `core::agents::AGENTS`
+    /// paired with per-host enabled / default flags + per-agent
+    /// launch-args list. Drives the Settings → Agents page on a
+    /// remote client. Default impl returns an empty view; the
+    /// sandbox binary has no agents config.
+    fn read_agent_settings(&self) -> AgentSettingsViewWire {
+        AgentSettingsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        }
+    }
+
+    /// Run one custom action inside `section_id`'s task. Returns
+    /// the freshly-minted tab id on success, or a human-readable
+    /// error on failure (unknown project / action id, malformed
+    /// section id, empty shell command, etc. — matches
+    /// `LocalSession::run_project_action`).
+    ///
+    /// Single-shot Ack semantics: the action's PTY output flows
+    /// over the existing `Control::AttachTab` pipeline; this verb
+    /// only kicks off the spawn. Default impl returns
+    /// `Err("unsupported")` for registries with no project store
+    /// to mutate (the sandbox binary).
+    fn run_project_action(
+        &self,
+        _project_id: &str,
+        _section_id: &str,
+        _action_id: &str,
+    ) -> Result<String, String> {
+        Err("unsupported on this daemon".to_string())
     }
 }
 

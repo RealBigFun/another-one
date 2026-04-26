@@ -34,14 +34,23 @@ use another_one_core::agents::AgentProviderKind;
 use another_one_core::daemon_embed::{
     daemon_paths, key_from_wire, RegistryState, TabLaunchRequest,
 };
+use another_one_core::open_in::OpenInAppKind;
+use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
+use another_one_core::project_store::{
+    PersistedSectionState, PersistedTerminalTab, ProjectAction, ProjectActionAccess,
+    ProjectActionIcon, ProjectActionKind, ProjectActionScope,
+};
 use another_one_core::project_store::ProjectStore;
 use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    ActiveGitStateWire, AgentProvider, ChangedFileWire, Check, CheckBucket, CommitWire,
-    ProjectKind, ProjectPagePullRequest, ProjectSummary, PullRequestState, PullRequestStatus,
+    ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
+    AgentSummaryWire, ChangedFileWire, Check, CheckBucket, CommitWire, EnabledAgentsViewWire,
+    OpenInAppWire, OpenInStateWire, ProjectActionAccessWire, ProjectActionIconWire,
+    ProjectActionKindWire, ProjectActionScopeWire, ProjectActionWire, ProjectKind,
+    ProjectPagePullRequest, ProjectSummary, PullRequestState, PullRequestStatus,
     RecentCommitsWire, TabSummary, TaskSummary, ToolbarActionOutcome,
 };
 use daemon_sandbox::registry::RegistryFuture;
@@ -1190,6 +1199,208 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         )?;
         Ok(Some(prs.into_iter().map(map_project_page_pr).collect()))
     }
+
+    // ── Custom actions + Open In + agents (another-one-ojm.7) ─────
+
+    fn open_in_state(&self) -> Option<OpenInStateWire> {
+        // Mirrors `LocalSession::open_in_state` (api/local_session.rs).
+        // Cheap: install detection runs through HeadlessPlatform's
+        // single PATH walk + the project-store read is one mutex lock.
+        // No need to run on a blocking pool.
+        let available = available_open_in_apps();
+        self.with_state(|state| {
+            let enabled_apps = state
+                .project_store
+                .enabled_open_in_apps(&available)
+                .into_iter()
+                .map(open_in_app_to_wire)
+                .collect();
+            let preferred_app_id = state
+                .project_store
+                .preferred_open_in_app(&available)
+                .map(|app| app.id().to_string());
+            OpenInStateWire {
+                enabled_apps,
+                preferred_app_id,
+            }
+        })
+    }
+
+    fn list_project_actions(&self, project_id: &str) -> Vec<ProjectActionWire> {
+        // Mirrors `LocalSession::list_project_actions`.
+        self.with_state(|state| {
+            state
+                .project_store
+                .project_actions(project_id)
+                .into_iter()
+                .map(project_action_to_wire)
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
+        // Mirrors `LocalSession::read_enabled_agents`.
+        self.with_state(|state| {
+            let enabled = another_one_core::agents::effective_enabled_agents(
+                state.project_store.ui.enabled_agents.as_ref(),
+            );
+            let agents = enabled.iter().map(|agent| agent_def_to_wire(agent)).collect();
+            let default_agent_id = state
+                .project_store
+                .default_agent_id()
+                .map(str::to_string);
+            EnabledAgentsViewWire {
+                agents,
+                default_agent_id,
+            }
+        })
+        .unwrap_or_else(|| EnabledAgentsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        })
+    }
+
+    fn read_agent_settings(&self) -> AgentSettingsViewWire {
+        // Mirrors `LocalSession::read_agent_settings`.
+        self.with_state(|state| {
+            let default_agent_id = state
+                .project_store
+                .default_agent_id()
+                .map(str::to_string);
+            let agents = another_one_core::agents::AGENTS
+                .iter()
+                .map(|agent| AgentSettingsRowWire {
+                    id: agent.id.to_string(),
+                    label: agent.label.to_string(),
+                    icon_path: agent.icon.to_string(),
+                    provider: agent.provider.map(map_agent_provider),
+                    enabled: state.project_store.agent_enabled(agent.id),
+                    is_default: default_agent_id.as_deref() == Some(agent.id),
+                    launch_args: state
+                        .project_store
+                        .agent_launch_args(agent.id)
+                        .to_vec(),
+                })
+                .collect();
+            AgentSettingsViewWire {
+                agents,
+                default_agent_id,
+            }
+        })
+        .unwrap_or_else(|| AgentSettingsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        })
+    }
+
+    fn run_project_action(
+        &self,
+        project_id: &str,
+        section_id: &str,
+        action_id: &str,
+    ) -> Result<String, String> {
+        // Mirrors `LocalSession::run_project_action`.
+        let key_section = SectionId::from_store_key(section_id).ok_or_else(|| {
+            format!(
+                "run_project_action: malformed section_id `{section_id}` — \
+                 expected SectionId::store_key()"
+            )
+        })?;
+        let arc = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| "run_project_action: registry state dropped".to_string())?;
+        let mut state = arc
+            .lock()
+            .map_err(|_| "run_project_action: RegistryState mutex poisoned".to_string())?;
+
+        let action = state
+            .project_store
+            .project_actions(project_id)
+            .into_iter()
+            .find(|a| a.id == action_id)
+            .ok_or_else(|| {
+                format!(
+                    "run_project_action: unknown action_id `{action_id}` for project `{project_id}`"
+                )
+            })?;
+
+        let (launch_config, post_launch_input, fixed_title) = match &action.kind {
+            ProjectActionKind::Shell { command } => {
+                let trimmed = command.trim();
+                if trimmed.is_empty() {
+                    return Err(
+                        "Shell actions need a command before they can run.".to_string()
+                    );
+                }
+                let title = {
+                    let name = action.name.trim();
+                    (!name.is_empty()).then(|| name.to_string())
+                };
+                (
+                    another_one_core::agents::TerminalLaunchConfig::default(),
+                    Some(format!("{trimmed}\n").into_bytes()),
+                    title,
+                )
+            }
+            ProjectActionKind::Agent { provider, .. } => {
+                let args =
+                    another_one_core::project_store::project_action_agent_launch_args(&action)?;
+                (
+                    another_one_core::agents::TerminalLaunchConfig::for_provider(*provider)
+                        .with_extra_args(args)
+                        .with_agent_launch_args(false),
+                    None,
+                    None,
+                )
+            }
+        };
+
+        let tab_id = uuid::Uuid::new_v4().to_string();
+        let title = fixed_title
+            .clone()
+            .unwrap_or_else(|| launch_config.default_title());
+        let tab = PersistedTerminalTab {
+            id: tab_id.clone(),
+            title,
+            pinned: false,
+            fixed_title,
+            provider: launch_config.provider,
+            launch_config: Some(launch_config.clone()),
+            restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
+        };
+
+        let key = TerminalRuntimeKey {
+            section_id: key_section,
+            tab_id: tab_id.clone(),
+        };
+
+        let mut existing_section = state
+            .project_store
+            .terminal_sections
+            .get(section_id)
+            .cloned()
+            .unwrap_or_else(|| PersistedSectionState {
+                active_tab_id: String::new(),
+                next_tab_id: 1,
+                cwd: None,
+                tabs: Vec::new(),
+            });
+        existing_section.tabs.push(tab);
+        existing_section.active_tab_id = tab_id.clone();
+        existing_section.next_tab_id = existing_section.next_tab_id.saturating_add(1);
+        state
+            .project_store
+            .set_section_state(section_id.to_string(), existing_section);
+
+        if let Some(input) = post_launch_input {
+            state.pending_post_launch_input.insert(key.clone(), input);
+        }
+        state.pending_tab_launches.push(TabLaunchRequest { key });
+
+        Ok(tab_id)
+    }
 }
 
 impl BridgeDaemonRegistry {
@@ -1280,6 +1491,97 @@ fn map_project_page_pr(
         review_requested_to_me: pr.review_requested_to_me,
         created_by_me: pr.created_by_me,
         state: map_pull_request_state(pr.state),
+    }
+}
+
+/// Project a `core::agents::AgentDef` into the wire DTO. Mirrors
+/// `api/local_session.rs::agent_def_to_dto`.
+fn agent_def_to_wire(agent: &&'static another_one_core::agents::AgentDef) -> AgentSummaryWire {
+    AgentSummaryWire {
+        id: agent.id.to_string(),
+        label: agent.label.to_string(),
+        icon_path: agent.icon.to_string(),
+        provider: agent.provider.map(map_agent_provider),
+    }
+}
+
+/// Filter [`OpenInAppKind::all`] down to what the host says is
+/// installed, preserving the canonical order. Mirrors
+/// `api/local_session.rs::available_open_in_apps`.
+fn available_open_in_apps() -> Vec<OpenInAppKind> {
+    OpenInAppKind::all()
+        .into_iter()
+        .filter(|app| {
+            <CurrentPlatform as HeadlessPlatform>::is_open_in_app_available(*app)
+        })
+        .collect()
+}
+
+/// Hydrate an [`OpenInAppKind`] into the wire DTO with display
+/// strings the mobile UI renders directly.
+fn open_in_app_to_wire(app: OpenInAppKind) -> OpenInAppWire {
+    OpenInAppWire {
+        id: app.id().to_string(),
+        label: app.label().to_string(),
+        description: app.description().to_string(),
+        icon_path: app.icon_path().to_string(),
+    }
+}
+
+fn project_action_to_wire(action: ProjectAction) -> ProjectActionWire {
+    let kind = match action.kind {
+        ProjectActionKind::Shell { command } => ProjectActionKindWire::Shell { command },
+        ProjectActionKind::Agent {
+            prompt,
+            provider,
+            model,
+            traits,
+            mode,
+            access,
+        } => ProjectActionKindWire::Agent {
+            prompt,
+            provider: map_agent_provider(provider),
+            model,
+            traits,
+            mode,
+            access: map_project_action_access(access),
+        },
+    };
+    ProjectActionWire {
+        id: action.id,
+        name: action.name,
+        icon: map_project_action_icon(action.icon),
+        run_on_worktree_create: action.run_on_worktree_create,
+        scope: map_project_action_scope(action.scope),
+        kind,
+    }
+}
+
+fn map_project_action_icon(icon: ProjectActionIcon) -> ProjectActionIconWire {
+    match icon {
+        ProjectActionIcon::Play => ProjectActionIconWire::Play,
+        ProjectActionIcon::Test => ProjectActionIconWire::Test,
+        ProjectActionIcon::Lint => ProjectActionIconWire::Lint,
+        ProjectActionIcon::Configure => ProjectActionIconWire::Configure,
+        ProjectActionIcon::Build => ProjectActionIconWire::Build,
+        ProjectActionIcon::Debug => ProjectActionIconWire::Debug,
+        ProjectActionIcon::Agent => ProjectActionIconWire::Agent,
+    }
+}
+
+fn map_project_action_scope(scope: ProjectActionScope) -> ProjectActionScopeWire {
+    match scope {
+        ProjectActionScope::Project => ProjectActionScopeWire::Project,
+        ProjectActionScope::Global => ProjectActionScopeWire::Global,
+    }
+}
+
+fn map_project_action_access(access: ProjectActionAccess) -> ProjectActionAccessWire {
+    match access {
+        ProjectActionAccess::Default => ProjectActionAccessWire::Default,
+        ProjectActionAccess::ReadOnly => ProjectActionAccessWire::ReadOnly,
+        ProjectActionAccess::WorkspaceWrite => ProjectActionAccessWire::WorkspaceWrite,
+        ProjectActionAccess::FullAccess => ProjectActionAccessWire::FullAccess,
     }
 }
 
@@ -1387,6 +1689,63 @@ fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {
     match kind {
         CoreProjectKind::Root => ProjectKind::Root,
         CoreProjectKind::Worktree => ProjectKind::Worktree,
+    }
+}
+
+fn project_action_to_wire(action: ProjectAction) -> ProjectActionWire {
+    let kind = match action.kind {
+        ProjectActionKind::Shell { command } => ProjectActionKindWire::Shell { command },
+        ProjectActionKind::Agent {
+            prompt,
+            provider,
+            model,
+            traits,
+            mode,
+            access,
+        } => ProjectActionKindWire::Agent {
+            prompt,
+            provider: map_agent_provider(provider),
+            model,
+            traits,
+            mode,
+            access: map_project_action_access(access),
+        },
+    };
+    ProjectActionWire {
+        id: action.id,
+        name: action.name,
+        icon: map_project_action_icon(action.icon),
+        run_on_worktree_create: action.run_on_worktree_create,
+        scope: map_project_action_scope(action.scope),
+        kind,
+    }
+}
+
+fn map_project_action_icon(icon: ProjectActionIcon) -> ProjectActionIconWire {
+    match icon {
+        ProjectActionIcon::Play => ProjectActionIconWire::Play,
+        ProjectActionIcon::Test => ProjectActionIconWire::Test,
+        ProjectActionIcon::Lint => ProjectActionIconWire::Lint,
+        ProjectActionIcon::Configure => ProjectActionIconWire::Configure,
+        ProjectActionIcon::Build => ProjectActionIconWire::Build,
+        ProjectActionIcon::Debug => ProjectActionIconWire::Debug,
+        ProjectActionIcon::Agent => ProjectActionIconWire::Agent,
+    }
+}
+
+fn map_project_action_scope(scope: ProjectActionScope) -> ProjectActionScopeWire {
+    match scope {
+        ProjectActionScope::Project => ProjectActionScopeWire::Project,
+        ProjectActionScope::Global => ProjectActionScopeWire::Global,
+    }
+}
+
+fn map_project_action_access(access: ProjectActionAccess) -> ProjectActionAccessWire {
+    match access {
+        ProjectActionAccess::Default => ProjectActionAccessWire::Default,
+        ProjectActionAccess::ReadOnly => ProjectActionAccessWire::ReadOnly,
+        ProjectActionAccess::WorkspaceWrite => ProjectActionAccessWire::WorkspaceWrite,
+        ProjectActionAccess::FullAccess => ProjectActionAccessWire::FullAccess,
     }
 }
 

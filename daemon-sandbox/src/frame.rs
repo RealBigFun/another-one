@@ -143,6 +143,51 @@ pub enum Control {
     /// can drop any stale UI rows. Mirror of
     /// `another-one-bridge/src/api/local_session.rs::remove_project`.
     RemoveProject { project_id: String },
+    /// Snapshot of the host's "Open In" config — installed-and-enabled
+    /// apps + the user's preferred default. Drives the mobile titlebar
+    /// split-button's primary icon + the chevron dropdown. Reading it
+    /// remotely is fine (display-only); the actual app launch
+    /// (`open_project_in_app`) stays host-local — see the comment on
+    /// `connection.dart::openProjectInApp` for why. Reply:
+    /// [`WorkerReply::OpenInStateAck`].
+    OpenInState,
+    /// List the merged project + global custom actions for `project_id`,
+    /// in the same order the desktop's titlebar split-button dropdown
+    /// renders. Empty list when the project is unknown — matches
+    /// `ProjectStore::project_actions` behaviour. Reply:
+    /// [`WorkerReply::ProjectActionsAck`].
+    ListProjectActions { project_id: String },
+    /// Snapshot of agents the user has enabled on this host plus
+    /// the id of the one they've picked as default. Drives the
+    /// new-task modal's agent multi-select. Reply:
+    /// [`WorkerReply::EnabledAgentsAck`].
+    ReadEnabledAgents,
+    /// Full agent registry — every agent in `core::agents::AGENTS`
+    /// paired with its per-host enabled flag, default flag, and
+    /// launch-args list. Drives the Settings → Agents page. Reply:
+    /// [`WorkerReply::AgentSettingsAck`].
+    ReadAgentSettings,
+    /// Run one custom action inside `section_id`'s task: appends a
+    /// fresh `PersistedTerminalTab`, queues a launch, and (for
+    /// shell actions) records the command bytes the daemon writes
+    /// once the PTY is up.
+    ///
+    /// **Single-shot Ack** (resolved per ojm.7's bd body): the
+    /// reply carries only the new `tab_id` so the caller can
+    /// `AttachTab` and watch the action's PTY output flow over the
+    /// existing data-frame pipeline. There's no streaming
+    /// per-step progress channel here; if a future iteration ever
+    /// needs one, it lands as a separate `Control::Subscribe` verb
+    /// per the foundation task's push-channel hatch (`request_id == 0`).
+    /// Today this matches `LocalSession::run_project_action`'s shape
+    /// 1:1 — the GPUI desktop has lived with single-shot for the
+    /// life of the feature without a streaming requirement
+    /// surfacing. Reply: [`WorkerReply::RunProjectActionAck`].
+    RunProjectAction {
+        project_id: String,
+        section_id: String,
+        action_id: String,
+    },
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -475,6 +520,30 @@ pub enum WorkerReply {
     /// `Err` (mirrors `LocalSession::remove_project`'s anyhow-Ok-
     /// even-on-unknown-id semantics).
     ProjectRemoved { project_id: String },
+    /// Reply to [`Control::OpenInState`]. `state.enabled_apps` is in
+    /// canonical `OpenInAppKind::all()` order; `preferred_app_id`
+    /// is `None` when no Open-In app is detected on the host.
+    OpenInStateAck { state: OpenInStateWire },
+    /// Reply to [`Control::ListProjectActions`]. Empty `actions` is a
+    /// valid result (unknown project, or project with no custom
+    /// actions configured) — clients render the empty state rather
+    /// than treating it as an error.
+    ProjectActionsAck { actions: Vec<ProjectActionWire> },
+    /// Reply to [`Control::ReadEnabledAgents`]. `view.agents` is in
+    /// the canonical `core::agents::AGENTS` order — clients render
+    /// without re-sorting.
+    EnabledAgentsAck { view: EnabledAgentsViewWire },
+    /// Reply to [`Control::ReadAgentSettings`]. `view.agents`
+    /// contains every agent in `core::agents::AGENTS` (canonical
+    /// order) regardless of enabled state, so the Settings →
+    /// Agents page can render rows for every agent at once.
+    AgentSettingsAck { view: AgentSettingsViewWire },
+    /// Reply to [`Control::RunProjectAction`]. `tab_id` is the
+    /// freshly-minted uuid for the spawned tab; the caller
+    /// follows up with `Control::AttachTab` (or relies on the
+    /// active-tab-changed event the desktop UI emits) to start
+    /// receiving the action's PTY output.
+    RunProjectActionAck { tab_id: String },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same
@@ -902,81 +971,6 @@ pub enum ProjectKind {
     Worktree,
 }
 
-/// Lossy wire projection of `core::git_actions::PullRequestStatus`.
-/// One row per project that has an open PR for its current branch;
-/// drives the titlebar's PR pill state across desktop + mobile
-/// (Create vs Open vs Draft, plus the disabled state on the Git
-/// Actions dropdown). Encoded inline on
-/// [`WorkerReply::PullRequestStatusAck`] — the desktop bridge fills
-/// it from `core::git_actions::find_latest_pull_request_status`
-/// (which shells out to `gh pr list`); the sandbox always replies
-/// `None`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PullRequestStatus {
-    pub number: u64,
-    pub url: String,
-    pub state: PullRequestState,
-}
-
-/// Mirror of `core::git_actions::PullRequestState`. Wire-serialised
-/// as lowercase strings — UI maps each to a chip palette + the
-/// titlebar PR pill copy.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PullRequestState {
-    Open,
-    Closed,
-    Merged,
-}
-
-/// Lossy wire projection of `core::git_actions::PullRequestCheck`.
-/// One row per CI check on the project's current PR; drives the
-/// right-sidebar Checks pane on every connected client. Bucket is
-/// already classified server-side so mobile doesn't have to
-/// re-derive the colour mapping from the freeform `state` string.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Check {
-    pub name: String,
-    pub state: String,
-    pub bucket: CheckBucket,
-    pub description: Option<String>,
-    pub link: Option<String>,
-    pub duration_text: Option<String>,
-}
-
-/// Mirror of `core::git_actions::PullRequestCheckBucket`. Wire form
-/// is snake_case; clients render glyph + colour off this.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CheckBucket {
-    Pass,
-    Fail,
-    Pending,
-    Skipping,
-    Cancel,
-}
-
-/// Lossy wire projection of `core::git_actions::ProjectPagePullRequest`.
-/// One entry per row in the project page's Open PRs section.
-/// `review_required` / `review_requested_to_me` / `created_by_me`
-/// are pre-derived on the daemon so mobile doesn't need to
-/// re-implement the filter-index logic that gates each row's chip.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectPagePullRequest {
-    pub number: u64,
-    pub url: String,
-    pub title: String,
-    pub branch: String,
-    pub author: String,
-    pub lines_added: i32,
-    pub lines_removed: i32,
-    pub draft: bool,
-    pub review_required: bool,
-    pub review_requested_to_me: bool,
-    pub created_by_me: bool,
-    pub state: PullRequestState,
-}
-
 /// Mirror of `core::agents::AgentProviderKind`. Wire-serialised as
 /// snake_case: `"claude_code"` / `"codex"` / `"cursor_agent"` etc.
 /// `Shell` is the catch-all for tabs launched without an agent
@@ -994,6 +988,175 @@ pub enum AgentProvider {
     RovoDev,
     Forge,
     Shell,
+}
+
+/// Wire projection of `another_one_core::open_in::OpenInAppKind`
+/// pre-hydrated with the display strings the mobile UI renders. The
+/// daemon resolves them once at projection time so the wire payload
+/// is one round-trip — mobile never needs to re-derive label/icon
+/// from the id.
+///
+/// Field-for-field compatible with
+/// `another_one_bridge::api::local_session::OpenInAppDto` so the
+/// bridge can pass these straight through to its FRB-exposed DTO
+/// without a mapping layer per field.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenInAppWire {
+    /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
+    /// `"zed"`, `"vscode"`, `"file-manager"`.
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub icon_path: String,
+}
+
+/// Wire projection of [`another_one_bridge::api::local_session::OpenInState`].
+/// Mobile's titlebar uses `preferred_app_id` for its primary-action
+/// icon and `enabled_apps` for the chevron dropdown. Actual app
+/// launch stays host-local on the daemon (see `openProjectInApp`'s
+/// docstring in `connection.dart`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenInStateWire {
+    /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
+    /// declares them.
+    pub enabled_apps: Vec<OpenInAppWire>,
+    /// Id of the app the titlebar's primary action launches, or
+    /// `None` when no app is enabled at all.
+    pub preferred_app_id: Option<String>,
+}
+
+/// Wire projection of `another_one_core::project_store::ProjectAction`.
+/// Field-for-field compatible with
+/// `another_one_bridge::api::local_session::ProjectActionDto` so the
+/// bridge can deserialize the wire JSON straight into the FRB-exposed
+/// DTO without a mapping pass — same reason `OpenInAppWire` mirrors
+/// `OpenInAppDto`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectActionWire {
+    pub id: String,
+    pub name: String,
+    pub icon: ProjectActionIconWire,
+    pub run_on_worktree_create: bool,
+    pub scope: ProjectActionScopeWire,
+    pub kind: ProjectActionKindWire,
+}
+
+/// Wire mirror of `core::project_store::ProjectActionIcon`. Stable
+/// kebab-case ids match the GPUI on-disk format (`projects.json`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionIconWire {
+    Play,
+    Test,
+    Lint,
+    Configure,
+    Build,
+    Debug,
+    Agent,
+}
+
+/// Wire mirror of `core::project_store::ProjectActionScope`. Project
+/// rows render before global rows in the dropdown.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionScopeWire {
+    Project,
+    Global,
+}
+
+/// Wire mirror of `core::project_store::ProjectActionAccess`. Fed
+/// through to the agent CLI's permission flag at run time —
+/// `default` passes nothing extra, the other three map to
+/// `--read-only`, `--workspace-write`, `--full-access`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionAccessWire {
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    FullAccess,
+}
+
+/// Wire mirror of `core::project_store::ProjectActionKind`. Tagged
+/// union — `kind: "shell"` carries `command`, `kind: "agent"`
+/// carries the prompt + provider-specific knobs.
+///
+/// This has to use the same `#[serde(tag = ...)]` discriminator that
+/// the FRB-bound `ProjectActionKindDto` uses on the Dart side; FRB
+/// emits a sealed-class hierarchy, and serde decodes it from the
+/// internally-tagged shape produced by the daemon.
+///
+/// FRB-bound mirror uses an externally-tagged shape (the default for
+/// Rust enums without serde annotations); we match that here so the
+/// bridge-side `ProjectActionKindDto` decodes the same JSON without
+/// needing a separate intermediate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProjectActionKindWire {
+    Shell {
+        command: String,
+    },
+    Agent {
+        prompt: String,
+        provider: AgentProvider,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        traits: Option<String>,
+        #[serde(default)]
+        mode: Option<String>,
+        access: ProjectActionAccessWire,
+    },
+}
+
+/// Wire projection of one entry in `another_one_core::agents::AGENTS`.
+/// Field-for-field compatible with
+/// `another_one_bridge::api::local_session::AgentSummaryDto` so the
+/// bridge decodes wire JSON straight into the FRB-exposed DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSummaryWire {
+    /// Stable id used by `submit_new_task` and the agent settings
+    /// verbs (`set_agent_enabled`, etc.).
+    pub id: String,
+    pub label: String,
+    pub icon_path: String,
+    pub provider: Option<AgentProvider>,
+}
+
+/// Wire projection of
+/// [`another_one_bridge::api::local_session::EnabledAgentsView`].
+/// Pairs the enabled-agents list with the user's preferred default
+/// (the chip the new-task modal pre-checks on open).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnabledAgentsViewWire {
+    pub agents: Vec<AgentSummaryWire>,
+    pub default_agent_id: Option<String>,
+}
+
+/// Wire projection of
+/// [`another_one_bridge::api::local_session::AgentSettingsRow`].
+/// One row of the Settings → Agents page — label + icon paired with
+/// per-host enabled / default flags and the per-agent launch-args
+/// list. Field-compatible with the FRB DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSettingsRowWire {
+    pub id: String,
+    pub label: String,
+    pub icon_path: String,
+    pub provider: Option<AgentProvider>,
+    pub enabled: bool,
+    pub is_default: bool,
+    pub launch_args: Vec<String>,
+}
+
+/// Wire projection of
+/// [`another_one_bridge::api::local_session::AgentSettingsView`].
+/// Drives the Settings → Agents page; rows are in the canonical
+/// `core::agents::AGENTS` order so the page renders without
+/// re-sorting after each toggle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSettingsViewWire {
+    pub agents: Vec<AgentSettingsRowWire>,
+    pub default_agent_id: Option<String>,
 }
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the
