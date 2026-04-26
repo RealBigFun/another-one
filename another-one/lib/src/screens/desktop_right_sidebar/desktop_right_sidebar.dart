@@ -26,6 +26,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../rust/api/local_session.dart'
     show
@@ -1674,108 +1675,290 @@ class _ChecksPane extends ConsumerWidget {
     }
     final checks = ref.watch(prChecksProvider(projectId));
     return checks.when(
-      data: (list) {
-        if (list == null) {
-          return const EmptyState(text: 'No pull request for this branch');
-        }
-        if (list.isEmpty) {
-          return const EmptyState(text: 'No checks configured for this PR');
-        }
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: AppTokens.space2),
-          itemCount: list.length,
-          itemBuilder: (_, i) => _CheckRow(check: list[i]),
-        );
-      },
-      loading: () => const EmptyState(text: 'Loading PR checks…'),
-      error: (e, _) => EmptyState(text: 'Could not load checks: $e'),
+      data: (list) => _ChecksBody(list: list),
+      loading: () => const EmptyState(text: 'Loading checks...'),
+      // GPUI surfaces the error message verbatim — same here so a
+      // missing gh CLI / auth issue is actionable from the panel.
+      error: (e, _) => EmptyState(text: e.toString()),
     );
   }
 }
 
-/// Single check row — bucket glyph + name + state + duration.
-/// Clickable when `link` is set: opens the check's GitHub page in
-/// the system browser, mirroring GPUI's
-/// `right_sidebar.rs::open_external_url` chevron.
-class _CheckRow extends StatelessWidget {
+class _ChecksBody extends StatelessWidget {
+  const _ChecksBody({required this.list});
+
+  final List<CheckDto>? list;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = list;
+    if (l == null) {
+      return const EmptyState(
+        text: 'No pull request exists for this branch.',
+      );
+    }
+    if (l.isEmpty) {
+      return const EmptyState(
+        text: 'No CI checks found for this pull request.',
+      );
+    }
+    // Sort by bucket priority (Fail, Pending, Pass, Skipping/Cancel)
+    // then case-insensitive name. Mirrors GPUI's sort.
+    final sorted = [...l]..sort((a, b) {
+        final pa = _bucketPriority(a.bucket);
+        final pb = _bucketPriority(b.bucket);
+        if (pa != pb) return pa.compareTo(pb);
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    final passed = sorted.where((c) => c.bucket == CheckBucket.pass).length;
+    final failed = sorted.where((c) => c.bucket == CheckBucket.fail).length;
+    final pending =
+        sorted.where((c) => c.bucket == CheckBucket.pending).length;
+    final skipped = sorted
+        .where((c) =>
+            c.bucket == CheckBucket.skipping || c.bucket == CheckBucket.cancel)
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _ChecksSummaryBar(
+          passed: passed,
+          failed: failed,
+          pending: pending,
+          skipped: skipped,
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            itemCount: sorted.length,
+            itemBuilder: (_, i) => _CheckRow(check: sorted[i]),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Mirrors GPUI's `check_run_sort_priority`: Fail first, Pending,
+/// then Pass, then Skipping/Cancel. Lower number = higher
+/// priority.
+int _bucketPriority(CheckBucket bucket) => switch (bucket) {
+      CheckBucket.fail => 0,
+      CheckBucket.pending => 1,
+      CheckBucket.pass => 2,
+      CheckBucket.skipping || CheckBucket.cancel => 3,
+    };
+
+/// HSL-derived sRGB constants, computed once. Matches GPUI's
+/// `check_run_visual` colors so the badge glyphs and the summary
+/// pills agree.
+const Color _bucketColorPass = Color(0xFFA0D9B4); // hsla(138/360, 0.50, 0.74)
+const Color _bucketColorFail = Color(0xFFEBA8B0); // hsla(352/360, 0.52, 0.76)
+const Color _bucketColorPending = Color(0xFFF5C53D); // hsla(42/360, 0.90, 0.66)
+const Color _bucketColorMuted = Color(0xFF9E9E9E); // hsla(0, 0, 0.62) — summary
+const Color _bucketIconMuted = Color(0xFF8F8F8F); // hsla(0, 0, 0.56) — row icon
+
+Color _bucketColor(CheckBucket bucket) => switch (bucket) {
+      CheckBucket.pass => _bucketColorPass,
+      CheckBucket.fail => _bucketColorFail,
+      CheckBucket.pending => _bucketColorPending,
+      CheckBucket.skipping || CheckBucket.cancel => _bucketIconMuted,
+    };
+
+String _bucketIconName(CheckBucket bucket) => switch (bucket) {
+      CheckBucket.pass => 'badge-check',
+      CheckBucket.fail => 'badge-x',
+      CheckBucket.pending => 'badge-clock',
+      CheckBucket.skipping || CheckBucket.cancel => 'minus',
+    };
+
+class _ChecksSummaryBar extends StatelessWidget {
+  const _ChecksSummaryBar({
+    required this.passed,
+    required this.failed,
+    required this.pending,
+    required this.skipped,
+  });
+
+  final int passed;
+  final int failed;
+  final int pending;
+  final int skipped;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: AppTokens.divider, width: 0.5),
+        ),
+      ),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          if (passed > 0)
+            _CheckSummaryBadge(label: '$passed passed', color: _bucketColorPass),
+          if (failed > 0)
+            _CheckSummaryBadge(label: '$failed failed', color: _bucketColorFail),
+          if (pending > 0)
+            _CheckSummaryBadge(
+              label: '$pending pending',
+              color: _bucketColorPending,
+            ),
+          if (skipped > 0)
+            _CheckSummaryBadge(
+              label: '$skipped skipped',
+              color: _bucketColorMuted,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// `check_runs_summary_badge`: pill, white@0.06 bg, 11px semibold,
+/// bucket-coloured text.
+class _CheckSummaryBadge extends StatelessWidget {
+  const _CheckSummaryBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0x0FFFFFFF), // white @ 0.06
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+/// Per-check row matching `desktop/src/right_sidebar.rs::check_run_row`:
+///   px(14) py(0.5) gap(10) rounded_md, hover white@0.04, items_start
+///   16px bucket icon — name (12px medium 0.94, truncated)
+///                       description (11px 0.58, truncated, optional)
+///   right cluster: duration text (11px 0.58, optional) + open-link
+///   action button (icons__external-link.svg) when `link` is set.
+class _CheckRow extends StatefulWidget {
   const _CheckRow({required this.check});
 
   final CheckDto check;
 
   @override
+  State<_CheckRow> createState() => _CheckRowState();
+}
+
+class _CheckRowState extends State<_CheckRow> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
-    final bucket = check.bucket;
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppTokens.space3,
-        vertical: AppTokens.space2,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Icon(
-            _bucketIcon(bucket),
-            size: 16,
-            color: _bucketColor(bucket),
-          ),
-          const SizedBox(width: AppTokens.space2),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  check.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: AppTokens.fontBody,
-                    color: AppTokens.textPrimary,
-                  ),
-                ),
-                Text(
-                  check.state,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: AppTokens.fontCaption,
-                    color: AppTokens.textMuted,
-                  ),
-                ),
-              ],
+    final check = widget.check;
+    final bucketColor = _bucketColor(check.bucket);
+    final iconName = _bucketIconName(check.bucket);
+    final description = check.description;
+    final duration = check.durationText;
+    final link = check.link;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0.5),
+        decoration: BoxDecoration(
+          color: _hover ? const Color(0x0AFFFFFF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: AppIcon(iconName, size: 16, color: bucketColor),
             ),
-          ),
-          if (check.durationText != null) ...[
-            const SizedBox(width: AppTokens.space2),
-            Text(
-              check.durationText!,
-              style: const TextStyle(
-                fontSize: AppTokens.fontCaption,
-                color: AppTokens.textMuted,
-                fontFamily: AppTokens.fontFamilyMono,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      check.name,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xF0FFFFFF),
+                      ),
+                    ),
+                    if (description != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        description,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0x94FFFFFF),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
+            if (duration != null || link != null) ...[
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (duration != null) ...[
+                      Text(
+                        duration,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0x94FFFFFF),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    if (link != null)
+                      _IconActionButton(
+                        icon: 'external-link',
+                        tooltip: 'Open this check in GitHub',
+                        onPressed: () async {
+                          final uri = Uri.tryParse(link);
+                          if (uri == null) return;
+                          await launchUrl(
+                            uri,
+                            mode: LaunchMode.externalApplication,
+                          );
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
-  }
-
-  IconData _bucketIcon(CheckBucket bucket) {
-    return switch (bucket) {
-      CheckBucket.pass => Icons.check_circle,
-      CheckBucket.fail => Icons.error,
-      CheckBucket.pending => Icons.pending,
-      CheckBucket.skipping => Icons.remove_circle_outline,
-      CheckBucket.cancel => Icons.cancel,
-    };
-  }
-
-  Color _bucketColor(CheckBucket bucket) {
-    return switch (bucket) {
-      CheckBucket.pass => AppTokens.successIcon,
-      CheckBucket.fail => AppTokens.errorIcon,
-      CheckBucket.pending => AppTokens.warningIcon,
-      CheckBucket.skipping => AppTokens.textMuted,
-      CheckBucket.cancel => AppTokens.textMuted,
-    };
   }
 }
 
