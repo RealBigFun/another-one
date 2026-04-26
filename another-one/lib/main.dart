@@ -20,7 +20,7 @@
 import 'dart:io' show Platform;
 import 'dart:ui' show PlatformDispatcher;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show DiagnosticsTreeStyle, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -50,6 +50,15 @@ void main() {
   // zone-specific state.
   FlutterError.onError = (details) {
     const log = Log('aone.flutter');
+    // For RenderFlex overflows the framework's default summary is
+    // just "A RenderFlex overflowed by N pixels on the right" with
+    // no widget-tree path. The DiagnosticsNode chain (built from
+    // `details.toDiagnosticsNode(...).toStringDeep`) names the
+    // offending widget hierarchy + offers the "creator" callsite,
+    // which is what we actually need to track these down.
+    final diag = details
+        .toDiagnosticsNode(style: DiagnosticsTreeStyle.error)
+        .toStringDeep();
     log.error(
       details.exceptionAsString(),
       error: details.exception,
@@ -58,6 +67,7 @@ void main() {
         if (details.library != null) 'library': details.library!,
         if (details.context != null)
           'context': details.context.toString(),
+        'tree': diag,
       },
     );
     // Still hand the error to the framework's default presenter

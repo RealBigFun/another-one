@@ -106,12 +106,21 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
                   ),
                 ),
                 const SizedBox(width: 6),
-                const Text(
-                  'Open In',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: AppTokens.textSecondary,
+                // Flexible+clip mirrors GPUI's default flex-shrink on
+                // a text child — the 114px button width is exact, but
+                // Lilex Mono "Open In" at 12px Medium runs ~5px past
+                // the inner 67px content width. GPUI clips silently,
+                // so we do the same here rather than widen the button.
+                const Flexible(
+                  child: Text(
+                    'Open In',
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: AppTokens.textSecondary,
+                    ),
                   ),
                 ),
               ],
