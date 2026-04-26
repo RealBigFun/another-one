@@ -1333,8 +1333,15 @@ fn peer_status(remote_id: &str, path: &Path) -> anyhow::Result<PeerStatus> {
 }
 
 /// Append `remote_id` to the allowlist, creating the file with 0600
-/// perms if needed. Called after a successful TOFU Hello.
-fn persist_pairing(remote_id: &str, path: &Path) -> anyhow::Result<()> {
+/// perms if needed. Called after a successful TOFU Hello — and from
+/// the desktop bootstrap (`another-one-ojm.9`) to pre-allowlist its
+/// own loopback-client NodeId so dialing the embedded daemon over
+/// iroh skips the Hello dance, leaving the pair nonce intact for
+/// real mobile pairing flows.
+///
+/// Idempotent — duplicate appends are harmless because `peer_status`
+/// short-circuits on the first match.
+pub fn persist_pairing(remote_id: &str, path: &Path) -> anyhow::Result<()> {
     use std::io::Write;
 
     if let Some(parent) = path.parent() {

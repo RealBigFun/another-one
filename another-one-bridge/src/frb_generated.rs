@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1152881793;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2080331662;
 
 // Section: executor
 
@@ -7831,6 +7831,45 @@ fn wire__crate__api__local_session__LocalSession_unstage_changed_file_impl(
         },
     )
 }
+fn wire__crate__api__embedded_daemon__await_loopback_session_addr_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "await_loopback_session_addr",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_timeout_ms = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::embedded_daemon::await_loopback_session_addr(
+                            api_timeout_ms,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -8261,6 +8300,39 @@ fn wire__crate__api__local_session__local_connect_impl(
                     })()
                     .await,
                 )
+            }
+        },
+    )
+}
+fn wire__crate__api__embedded_daemon__loopback_session_addr_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "loopback_session_addr",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Result::<_, ()>::Ok(crate::api::embedded_daemon::loopback_session_addr())?;
+                    Ok(output_ok)
+                })())
             }
         },
     )
@@ -9300,6 +9372,20 @@ impl SseDecode for Vec<crate::api::iroh_client::TaskSummary> {
     }
 }
 
+impl SseDecode for crate::api::embedded_daemon::LoopbackSessionAddr {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_endpointId = <String>::sse_decode(deserializer);
+        let mut var_directAddrs = <Vec<String>>::sse_decode(deserializer);
+        let mut var_relayUrls = <Vec<String>>::sse_decode(deserializer);
+        return crate::api::embedded_daemon::LoopbackSessionAddr {
+            endpoint_id: var_endpointId,
+            direct_addrs: var_directAddrs,
+            relay_urls: var_relayUrls,
+        };
+    }
+}
+
 impl SseDecode for crate::api::local_session::McpCatalogEntryDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -9504,6 +9590,19 @@ impl SseDecode for Option<crate::api::iroh_client::BranchCompareWire> {
             return Some(<crate::api::iroh_client::BranchCompareWire>::sse_decode(
                 deserializer,
             ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::embedded_daemon::LoopbackSessionAddr> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(
+                <crate::api::embedded_daemon::LoopbackSessionAddr>::sse_decode(deserializer),
+            );
         } else {
             return None;
         }
@@ -11335,70 +11434,82 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        126 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+        126 => wire__crate__api__embedded_daemon__await_loopback_session_addr_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        127 => {
+        127 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        128 => {
             wire__crate__api__terminal_engine__engine_close_impl(port, ptr, rust_vec_len, data_len)
         }
-        128 => wire__crate__api__terminal_engine__engine_encode_input_impl(
+        129 => wire__crate__api__terminal_engine__engine_encode_input_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        129 => {
+        130 => {
             wire__crate__api__terminal_engine__engine_open_impl(port, ptr, rust_vec_len, data_len)
         }
-        130 => {
+        131 => {
             wire__crate__api__terminal_engine__engine_resize_impl(port, ptr, rust_vec_len, data_len)
         }
-        131 => wire__crate__api__terminal_engine__engine_revision_impl(
+        132 => wire__crate__api__terminal_engine__engine_revision_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        132 => wire__crate__api__terminal_engine__engine_snapshot_impl(
+        133 => wire__crate__api__terminal_engine__engine_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        133 => wire__crate__api__terminal_engine__engine_write_pty_impl(
+        134 => wire__crate__api__terminal_engine__engine_write_pty_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        134 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
-        135 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
-        136 => {
+        135 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
+        136 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
+        137 => {
             wire__crate__api__local_session__local_connect_impl(port, ptr, rust_vec_len, data_len)
         }
-        137 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
-        138 => wire__crate__api__resources__read_app_resource_sample_impl(
+        138 => wire__crate__api__embedded_daemon__loopback_session_addr_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        139 => {
-            wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len)
-        }
-        140 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
+        139 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
+        140 => wire__crate__api__resources__read_app_resource_sample_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
         141 => {
+            wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len)
+        }
+        142 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        143 => {
             wire__crate__api__pair__regenerate_local_pairing_impl(port, ptr, rust_vec_len, data_len)
         }
-        142 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        144 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -11968,6 +12079,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal_engine::InputEventDt
     for crate::api::terminal_engine::InputEventDto
 {
     fn into_into_dart(self) -> crate::api::terminal_engine::InputEventDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::embedded_daemon::LoopbackSessionAddr {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.endpoint_id.into_into_dart().into_dart(),
+            self.direct_addrs.into_into_dart().into_dart(),
+            self.relay_urls.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::embedded_daemon::LoopbackSessionAddr
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::embedded_daemon::LoopbackSessionAddr>
+    for crate::api::embedded_daemon::LoopbackSessionAddr
+{
+    fn into_into_dart(self) -> crate::api::embedded_daemon::LoopbackSessionAddr {
         self
     }
 }
@@ -13662,6 +13795,15 @@ impl SseEncode for Vec<crate::api::iroh_client::TaskSummary> {
     }
 }
 
+impl SseEncode for crate::api::embedded_daemon::LoopbackSessionAddr {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.endpoint_id, serializer);
+        <Vec<String>>::sse_encode(self.direct_addrs, serializer);
+        <Vec<String>>::sse_encode(self.relay_urls, serializer);
+    }
+}
+
 impl SseEncode for crate::api::local_session::McpCatalogEntryDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -13829,6 +13971,16 @@ impl SseEncode for Option<crate::api::iroh_client::BranchCompareWire> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::iroh_client::BranchCompareWire>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::embedded_daemon::LoopbackSessionAddr> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::embedded_daemon::LoopbackSessionAddr>::sse_encode(value, serializer);
         }
     }
 }

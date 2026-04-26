@@ -7,8 +7,63 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 /// Spawns the embedded iroh daemon on a dedicated OS thread and
-/// registers its `RegistryState` + pair info with the bridge so
-/// `LocalSession` and the pair-mobile FRB API can read from them.
-/// Idempotent — a second call is a no-op.
+/// registers its `RegistryState` + pair info with the bridge so the
+/// pair-mobile FRB API and the loopback bootstrap can read from
+/// them. Idempotent — a second call is a no-op.
 Future<void> bootEmbeddedDaemon() =>
     RustLib.instance.api.crateApiEmbeddedDaemonBootEmbeddedDaemon();
+
+/// Snapshot of the embedded daemon's iroh address. Returns `None`
+/// until [`boot_embedded_daemon`] has finished binding the endpoint
+/// (typically a few hundred milliseconds after `boot`).
+Future<LoopbackSessionAddr?> loopbackSessionAddr() =>
+    RustLib.instance.api.crateApiEmbeddedDaemonLoopbackSessionAddr();
+
+/// Block until the embedded daemon has bound its iroh endpoint and
+/// return its loopback address. Polls [`loopback_session_addr`] on
+/// the bridge's tokio runtime so the FRB worker thread stays free.
+/// Times out after `timeout_ms` (caller-supplied; the Dart bootstrap
+/// passes 10 000 ms).
+///
+/// Errors:
+///   * `boot_embedded_daemon` was never called (daemon thread isn't
+///     running) — returns the timeout error after the deadline.
+///   * The daemon thread is running but its endpoint bind failed —
+///     same observable: timeout. The bind error is logged; surfacing
+///     it across this FFI would couple the bridge to the
+///     `daemon-sandbox` error type.
+Future<LoopbackSessionAddr> awaitLoopbackSessionAddr({
+  required int timeoutMs,
+}) => RustLib.instance.api.crateApiEmbeddedDaemonAwaitLoopbackSessionAddr(
+  timeoutMs: timeoutMs,
+);
+
+/// Hex-encoded `EndpointId` + direct socket addresses + relay URLs
+/// of the running embedded daemon. Drives the desktop's loopback
+/// bootstrap: the UI's `DaemonConnection` is an `IrohTransport`
+/// dialling this address, exercising the same wire surface mobile
+/// uses.
+class LoopbackSessionAddr {
+  final String endpointId;
+  final List<String> directAddrs;
+  final List<String> relayUrls;
+
+  const LoopbackSessionAddr({
+    required this.endpointId,
+    required this.directAddrs,
+    required this.relayUrls,
+  });
+
+  @override
+  int get hashCode =>
+      endpointId.hashCode ^ directAddrs.hashCode ^ relayUrls.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LoopbackSessionAddr &&
+          runtimeType == other.runtimeType &&
+          endpointId == other.endpointId &&
+          directAddrs == other.directAddrs &&
+          relayUrls == other.relayUrls;
+}

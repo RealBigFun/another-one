@@ -873,7 +873,13 @@ async fn read_frame(recv: &mut RecvStream) -> anyhow::Result<Option<(u8, Vec<u8>
 /// we have nowhere safe to persist); in that case the caller is
 /// expected to surface a clear error rather than silently falling
 /// back to an ephemeral key that would break TOFU on restart.
-fn load_or_create_device_secret_key() -> anyhow::Result<SecretKey> {
+///
+/// `pub(crate)` so the embedded-daemon bootstrap can resolve the
+/// device's NodeId at boot time and pre-allowlist it in the daemon's
+/// paired-peers file (`another-one-ojm.9` loopback bootstrap), which
+/// lets the desktop dial its own daemon over iroh without consuming
+/// the pair nonce reserved for actual mobile pairing flows.
+pub(crate) fn load_or_create_device_secret_key() -> anyhow::Result<SecretKey> {
     let path = {
         let slot = data_dir_slot().lock().expect("data_dir mutex poisoned");
         slot.clone()

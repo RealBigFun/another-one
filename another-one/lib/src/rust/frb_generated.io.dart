@@ -139,6 +139,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InputEventDto dco_decode_box_autoadd_input_event_dto(dynamic raw);
 
   @protected
+  LoopbackSessionAddr dco_decode_box_autoadd_loopback_session_addr(dynamic raw);
+
+  @protected
   McpSettingsView dco_decode_box_autoadd_mcp_settings_view(dynamic raw);
 
   @protected
@@ -340,6 +343,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TaskSummary> dco_decode_list_task_summary(dynamic raw);
 
   @protected
+  LoopbackSessionAddr dco_decode_loopback_session_addr(dynamic raw);
+
+  @protected
   McpCatalogEntryDto dco_decode_mcp_catalog_entry_dto(dynamic raw);
 
   @protected
@@ -389,6 +395,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BranchCompareWire? dco_decode_opt_box_autoadd_branch_compare_wire(
+    dynamic raw,
+  );
+
+  @protected
+  LoopbackSessionAddr? dco_decode_opt_box_autoadd_loopback_session_addr(
     dynamic raw,
   );
 
@@ -690,6 +701,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  LoopbackSessionAddr sse_decode_box_autoadd_loopback_session_addr(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   McpSettingsView sse_decode_box_autoadd_mcp_settings_view(
     SseDeserializer deserializer,
   );
@@ -939,6 +955,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TaskSummary> sse_decode_list_task_summary(SseDeserializer deserializer);
 
   @protected
+  LoopbackSessionAddr sse_decode_loopback_session_addr(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   McpCatalogEntryDto sse_decode_mcp_catalog_entry_dto(
     SseDeserializer deserializer,
   );
@@ -998,6 +1019,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BranchCompareWire? sse_decode_opt_box_autoadd_branch_compare_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  LoopbackSessionAddr? sse_decode_opt_box_autoadd_loopback_session_addr(
     SseDeserializer deserializer,
   );
 
@@ -1380,6 +1406,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_loopback_session_addr(
+    LoopbackSessionAddr self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_mcp_settings_view(
     McpSettingsView self,
     SseSerializer serializer,
@@ -1689,6 +1721,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_loopback_session_addr(
+    LoopbackSessionAddr self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_mcp_catalog_entry_dto(
     McpCatalogEntryDto self,
     SseSerializer serializer,
@@ -1760,6 +1798,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_branch_compare_wire(
     BranchCompareWire? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_loopback_session_addr(
+    LoopbackSessionAddr? self,
     SseSerializer serializer,
   );
 

@@ -85,6 +85,37 @@ impl EndpointHandle {
             .clone()
     }
 
+    /// Direct socket addresses (`ip:port`) the iroh endpoint is
+    /// reachable through. Snapshot taken when the endpoint bound; on a
+    /// laptop changing networks these may go stale until a relay
+    /// fallback or a re-bind. Used by the loopback-iroh bootstrap
+    /// (`another-one-ojm.9`) to construct a same-process
+    /// [`crate::api::iroh_client::iroh_connect`] target without
+    /// round-tripping through the pairing URL.
+    pub fn direct_addrs(&self) -> Vec<String> {
+        self.pair_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .addr
+            .ip_addrs()
+            .map(|a| a.to_string())
+            .collect()
+    }
+
+    /// Relay URLs the iroh endpoint is reachable through. Empty for
+    /// the embedded daemon today (`presets::Minimal` skips relay
+    /// publishing); included for shape-symmetry with the mobile pair
+    /// path so the loopback bootstrap can pass the same shape.
+    pub fn relay_urls(&self) -> Vec<String> {
+        self.pair_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .addr
+            .relay_urls()
+            .map(|r| r.to_string())
+            .collect()
+    }
+
     /// Roll a fresh TOFU nonce and rebuild the pairing URL + QR. Call
     /// this after the user clicks "Reset pairings" so the previously
     /// scanned QR can no longer pair (even if the attacker captured

@@ -23,6 +23,7 @@ pub mod transport_iroh;
 pub mod transport_mcp;
 
 pub use registry::{EndpointHandle, DaemonRegistry};
+pub use transport_iroh::persist_pairing;
 
 // These two are the sandbox binary's own helpers; re-exported so the
 // binary can call them via `daemon_sandbox::sandbox::*` without

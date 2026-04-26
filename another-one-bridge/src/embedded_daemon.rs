@@ -126,6 +126,42 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
         }
     };
 
+    // Loopback self-trust (`another-one-ojm.9`): the desktop's UI
+    // layer dials this same daemon over iroh, so the daemon needs to
+    // recognise its own loopback client as already-paired and skip the
+    // TOFU Hello dance — otherwise every cold boot would burn the
+    // user-facing pair nonce on the in-process self-dial, leaving no
+    // valid nonce for an actual mobile pair scan.
+    //
+    // Resolve the device's NodeId from the same iroh secret key
+    // `iroh_connect` will use, then append it to `paths.paired_peers`.
+    // Idempotent: `peer_status` short-circuits on the first match, so
+    // repeated boots don't bloat the file with the same id.
+    match crate::api::iroh_client::load_or_create_device_secret_key() {
+        Ok(sk) => {
+            let device_node_id = sk.public().to_string();
+            if let Err(e) = daemon_sandbox::persist_pairing(&device_node_id, &paths.paired_peers)
+            {
+                tracing::warn!(
+                    "loopback self-trust: persist_pairing failed (device_node_id={}): {:#}",
+                    device_node_id,
+                    e,
+                );
+            } else {
+                tracing::info!(
+                    "loopback self-trust: pre-allowlisted device NodeId {} in paired_peers",
+                    device_node_id,
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "loopback self-trust: skipping — could not load device secret key: {:#}",
+                e,
+            );
+        }
+    }
+
     let endpoint_result = runtime.block_on(async {
         daemon_sandbox::run_endpoint(registry, paths.secret_key, paths.paired_peers).await
     });
@@ -175,6 +211,18 @@ impl LocalPairInfo for EndpointHandlePairAdapter {
         self.handle
             .regenerate_pairing()
             .map_err(|e| format!("{e:#}"))
+    }
+
+    fn endpoint_id(&self) -> String {
+        self.handle.endpoint_id.clone()
+    }
+
+    fn direct_addrs(&self) -> Vec<String> {
+        self.handle.direct_addrs()
+    }
+
+    fn relay_urls(&self) -> Vec<String> {
+        self.handle.relay_urls()
     }
 }
 

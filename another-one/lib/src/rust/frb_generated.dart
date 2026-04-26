@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1152881793;
+  int get rustContentHash => -2080331662;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -826,6 +826,10 @@ abstract class RustLibApi extends BaseApi {
     String? originalPath,
   });
 
+  Future<LoopbackSessionAddr> crateApiEmbeddedDaemonAwaitLoopbackSessionAddr({
+    required int timeoutMs,
+  });
+
   Future<void> crateApiEmbeddedDaemonBootEmbeddedDaemon();
 
   Future<void> crateApiTerminalEngineEngineClose({
@@ -881,6 +885,8 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<LocalSession> crateApiLocalSessionLocalConnect();
+
+  Future<LoopbackSessionAddr?> crateApiEmbeddedDaemonLoopbackSessionAddr();
 
   Future<PairingInfo?> crateApiPairPairingInfo();
 
@@ -6087,6 +6093,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<LoopbackSessionAddr> crateApiEmbeddedDaemonAwaitLoopbackSessionAddr({
+    required int timeoutMs,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(timeoutMs, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 126,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_loopback_session_addr,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiEmbeddedDaemonAwaitLoopbackSessionAddrConstMeta,
+        argValues: [timeoutMs],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEmbeddedDaemonAwaitLoopbackSessionAddrConstMeta =>
+      const TaskConstMeta(
+        debugName: "await_loopback_session_addr",
+        argNames: ["timeoutMs"],
+      );
+
+  @override
   Future<void> crateApiEmbeddedDaemonBootEmbeddedDaemon() {
     return handler.executeNormal(
       NormalTask(
@@ -6095,7 +6134,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 126,
+            funcId: 127,
             port: port_,
           );
         },
@@ -6127,7 +6166,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 127,
+            funcId: 128,
             port: port_,
           );
         },
@@ -6164,7 +6203,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 128,
+            funcId: 129,
             port: port_,
           );
         },
@@ -6203,7 +6242,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 129,
+            funcId: 130,
             port: port_,
           );
         },
@@ -6242,7 +6281,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 130,
+            funcId: 131,
             port: port_,
           );
         },
@@ -6277,7 +6316,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 131,
+            funcId: 132,
             port: port_,
           );
         },
@@ -6316,7 +6355,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 132,
+            funcId: 133,
             port: port_,
           );
         },
@@ -6353,7 +6392,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 133,
+            funcId: 134,
             port: port_,
           );
         },
@@ -6383,7 +6422,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 134,
+            funcId: 135,
             port: port_,
           );
         },
@@ -6419,7 +6458,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 135,
+            funcId: 136,
             port: port_,
           );
         },
@@ -6450,7 +6489,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 136,
+            funcId: 137,
             port: port_,
           );
         },
@@ -6470,6 +6509,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "local_connect", argNames: []);
 
   @override
+  Future<LoopbackSessionAddr?> crateApiEmbeddedDaemonLoopbackSessionAddr() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 138,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_loopback_session_addr,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEmbeddedDaemonLoopbackSessionAddrConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEmbeddedDaemonLoopbackSessionAddrConstMeta =>
+      const TaskConstMeta(debugName: "loopback_session_addr", argNames: []);
+
+  @override
   Future<PairingInfo?> crateApiPairPairingInfo() {
     return handler.executeNormal(
       NormalTask(
@@ -6478,7 +6544,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 137,
+            funcId: 139,
             port: port_,
           );
         },
@@ -6505,7 +6571,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 138,
+            funcId: 140,
             port: port_,
           );
         },
@@ -6532,7 +6598,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 139,
+            funcId: 141,
             port: port_,
           );
         },
@@ -6560,7 +6626,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 140,
+            funcId: 142,
             port: port_,
           );
         },
@@ -6591,7 +6657,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 141,
+            funcId: 143,
             port: port_,
           );
         },
@@ -6619,7 +6685,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 142,
+            funcId: 144,
             port: port_,
           );
         },
@@ -6877,6 +6943,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InputEventDto dco_decode_box_autoadd_input_event_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_input_event_dto(raw);
+  }
+
+  @protected
+  LoopbackSessionAddr dco_decode_box_autoadd_loopback_session_addr(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_loopback_session_addr(raw);
   }
 
   @protected
@@ -7400,6 +7474,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LoopbackSessionAddr dco_decode_loopback_session_addr(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return LoopbackSessionAddr(
+      endpointId: dco_decode_String(arr[0]),
+      directAddrs: dco_decode_list_String(arr[1]),
+      relayUrls: dco_decode_list_String(arr[2]),
+    );
+  }
+
+  @protected
   McpCatalogEntryDto dco_decode_mcp_catalog_entry_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -7551,6 +7638,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_branch_compare_wire(raw);
+  }
+
+  @protected
+  LoopbackSessionAddr? dco_decode_opt_box_autoadd_loopback_session_addr(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_loopback_session_addr(raw);
   }
 
   @protected
@@ -8561,6 +8658,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LoopbackSessionAddr sse_decode_box_autoadd_loopback_session_addr(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_loopback_session_addr(deserializer));
+  }
+
+  @protected
   McpSettingsView sse_decode_box_autoadd_mcp_settings_view(
     SseDeserializer deserializer,
   ) {
@@ -9281,6 +9386,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LoopbackSessionAddr sse_decode_loopback_session_addr(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_endpointId = sse_decode_String(deserializer);
+    var var_directAddrs = sse_decode_list_String(deserializer);
+    var var_relayUrls = sse_decode_list_String(deserializer);
+    return LoopbackSessionAddr(
+      endpointId: var_endpointId,
+      directAddrs: var_directAddrs,
+      relayUrls: var_relayUrls,
+    );
+  }
+
+  @protected
   McpCatalogEntryDto sse_decode_mcp_catalog_entry_dto(
     SseDeserializer deserializer,
   ) {
@@ -9472,6 +9592,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_branch_compare_wire(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  LoopbackSessionAddr? sse_decode_opt_box_autoadd_loopback_session_addr(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_loopback_session_addr(deserializer));
     } else {
       return null;
     }
@@ -10679,6 +10812,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_loopback_session_addr(
+    LoopbackSessionAddr self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_loopback_session_addr(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_mcp_settings_view(
     McpSettingsView self,
     SseSerializer serializer,
@@ -11304,6 +11446,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_loopback_session_addr(
+    LoopbackSessionAddr self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.endpointId, serializer);
+    sse_encode_list_String(self.directAddrs, serializer);
+    sse_encode_list_String(self.relayUrls, serializer);
+  }
+
+  @protected
   void sse_encode_mcp_catalog_entry_dto(
     McpCatalogEntryDto self,
     SseSerializer serializer,
@@ -11461,6 +11614,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_branch_compare_wire(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_loopback_session_addr(
+    LoopbackSessionAddr? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_loopback_session_addr(self, serializer);
     }
   }
 
