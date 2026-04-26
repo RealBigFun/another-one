@@ -1249,6 +1249,78 @@ impl LocalSession {
             .map(|branch| branch.name))
     }
 
+    /// Append an agent tab (or plain shell, when `agent_id` is
+    /// empty / the Terminal sentinel) to `section_id`'s task and
+    /// queue its PTY launch. Mirrors
+    /// `desktop/src/add_agent_modal.rs::submit_add_agent_modal`.
+    ///
+    /// Returns the new tab id so the UI can switch to it.
+    /// Empty `agent_id` is treated the same way as GPUI's
+    /// `terminal_launch_config_for_selected_agent(None)` —
+    /// i.e. opens a plain shell in the section's worktree.
+    pub async fn add_agent_to_section(
+        &self,
+        section_id: String,
+        agent_id: String,
+    ) -> anyhow::Result<String> {
+        let key_section = another_one_core::section::SectionId::from_store_key(&section_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "add_agent_to_section: malformed section_id `{section_id}` — expected SectionId::store_key()"
+                )
+            })?;
+        let trimmed = agent_id.trim().to_string();
+        let launch_config = if trimmed.is_empty() {
+            another_one_core::agents::TerminalLaunchConfig::default()
+        } else {
+            let mut set = std::collections::HashSet::new();
+            set.insert(trimmed);
+            another_one_core::agents::terminal_launch_config_for_selected_agents(&set)
+        };
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("add_agent_to_section: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("add_agent_to_section: RegistryState mutex poisoned")
+        })?;
+
+        let tab_id = uuid::Uuid::new_v4().to_string();
+        let tab = PersistedTerminalTab {
+            id: tab_id.clone(),
+            title: launch_config.default_title(),
+            pinned: false,
+            fixed_title: None,
+            provider: launch_config.provider,
+            launch_config: Some(launch_config.clone()),
+            restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
+        };
+        let key = TerminalRuntimeKey {
+            section_id: key_section,
+            tab_id: tab_id.clone(),
+        };
+        let mut existing_section = state
+            .project_store
+            .terminal_sections
+            .get(&section_id)
+            .cloned()
+            .unwrap_or_else(|| PersistedSectionState {
+                active_tab_id: String::new(),
+                next_tab_id: 1,
+                cwd: None,
+                tabs: Vec::new(),
+            });
+        existing_section.tabs.push(tab);
+        existing_section.active_tab_id = tab_id.clone();
+        existing_section.next_tab_id = existing_section.next_tab_id.saturating_add(1);
+        state
+            .project_store
+            .set_section_state(section_id.clone(), existing_section);
+        state
+            .pending_tab_launches
+            .push(TabLaunchRequest { key });
+        Ok(tab_id)
+    }
+
     /// Snapshot of agents the user has enabled on this host plus
     /// the id of the one they've picked as default. Drives the
     /// new-task modal's agent multi-select. The returned list is

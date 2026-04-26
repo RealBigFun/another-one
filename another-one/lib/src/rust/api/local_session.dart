@@ -19,6 +19,20 @@ Future<LocalSession> localConnect() =>
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LocalSession>>
 abstract class LocalSession implements RustOpaqueInterface {
+  /// Append an agent tab (or plain shell, when `agent_id` is
+  /// empty / the Terminal sentinel) to `section_id`'s task and
+  /// queue its PTY launch. Mirrors
+  /// `desktop/src/add_agent_modal.rs::submit_add_agent_modal`.
+  ///
+  /// Returns the new tab id so the UI can switch to it.
+  /// Empty `agent_id` is treated the same way as GPUI's
+  /// `terminal_launch_config_for_selected_agent(None)` —
+  /// i.e. opens a plain shell in the section's worktree.
+  Future<String> addAgentToSection({
+    required String sectionId,
+    required String agentId,
+  });
+
   /// Add an existing on-disk project to the embedded daemon's
   /// project store. Returns `Ok(true)` if the project was inserted,
   /// `Ok(false)` if a project at the same path already existed

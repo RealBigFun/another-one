@@ -642,6 +642,21 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<String> addAgentToSection({
+    required String sectionId,
+    required String agentId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('addAgentToSection: LocalTransport not connected');
+    }
+    return session.addAgentToSection(
+      sectionId: sectionId,
+      agentId: agentId,
+    );
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,

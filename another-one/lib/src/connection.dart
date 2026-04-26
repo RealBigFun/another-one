@@ -594,6 +594,19 @@ abstract class DaemonConnection {
       'variant on the iroh transport (not yet implemented).',
     );
   }
+
+  /// Append an agent tab (or plain shell when `agentId` is empty)
+  /// to an existing task's section. Returns the new tab id so the
+  /// UI can switch focus to it.
+  Future<String> addAgentToSection({
+    required String sectionId,
+    required String agentId,
+  }) {
+    throw UnimplementedError(
+      'addAgentToSection: requires Control::AddAgentToSection wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
 }
 
 /// In-memory list of active [DaemonConnection]s. Holds N regardless
