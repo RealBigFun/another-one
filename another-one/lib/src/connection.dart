@@ -338,12 +338,7 @@ abstract class DaemonConnection {
   Future<ToolbarActionOutcomeDto> runToolbarGitAction({
     required String projectId,
     required String actionId,
-  }) {
-    throw UnimplementedError(
-      'runToolbarGitAction: requires Control::RunToolbarGitAction wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Diff the project's current branch against `targetBranch`
   /// (= `target..HEAD`). Powers the right sidebar's Compare pane.

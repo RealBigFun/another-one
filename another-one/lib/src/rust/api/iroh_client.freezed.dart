@@ -55,7 +55,7 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -65,7 +65,8 @@ return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck() when 
 return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
 return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
-return discardChangedFileAck(_that);case _:
+return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return toolbarActionOutcomeAck(_that);case _:
   return orElse();
 
 }
@@ -83,7 +84,7 @@ return discardChangedFileAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,required TResult Function( WorkerReply_UnstageChangedFileAck value)  unstageChangedFileAck,required TResult Function( WorkerReply_StageAllChangesAck value)  stageAllChangesAck,required TResult Function( WorkerReply_UnstageAllChangesAck value)  unstageAllChangesAck,required TResult Function( WorkerReply_DiscardChangedFileAck value)  discardChangedFileAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,required TResult Function( WorkerReply_UnstageChangedFileAck value)  unstageChangedFileAck,required TResult Function( WorkerReply_StageAllChangesAck value)  stageAllChangesAck,required TResult Function( WorkerReply_UnstageAllChangesAck value)  unstageAllChangesAck,required TResult Function( WorkerReply_DiscardChangedFileAck value)  discardChangedFileAck,required TResult Function( WorkerReply_ToolbarActionOutcomeAck value)  toolbarActionOutcomeAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
@@ -93,7 +94,8 @@ return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck():
 return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck():
 return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck():
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck():
-return discardChangedFileAck(_that);}
+return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck():
+return toolbarActionOutcomeAck(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -107,7 +109,7 @@ return discardChangedFileAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult? Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult? Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult? Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult? Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult? Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult? Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult? Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult? Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult? Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -117,7 +119,8 @@ return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck() when 
 return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
 return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
-return discardChangedFileAck(_that);case _:
+return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return toolbarActionOutcomeAck(_that);case _:
   return null;
 
 }
@@ -134,7 +137,7 @@ return discardChangedFileAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,TResult Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
@@ -143,7 +146,8 @@ return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFi
 return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
 return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
-return discardChangedFileAck(_that.changedFiles);case _:
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return toolbarActionOutcomeAck(_that.outcome);case _:
   return orElse();
 
 }
@@ -161,7 +165,7 @@ return discardChangedFileAck(_that.changedFiles);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( List<ChangedFile> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  discardChangedFileAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( List<ChangedFile> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  discardChangedFileAck,required TResult Function( ToolbarActionOutcome outcome)  toolbarActionOutcomeAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
@@ -170,7 +174,8 @@ return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFi
 return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck():
 return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck():
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck():
-return discardChangedFileAck(_that.changedFiles);}
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck():
+return toolbarActionOutcomeAck(_that.outcome);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -184,7 +189,7 @@ return discardChangedFileAck(_that.changedFiles);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,TResult? Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
@@ -193,7 +198,8 @@ return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFi
 return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
 return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
-return discardChangedFileAck(_that.changedFiles);case _:
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return toolbarActionOutcomeAck(_that.outcome);case _:
   return null;
 
 }
@@ -695,6 +701,72 @@ class _$WorkerReply_DiscardChangedFileAckCopyWithImpl<$Res>
   return _then(WorkerReply_DiscardChangedFileAck(
 changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
 as List<ChangedFile>,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_ToolbarActionOutcomeAck extends WorkerReply {
+  const WorkerReply_ToolbarActionOutcomeAck({required this.outcome}): super._();
+  
+
+ final  ToolbarActionOutcome outcome;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_ToolbarActionOutcomeAckCopyWith<WorkerReply_ToolbarActionOutcomeAck> get copyWith => _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl<WorkerReply_ToolbarActionOutcomeAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ToolbarActionOutcomeAck&&(identical(other.outcome, outcome) || other.outcome == outcome));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,outcome);
+
+@override
+String toString() {
+  return 'WorkerReply.toolbarActionOutcomeAck(outcome: $outcome)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_ToolbarActionOutcomeAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_ToolbarActionOutcomeAckCopyWith(WorkerReply_ToolbarActionOutcomeAck value, $Res Function(WorkerReply_ToolbarActionOutcomeAck) _then) = _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl;
+@useResult
+$Res call({
+ ToolbarActionOutcome outcome
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl<$Res>
+    implements $WorkerReply_ToolbarActionOutcomeAckCopyWith<$Res> {
+  _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_ToolbarActionOutcomeAck _self;
+  final $Res Function(WorkerReply_ToolbarActionOutcomeAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? outcome = null,}) {
+  return _then(WorkerReply_ToolbarActionOutcomeAck(
+outcome: null == outcome ? _self.outcome : outcome // ignore: cast_nullable_to_non_nullable
+as ToolbarActionOutcome,
   ));
 }
 

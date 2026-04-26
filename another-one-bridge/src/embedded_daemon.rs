@@ -41,6 +41,7 @@ use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
     AgentProvider, ChangedFile, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    ToolbarActionOutcome,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -451,6 +452,75 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             .await
         })
     }
+
+    fn run_toolbar_git_action<'a>(
+        &'a self,
+        project_id: &'a str,
+        action_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<ToolbarActionOutcome>> + Send + 'a>,
+    > {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let action_id = action_id.to_string();
+        Box::pin(async move {
+            let project_path = resolve_project_path(&inner, &project_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "run_toolbar_git_action: unknown project_id `{project_id}`"
+                )
+            })?;
+            let action = parse_toolbar_action_id(&action_id)?;
+            let outcome = tokio::task::spawn_blocking(move || {
+                let mut on_progress = |_msg: String| {};
+                another_one_core::git_actions::execute_toolbar_git_action(
+                    &project_path,
+                    action,
+                    another_one_core::git_actions::GitActionSettings::default(),
+                    &mut on_progress,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("run_toolbar_git_action join: {e}"))?;
+            outcome
+                .map(|o| ToolbarActionOutcome {
+                    toast_message: o.toast_message,
+                    warning: o.warning,
+                    refresh_git_state: o.refresh_git_state,
+                })
+                .map_err(|err| anyhow::anyhow!(err.message))
+        })
+    }
+}
+
+/// Mirror of `another_one_bridge::api::local_session::parse_toolbar_action_id`.
+/// The `action_id` strings round-trip verbatim from the Dart titlebar
+/// split-button — keep this list in lockstep with the FRB-side parser.
+fn parse_toolbar_action_id(
+    id: &str,
+) -> anyhow::Result<another_one_core::git_actions::ToolbarGitAction> {
+    use another_one_core::git_actions::ToolbarGitAction;
+    Ok(match id {
+        "commit" => ToolbarGitAction::Commit,
+        "commit-and-push" => ToolbarGitAction::CommitAndPush,
+        "undo-last-commit" => ToolbarGitAction::UndoLastCommit,
+        "fetch" => ToolbarGitAction::Fetch,
+        "pull" => ToolbarGitAction::Pull,
+        "push" => ToolbarGitAction::Push { force: false },
+        "force-push" => ToolbarGitAction::Push { force: true },
+        "create-pr" => ToolbarGitAction::CreatePr {
+            draft: false,
+            base_branch: None,
+        },
+        "create-draft-pr" => ToolbarGitAction::CreatePr {
+            draft: true,
+            base_branch: None,
+        },
+        other => {
+            return Err(anyhow::anyhow!(
+                "run_toolbar_git_action: unknown action_id `{other}`"
+            ));
+        }
+    })
 }
 
 /// Common scaffolding for the stage / unstage / discard / stage-all /

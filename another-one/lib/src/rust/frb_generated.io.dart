@@ -142,6 +142,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ToolbarActionOutcome dco_decode_box_autoadd_toolbar_action_outcome(
+    dynamic raw,
+  );
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -428,6 +433,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TaskSummary dco_decode_task_summary(dynamic raw);
 
   @protected
+  ToolbarActionOutcome dco_decode_toolbar_action_outcome(dynamic raw);
+
+  @protected
   ToolbarActionOutcomeDto dco_decode_toolbar_action_outcome_dto(dynamic raw);
 
   @protected
@@ -578,6 +586,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ResourceUsageSnapshotDto sse_decode_box_autoadd_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ToolbarActionOutcome sse_decode_box_autoadd_toolbar_action_outcome(
     SseDeserializer deserializer,
   );
 
@@ -940,6 +953,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TaskSummary sse_decode_task_summary(SseDeserializer deserializer);
 
   @protected
+  ToolbarActionOutcome sse_decode_toolbar_action_outcome(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ToolbarActionOutcomeDto sse_decode_toolbar_action_outcome_dto(
     SseDeserializer deserializer,
   );
@@ -1126,6 +1144,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_resource_usage_snapshot_dto(
     ResourceUsageSnapshotDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_toolbar_action_outcome(
+    ToolbarActionOutcome self,
     SseSerializer serializer,
   );
 
@@ -1566,6 +1590,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_task_summary(TaskSummary self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_toolbar_action_outcome(
+    ToolbarActionOutcome self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_toolbar_action_outcome_dto(

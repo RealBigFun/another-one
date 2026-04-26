@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{ChangedFile, ProjectSummary};
+use crate::frame::{ChangedFile, ProjectSummary, ToolbarActionOutcome};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -245,6 +245,23 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         Box::pin(async {
             Err(anyhow::anyhow!(
                 "discard_changed_file: not implemented on this DaemonRegistry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — run one of the titlebar git actions.
+    /// `action_id` strings round-trip verbatim from the wire (see
+    /// [`crate::frame::Control::RunToolbarGitAction`]).
+    fn run_toolbar_git_action<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _action_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<ToolbarActionOutcome>> + Send + 'a>,
+    > {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "run_toolbar_git_action: not implemented on this DaemonRegistry"
             ))
         })
     }

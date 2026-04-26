@@ -11,6 +11,7 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
+import 'rust/api/local_session.dart' show ToolbarActionOutcomeDto;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -507,6 +508,38 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       default:
         throw StateError(
           'discardChangedFile: unexpected reply variant $reply',
+        );
+    }
+  }
+
+  /// `another-one-ojm.5` — run one of the titlebar git actions over
+  /// the iroh wire. The returned `ToolbarActionOutcomeDto` matches
+  /// what `LocalTransport` produces, so the titlebar's snackbar
+  /// rendering doesn't have to branch on transport.
+  @override
+  Future<ToolbarActionOutcomeDto> runToolbarGitAction({
+    required String projectId,
+    required String actionId,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.runToolbarGitAction(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        actionId: actionId,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_ToolbarActionOutcomeAck(:final outcome):
+        return ToolbarActionOutcomeDto(
+          toastMessage: outcome.toastMessage,
+          warning: outcome.warning,
+          refreshGitState: outcome.refreshGitState,
+        );
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'runToolbarGitAction: unexpected reply variant $reply',
         );
     }
   }

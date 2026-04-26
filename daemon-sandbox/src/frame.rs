@@ -201,6 +201,18 @@ pub enum Control {
         untracked: bool,
         original_path: Option<String>,
     },
+    /// `another-one-ojm.5` — run a titlebar git action against
+    /// `project_id`. `action_id` is the verbatim string the
+    /// titlebar split-button emits: `"commit"`, `"commit-and-push"`,
+    /// `"undo-last-commit"`, `"fetch"`, `"pull"`, `"push"`,
+    /// `"force-push"`, `"create-pr"`, `"create-draft-pr"`. Reply is
+    /// [`WorkerReply::ToolbarActionOutcomeAck`] carrying the
+    /// `outcome` so the UI can surface the toast + decide whether to
+    /// invalidate the changed-files / git-state providers.
+    RunToolbarGitAction {
+        project_id: String,
+        action_id: String,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -338,6 +350,13 @@ pub enum WorkerReply {
     /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
     DiscardChangedFileAck {
         changed_files: Vec<ChangedFile>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
+    /// Carries the `ToolbarActionOutcome` (toast + warning/refresh
+    /// flags) the issuing client uses to render its snackbar and
+    /// invalidate the active git-state / changed-files providers.
+    ToolbarActionOutcomeAck {
+        outcome: ToolbarActionOutcome,
     },
 }
 
@@ -487,6 +506,19 @@ pub enum AgentProvider {
     RovoDev,
     Forge,
     Shell,
+}
+
+/// Lossy wire projection of
+/// `core::git_actions::ToolbarActionOutcome`. Same field shape as the
+/// FRB-side `ToolbarActionOutcomeDto`; `warning` distinguishes the
+/// snackbar palette and `refresh_git_state` tells the issuing client
+/// to invalidate the active changed-files / git-state providers
+/// after the call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolbarActionOutcome {
+    pub toast_message: String,
+    pub warning: bool,
+    pub refresh_git_state: bool,
 }
 
 /// Lossy wire projection of `core::project_store::ChangedFile`.

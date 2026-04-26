@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -94,6 +94,14 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// variant carries no data the client needs to wait on, so it
   /// uses a fresh request_id but no caller correlates against it.
   Future<void> resize({required int cols, required int rows});
+
+  /// `another-one-ojm.5` — issue a `Control::RunToolbarGitAction`
+  /// frame.
+  Future<void> runToolbarGitAction({
+    required BigInt requestId,
+    required String projectId,
+    required String actionId,
+  });
 
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
@@ -412,6 +420,39 @@ class TaskSummary {
           targetProjectId == other.targetProjectId;
 }
 
+/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
+/// The titlebar surfaces `toast_message` as a snackbar (warning
+/// palette when `warning` is true) and uses `refresh_git_state` to
+/// decide whether to invalidate the active changed-files / git-state
+/// providers after the call returns. Field-for-field compatible with
+/// the FRB-side `ToolbarActionOutcomeDto` so call sites that hand
+/// the outcome to UI code can use either type interchangeably as
+/// migration progresses.
+class ToolbarActionOutcome {
+  final String toastMessage;
+  final bool warning;
+  final bool refreshGitState;
+
+  const ToolbarActionOutcome({
+    required this.toastMessage,
+    required this.warning,
+    required this.refreshGitState,
+  });
+
+  @override
+  int get hashCode =>
+      toastMessage.hashCode ^ warning.hashCode ^ refreshGitState.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ToolbarActionOutcome &&
+          runtimeType == other.runtimeType &&
+          toastMessage == other.toastMessage &&
+          warning == other.warning &&
+          refreshGitState == other.refreshGitState;
+}
+
 @freezed
 sealed class WorkerReply with _$WorkerReply {
   const WorkerReply._();
@@ -463,6 +504,13 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.discardChangedFileAck({
     required List<ChangedFile> changedFiles,
   }) = WorkerReply_DiscardChangedFileAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
+  /// Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
+  const factory WorkerReply.toolbarActionOutcomeAck({
+    required ToolbarActionOutcome outcome,
+  }) = WorkerReply_ToolbarActionOutcomeAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

@@ -165,6 +165,12 @@ enum Control {
         untracked: bool,
         original_path: Option<String>,
     },
+    /// `another-one-ojm.5` — run one of the titlebar git actions.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::RunToolbarGitAction`.
+    RunToolbarGitAction {
+        project_id: String,
+        action_id: String,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -212,6 +218,10 @@ pub enum WorkerReply {
     UnstageAllChangesAck { changed_files: Vec<ChangedFile> },
     /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
     DiscardChangedFileAck { changed_files: Vec<ChangedFile> },
+    /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
+    /// Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
+    ToolbarActionOutcomeAck { outcome: ToolbarActionOutcome },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -343,6 +353,21 @@ pub enum AgentProvider {
 
 // `PullRequestInfo` + `PullRequestState` removed with the dead
 // `WorkerReply::PullRequestStatus` variant on the daemon side.
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
+/// The titlebar surfaces `toast_message` as a snackbar (warning
+/// palette when `warning` is true) and uses `refresh_git_state` to
+/// decide whether to invalidate the active changed-files / git-state
+/// providers after the call returns. Field-for-field compatible with
+/// the FRB-side `ToolbarActionOutcomeDto` so call sites that hand
+/// the outcome to UI code can use either type interchangeably as
+/// migration progresses.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ToolbarActionOutcome {
+    pub toast_message: String,
+    pub warning: bool,
+    pub refresh_git_state: bool,
+}
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ChangedFile`. Carries the
 /// post-mutation snapshot returned by `StageChangedFileAck` (and
@@ -1001,6 +1026,24 @@ impl IrohSession {
                 path,
                 untracked,
                 original_path,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::RunToolbarGitAction`
+    /// frame.
+    pub async fn run_toolbar_git_action(
+        &self,
+        request_id: u64,
+        project_id: String,
+        action_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::RunToolbarGitAction {
+                project_id,
+                action_id,
             },
         )
         .await

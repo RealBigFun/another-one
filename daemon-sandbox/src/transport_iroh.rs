@@ -594,6 +594,27 @@ async fn handle_control(
                 }
             }
         }
+        Control::RunToolbarGitAction {
+            project_id,
+            action_id,
+        } => {
+            let outcome = registry
+                .run_toolbar_git_action(&project_id, &action_id)
+                .await;
+            match outcome {
+                Ok(outcome) => {
+                    let reply = WorkerReply::ToolbarActionOutcomeAck { outcome };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
     }
     Ok(())
 }
