@@ -3180,7 +3180,12 @@ pub enum PullRequestStateDto {
 /// FRB-friendly mirror of
 /// [`another_one_core::git_actions::ProjectPagePullRequest`]. One
 /// entry per row in the project page's Open PRs section.
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` are derived so the iroh wire's
+/// `WorkerReply::ProjectPullRequestsAck` payload can reuse this
+/// struct directly. Same parity-via-single-source-of-truth move as
+/// `PullRequestStatusDto` / `CheckDto`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectPagePullRequestDto {
     pub number: u64,
     pub url: String,

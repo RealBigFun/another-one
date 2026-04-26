@@ -55,14 +55,15 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,TResult Function( WorkerReply_ProjectPullRequestsAck value)?  projectPullRequestsAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
 return err(_that);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
 return pullRequestStatusAck(_that);case WorkerReply_PullRequestChecksAck() when pullRequestChecksAck != null:
-return pullRequestChecksAck(_that);case _:
+return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck() when projectPullRequestsAck != null:
+return projectPullRequestsAck(_that);case _:
   return orElse();
 
 }
@@ -80,14 +81,15 @@ return pullRequestChecksAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_PullRequestStatusAck value)  pullRequestStatusAck,required TResult Function( WorkerReply_PullRequestChecksAck value)  pullRequestChecksAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_PullRequestStatusAck value)  pullRequestStatusAck,required TResult Function( WorkerReply_PullRequestChecksAck value)  pullRequestChecksAck,required TResult Function( WorkerReply_ProjectPullRequestsAck value)  projectPullRequestsAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that);case WorkerReply_Err():
 return err(_that);case WorkerReply_PullRequestStatusAck():
 return pullRequestStatusAck(_that);case WorkerReply_PullRequestChecksAck():
-return pullRequestChecksAck(_that);}
+return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck():
+return projectPullRequestsAck(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -101,14 +103,15 @@ return pullRequestChecksAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult? Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult? Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,TResult? Function( WorkerReply_ProjectPullRequestsAck value)?  projectPullRequestsAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
 return err(_that);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
 return pullRequestStatusAck(_that);case WorkerReply_PullRequestChecksAck() when pullRequestChecksAck != null:
-return pullRequestChecksAck(_that);case _:
+return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck() when projectPullRequestsAck != null:
+return projectPullRequestsAck(_that);case _:
   return null;
 
 }
@@ -125,13 +128,14 @@ return pullRequestChecksAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult Function( List<CheckDto>? checks)?  pullRequestChecksAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
 return err(_that.message,_that.kind);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
 return pullRequestStatusAck(_that.status);case WorkerReply_PullRequestChecksAck() when pullRequestChecksAck != null:
-return pullRequestChecksAck(_that.checks);case _:
+return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAck() when projectPullRequestsAck != null:
+return projectPullRequestsAck(_that.prs);case _:
   return orElse();
 
 }
@@ -149,13 +153,14 @@ return pullRequestChecksAck(_that.checks);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( PullRequestStatusDto? status)  pullRequestStatusAck,required TResult Function( List<CheckDto>? checks)  pullRequestChecksAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( PullRequestStatusDto? status)  pullRequestStatusAck,required TResult Function( List<CheckDto>? checks)  pullRequestChecksAck,required TResult Function( List<ProjectPagePullRequestDto>? prs)  projectPullRequestsAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
 return err(_that.message,_that.kind);case WorkerReply_PullRequestStatusAck():
 return pullRequestStatusAck(_that.status);case WorkerReply_PullRequestChecksAck():
-return pullRequestChecksAck(_that.checks);}
+return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAck():
+return projectPullRequestsAck(_that.prs);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -169,13 +174,14 @@ return pullRequestChecksAck(_that.checks);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult? Function( List<CheckDto>? checks)?  pullRequestChecksAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult? Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult? Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
 return err(_that.message,_that.kind);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
 return pullRequestStatusAck(_that.status);case WorkerReply_PullRequestChecksAck() when pullRequestChecksAck != null:
-return pullRequestChecksAck(_that.checks);case _:
+return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAck() when projectPullRequestsAck != null:
+return projectPullRequestsAck(_that.prs);case _:
   return null;
 
 }
@@ -457,6 +463,80 @@ class _$WorkerReply_PullRequestChecksAckCopyWithImpl<$Res>
   return _then(WorkerReply_PullRequestChecksAck(
 checks: freezed == checks ? _self._checks : checks // ignore: cast_nullable_to_non_nullable
 as List<CheckDto>?,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_ProjectPullRequestsAck extends WorkerReply {
+  const WorkerReply_ProjectPullRequestsAck({final  List<ProjectPagePullRequestDto>? prs}): _prs = prs,super._();
+  
+
+ final  List<ProjectPagePullRequestDto>? _prs;
+ List<ProjectPagePullRequestDto>? get prs {
+  final value = _prs;
+  if (value == null) return null;
+  if (_prs is EqualUnmodifiableListView) return _prs;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(value);
+}
+
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_ProjectPullRequestsAckCopyWith<WorkerReply_ProjectPullRequestsAck> get copyWith => _$WorkerReply_ProjectPullRequestsAckCopyWithImpl<WorkerReply_ProjectPullRequestsAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ProjectPullRequestsAck&&const DeepCollectionEquality().equals(other._prs, _prs));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_prs));
+
+@override
+String toString() {
+  return 'WorkerReply.projectPullRequestsAck(prs: $prs)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_ProjectPullRequestsAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_ProjectPullRequestsAckCopyWith(WorkerReply_ProjectPullRequestsAck value, $Res Function(WorkerReply_ProjectPullRequestsAck) _then) = _$WorkerReply_ProjectPullRequestsAckCopyWithImpl;
+@useResult
+$Res call({
+ List<ProjectPagePullRequestDto>? prs
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_ProjectPullRequestsAckCopyWithImpl<$Res>
+    implements $WorkerReply_ProjectPullRequestsAckCopyWith<$Res> {
+  _$WorkerReply_ProjectPullRequestsAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_ProjectPullRequestsAck _self;
+  final $Res Function(WorkerReply_ProjectPullRequestsAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? prs = freezed,}) {
+  return _then(WorkerReply_ProjectPullRequestsAck(
+prs: freezed == prs ? _self._prs : prs // ignore: cast_nullable_to_non_nullable
+as List<ProjectPagePullRequestDto>?,
   ));
 }
 

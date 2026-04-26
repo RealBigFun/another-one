@@ -379,16 +379,18 @@ abstract class DaemonConnection {
   /// plus an optional free-text `query` (GitHub search syntax).
   /// Returns `null` for unknown project ids; throws when gh CLI
   /// fails (CLI missing, auth, network).
+  ///
+  /// Both transports implement this against their respective code
+  /// paths: `LocalTransport` calls
+  /// `LocalSession::find_project_pull_requests` directly;
+  /// `IrohTransport` issues `Control::FindProjectPullRequests` and
+  /// dispatches the `WorkerReply::ProjectPullRequestsAck` reply
+  /// through its completer table (`another-one-ojm.6`).
   Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
     required String projectId,
     required int filterIndex,
     required String query,
-  }) {
-    throw UnimplementedError(
-      'findProjectPullRequests: requires Control::FindProjectPullRequests '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Spawn a review task targeting a specific PR. Clones the PR's
   /// head branch into a worktree, prepares the project, inserts the

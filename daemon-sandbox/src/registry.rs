@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{Check, ProjectSummary, PullRequestStatus};
+use crate::frame::{Check, ProjectPagePullRequest, ProjectSummary, PullRequestStatus};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -191,6 +191,27 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         &self,
         _project_id: &str,
     ) -> Result<Option<Vec<Check>>, String> {
+        Ok(None)
+    }
+
+    /// Fetch open pull requests for `project_id` filtered by
+    /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
+    /// 3=draft) plus an optional free-text `query`. `Ok(None)`
+    /// means "unknown project id" so the UI can render its empty
+    /// state; `Err(_)` is reserved for gh CLI / auth / network
+    /// failures (surfaced upstream as
+    /// [`crate::frame::WorkerReply::Err`]).
+    ///
+    /// Default impl returns `Ok(None)` so the sandbox keeps its
+    /// in-memory shape. The bridge override delegates to
+    /// `another_one_core::git_actions::find_project_pull_requests`
+    /// (which shells out to `gh pr list`).
+    fn find_project_pull_requests(
+        &self,
+        _project_id: &str,
+        _filter_index: u32,
+        _query: &str,
+    ) -> Result<Option<Vec<ProjectPagePullRequest>>, String> {
         Ok(None)
     }
 }

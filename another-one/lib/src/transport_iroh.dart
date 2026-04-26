@@ -11,7 +11,8 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
-import 'rust/api/local_session.dart' show CheckDto, PullRequestStatusDto;
+import 'rust/api/local_session.dart'
+    show CheckDto, ProjectPagePullRequestDto, PullRequestStatusDto;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -309,6 +310,42 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       WorkerReply_Err(:final message) => throw StateError(message),
       _ => throw StateError(
         'unexpected WorkerReply for readPullRequestChecks: $reply',
+      ),
+    };
+  }
+
+  /// Open pull requests for `projectId` filtered by `filterIndex`
+  /// (0=all, 1=needs my review, 2=author:@me, 3=draft) plus an
+  /// optional free-text `query`. Returns `null` for unknown
+  /// projects; throws on `WorkerReply::Err` (gh CLI / auth /
+  /// network).
+  ///
+  /// Routes through [_sendControlAndAwait] so the matching
+  /// `ProjectPullRequestsAck` reply is dispatched against this
+  /// session's completer table.
+  @override
+  Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  }) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.findProjectPullRequests(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+        filterIndex: filterIndex,
+        query: query,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_ProjectPullRequestsAck(:final prs) => prs,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+        'unexpected WorkerReply for findProjectPullRequests: $reply',
       ),
     };
   }

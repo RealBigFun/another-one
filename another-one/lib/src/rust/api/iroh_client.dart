@@ -59,6 +59,16 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab();
 
+  /// Issue [`Control::FindProjectPullRequests`] under `request_id`.
+  /// The matching [`WorkerReply::ProjectPullRequestsAck`] (or
+  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`.
+  Future<void> findProjectPullRequests({
+    required BigInt requestId,
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  });
+
   /// Issue [`Control::FindPullRequestStatus`] under `request_id`.
   /// The matching [`WorkerReply::PullRequestStatusAck`] (or
   /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
@@ -374,6 +384,14 @@ sealed class WorkerReply with _$WorkerReply {
   /// single Dart class regardless of transport.
   const factory WorkerReply.pullRequestChecksAck({List<CheckDto>? checks}) =
       WorkerReply_PullRequestChecksAck;
+
+  /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
+  /// covers the unknown-project case. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectPullRequestsAck`.
+  /// Reuses `local_session::ProjectPagePullRequestDto` directly.
+  const factory WorkerReply.projectPullRequestsAck({
+    List<ProjectPagePullRequestDto>? prs,
+  }) = WorkerReply_ProjectPullRequestsAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

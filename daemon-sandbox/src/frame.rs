@@ -173,6 +173,18 @@ pub enum Control {
     /// come back as [`WorkerReply::Err`] so the UI can surface a
     /// toast rather than rendering a silent empty state.
     ReadPullRequestChecks { project_id: String },
+    /// Fetch open pull requests for `project_id` filtered by
+    /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
+    /// 3=draft) plus an optional free-text `query` (GitHub search
+    /// syntax). Powers the project page's Open PRs section. Reply
+    /// variant is [`WorkerReply::ProjectPullRequestsAck`]; `prs:
+    /// None` covers the unknown-project case. gh CLI / auth /
+    /// network failures arrive as [`WorkerReply::Err`].
+    FindProjectPullRequests {
+        project_id: String,
+        filter_index: u32,
+        query: String,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -295,6 +307,12 @@ pub enum WorkerReply {
     ///   * `None` — no PR for the branch, or unknown project id.
     /// gh CLI / network failures come back as [`WorkerReply::Err`].
     PullRequestChecksAck { checks: Option<Vec<Check>> },
+    /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
+    /// covers the unknown-project case; gh CLI / auth / network
+    /// failures arrive as [`WorkerReply::Err`].
+    ProjectPullRequestsAck {
+        prs: Option<Vec<ProjectPagePullRequest>>,
+    },
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —
@@ -474,6 +492,27 @@ pub enum CheckBucket {
     Pending,
     Skipping,
     Cancel,
+}
+
+/// Lossy wire projection of `core::git_actions::ProjectPagePullRequest`.
+/// One entry per row in the project page's Open PRs section.
+/// `review_required` / `review_requested_to_me` / `created_by_me`
+/// are pre-derived on the daemon so mobile doesn't need to
+/// re-implement the filter-index logic that gates each row's chip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectPagePullRequest {
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+    pub branch: String,
+    pub author: String,
+    pub lines_added: i32,
+    pub lines_removed: i32,
+    pub draft: bool,
+    pub review_required: bool,
+    pub review_requested_to_me: bool,
+    pub created_by_me: bool,
+    pub state: PullRequestState,
 }
 
 /// Mirror of `core::agents::AgentProviderKind`. Wire-serialised as

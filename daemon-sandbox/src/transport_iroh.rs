@@ -520,6 +520,27 @@ async fn handle_control(
             };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::FindProjectPullRequests {
+            project_id,
+            filter_index,
+            query,
+        } => {
+            // Same Ok/Err split as the sibling PR readers above.
+            // `Ok(None)` covers unknown-project; gh CLI / auth /
+            // network errors land as WorkerReply::Err.
+            let reply = match registry.find_project_pull_requests(
+                &project_id,
+                filter_index,
+                &query,
+            ) {
+                Ok(prs) => WorkerReply::ProjectPullRequestsAck { prs },
+                Err(message) => WorkerReply::Err {
+                    message,
+                    kind: ErrKind::Internal,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

@@ -144,6 +144,15 @@ enum Control {
     /// variant is [`WorkerReply::PullRequestChecksAck`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadPullRequestChecks`.
     ReadPullRequestChecks { project_id: String },
+    /// Fetch open pull requests for `project_id` filtered by
+    /// `filter_index` plus an optional free-text `query`. Reply
+    /// variant is [`WorkerReply::ProjectPullRequestsAck`]. Mirror
+    /// of `daemon-sandbox/src/frame.rs::Control::FindProjectPullRequests`.
+    FindProjectPullRequests {
+        project_id: String,
+        filter_index: u32,
+        query: String,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -192,6 +201,13 @@ pub enum WorkerReply {
     /// single Dart class regardless of transport.
     PullRequestChecksAck {
         checks: Option<Vec<crate::api::local_session::CheckDto>>,
+    },
+    /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
+    /// covers the unknown-project case. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectPullRequestsAck`.
+    /// Reuses `local_session::ProjectPagePullRequestDto` directly.
+    ProjectPullRequestsAck {
+        prs: Option<Vec<crate::api::local_session::ProjectPagePullRequestDto>>,
     },
 }
 
@@ -915,6 +931,27 @@ impl IrohSession {
     ) -> anyhow::Result<()> {
         self.send_control(request_id, Control::ReadPullRequestChecks { project_id })
             .await
+    }
+
+    /// Issue [`Control::FindProjectPullRequests`] under `request_id`.
+    /// The matching [`WorkerReply::ProjectPullRequestsAck`] (or
+    /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`.
+    pub async fn find_project_pull_requests(
+        &self,
+        request_id: u64,
+        project_id: String,
+        filter_index: u32,
+        query: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::FindProjectPullRequests {
+                project_id,
+                filter_index,
+                query,
+            },
+        )
+        .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push
