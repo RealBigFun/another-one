@@ -142,3 +142,60 @@ half-deleted while in flight.
   PR follows.
 * Any future variant lands as a trait impl, not as a branch inside
   shared code.
+
+## Mutator state-update contract — inline snapshot in the reply
+
+Foundation task `another-one-ojm.1` locks the wire's mutator reply
+shape. **Mutator replies carry the changed entity inline.** The
+issuing client updates its tree from the reply itself — no separate
+`ListProjects` round-trip, no daemon-side broadcast on every state
+change.
+
+Concretely, every mutator verb introduced in `another-one-ojm.2..8`
+returns a `WorkerReply::*` variant whose payload contains the post-
+mutation snapshot of what changed:
+
+```rust
+// Project mutation (ojm.2)
+WorkerReply::ProjectAdded   { project: ProjectSummary }
+WorkerReply::ProjectRemoved { project_id: String }
+
+// Task mutation (ojm.3)
+WorkerReply::TaskCreated    { task: TaskSummary, project_id: String }
+WorkerReply::TaskRenamed    { task: TaskSummary }
+WorkerReply::TaskRemoved    { task_id: String, project_id: String }
+
+// Git mutation (ojm.5)
+WorkerReply::BranchCreated  { project: ProjectSummary, section_id: String }
+```
+
+The rejected alternative was: mutators return only an `Ack`, and the
+daemon pushes a fresh `WorkerReply::ProjectList { request_id: 0 }` to
+every connected client on every state change.
+
+The choice trades broadcast simplicity for round-trip latency and
+bandwidth, in favour of:
+
+* **Single round-trip per mutation.** A mobile peer on cellular pays
+  the latency cost of every additional round-trip; bundling the
+  result with the reply matters more than the bookkeeping savings of
+  push-based updates.
+* **Issuer-first convergence.** The client that did the mutation is
+  the one most likely to render the result immediately. Other peers
+  can opt into a future `Control::Subscribe { topic }` channel when
+  there's a UX that demands cross-client live state — adding that is
+  purely additive over today's contract. Going the other way
+  (push-based → snapshot-in-reply) would be a wire break.
+* **Lower daemon complexity.** No broadcast bookkeeping, no "which
+  client cares about project X" filter, no fan-out on every git-
+  refresh tick. Each `Control::*` mutator handler emits one reply
+  and is done.
+* **Bandwidth.** Today the typical session is desktop + one paired
+  phone. Pushing a full `ProjectList` snapshot to every peer on
+  every state change is wasted bytes for the 2-peer case.
+
+The push channel (`request_id == 0` reserved by the foundation task)
+exists as the future hatch. When a feature needs it, it lands as an
+opt-in `Control::Subscribe { topic }` verb plus targeted
+`WorkerReply::*` frames keyed `request_id == 0`. YAGNI applies until
+that feature actually exists.

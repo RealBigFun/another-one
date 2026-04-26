@@ -159,6 +159,53 @@ pub enum Control {
     },
 }
 
+// ── Push vs pull contract for state mutations ────────────────────
+//
+// Foundation task `another-one-ojm.1` locks in the **inline-snapshot
+// reply** model (option (a) of the two we considered):
+//
+//   Domain mutator replies — `ProjectAdded`, `TaskRenamed`,
+//   `BranchCreated`, etc. — carry an inline `ProjectSummary`
+//   (or scoped projection of it) so the issuing client updates
+//   its tree from the reply directly. **No** separate
+//   `ListProjects` round-trip is required after a successful
+//   mutation.
+//
+// The rejected alternative (b) was: mutator replies return only an
+// Ack, and the daemon pushes a fresh `WorkerReply::ProjectList` with
+// `request_id == 0` to every connected client on every state change.
+//
+// Why (a):
+//   - Single round-trip per mutation. Mobile-on-cellular cares.
+//   - The mutating client's UI converges first (it gets the snapshot
+//     synchronously with the reply). Other clients can still
+//     subscribe to a separate push channel later — but adding that
+//     subscription is purely additive over (a). Going the other way
+//     (a → b) would be a wire break.
+//   - Bandwidth: today the desktop is the only mutator and the
+//     paired phone is the only other client. Pushing the full
+//     `ProjectList` to every connected client on every state change
+//     is wasted bytes for the typical 2-peer case. (a) limits the
+//     post-mutation traffic to the issuer.
+//   - Simpler daemon: no broadcast bookkeeping, no "which client
+//     cares about project X" filter logic. Each `Control::*` mutator
+//     handler emits one reply and is done.
+//
+// Domain children (`ojm.2..8`) follow this rule:
+//   - Mutator verbs return a `WorkerReply::*` variant whose payload
+//     contains the changed entity (or the full project summary if
+//     the change cascades). Names like
+//     `ProjectAdded { project: ProjectSummary }`,
+//     `TaskRenamed { task: TaskSummary }`.
+//   - Reader verbs return the projection the caller asked for, no
+//     side-effects on other clients.
+//   - If a future feature needs cross-client live updates (e.g.
+//     "phone follows desktop's commit panel in real time"), it
+//     lands as a separate opt-in `Control::Subscribe { topic }`
+//     verb that pushes targeted `WorkerReply::*` frames with
+//     `request_id == 0`. Today nothing in the GPUI desktop's UX
+//     requires that, and YAGNI applies.
+
 /// Worker replies (type=2 frames). Payload is JSON. Daemon → client
 /// only.
 ///
@@ -182,6 +229,8 @@ pub enum Control {
 ///   emit variants the contemporaneous client supports. Track client
 ///   capability out of band (ALPN version bump or a hello frame) when
 ///   we move beyond this slice.
+/// - Mutators carry an inline state snapshot — see the "Push vs
+///   pull" comment block immediately above.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkerReply {
