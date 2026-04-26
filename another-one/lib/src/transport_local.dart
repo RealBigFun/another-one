@@ -760,6 +760,51 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<GitActionScriptsView> readGitActionScripts() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readGitActionScripts: LocalTransport not connected');
+    }
+    return session.readGitActionScripts();
+  }
+
+  @override
+  Future<bool> setGitCommitScript(String script) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setGitCommitScript: LocalTransport not connected');
+    }
+    return session.setGitCommitScript(script: script);
+  }
+
+  @override
+  Future<bool> resetGitCommitScript() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('resetGitCommitScript: LocalTransport not connected');
+    }
+    return session.resetGitCommitScript();
+  }
+
+  @override
+  Future<bool> setGitPrScript(String script) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setGitPrScript: LocalTransport not connected');
+    }
+    return session.setGitPrScript(script: script);
+  }
+
+  @override
+  Future<bool> resetGitPrScript() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('resetGitPrScript: LocalTransport not connected');
+    }
+    return session.resetGitPrScript();
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,

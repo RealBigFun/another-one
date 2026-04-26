@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1494387154;
+  int get rustContentHash => 1428091669;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -284,6 +284,11 @@ abstract class RustLibApi extends BaseApi {
     required LocalSession that,
   });
 
+  Future<GitActionScriptsView>
+  crateApiLocalSessionLocalSessionReadGitActionScripts({
+    required LocalSession that,
+  });
+
   Future<OpenInSettingsView>
   crateApiLocalSessionLocalSessionReadOpenInSettings({
     required LocalSession that,
@@ -333,6 +338,14 @@ abstract class RustLibApi extends BaseApi {
     required String projectId,
   });
 
+  Future<bool> crateApiLocalSessionLocalSessionResetGitCommitScript({
+    required LocalSession that,
+  });
+
+  Future<bool> crateApiLocalSessionLocalSessionResetGitPrScript({
+    required LocalSession that,
+  });
+
   Future<ResolvedProjectBranchSettingsDto?>
   crateApiLocalSessionLocalSessionResolvedBranchSettings({
     required LocalSession that,
@@ -380,6 +393,16 @@ abstract class RustLibApi extends BaseApi {
   Future<bool> crateApiLocalSessionLocalSessionSetDefaultAgent({
     required LocalSession that,
     required String agentId,
+  });
+
+  Future<bool> crateApiLocalSessionLocalSessionSetGitCommitScript({
+    required LocalSession that,
+    required String script,
+  });
+
+  Future<bool> crateApiLocalSessionLocalSessionSetGitPrScript({
+    required LocalSession that,
+    required String script,
   });
 
   Future<void> crateApiLocalSessionLocalSessionSetOpenInAppEnabled({
@@ -1973,6 +1996,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<GitActionScriptsView>
+  crateApiLocalSessionLocalSessionReadGitActionScripts({
+    required LocalSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 37,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_git_action_scripts_view,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta:
+            kCrateApiLocalSessionLocalSessionReadGitActionScriptsConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionReadGitActionScriptsConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_read_git_action_scripts",
+        argNames: ["that"],
+      );
+
+  @override
   Future<OpenInSettingsView>
   crateApiLocalSessionLocalSessionReadOpenInSettings({
     required LocalSession that,
@@ -1988,7 +2050,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 38,
             port: port_,
           );
         },
@@ -2027,7 +2089,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 39,
             port: port_,
           );
         },
@@ -2067,7 +2129,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 40,
             port: port_,
           );
         },
@@ -2108,7 +2170,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 41,
             port: port_,
           );
         },
@@ -2150,7 +2212,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 41,
+            funcId: 42,
             port: port_,
           );
         },
@@ -2189,7 +2251,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 42,
+            funcId: 43,
             port: port_,
           );
         },
@@ -2229,7 +2291,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 43,
+            funcId: 44,
             port: port_,
           );
         },
@@ -2269,7 +2331,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 44,
+            funcId: 45,
             port: port_,
           );
         },
@@ -2307,7 +2369,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 45,
+            funcId: 46,
             port: port_,
           );
         },
@@ -2331,6 +2393,81 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<bool> crateApiLocalSessionLocalSessionResetGitCommitScript({
+    required LocalSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 47,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta:
+            kCrateApiLocalSessionLocalSessionResetGitCommitScriptConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionResetGitCommitScriptConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_reset_git_commit_script",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<bool> crateApiLocalSessionLocalSessionResetGitPrScript({
+    required LocalSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 48,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionResetGitPrScriptConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionResetGitPrScriptConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_reset_git_pr_script",
+        argNames: ["that"],
+      );
+
+  @override
   Future<ResolvedProjectBranchSettingsDto?>
   crateApiLocalSessionLocalSessionResolvedBranchSettings({
     required LocalSession that,
@@ -2348,7 +2485,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 46,
+            funcId: 49,
             port: port_,
           );
         },
@@ -2393,7 +2530,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 47,
+            funcId: 50,
             port: port_,
           );
         },
@@ -2435,7 +2572,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 48,
+            funcId: 51,
             port: port_,
           );
         },
@@ -2479,7 +2616,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 49,
+            funcId: 52,
             port: port_,
           );
         },
@@ -2518,7 +2655,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 50,
+            funcId: 53,
             port: port_,
           );
         },
@@ -2558,7 +2695,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 51,
+            funcId: 54,
             port: port_,
           );
         },
@@ -2598,7 +2735,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 52,
+            funcId: 55,
             port: port_,
           );
         },
@@ -2637,7 +2774,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 53,
+            funcId: 56,
             port: port_,
           );
         },
@@ -2659,6 +2796,83 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<bool> crateApiLocalSessionLocalSessionSetGitCommitScript({
+    required LocalSession that,
+    required String script,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(script, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 57,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionSetGitCommitScriptConstMeta,
+        argValues: [that, script],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionSetGitCommitScriptConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_set_git_commit_script",
+        argNames: ["that", "script"],
+      );
+
+  @override
+  Future<bool> crateApiLocalSessionLocalSessionSetGitPrScript({
+    required LocalSession that,
+    required String script,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(script, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 58,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionSetGitPrScriptConstMeta,
+        argValues: [that, script],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionSetGitPrScriptConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_set_git_pr_script",
+        argNames: ["that", "script"],
+      );
+
+  @override
   Future<void> crateApiLocalSessionLocalSessionSetOpenInAppEnabled({
     required LocalSession that,
     required String appId,
@@ -2677,7 +2891,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 54,
+            funcId: 59,
             port: port_,
           );
         },
@@ -2721,7 +2935,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 55,
+            funcId: 60,
             port: port_,
           );
         },
@@ -2763,7 +2977,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 56,
+            funcId: 61,
             port: port_,
           );
         },
@@ -2801,7 +3015,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 57,
+            funcId: 62,
             port: port_,
           );
         },
@@ -2840,7 +3054,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 58,
+            funcId: 63,
             port: port_,
           );
         },
@@ -2882,7 +3096,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 59,
+            funcId: 64,
             port: port_,
           );
         },
@@ -2931,7 +3145,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 60,
+            funcId: 65,
             port: port_,
           );
         },
@@ -2986,7 +3200,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 61,
+              funcId: 66,
               port: port_,
             );
           },
@@ -3027,7 +3241,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 62,
+              funcId: 67,
               port: port_,
             );
           },
@@ -3071,7 +3285,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 63,
+            funcId: 68,
             port: port_,
           );
         },
@@ -3111,7 +3325,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 64,
+            funcId: 69,
             port: port_,
           );
         },
@@ -3151,7 +3365,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 65,
+            funcId: 70,
             port: port_,
           );
         },
@@ -3194,7 +3408,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 66,
+            funcId: 71,
             port: port_,
           );
         },
@@ -3225,7 +3439,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 67,
+            funcId: 72,
             port: port_,
           );
         },
@@ -3252,7 +3466,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 68,
+            funcId: 73,
             port: port_,
           );
         },
@@ -3288,7 +3502,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 69,
+            funcId: 74,
             port: port_,
           );
         },
@@ -3319,7 +3533,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 70,
+            funcId: 75,
             port: port_,
           );
         },
@@ -3347,7 +3561,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 71,
+            funcId: 76,
             port: port_,
           );
         },
@@ -3374,7 +3588,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 72,
+            funcId: 77,
             port: port_,
           );
         },
@@ -3401,7 +3615,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 73,
+            funcId: 78,
             port: port_,
           );
         },
@@ -3428,7 +3642,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 74,
+            funcId: 79,
             port: port_,
           );
         },
@@ -3456,7 +3670,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 75,
+            funcId: 80,
             port: port_,
           );
         },
@@ -3806,6 +4020,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return EnabledAgentsView(
       agents: dco_decode_list_agent_summary_dto(arr[0]),
       defaultAgentId: dco_decode_opt_String(arr[1]),
+    );
+  }
+
+  @protected
+  GitActionScriptsView dco_decode_git_action_scripts_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return GitActionScriptsView(
+      commitScript: dco_decode_String(arr[0]),
+      commitUsingDefault: dco_decode_bool(arr[1]),
+      prScript: dco_decode_String(arr[2]),
+      prUsingDefault: dco_decode_bool(arr[3]),
     );
   }
 
@@ -4727,6 +4955,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return EnabledAgentsView(
       agents: var_agents,
       defaultAgentId: var_defaultAgentId,
+    );
+  }
+
+  @protected
+  GitActionScriptsView sse_decode_git_action_scripts_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_commitScript = sse_decode_String(deserializer);
+    var var_commitUsingDefault = sse_decode_bool(deserializer);
+    var var_prScript = sse_decode_String(deserializer);
+    var var_prUsingDefault = sse_decode_bool(deserializer);
+    return GitActionScriptsView(
+      commitScript: var_commitScript,
+      commitUsingDefault: var_commitUsingDefault,
+      prScript: var_prScript,
+      prUsingDefault: var_prUsingDefault,
     );
   }
 
@@ -5841,6 +6086,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_agent_summary_dto(self.agents, serializer);
     sse_encode_opt_String(self.defaultAgentId, serializer);
+  }
+
+  @protected
+  void sse_encode_git_action_scripts_view(
+    GitActionScriptsView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.commitScript, serializer);
+    sse_encode_bool(self.commitUsingDefault, serializer);
+    sse_encode_String(self.prScript, serializer);
+    sse_encode_bool(self.prUsingDefault, serializer);
   }
 
   @protected
@@ -7003,6 +7260,15 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
   Future<EnabledAgentsView> readEnabledAgents() => RustLib.instance.api
       .crateApiLocalSessionLocalSessionReadEnabledAgents(that: this);
 
+  /// Snapshot of the Settings → Git Actions page state. Returns
+  /// the user-customised commit + PR scripts if set, plus the
+  /// resolved-current text (built-in default when no override).
+  /// `using_default` reflects whether each script is using the
+  /// built-in template — drives the "Currently using the default
+  /// built-in template." vs "...custom template..." subtitle.
+  Future<GitActionScriptsView> readGitActionScripts() => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionReadGitActionScripts(that: this);
+
   /// Snapshot of every detected Open-In app on this host paired
   /// with its current enabled flag. Drives the Settings → Open
   /// In page (the titlebar dropdown still uses the narrower
@@ -7129,6 +7395,15 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
             projectId: projectId,
           );
 
+  /// Drop the commit-message override and revert to the built-in
+  /// default. Returns whether anything was removed.
+  Future<bool> resetGitCommitScript() => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionResetGitCommitScript(that: this);
+
+  /// Reset the PR script back to the built-in template.
+  Future<bool> resetGitPrScript() => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionResetGitPrScript(that: this);
+
   /// Snapshot the resolved branch settings for `project_id` —
   /// configured + effective values for default and target branch
   /// plus the available branch list for the dropdown.
@@ -7253,6 +7528,23 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
       RustLib.instance.api.crateApiLocalSessionLocalSessionSetDefaultAgent(
         that: this,
         agentId: agentId,
+      );
+
+  /// Set the commit-message generation script. Empty / matching
+  /// the default reverts to the built-in template (matches the
+  /// short-circuit in core).
+  Future<bool> setGitCommitScript({required String script}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionSetGitCommitScript(
+        that: this,
+        script: script,
+      );
+
+  /// Set the PR title/body generation script. Same short-circuit
+  /// rules as `set_git_commit_script`.
+  Future<bool> setGitPrScript({required String script}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionSetGitPrScript(
+        that: this,
+        script: script,
       );
 
   /// Toggle one Open-In app's enabled flag in the user's Settings

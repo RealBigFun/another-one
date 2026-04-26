@@ -156,6 +156,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   EnabledAgentsView dco_decode_enabled_agents_view(dynamic raw);
 
   @protected
+  GitActionScriptsView dco_decode_git_action_scripts_view(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -493,6 +496,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   EnabledAgentsView sse_decode_enabled_agents_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  GitActionScriptsView sse_decode_git_action_scripts_view(
     SseDeserializer deserializer,
   );
 
@@ -910,6 +918,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_enabled_agents_view(
     EnabledAgentsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_git_action_scripts_view(
+    GitActionScriptsView self,
     SseSerializer serializer,
   );
 

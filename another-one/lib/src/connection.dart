@@ -40,6 +40,7 @@ import 'rust/api/local_session.dart'
         ChangedFileDto,
         CheckDto,
         EnabledAgentsView,
+        GitActionScriptsView,
         OpenInSettingsView,
         OpenInState,
         ProjectActionDto,
@@ -708,6 +709,51 @@ abstract class DaemonConnection {
   }) {
     throw UnimplementedError(
       'setOpenInAppEnabled: requires Control::SetOpenInAppEnabled wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  // ── Settings → Git Actions ───────────────────────────────────────
+
+  /// Snapshot of both git-action LLM scripts (commit + PR), with
+  /// the resolved-current text and a per-script "using default"
+  /// flag.
+  Future<GitActionScriptsView> readGitActionScripts() {
+    throw UnimplementedError(
+      'readGitActionScripts: requires Control::ReadGitActionScripts wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Update the commit-message generation script. Empty / matching
+  /// the default reverts to the built-in template.
+  Future<bool> setGitCommitScript(String script) {
+    throw UnimplementedError(
+      'setGitCommitScript: requires Control::SetGitCommitScript wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Reset the commit-message script back to the built-in default.
+  Future<bool> resetGitCommitScript() {
+    throw UnimplementedError(
+      'resetGitCommitScript: requires Control::ResetGitCommitScript wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Update the PR title/body generation script.
+  Future<bool> setGitPrScript(String script) {
+    throw UnimplementedError(
+      'setGitPrScript: requires Control::SetGitPrScript wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Reset the PR script back to the built-in default.
+  Future<bool> resetGitPrScript() {
+    throw UnimplementedError(
+      'resetGitPrScript: requires Control::ResetGitPrScript wire '
       'variant on the iroh transport (not yet implemented).',
     );
   }

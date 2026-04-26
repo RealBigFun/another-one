@@ -1526,6 +1526,119 @@ impl LocalSession {
         Ok(state.project_store.set_default_agent(&agent_id))
     }
 
+    /// Snapshot of the Settings → Git Actions page state. Returns
+    /// the user-customised commit + PR scripts if set, plus the
+    /// resolved-current text (built-in default when no override).
+    /// `using_default` reflects whether each script is using the
+    /// built-in template — drives the "Currently using the default
+    /// built-in template." vs "...custom template..." subtitle.
+    pub async fn read_git_action_scripts(
+        &self,
+    ) -> anyhow::Result<GitActionScriptsView> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "read_git_action_scripts: set_local_registry not called"
+            )
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "read_git_action_scripts: RegistryState mutex poisoned"
+            )
+        })?;
+        let store = &state.project_store;
+        Ok(GitActionScriptsView {
+            commit_script: store.git_commit_generation_script().to_string(),
+            commit_using_default:
+                store.ui.git_commit_generation_script.is_none(),
+            pr_script: store.git_pr_generation_script().to_string(),
+            pr_using_default:
+                store.ui.git_pr_generation_script.is_none(),
+        })
+    }
+
+    /// Set the commit-message generation script. Empty / matching
+    /// the default reverts to the built-in template (matches the
+    /// short-circuit in core).
+    pub async fn set_git_commit_script(
+        &self,
+        script: String,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "set_git_commit_script: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "set_git_commit_script: RegistryState mutex poisoned"
+            )
+        })?;
+        Ok(state
+            .project_store
+            .set_git_commit_generation_script(script))
+    }
+
+    /// Drop the commit-message override and revert to the built-in
+    /// default. Returns whether anything was removed.
+    pub async fn reset_git_commit_script(&self) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "reset_git_commit_script: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "reset_git_commit_script: RegistryState mutex poisoned"
+            )
+        })?;
+        Ok(state.project_store.reset_git_commit_generation_script())
+    }
+
+    /// Set the PR title/body generation script. Same short-circuit
+    /// rules as `set_git_commit_script`.
+    pub async fn set_git_pr_script(
+        &self,
+        script: String,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "set_git_pr_script: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "set_git_pr_script: RegistryState mutex poisoned"
+            )
+        })?;
+        Ok(state.project_store.set_git_pr_generation_script(script))
+    }
+
+    /// Reset the PR script back to the built-in template.
+    pub async fn reset_git_pr_script(&self) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "reset_git_pr_script: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "reset_git_pr_script: RegistryState mutex poisoned"
+            )
+        })?;
+        // Mirrors core's reset which only knows the commit one;
+        // do the equivalent inline for PR.
+        let removed = state
+            .project_store
+            .ui
+            .git_pr_generation_script
+            .take()
+            .is_some();
+        if removed {
+            state.project_store.save();
+        }
+        Ok(removed)
+    }
+
     /// Snapshot of every detected Open-In app on this host paired
     /// with its current enabled flag. Drives the Settings → Open
     /// In page (the titlebar dropdown still uses the narrower
@@ -3253,6 +3366,19 @@ pub struct OpenInSettingsView {
     /// canonical order. Empty when no supported app is on the
     /// host's PATH / installed.
     pub available_apps: Vec<OpenInAppSettingsRow>,
+}
+
+/// Snapshot returned by [`LocalSession::read_git_action_scripts`].
+/// Carries the resolved-current text for both the commit and PR
+/// scripts (built-in default when there's no override) plus a
+/// `using_default` flag per script so the UI can flip the
+/// subtitle copy without re-checking.
+#[derive(Debug, Clone)]
+pub struct GitActionScriptsView {
+    pub commit_script: String,
+    pub commit_using_default: bool,
+    pub pr_script: String,
+    pub pr_using_default: bool,
 }
 
 fn agent_def_to_dto(

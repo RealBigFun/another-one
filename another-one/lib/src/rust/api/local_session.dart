@@ -11,7 +11,7 @@ part 'local_session.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `agent_def_to_dto`, `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`, `submit_direct_task`, `submit_worktree_task`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -319,6 +319,14 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// in the canonical AGENTS order — UI renders it as is.
   Future<EnabledAgentsView> readEnabledAgents();
 
+  /// Snapshot of the Settings → Git Actions page state. Returns
+  /// the user-customised commit + PR scripts if set, plus the
+  /// resolved-current text (built-in default when no override).
+  /// `using_default` reflects whether each script is using the
+  /// built-in template — drives the "Currently using the default
+  /// built-in template." vs "...custom template..." subtitle.
+  Future<GitActionScriptsView> readGitActionScripts();
+
   /// Snapshot of every detected Open-In app on this host paired
   /// with its current enabled flag. Drives the Settings → Open
   /// In page (the titlebar dropdown still uses the narrower
@@ -405,6 +413,13 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// `"commit"` in that case, matching GPUI's
   /// `resolve_idle_primary_git_action` fallback.
   Future<String?> repoDefaultCommitAction({required String projectId});
+
+  /// Drop the commit-message override and revert to the built-in
+  /// default. Returns whether anything was removed.
+  Future<bool> resetGitCommitScript();
+
+  /// Reset the PR script back to the built-in template.
+  Future<bool> resetGitPrScript();
 
   /// Snapshot the resolved branch settings for `project_id` —
   /// configured + effective values for default and target branch
@@ -499,6 +514,15 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// Mark `agent_id` as the default agent. Mirrors GPUI's
   /// `set_default_agent`. Returns whether anything changed.
   Future<bool> setDefaultAgent({required String agentId});
+
+  /// Set the commit-message generation script. Empty / matching
+  /// the default reverts to the built-in template (matches the
+  /// short-circuit in core).
+  Future<bool> setGitCommitScript({required String script});
+
+  /// Set the PR title/body generation script. Same short-circuit
+  /// rules as `set_git_commit_script`.
+  Future<bool> setGitPrScript({required String script});
 
   /// Toggle one Open-In app's enabled flag in the user's Settings
   /// → Open In page. Mirrors GPUI's `set_open_in_app_enabled`.
@@ -1019,6 +1043,42 @@ class EnabledAgentsView {
           runtimeType == other.runtimeType &&
           agents == other.agents &&
           defaultAgentId == other.defaultAgentId;
+}
+
+/// Snapshot returned by [`LocalSession::read_git_action_scripts`].
+/// Carries the resolved-current text for both the commit and PR
+/// scripts (built-in default when there's no override) plus a
+/// `using_default` flag per script so the UI can flip the
+/// subtitle copy without re-checking.
+class GitActionScriptsView {
+  final String commitScript;
+  final bool commitUsingDefault;
+  final String prScript;
+  final bool prUsingDefault;
+
+  const GitActionScriptsView({
+    required this.commitScript,
+    required this.commitUsingDefault,
+    required this.prScript,
+    required this.prUsingDefault,
+  });
+
+  @override
+  int get hashCode =>
+      commitScript.hashCode ^
+      commitUsingDefault.hashCode ^
+      prScript.hashCode ^
+      prUsingDefault.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is GitActionScriptsView &&
+          runtimeType == other.runtimeType &&
+          commitScript == other.commitScript &&
+          commitUsingDefault == other.commitUsingDefault &&
+          prScript == other.prScript &&
+          prUsingDefault == other.prUsingDefault;
 }
 
 /// FRB-friendly mirror of [`OpenInAppKind`] with the
