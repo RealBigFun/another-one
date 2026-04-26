@@ -96,6 +96,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
 
   @protected
+  RecentCommitsView dco_decode_box_autoadd_recent_commits_view(dynamic raw);
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -105,6 +108,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChangedFileDto dco_decode_changed_file_dto(dynamic raw);
 
   @protected
+  CommitDto dco_decode_commit_dto(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -112,6 +118,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
+
+  @protected
+  List<CommitDto> dco_decode_list_commit_dto(dynamic raw);
 
   @protected
   List<OpenInAppDto> dco_decode_list_open_in_app_dto(dynamic raw);
@@ -147,6 +156,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PairingInfo? dco_decode_opt_box_autoadd_pairing_info(dynamic raw);
 
   @protected
+  RecentCommitsView? dco_decode_opt_box_autoadd_recent_commits_view(
+    dynamic raw,
+  );
+
+  @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -162,6 +176,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ProjectSummary dco_decode_project_summary(dynamic raw);
 
   @protected
+  RecentCommitsView dco_decode_recent_commits_view(dynamic raw);
+
+  @protected
   ResourceSample dco_decode_resource_sample(dynamic raw);
 
   @protected
@@ -172,6 +189,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int dco_decode_u_16(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
 
   @protected
   BigInt dco_decode_u_64(dynamic raw);
@@ -255,6 +275,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PairingInfo sse_decode_box_autoadd_pairing_info(SseDeserializer deserializer);
 
   @protected
+  RecentCommitsView sse_decode_box_autoadd_recent_commits_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
@@ -262,6 +287,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer);
+
+  @protected
+  CommitDto sse_decode_commit_dto(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -273,6 +301,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ChangedFileDto> sse_decode_list_changed_file_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<CommitDto> sse_decode_list_commit_dto(SseDeserializer deserializer);
 
   @protected
   List<OpenInAppDto> sse_decode_list_open_in_app_dto(
@@ -316,6 +347,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RecentCommitsView? sse_decode_opt_box_autoadd_recent_commits_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
@@ -333,6 +369,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ProjectSummary sse_decode_project_summary(SseDeserializer deserializer);
 
   @protected
+  RecentCommitsView sse_decode_recent_commits_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ResourceSample sse_decode_resource_sample(SseDeserializer deserializer);
 
   @protected
@@ -343,6 +384,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
   BigInt sse_decode_u_64(SseDeserializer deserializer);
@@ -441,6 +485,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_recent_commits_view(
+    RecentCommitsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
@@ -453,6 +503,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_commit_dto(CommitDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
@@ -461,6 +514,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_changed_file_dto(
     List<ChangedFileDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_commit_dto(
+    List<CommitDto> self,
     SseSerializer serializer,
   );
 
@@ -519,6 +578,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_recent_commits_view(
+    RecentCommitsView? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
@@ -540,6 +605,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_recent_commits_view(
+    RecentCommitsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_resource_sample(
     ResourceSample self,
     SseSerializer serializer,
@@ -553,6 +624,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_64(BigInt self, SseSerializer serializer);

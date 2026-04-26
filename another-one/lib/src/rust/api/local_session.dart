@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `changed_file_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `changed_file_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -146,6 +146,22 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// (`spawn_github_link_lookup` in `core::git_service`).
   Future<String?> readProjectGithubUrl({required String projectId});
 
+  /// Recent commits on `project_id`'s current branch, capped at
+  /// `limit` entries. Powers the right sidebar's Commits pane —
+  /// reads through
+  /// [`another_one_core::project_store::read_project_branch_commit_state`]
+  /// inside `spawn_blocking` so the FRB caller's tokio runtime
+  /// stays free.
+  ///
+  /// `limit` mirrors GPUI's `commit_page_size_for_project` — the
+  /// caller picks the page size; here we don't enforce a default
+  /// so the UI can choose. Returns `Ok(None)` for unknown
+  /// projects (UI shows the empty state instead of an error).
+  Future<RecentCommitsView?> readRecentCommits({
+    required String projectId,
+    required int limit,
+  });
+
   /// Remove a project from the embedded daemon's store. Cascades
   /// to the project's tasks + terminal sections (see
   /// [`another_one_core::project_store::ProjectStore::remove_project`]).
@@ -269,6 +285,56 @@ class ChangedFileDto {
           untracked == other.untracked;
 }
 
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::BranchCommit`]. Carries the
+/// pre-computed relative authored timestamp ("3 hours ago") so the
+/// UI doesn't have to round-trip through chrono on every redraw.
+class CommitDto {
+  /// Full SHA — used as the row id and for the diff lookup.
+  final String id;
+
+  /// 7-char abbreviated SHA shown next to the message.
+  final String shortId;
+
+  /// First line of the commit message.
+  final String subject;
+  final String authorName;
+
+  /// Pre-formatted "X minutes ago"-style label. Computed Rust-side
+  /// because chrono is already a dep there; doing it Dart-side
+  /// would mean shipping a humanize-duration package for one
+  /// caller. This is borderline display logic but the read is
+  /// one-shot per pane open so the FFI cost is a wash.
+  final String authoredRelative;
+
+  const CommitDto({
+    required this.id,
+    required this.shortId,
+    required this.subject,
+    required this.authorName,
+    required this.authoredRelative,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      shortId.hashCode ^
+      subject.hashCode ^
+      authorName.hashCode ^
+      authoredRelative.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CommitDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          shortId == other.shortId &&
+          subject == other.subject &&
+          authorName == other.authorName &&
+          authoredRelative == other.authoredRelative;
+}
+
 /// FRB-friendly mirror of [`OpenInAppKind`] with the
 /// pre-computed display strings. Lives here (not in core) because
 /// FRB's binding generator only walks bridge crate types — we'd
@@ -337,4 +403,34 @@ class OpenInState {
           runtimeType == other.runtimeType &&
           enabledApps == other.enabledApps &&
           preferredAppId == other.preferredAppId;
+}
+
+/// FRB-friendly snapshot of the right sidebar's Commits pane data.
+class RecentCommitsView {
+  /// Current branch — shown as the pane subtitle in GPUI.
+  final String? currentBranch;
+
+  /// True when more commits exist past the requested `limit`. UI
+  /// uses this to render a "Load more" affordance.
+  final bool hasMore;
+  final List<CommitDto> commits;
+
+  const RecentCommitsView({
+    this.currentBranch,
+    required this.hasMore,
+    required this.commits,
+  });
+
+  @override
+  int get hashCode =>
+      currentBranch.hashCode ^ hasMore.hashCode ^ commits.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RecentCommitsView &&
+          runtimeType == other.runtimeType &&
+          currentBranch == other.currentBranch &&
+          hasMore == other.hasMore &&
+          commits == other.commits;
 }

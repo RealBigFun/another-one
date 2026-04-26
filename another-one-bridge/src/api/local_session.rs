@@ -512,6 +512,58 @@ impl LocalSession {
         Ok(Some(files))
     }
 
+    /// Recent commits on `project_id`'s current branch, capped at
+    /// `limit` entries. Powers the right sidebar's Commits pane —
+    /// reads through
+    /// [`another_one_core::project_store::read_project_branch_commit_state`]
+    /// inside `spawn_blocking` so the FRB caller's tokio runtime
+    /// stays free.
+    ///
+    /// `limit` mirrors GPUI's `commit_page_size_for_project` — the
+    /// caller picks the page size; here we don't enforce a default
+    /// so the UI can choose. Returns `Ok(None)` for unknown
+    /// projects (UI shows the empty state instead of an error).
+    pub async fn read_recent_commits(
+        &self,
+        project_id: String,
+        limit: u32,
+    ) -> anyhow::Result<Option<RecentCommitsView>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("read_recent_commits: set_local_registry not called")
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "read_recent_commits: RegistryState mutex poisoned"
+                )
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        };
+        let Some(project_path) = project_path else {
+            return Ok(None);
+        };
+        let limit = limit as usize;
+        let result = tokio::task::spawn_blocking(move || {
+            another_one_core::project_store::read_project_branch_commit_state(
+                &project_path,
+                limit,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("read_recent_commits join: {e}"))?
+        .map_err(|e| anyhow::anyhow!("read_recent_commits: {e}"))?;
+        Ok(Some(RecentCommitsView {
+            current_branch: result.current_branch,
+            has_more: result.has_more,
+            commits: result.commits.into_iter().map(commit_to_dto).collect(),
+        }))
+    }
+
     /// Resolve the GitHub remote URL for a project by shelling out to
     /// `git remote get-url origin` and normalising the result through
     /// [`another_one_core::git_actions::find_github_repo_url`].
@@ -992,6 +1044,48 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         AgentProviderKind::RovoDev => AgentProvider::RovoDev,
         AgentProviderKind::Forge => AgentProvider::Forge,
     }
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::BranchCommit`]. Carries the
+/// pre-computed relative authored timestamp ("3 hours ago") so the
+/// UI doesn't have to round-trip through chrono on every redraw.
+#[derive(Debug, Clone)]
+pub struct CommitDto {
+    /// Full SHA — used as the row id and for the diff lookup.
+    pub id: String,
+    /// 7-char abbreviated SHA shown next to the message.
+    pub short_id: String,
+    /// First line of the commit message.
+    pub subject: String,
+    pub author_name: String,
+    /// Pre-formatted "X minutes ago"-style label. Computed Rust-side
+    /// because chrono is already a dep there; doing it Dart-side
+    /// would mean shipping a humanize-duration package for one
+    /// caller. This is borderline display logic but the read is
+    /// one-shot per pane open so the FFI cost is a wash.
+    pub authored_relative: String,
+}
+
+fn commit_to_dto(c: another_one_core::project_store::BranchCommit) -> CommitDto {
+    CommitDto {
+        id: c.id,
+        short_id: c.short_id,
+        subject: c.subject,
+        author_name: c.author_name,
+        authored_relative: c.authored_relative,
+    }
+}
+
+/// FRB-friendly snapshot of the right sidebar's Commits pane data.
+#[derive(Debug, Clone)]
+pub struct RecentCommitsView {
+    /// Current branch — shown as the pane subtitle in GPUI.
+    pub current_branch: Option<String>,
+    /// True when more commits exist past the requested `limit`. UI
+    /// uses this to render a "Load more" affordance.
+    pub has_more: bool,
+    pub commits: Vec<CommitDto>,
 }
 
 /// FRB-friendly mirror of

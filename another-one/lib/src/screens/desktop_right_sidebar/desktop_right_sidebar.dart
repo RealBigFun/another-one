@@ -5,16 +5,16 @@
 // Checks. Body is a per-tab pane.
 //
 // Status:
-//   - Changes: rendered as a flat list of files with status glyph
-//     + path + per-file +N/-N badges. Reads through
-//     `changedFilesProvider`, which calls into LocalSession's
-//     `read_changed_files` on the daemon side. Stage/unstage
-//     actions and the Staged vs Uncommitted grouping that GPUI
-//     paints as section headers haven't landed yet — the bridge
-//     surface for `ChangedFilesGitMutation` lands in a follow-up.
-//   - Commits / Checks: still empty-state placeholders. They need
-//     `LocalSession.recent_commits` and `LocalSession.check_runs`
-//     respectively.
+//   - Changes: flat list of files with status glyph + path + per-
+//     file +N/-N badges via `read_changed_files`. Stage/unstage
+//     actions and the Staged-vs-Uncommitted section grouping
+//     haven't landed — that needs `ChangedFilesGitMutation`.
+//   - Commits: flat list of recent commits (short SHA + subject +
+//     author + relative time) via `read_recent_commits`. The
+//     expandable per-commit file list GPUI paints needs a
+//     `read_commit_file_changes` bridge call.
+//   - Checks: still empty-state placeholder. Needs
+//     `LocalSession.read_pull_request_check_runs`.
 //
 // This file's purpose is the visual + state shell so those verbs
 // have a place to land without re-laying-out the chrome each time.
@@ -22,9 +22,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../rust/api/local_session.dart' show ChangedFileDto;
+import '../../rust/api/local_session.dart' show ChangedFileDto, CommitDto;
 import '../../state/active_project_provider.dart';
 import '../../state/changed_files_provider.dart';
+import '../../state/recent_commits_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/empty_state.dart';
@@ -267,12 +268,91 @@ class _ChangedFileRow extends StatelessWidget {
   }
 }
 
-class _CommitsPane extends StatelessWidget {
+class _CommitsPane extends ConsumerWidget {
   const _CommitsPane();
 
   @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final projectId = ref.watch(activeProjectIdProvider);
+    if (projectId == null) {
+      return const EmptyState(text: 'No project selected');
+    }
+    final commits = ref.watch(recentCommitsProvider(projectId));
+    return commits.when(
+      data: (view) {
+        if (view == null || view.commits.isEmpty) {
+          return const EmptyState(text: 'No commits on this branch yet');
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: AppTokens.space2),
+          itemCount: view.commits.length,
+          itemBuilder: (_, i) => _CommitRow(commit: view.commits[i]),
+        );
+      },
+      loading: () => const EmptyState(text: 'Reading recent commits…'),
+      error: (e, _) => EmptyState(text: 'Could not read commits: $e'),
+    );
+  }
+}
+
+/// Single-line commit row: short SHA + subject + author + time.
+/// GPUI's `branch_commit_row` paints a richer expandable two-line
+/// layout with file lists; this is the flat baseline so the pane
+/// renders something useful while the diff bridge is built out.
+class _CommitRow extends StatelessWidget {
+  const _CommitRow({required this.commit});
+
+  final CommitDto commit;
+
+  @override
   Widget build(BuildContext context) {
-    return const EmptyState(text:'No commits to show');
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTokens.space3,
+        vertical: AppTokens.space2,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                commit.shortId,
+                style: const TextStyle(
+                  fontFamily: AppTokens.fontFamilyMono,
+                  fontSize: AppTokens.fontSmall,
+                  color: AppTokens.textMuted,
+                ),
+              ),
+              const SizedBox(width: AppTokens.space2),
+              Expanded(
+                child: Text(
+                  commit.subject,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: AppTokens.fontBody,
+                    color: AppTokens.textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Padding(
+            padding: const EdgeInsets.only(left: 56),
+            child: Text(
+              '${commit.authorName} • ${commit.authoredRelative}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: AppTokens.fontCaption,
+                color: AppTokens.textMuted,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

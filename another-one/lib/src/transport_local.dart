@@ -265,6 +265,21 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     return session.readChangedFiles(projectId: projectId);
   }
 
+  /// Read the most recent `limit` commits on the project's current
+  /// branch via `read_project_branch_commit_state`. `null` for an
+  /// unknown project id.
+  @override
+  Future<RecentCommitsView?> readRecentCommits({
+    required String projectId,
+    required int limit,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readRecentCommits: LocalTransport not connected');
+    }
+    return session.readRecentCommits(projectId: projectId, limit: limit);
+  }
+
   @override
   Future<void> attachTab({
     required String sectionId,

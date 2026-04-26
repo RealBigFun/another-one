@@ -31,7 +31,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'rust/api/iroh_client.dart';
-import 'rust/api/local_session.dart' show ChangedFileDto, OpenInState;
+import 'rust/api/local_session.dart'
+    show ChangedFileDto, OpenInState, RecentCommitsView;
 import 'transport.dart';
 
 /// Unified interface for any daemon — local FFI or remote iroh —
@@ -223,6 +224,19 @@ abstract class DaemonConnection {
   Future<List<ChangedFileDto>?> readChangedFiles(String projectId) {
     throw UnimplementedError(
       'readChangedFiles: requires Control::ReadChangedFiles wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Recent commits on `projectId`'s current branch, capped at
+  /// `limit`. Powers the right sidebar's Commits pane. Returns
+  /// `null` when the project id is unknown.
+  Future<RecentCommitsView?> readRecentCommits({
+    required String projectId,
+    required int limit,
+  }) {
+    throw UnimplementedError(
+      'readRecentCommits: requires Control::ReadRecentCommits wire '
       'variant on the iroh transport (not yet implemented).',
     );
   }
