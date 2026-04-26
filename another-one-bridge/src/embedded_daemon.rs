@@ -48,10 +48,12 @@ use another_one_core::terminal_types::TerminalRuntimeKey;
 use daemon_sandbox::frame::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
     AgentSummaryWire, ChangedFileWire, Check, CheckBucket, CommitWire, EnabledAgentsViewWire,
-    OpenInAppWire, OpenInStateWire, ProjectActionAccessWire, ProjectActionIconWire,
-    ProjectActionKindWire, ProjectActionScopeWire, ProjectActionWire, ProjectKind,
-    ProjectPagePullRequest, ProjectSummary, PullRequestState, PullRequestStatus,
-    RecentCommitsWire, TabSummary, TaskSummary, ToolbarActionOutcome,
+    GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView, McpSourceDto,
+    McpTransportKindDto, OpenInAppWire, OpenInStateWire, ProjectActionAccessWire,
+    ProjectActionIconWire, ProjectActionKindWire, ProjectActionScopeWire, ProjectActionWire,
+    ProjectKind, ProjectPagePullRequest, ProjectSummary, PullRequestState, PullRequestStatus,
+    RecentCommitsWire, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
+    ToolbarActionOutcome,
 };
 use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
@@ -1401,6 +1403,176 @@ impl DaemonRegistry for BridgeDaemonRegistry {
 
         Ok(tab_id)
     }
+
+    // ── Settings → Git Actions (`another-one-ojm.8`) ───────────────
+
+    fn read_git_action_scripts(&self) -> GitActionScriptsView {
+        // Mirrors `LocalSession::read_git_action_scripts`.
+        self.with_state(|state| {
+            let store = &state.project_store;
+            GitActionScriptsView {
+                commit_script: store.git_commit_generation_script().to_string(),
+                commit_using_default: store.ui.git_commit_generation_script.is_none(),
+                pr_script: store.git_pr_generation_script().to_string(),
+                pr_using_default: store.ui.git_pr_generation_script.is_none(),
+            }
+        })
+        .unwrap_or_else(|| GitActionScriptsView {
+            commit_script: String::new(),
+            commit_using_default: true,
+            pr_script: String::new(),
+            pr_using_default: true,
+        })
+    }
+
+    fn set_git_commit_script(&self, script: &str) -> Result<bool, String> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_git_commit_generation_script(script.to_string())
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn reset_git_commit_script(&self) -> Result<bool, String> {
+        self.with_state(|state| state.project_store.reset_git_commit_generation_script())
+            .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn set_git_pr_script(&self, script: &str) -> Result<bool, String> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_git_pr_generation_script(script.to_string())
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn reset_git_pr_script(&self) -> Result<bool, String> {
+        self.with_state(|state| {
+            let removed = state
+                .project_store
+                .ui
+                .git_pr_generation_script
+                .take()
+                .is_some();
+            if removed {
+                state.project_store.save();
+            }
+            removed
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    // ── Settings → Keybindings (`another-one-ojm.8`) ───────────────
+
+    fn read_shortcut_settings(&self) -> ShortcutSettingsView {
+        self.with_state(|state| {
+            let shortcuts = &state.project_store.ui.shortcuts;
+            let actions = another_one_core::shortcuts::ALL_SHORTCUT_ACTIONS
+                .iter()
+                .map(|action| ShortcutSettingsRow {
+                    id: shortcut_action_id(*action).to_string(),
+                    label: action.label().to_string(),
+                    current_binding: shortcuts.binding_for(*action).to_string(),
+                    default_binding: action.default_binding().to_string(),
+                })
+                .collect();
+            ShortcutSettingsView { actions }
+        })
+        .unwrap_or(ShortcutSettingsView {
+            actions: Vec::new(),
+        })
+    }
+
+    fn set_shortcut_binding(
+        &self,
+        action_id: &str,
+        binding: &str,
+    ) -> Result<(), String> {
+        let action = parse_shortcut_action_id(action_id)
+            .ok_or_else(|| format!("unknown action id `{action_id}`"))?;
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_shortcut_binding(action, binding.to_string());
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn reset_shortcut_binding(&self, action_id: &str) -> Result<(), String> {
+        let action = parse_shortcut_action_id(action_id)
+            .ok_or_else(|| format!("unknown action id `{action_id}`"))?;
+        self.with_state(|state| {
+            state.project_store.reset_shortcut_binding(action);
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    // ── Settings → MCP (`another-one-ojm.8`) ───────────────────────
+
+    fn read_mcp_settings(&self) -> McpSettingsView {
+        let registry = another_one_core::mcp::registry::McpRegistry::load();
+        let catalog_entries = another_one_core::mcp::catalog::entries()
+            .iter()
+            .map(|entry| McpCatalogEntryDto {
+                id: entry.id.to_string(),
+                label: entry.label.to_string(),
+                description: entry.description.to_string(),
+                docs_url: entry.docs_url.to_string(),
+            })
+            .collect();
+        let registry_entries = registry.entries.iter().map(mcp_server_to_wire).collect();
+        McpSettingsView {
+            catalog_entries,
+            registry_entries,
+            sync_error_provider_ids: Vec::new(),
+        }
+    }
+
+    fn mcp_add_from_catalog(&self, catalog_id: &str) -> Result<(), String> {
+        let entry = match another_one_core::mcp::catalog::find(catalog_id) {
+            Some(e) => e,
+            None => return Ok(()),
+        };
+        let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        registry.upsert(another_one_core::mcp::catalog::instantiate(entry));
+        registry
+            .save()
+            .map_err(|e| format!("save mcp registry: {e}"))?;
+        Ok(())
+    }
+
+    fn mcp_toggle(
+        &self,
+        entry_id: &str,
+        provider_id: &str,
+        enabled: bool,
+    ) -> Result<(), String> {
+        let provider = parse_provider_id(provider_id)
+            .ok_or_else(|| format!("unknown provider id `{provider_id}`"))?;
+        let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        if !registry.toggle(entry_id, provider, enabled) {
+            return Ok(());
+        }
+        let _report = registry.sync_all();
+        registry
+            .save()
+            .map_err(|e| format!("save mcp registry: {e}"))?;
+        Ok(())
+    }
+
+    fn mcp_remove(&self, entry_id: &str) -> Result<(), String> {
+        let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        if !registry.remove(entry_id) {
+            return Ok(());
+        }
+        let _report = registry.sync_all();
+        registry
+            .save()
+            .map_err(|e| format!("save mcp registry: {e}"))?;
+        Ok(())
+    }
 }
 
 impl BridgeDaemonRegistry {
@@ -1585,6 +1757,107 @@ fn map_project_action_access(access: ProjectActionAccess) -> ProjectActionAccess
     }
 }
 
+// ── Settings helpers (`another-one-ojm.8`) ────────────────────────
+
+fn shortcut_action_id(
+    action: another_one_core::shortcuts::ShortcutAction,
+) -> &'static str {
+    use another_one_core::shortcuts::ShortcutAction;
+    match action {
+        ShortcutAction::CycleProjects => "cycle-projects",
+        ShortcutAction::NewTabInCurrentTask => "new-tab-in-current-task",
+        ShortcutAction::NewTask => "new-task",
+        ShortcutAction::CloseCurrentTab => "close-current-tab",
+        ShortcutAction::NextTab => "next-tab",
+        ShortcutAction::PreviousTab => "previous-tab",
+        ShortcutAction::NextTask => "next-task",
+        ShortcutAction::PreviousTask => "previous-task",
+    }
+}
+
+fn parse_shortcut_action_id(
+    id: &str,
+) -> Option<another_one_core::shortcuts::ShortcutAction> {
+    use another_one_core::shortcuts::ShortcutAction;
+    match id {
+        "cycle-projects" => Some(ShortcutAction::CycleProjects),
+        "new-tab-in-current-task" => Some(ShortcutAction::NewTabInCurrentTask),
+        "new-task" => Some(ShortcutAction::NewTask),
+        "close-current-tab" => Some(ShortcutAction::CloseCurrentTab),
+        "next-tab" => Some(ShortcutAction::NextTab),
+        "previous-tab" => Some(ShortcutAction::PreviousTab),
+        "next-task" => Some(ShortcutAction::NextTask),
+        "previous-task" => Some(ShortcutAction::PreviousTask),
+        _ => None,
+    }
+}
+
+fn provider_id_str(p: AgentProviderKind) -> &'static str {
+    match p {
+        AgentProviderKind::ClaudeCode => "claude-code",
+        AgentProviderKind::CursorAgent => "cursor-agent",
+        AgentProviderKind::Codex => "codex",
+        AgentProviderKind::Pi => "pi",
+        AgentProviderKind::Gemini => "gemini",
+        AgentProviderKind::OpenCode => "opencode",
+        AgentProviderKind::Amp => "amp",
+        AgentProviderKind::RovoDev => "rovo-dev",
+        AgentProviderKind::Forge => "forge",
+    }
+}
+
+fn parse_provider_id(id: &str) -> Option<AgentProviderKind> {
+    match id {
+        "claude-code" => Some(AgentProviderKind::ClaudeCode),
+        "cursor-agent" => Some(AgentProviderKind::CursorAgent),
+        "codex" => Some(AgentProviderKind::Codex),
+        "pi" => Some(AgentProviderKind::Pi),
+        "gemini" => Some(AgentProviderKind::Gemini),
+        "opencode" => Some(AgentProviderKind::OpenCode),
+        "amp" => Some(AgentProviderKind::Amp),
+        "rovo-dev" => Some(AgentProviderKind::RovoDev),
+        "forge" => Some(AgentProviderKind::Forge),
+        _ => None,
+    }
+}
+
+fn mcp_server_to_wire(server: &another_one_core::mcp::McpServer) -> McpServerDto {
+    let enabled_for = [
+        AgentProviderKind::ClaudeCode,
+        AgentProviderKind::CursorAgent,
+        AgentProviderKind::Codex,
+        AgentProviderKind::Gemini,
+        AgentProviderKind::OpenCode,
+        AgentProviderKind::Amp,
+    ]
+    .into_iter()
+    .filter(|p| server.enabled_for.contains(p))
+    .map(provider_id_str)
+    .map(str::to_string)
+    .collect();
+    McpServerDto {
+        id: server.id.clone(),
+        label: server.label.clone(),
+        source: match server.source {
+            another_one_core::mcp::McpSource::Catalog => McpSourceDto::Catalog,
+            another_one_core::mcp::McpSource::Custom => McpSourceDto::Custom,
+            another_one_core::mcp::McpSource::BuiltInDaemon => {
+                McpSourceDto::BuiltInDaemon
+            }
+        },
+        transport_kind: match server.transport {
+            another_one_core::mcp::McpTransport::Stdio { .. } => {
+                McpTransportKindDto::Stdio
+            }
+            another_one_core::mcp::McpTransport::Http { .. } => {
+                McpTransportKindDto::Http
+            }
+        },
+        enabled_for,
+    }
+}
+
+
 /// Flatten the bridge's `RegistryState` into the iroh wire's
 /// `frame::ProjectSummary` shape. Mirrors `flatten_project_store`
 /// in `api/local_session.rs` (which produces the FRB-side
@@ -1598,25 +1871,31 @@ fn flatten_state_to_frame(state: &RegistryState) -> Vec<ProjectSummary> {
         .projects
         .iter()
         .filter(|project| matches!(project.kind, CoreProjectKind::Root))
-        .map(|project| {
-            let tasks = store
-                .tasks
-                .get(&project.id)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|task| task_to_summary(state, task))
-                .collect();
-            ProjectSummary {
-                id: project.id.clone(),
-                name: project.name.clone(),
-                path: project.path.to_string_lossy().into_owned(),
-                kind: map_project_kind(project.kind),
-                current_branch: project.checkout.current_branch.clone(),
-                tasks,
-            }
-        })
+        .map(|project| project_to_frame(state, project))
         .collect()
+}
+
+fn project_to_frame(
+    state: &RegistryState,
+    project: &another_one_core::project_store::Project,
+) -> ProjectSummary {
+    let store = &state.project_store;
+    let tasks = store
+        .tasks
+        .get(&project.id)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|task| task_to_summary(state, task))
+        .collect();
+    ProjectSummary {
+        id: project.id.clone(),
+        name: project.name.clone(),
+        path: project.path.to_string_lossy().into_owned(),
+        kind: map_project_kind(project.kind),
+        current_branch: project.checkout.current_branch.clone(),
+        tasks,
+    }
 }
 
 /// Project a single owned `core::project_store::Task` into the iroh
@@ -1689,63 +1968,6 @@ fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {
     match kind {
         CoreProjectKind::Root => ProjectKind::Root,
         CoreProjectKind::Worktree => ProjectKind::Worktree,
-    }
-}
-
-fn project_action_to_wire(action: ProjectAction) -> ProjectActionWire {
-    let kind = match action.kind {
-        ProjectActionKind::Shell { command } => ProjectActionKindWire::Shell { command },
-        ProjectActionKind::Agent {
-            prompt,
-            provider,
-            model,
-            traits,
-            mode,
-            access,
-        } => ProjectActionKindWire::Agent {
-            prompt,
-            provider: map_agent_provider(provider),
-            model,
-            traits,
-            mode,
-            access: map_project_action_access(access),
-        },
-    };
-    ProjectActionWire {
-        id: action.id,
-        name: action.name,
-        icon: map_project_action_icon(action.icon),
-        run_on_worktree_create: action.run_on_worktree_create,
-        scope: map_project_action_scope(action.scope),
-        kind,
-    }
-}
-
-fn map_project_action_icon(icon: ProjectActionIcon) -> ProjectActionIconWire {
-    match icon {
-        ProjectActionIcon::Play => ProjectActionIconWire::Play,
-        ProjectActionIcon::Test => ProjectActionIconWire::Test,
-        ProjectActionIcon::Lint => ProjectActionIconWire::Lint,
-        ProjectActionIcon::Configure => ProjectActionIconWire::Configure,
-        ProjectActionIcon::Build => ProjectActionIconWire::Build,
-        ProjectActionIcon::Debug => ProjectActionIconWire::Debug,
-        ProjectActionIcon::Agent => ProjectActionIconWire::Agent,
-    }
-}
-
-fn map_project_action_scope(scope: ProjectActionScope) -> ProjectActionScopeWire {
-    match scope {
-        ProjectActionScope::Project => ProjectActionScopeWire::Project,
-        ProjectActionScope::Global => ProjectActionScopeWire::Global,
-    }
-}
-
-fn map_project_action_access(access: ProjectActionAccess) -> ProjectActionAccessWire {
-    match access {
-        ProjectActionAccess::Default => ProjectActionAccessWire::Default,
-        ProjectActionAccess::ReadOnly => ProjectActionAccessWire::ReadOnly,
-        ProjectActionAccess::WorkspaceWrite => ProjectActionAccessWire::WorkspaceWrite,
-        ProjectActionAccess::FullAccess => ProjectActionAccessWire::FullAccess,
     }
 }
 

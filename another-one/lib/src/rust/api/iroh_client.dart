@@ -9,10 +9,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `decode_ack_field`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `request_and_await`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`, `PendingTable`
+// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -65,15 +64,6 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// After this, a subsequent `attach_tab` will receive bytes.
   Future<void> launchTab({required String sectionId, required String tabId});
 
-  /// Project + global custom actions for `project_id`, in the same
-  /// order GPUI's titlebar split-button dropdown renders. Empty
-  /// list when the project is unknown — matches
-  /// `ProjectStore::project_actions` behaviour. Daemon-side mirror
-  /// is `LocalSession::list_project_actions`.
-  Future<List<ProjectActionDto>> listProjectActions({
-    required String projectId,
-  });
-
   /// Ask the daemon to send back its current project list as a
   /// [`WorkerReply::ProjectList`] frame. The reply arrives on
   /// `subscribe_worker_replies` with a matching `request_id`;
@@ -83,6 +73,26 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// verb to the completer-table model.
   Future<void> listProjects();
 
+  /// Send `Control::McpAddFromCatalog`. Reply arrives as
+  /// `WorkerReply::McpAddFromCatalogAck`.
+  Future<void> mcpAddFromCatalog({
+    required BigInt requestId,
+    required String catalogId,
+  });
+
+  /// Send `Control::McpRemove`. Reply arrives as
+  /// `WorkerReply::McpRemoveAck`.
+  Future<void> mcpRemove({required BigInt requestId, required String entryId});
+
+  /// Send `Control::McpToggle`. Reply arrives as
+  /// `WorkerReply::McpToggleAck`.
+  Future<void> mcpToggle({
+    required BigInt requestId,
+    required String entryId,
+    required String providerId,
+    required bool enabled,
+  });
+
   /// Allocate the next per-session request id. Dart calls this
   /// before issuing a control verb so it can register a `Completer`
   /// in its dispatch map keyed by the same id. Strictly-monotonic
@@ -90,27 +100,33 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
-  /// Snapshot of the host's "Open In" config — installed-and-enabled
-  /// apps + preferred default. Daemon-side mirror is
-  /// `LocalSession::open_in_state`; the wire shape (`OpenInStateAck`)
-  /// is field-name-compatible with the FRB-bound [`OpenInState`] DTO,
-  /// so this method decodes the daemon's reply directly into it.
-  ///
-  /// The actual app launch (e.g. `xdg-open` / `cursor <path>`) stays
-  /// host-local on the daemon — see `connection.dart::openProjectInApp`.
-  Future<OpenInState> openInState();
+  /// Send `Control::ReadGitActionScripts`. Reply arrives via the
+  /// `subscribe_worker_replies` stream as
+  /// `WorkerReply::GitActionScriptsAck` keyed by `request_id`.
+  Future<void> readGitActionScripts({required BigInt requestId});
 
-  /// Full agent registry — every entry in `core::agents::AGENTS`
-  /// paired with per-host enabled / default / launch-args.
-  /// Drives the Settings → Agents page on a remote client.
-  /// Daemon-side mirror is `LocalSession::read_agent_settings`.
-  Future<AgentSettingsView> readAgentSettings();
+  /// Send `Control::ReadMcpSettings`. Reply arrives as
+  /// `WorkerReply::McpSettingsAck { view }`.
+  Future<void> readMcpSettings({required BigInt requestId});
 
-  /// Snapshot of agents the user has enabled on this host plus
-  /// the preferred default. Drives the new-task modal's agent
-  /// multi-select. Daemon-side mirror is
-  /// `LocalSession::read_enabled_agents`.
-  Future<EnabledAgentsView> readEnabledAgents();
+  /// Send `Control::ReadShortcutSettings`. Reply arrives as
+  /// `WorkerReply::ShortcutSettingsAck { view }`.
+  Future<void> readShortcutSettings({required BigInt requestId});
+
+  /// Send `Control::ResetGitCommitScript`. Reply arrives as
+  /// `WorkerReply::ResetGitCommitScriptAck { changed }`.
+  Future<void> resetGitCommitScript({required BigInt requestId});
+
+  /// Send `Control::ResetGitPrScript`. Reply arrives as
+  /// `WorkerReply::ResetGitPrScriptAck { changed }`.
+  Future<void> resetGitPrScript({required BigInt requestId});
+
+  /// Send `Control::ResetShortcutBinding`. Reply arrives as
+  /// `WorkerReply::ResetShortcutBindingAck`.
+  Future<void> resetShortcutBinding({
+    required BigInt requestId,
+    required String actionId,
+  });
 
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
@@ -118,24 +134,30 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// uses a fresh request_id but no caller correlates against it.
   Future<void> resize({required int cols, required int rows});
 
-  /// Run a custom action inside `section_id`'s task. The daemon
-  /// commits a new tab to the persistent project store + queues
-  /// its PTY launch; the returned `tab_id` lets the caller
-  /// `attach_tab` and watch the action's PTY output flow.
-  ///
-  /// **Single-shot Ack** by design (resolved in ojm.7's bd body):
-  /// no per-step streaming events, matching the GPUI desktop's
-  /// `LocalSession::run_project_action` contract. The action's
-  /// stdout/stderr arrives over the existing data-frame pipeline
-  /// once the daemon's drain spawns the queued tab.
-  Future<String> runProjectAction({
-    required String projectId,
-    required String sectionId,
-    required String actionId,
-  });
-
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
+
+  /// Send `Control::SetGitCommitScript`. Reply arrives as
+  /// `WorkerReply::SetGitCommitScriptAck { changed }`.
+  Future<void> setGitCommitScript({
+    required BigInt requestId,
+    required String script,
+  });
+
+  /// Send `Control::SetGitPrScript`. Reply arrives as
+  /// `WorkerReply::SetGitPrScriptAck { changed }`.
+  Future<void> setGitPrScript({
+    required BigInt requestId,
+    required String script,
+  });
+
+  /// Send `Control::SetShortcutBinding`. Reply arrives as
+  /// `WorkerReply::SetShortcutBindingAck`.
+  Future<void> setShortcutBinding({
+    required BigInt requestId,
+    required String actionId,
+    required String binding,
+  });
 
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
@@ -378,6 +400,59 @@ sealed class WorkerReply with _$WorkerReply {
     required String message,
     required ErrKind kind,
   }) = WorkerReply_Err;
+
+  /// Reply to `Control::ReadGitActionScripts`. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::GitActionScriptsAck`.
+  const factory WorkerReply.gitActionScriptsAck({
+    required GitActionScriptsView view,
+  }) = WorkerReply_GitActionScriptsAck;
+
+  /// Reply to `Control::SetGitCommitScript`. The `changed` flag
+  /// is the post-mutation snapshot per the inline-snapshot
+  /// contract.
+  const factory WorkerReply.setGitCommitScriptAck({required bool changed}) =
+      WorkerReply_SetGitCommitScriptAck;
+
+  /// Reply to `Control::ResetGitCommitScript`.
+  const factory WorkerReply.resetGitCommitScriptAck({required bool changed}) =
+      WorkerReply_ResetGitCommitScriptAck;
+
+  /// Reply to `Control::SetGitPrScript`.
+  const factory WorkerReply.setGitPrScriptAck({required bool changed}) =
+      WorkerReply_SetGitPrScriptAck;
+
+  /// Reply to `Control::ResetGitPrScript`.
+  const factory WorkerReply.resetGitPrScriptAck({required bool changed}) =
+      WorkerReply_ResetGitPrScriptAck;
+
+  /// Reply to `Control::ReadShortcutSettings`.
+  const factory WorkerReply.shortcutSettingsAck({
+    required ShortcutSettingsView view,
+  }) = WorkerReply_ShortcutSettingsAck;
+
+  /// Reply to `Control::SetShortcutBinding`. Payload-free —
+  /// callers re-read the full snapshot if they need post-mutation
+  /// state.
+  const factory WorkerReply.setShortcutBindingAck() =
+      WorkerReply_SetShortcutBindingAck;
+
+  /// Reply to `Control::ResetShortcutBinding`.
+  const factory WorkerReply.resetShortcutBindingAck() =
+      WorkerReply_ResetShortcutBindingAck;
+
+  /// Reply to `Control::ReadMcpSettings`.
+  const factory WorkerReply.mcpSettingsAck({required McpSettingsView view}) =
+      WorkerReply_McpSettingsAck;
+
+  /// Reply to `Control::McpAddFromCatalog`.
+  const factory WorkerReply.mcpAddFromCatalogAck() =
+      WorkerReply_McpAddFromCatalogAck;
+
+  /// Reply to `Control::McpToggle`.
+  const factory WorkerReply.mcpToggleAck() = WorkerReply_McpToggleAck;
+
+  /// Reply to `Control::McpRemove`.
+  const factory WorkerReply.mcpRemoveAck() = WorkerReply_McpRemoveAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

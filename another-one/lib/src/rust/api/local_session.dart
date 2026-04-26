@@ -1115,6 +1115,10 @@ class EnabledAgentsView {
 /// scripts (built-in default when there's no override) plus a
 /// `using_default` flag per script so the UI can flip the
 /// subtitle copy without re-checking.
+///
+/// `serde::Deserialize` is wired so the iroh wire's
+/// `WorkerReply::GitActionScriptsAck` (introduced in
+/// `another-one-ojm.8`) decodes straight into this struct.
 class GitActionScriptsView {
   final String commitScript;
   final bool commitUsingDefault;

@@ -292,6 +292,40 @@ enum Control {
         filter_index: u32,
         query: String,
     },
+    // ── Settings → Git Actions (`another-one-ojm.8`) ──────────────
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ReadGitActionScripts`.
+    ReadGitActionScripts,
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetGitCommitScript`.
+    SetGitCommitScript { script: String },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ResetGitCommitScript`.
+    ResetGitCommitScript,
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetGitPrScript`.
+    SetGitPrScript { script: String },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ResetGitPrScript`.
+    ResetGitPrScript,
+    // ── Settings → Keybindings (`another-one-ojm.8`) ──────────────
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ReadShortcutSettings`.
+    ReadShortcutSettings,
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetShortcutBinding`.
+    SetShortcutBinding {
+        action_id: String,
+        binding: String,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ResetShortcutBinding`.
+    ResetShortcutBinding { action_id: String },
+    // ── Settings → MCP (`another-one-ojm.8`) ──────────────────────
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ReadMcpSettings`.
+    ReadMcpSettings,
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::McpAddFromCatalog`.
+    McpAddFromCatalog { catalog_id: String },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::McpToggle`.
+    McpToggle {
+        entry_id: String,
+        provider_id: String,
+        enabled: bool,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::McpRemove`.
+    McpRemove { entry_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -479,6 +513,39 @@ pub enum WorkerReply {
     /// Reply to [`Control::RunProjectAction`]. Single-shot Ack —
     /// `tab_id` is the freshly-minted uuid for the spawned tab.
     RunProjectActionAck { tab_id: String },
+    // ── Settings → Git Actions (`another-one-ojm.8`) ──────────────
+    /// Reply to `Control::ReadGitActionScripts`.
+    GitActionScriptsAck {
+        view: crate::api::local_session::GitActionScriptsView,
+    },
+    /// Reply to `Control::SetGitCommitScript`.
+    SetGitCommitScriptAck { changed: bool },
+    /// Reply to `Control::ResetGitCommitScript`.
+    ResetGitCommitScriptAck { changed: bool },
+    /// Reply to `Control::SetGitPrScript`.
+    SetGitPrScriptAck { changed: bool },
+    /// Reply to `Control::ResetGitPrScript`.
+    ResetGitPrScriptAck { changed: bool },
+    // ── Settings → Keybindings (`another-one-ojm.8`) ──────────────
+    /// Reply to `Control::ReadShortcutSettings`.
+    ShortcutSettingsAck {
+        view: crate::api::local_session::ShortcutSettingsView,
+    },
+    /// Reply to `Control::SetShortcutBinding`.
+    SetShortcutBindingAck,
+    /// Reply to `Control::ResetShortcutBinding`.
+    ResetShortcutBindingAck,
+    // ── Settings → MCP (`another-one-ojm.8`) ──────────────────────
+    /// Reply to `Control::ReadMcpSettings`.
+    McpSettingsAck {
+        view: crate::api::local_session::McpSettingsView,
+    },
+    /// Reply to `Control::McpAddFromCatalog`.
+    McpAddFromCatalogAck,
+    /// Reply to `Control::McpToggle`.
+    McpToggleAck,
+    /// Reply to `Control::McpRemove`.
+    McpRemoveAck,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
@@ -670,39 +737,25 @@ pub enum AgentProvider {
 // of which transport asks for them. Avoiding a parallel mirror
 // here keeps a single source of truth for the PR-status shape.
 
-/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
-/// The titlebar surfaces `toast_message` as a snackbar (warning
-/// palette when `warning` is true) and uses `refresh_git_state` to
-/// decide whether to invalidate the active changed-files / git-state
-/// providers after the call returns. Field-for-field compatible with
-/// the FRB-side `ToolbarActionOutcomeDto` so call sites that hand
-/// the outcome to UI code can use either type interchangeably as
-/// migration progresses.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ToolbarActionOutcome {
-    pub toast_message: String,
-    pub warning: bool,
-    pub refresh_git_state: bool,
-}
+// ── Settings → Git Actions / Keybindings / MCP wire types ────────
+//
+// Wire payloads introduced by `another-one-ojm.8`. The structs are
+// declared on the LocalSession side already (with FRB bindings the
+// Dart UI consumes); we re-use them here so the WorkerReply variants
+// landing in this module deserialize straight into the FRB-bound
+// shape Dart speaks. Two same-named structs across modules would
+// silently strip the SseEncode impl off one of them, so the cross-
+// module re-use is intentional, not duplication.
+//
+// Once `another-one-bridge::api::local_session` is deleted per ADR
+// `another-one-67l`, these become first-class wire types declared
+// here. Until then the dependency direction is iroh_client →
+// local_session.
 
-/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFile`. Carries the
-/// post-mutation snapshot returned by `StageChangedFileAck` (and
-/// future stage/unstage/discard acks landing in `another-one-ojm.5`).
-/// Same field shape as `ChangedFileDto` on the FRB local-session
-/// surface so the Dart layer can render the right-sidebar Changes
-/// pane without re-projecting per transport.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ChangedFile {
-    pub path: String,
-    pub original_path: Option<String>,
-    pub staged_additions: i32,
-    pub staged_deletions: i32,
-    pub unstaged_additions: i32,
-    pub unstaged_deletions: i32,
-    pub index_status: String,
-    pub worktree_status: String,
-    pub untracked: bool,
-}
+pub use crate::api::local_session::{
+    GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView,
+    McpSourceDto, McpTransportKindDto, ShortcutSettingsRow, ShortcutSettingsView,
+};
 
 /// Writes one frame to the Iroh send stream.
 async fn write_frame(send: &mut SendStream, ty: u8, payload: &[u8]) -> anyhow::Result<()> {
@@ -1541,6 +1594,124 @@ impl IrohSession {
             },
         )
         .await
+    }
+
+    // ── Settings → Git Actions (`another-one-ojm.8`) ──────────────
+
+    /// Send `Control::ReadGitActionScripts`.
+    pub async fn read_git_action_scripts(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadGitActionScripts)
+            .await
+    }
+
+    /// Send `Control::SetGitCommitScript`.
+    pub async fn set_git_commit_script(
+        &self,
+        request_id: u64,
+        script: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetGitCommitScript { script })
+            .await
+    }
+
+    /// Send `Control::ResetGitCommitScript`.
+    pub async fn reset_git_commit_script(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ResetGitCommitScript)
+            .await
+    }
+
+    /// Send `Control::SetGitPrScript`.
+    pub async fn set_git_pr_script(
+        &self,
+        request_id: u64,
+        script: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetGitPrScript { script })
+            .await
+    }
+
+    /// Send `Control::ResetGitPrScript`.
+    pub async fn reset_git_pr_script(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ResetGitPrScript)
+            .await
+    }
+
+    // ── Settings → Keybindings (`another-one-ojm.8`) ──────────────
+
+    /// Send `Control::ReadShortcutSettings`.
+    pub async fn read_shortcut_settings(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadShortcutSettings)
+            .await
+    }
+
+    /// Send `Control::SetShortcutBinding`.
+    pub async fn set_shortcut_binding(
+        &self,
+        request_id: u64,
+        action_id: String,
+        binding: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::SetShortcutBinding { action_id, binding },
+        )
+        .await
+    }
+
+    /// Send `Control::ResetShortcutBinding`.
+    pub async fn reset_shortcut_binding(
+        &self,
+        request_id: u64,
+        action_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ResetShortcutBinding { action_id })
+            .await
+    }
+
+    // ── Settings → MCP (`another-one-ojm.8`) ──────────────────────
+
+    /// Send `Control::ReadMcpSettings`.
+    pub async fn read_mcp_settings(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadMcpSettings).await
+    }
+
+    /// Send `Control::McpAddFromCatalog`.
+    pub async fn mcp_add_from_catalog(
+        &self,
+        request_id: u64,
+        catalog_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::McpAddFromCatalog { catalog_id })
+            .await
+    }
+
+    /// Send `Control::McpToggle`.
+    pub async fn mcp_toggle(
+        &self,
+        request_id: u64,
+        entry_id: String,
+        provider_id: String,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::McpToggle {
+                entry_id,
+                provider_id,
+                enabled,
+            },
+        )
+        .await
+    }
+
+    /// Send `Control::McpRemove`.
+    pub async fn mcp_remove(
+        &self,
+        request_id: u64,
+        entry_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::McpRemove { entry_id })
+            .await
     }
 
     /// `another-one-ojm.5` — issue a `Control::UnstageChangedFile`

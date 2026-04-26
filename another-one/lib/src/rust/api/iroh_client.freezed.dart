@@ -55,15 +55,24 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,TResult Function( WorkerReply_ProjectPullRequestsAck value)?  projectPullRequestsAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_GitActionScriptsAck value)?  gitActionScriptsAck,TResult Function( WorkerReply_SetGitCommitScriptAck value)?  setGitCommitScriptAck,TResult Function( WorkerReply_ResetGitCommitScriptAck value)?  resetGitCommitScriptAck,TResult Function( WorkerReply_SetGitPrScriptAck value)?  setGitPrScriptAck,TResult Function( WorkerReply_ResetGitPrScriptAck value)?  resetGitPrScriptAck,TResult Function( WorkerReply_ShortcutSettingsAck value)?  shortcutSettingsAck,TResult Function( WorkerReply_SetShortcutBindingAck value)?  setShortcutBindingAck,TResult Function( WorkerReply_ResetShortcutBindingAck value)?  resetShortcutBindingAck,TResult Function( WorkerReply_McpSettingsAck value)?  mcpSettingsAck,TResult Function( WorkerReply_McpAddFromCatalogAck value)?  mcpAddFromCatalogAck,TResult Function( WorkerReply_McpToggleAck value)?  mcpToggleAck,TResult Function( WorkerReply_McpRemoveAck value)?  mcpRemoveAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
-return err(_that);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
-return pullRequestStatusAck(_that);case WorkerReply_PullRequestChecksAck() when pullRequestChecksAck != null:
-return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck() when projectPullRequestsAck != null:
-return projectPullRequestsAck(_that);case _:
+return err(_that);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
+return gitActionScriptsAck(_that);case WorkerReply_SetGitCommitScriptAck() when setGitCommitScriptAck != null:
+return setGitCommitScriptAck(_that);case WorkerReply_ResetGitCommitScriptAck() when resetGitCommitScriptAck != null:
+return resetGitCommitScriptAck(_that);case WorkerReply_SetGitPrScriptAck() when setGitPrScriptAck != null:
+return setGitPrScriptAck(_that);case WorkerReply_ResetGitPrScriptAck() when resetGitPrScriptAck != null:
+return resetGitPrScriptAck(_that);case WorkerReply_ShortcutSettingsAck() when shortcutSettingsAck != null:
+return shortcutSettingsAck(_that);case WorkerReply_SetShortcutBindingAck() when setShortcutBindingAck != null:
+return setShortcutBindingAck(_that);case WorkerReply_ResetShortcutBindingAck() when resetShortcutBindingAck != null:
+return resetShortcutBindingAck(_that);case WorkerReply_McpSettingsAck() when mcpSettingsAck != null:
+return mcpSettingsAck(_that);case WorkerReply_McpAddFromCatalogAck() when mcpAddFromCatalogAck != null:
+return mcpAddFromCatalogAck(_that);case WorkerReply_McpToggleAck() when mcpToggleAck != null:
+return mcpToggleAck(_that);case WorkerReply_McpRemoveAck() when mcpRemoveAck != null:
+return mcpRemoveAck(_that);case _:
   return orElse();
 
 }
@@ -81,15 +90,24 @@ return projectPullRequestsAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_PullRequestStatusAck value)  pullRequestStatusAck,required TResult Function( WorkerReply_PullRequestChecksAck value)  pullRequestChecksAck,required TResult Function( WorkerReply_ProjectPullRequestsAck value)  projectPullRequestsAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_GitActionScriptsAck value)  gitActionScriptsAck,required TResult Function( WorkerReply_SetGitCommitScriptAck value)  setGitCommitScriptAck,required TResult Function( WorkerReply_ResetGitCommitScriptAck value)  resetGitCommitScriptAck,required TResult Function( WorkerReply_SetGitPrScriptAck value)  setGitPrScriptAck,required TResult Function( WorkerReply_ResetGitPrScriptAck value)  resetGitPrScriptAck,required TResult Function( WorkerReply_ShortcutSettingsAck value)  shortcutSettingsAck,required TResult Function( WorkerReply_SetShortcutBindingAck value)  setShortcutBindingAck,required TResult Function( WorkerReply_ResetShortcutBindingAck value)  resetShortcutBindingAck,required TResult Function( WorkerReply_McpSettingsAck value)  mcpSettingsAck,required TResult Function( WorkerReply_McpAddFromCatalogAck value)  mcpAddFromCatalogAck,required TResult Function( WorkerReply_McpToggleAck value)  mcpToggleAck,required TResult Function( WorkerReply_McpRemoveAck value)  mcpRemoveAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that);case WorkerReply_Err():
-return err(_that);case WorkerReply_PullRequestStatusAck():
-return pullRequestStatusAck(_that);case WorkerReply_PullRequestChecksAck():
-return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck():
-return projectPullRequestsAck(_that);}
+return err(_that);case WorkerReply_GitActionScriptsAck():
+return gitActionScriptsAck(_that);case WorkerReply_SetGitCommitScriptAck():
+return setGitCommitScriptAck(_that);case WorkerReply_ResetGitCommitScriptAck():
+return resetGitCommitScriptAck(_that);case WorkerReply_SetGitPrScriptAck():
+return setGitPrScriptAck(_that);case WorkerReply_ResetGitPrScriptAck():
+return resetGitPrScriptAck(_that);case WorkerReply_ShortcutSettingsAck():
+return shortcutSettingsAck(_that);case WorkerReply_SetShortcutBindingAck():
+return setShortcutBindingAck(_that);case WorkerReply_ResetShortcutBindingAck():
+return resetShortcutBindingAck(_that);case WorkerReply_McpSettingsAck():
+return mcpSettingsAck(_that);case WorkerReply_McpAddFromCatalogAck():
+return mcpAddFromCatalogAck(_that);case WorkerReply_McpToggleAck():
+return mcpToggleAck(_that);case WorkerReply_McpRemoveAck():
+return mcpRemoveAck(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -103,15 +121,24 @@ return projectPullRequestsAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult? Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,TResult? Function( WorkerReply_ProjectPullRequestsAck value)?  projectPullRequestsAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_GitActionScriptsAck value)?  gitActionScriptsAck,TResult? Function( WorkerReply_SetGitCommitScriptAck value)?  setGitCommitScriptAck,TResult? Function( WorkerReply_ResetGitCommitScriptAck value)?  resetGitCommitScriptAck,TResult? Function( WorkerReply_SetGitPrScriptAck value)?  setGitPrScriptAck,TResult? Function( WorkerReply_ResetGitPrScriptAck value)?  resetGitPrScriptAck,TResult? Function( WorkerReply_ShortcutSettingsAck value)?  shortcutSettingsAck,TResult? Function( WorkerReply_SetShortcutBindingAck value)?  setShortcutBindingAck,TResult? Function( WorkerReply_ResetShortcutBindingAck value)?  resetShortcutBindingAck,TResult? Function( WorkerReply_McpSettingsAck value)?  mcpSettingsAck,TResult? Function( WorkerReply_McpAddFromCatalogAck value)?  mcpAddFromCatalogAck,TResult? Function( WorkerReply_McpToggleAck value)?  mcpToggleAck,TResult? Function( WorkerReply_McpRemoveAck value)?  mcpRemoveAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
-return err(_that);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
-return pullRequestStatusAck(_that);case WorkerReply_PullRequestChecksAck() when pullRequestChecksAck != null:
-return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck() when projectPullRequestsAck != null:
-return projectPullRequestsAck(_that);case _:
+return err(_that);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
+return gitActionScriptsAck(_that);case WorkerReply_SetGitCommitScriptAck() when setGitCommitScriptAck != null:
+return setGitCommitScriptAck(_that);case WorkerReply_ResetGitCommitScriptAck() when resetGitCommitScriptAck != null:
+return resetGitCommitScriptAck(_that);case WorkerReply_SetGitPrScriptAck() when setGitPrScriptAck != null:
+return setGitPrScriptAck(_that);case WorkerReply_ResetGitPrScriptAck() when resetGitPrScriptAck != null:
+return resetGitPrScriptAck(_that);case WorkerReply_ShortcutSettingsAck() when shortcutSettingsAck != null:
+return shortcutSettingsAck(_that);case WorkerReply_SetShortcutBindingAck() when setShortcutBindingAck != null:
+return setShortcutBindingAck(_that);case WorkerReply_ResetShortcutBindingAck() when resetShortcutBindingAck != null:
+return resetShortcutBindingAck(_that);case WorkerReply_McpSettingsAck() when mcpSettingsAck != null:
+return mcpSettingsAck(_that);case WorkerReply_McpAddFromCatalogAck() when mcpAddFromCatalogAck != null:
+return mcpAddFromCatalogAck(_that);case WorkerReply_McpToggleAck() when mcpToggleAck != null:
+return mcpToggleAck(_that);case WorkerReply_McpRemoveAck() when mcpRemoveAck != null:
+return mcpRemoveAck(_that);case _:
   return null;
 
 }
@@ -128,14 +155,23 @@ return projectPullRequestsAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult Function( bool changed)?  setGitCommitScriptAck,TResult Function( bool changed)?  resetGitCommitScriptAck,TResult Function( bool changed)?  setGitPrScriptAck,TResult Function( bool changed)?  resetGitPrScriptAck,TResult Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult Function()?  setShortcutBindingAck,TResult Function()?  resetShortcutBindingAck,TResult Function( McpSettingsView view)?  mcpSettingsAck,TResult Function()?  mcpAddFromCatalogAck,TResult Function()?  mcpToggleAck,TResult Function()?  mcpRemoveAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
-return err(_that.message,_that.kind);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
-return pullRequestStatusAck(_that.status);case WorkerReply_PullRequestChecksAck() when pullRequestChecksAck != null:
-return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAck() when projectPullRequestsAck != null:
-return projectPullRequestsAck(_that.prs);case _:
+return err(_that.message,_that.kind);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
+return gitActionScriptsAck(_that.view);case WorkerReply_SetGitCommitScriptAck() when setGitCommitScriptAck != null:
+return setGitCommitScriptAck(_that.changed);case WorkerReply_ResetGitCommitScriptAck() when resetGitCommitScriptAck != null:
+return resetGitCommitScriptAck(_that.changed);case WorkerReply_SetGitPrScriptAck() when setGitPrScriptAck != null:
+return setGitPrScriptAck(_that.changed);case WorkerReply_ResetGitPrScriptAck() when resetGitPrScriptAck != null:
+return resetGitPrScriptAck(_that.changed);case WorkerReply_ShortcutSettingsAck() when shortcutSettingsAck != null:
+return shortcutSettingsAck(_that.view);case WorkerReply_SetShortcutBindingAck() when setShortcutBindingAck != null:
+return setShortcutBindingAck();case WorkerReply_ResetShortcutBindingAck() when resetShortcutBindingAck != null:
+return resetShortcutBindingAck();case WorkerReply_McpSettingsAck() when mcpSettingsAck != null:
+return mcpSettingsAck(_that.view);case WorkerReply_McpAddFromCatalogAck() when mcpAddFromCatalogAck != null:
+return mcpAddFromCatalogAck();case WorkerReply_McpToggleAck() when mcpToggleAck != null:
+return mcpToggleAck();case WorkerReply_McpRemoveAck() when mcpRemoveAck != null:
+return mcpRemoveAck();case _:
   return orElse();
 
 }
@@ -153,14 +189,23 @@ return projectPullRequestsAck(_that.prs);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( PullRequestStatusDto? status)  pullRequestStatusAck,required TResult Function( List<CheckDto>? checks)  pullRequestChecksAck,required TResult Function( List<ProjectPagePullRequestDto>? prs)  projectPullRequestsAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( GitActionScriptsView view)  gitActionScriptsAck,required TResult Function( bool changed)  setGitCommitScriptAck,required TResult Function( bool changed)  resetGitCommitScriptAck,required TResult Function( bool changed)  setGitPrScriptAck,required TResult Function( bool changed)  resetGitPrScriptAck,required TResult Function( ShortcutSettingsView view)  shortcutSettingsAck,required TResult Function()  setShortcutBindingAck,required TResult Function()  resetShortcutBindingAck,required TResult Function( McpSettingsView view)  mcpSettingsAck,required TResult Function()  mcpAddFromCatalogAck,required TResult Function()  mcpToggleAck,required TResult Function()  mcpRemoveAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
-return err(_that.message,_that.kind);case WorkerReply_PullRequestStatusAck():
-return pullRequestStatusAck(_that.status);case WorkerReply_PullRequestChecksAck():
-return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAck():
-return projectPullRequestsAck(_that.prs);}
+return err(_that.message,_that.kind);case WorkerReply_GitActionScriptsAck():
+return gitActionScriptsAck(_that.view);case WorkerReply_SetGitCommitScriptAck():
+return setGitCommitScriptAck(_that.changed);case WorkerReply_ResetGitCommitScriptAck():
+return resetGitCommitScriptAck(_that.changed);case WorkerReply_SetGitPrScriptAck():
+return setGitPrScriptAck(_that.changed);case WorkerReply_ResetGitPrScriptAck():
+return resetGitPrScriptAck(_that.changed);case WorkerReply_ShortcutSettingsAck():
+return shortcutSettingsAck(_that.view);case WorkerReply_SetShortcutBindingAck():
+return setShortcutBindingAck();case WorkerReply_ResetShortcutBindingAck():
+return resetShortcutBindingAck();case WorkerReply_McpSettingsAck():
+return mcpSettingsAck(_that.view);case WorkerReply_McpAddFromCatalogAck():
+return mcpAddFromCatalogAck();case WorkerReply_McpToggleAck():
+return mcpToggleAck();case WorkerReply_McpRemoveAck():
+return mcpRemoveAck();}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -174,14 +219,23 @@ return projectPullRequestsAck(_that.prs);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult? Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult? Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult? Function( bool changed)?  setGitCommitScriptAck,TResult? Function( bool changed)?  resetGitCommitScriptAck,TResult? Function( bool changed)?  setGitPrScriptAck,TResult? Function( bool changed)?  resetGitPrScriptAck,TResult? Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult? Function()?  setShortcutBindingAck,TResult? Function()?  resetShortcutBindingAck,TResult? Function( McpSettingsView view)?  mcpSettingsAck,TResult? Function()?  mcpAddFromCatalogAck,TResult? Function()?  mcpToggleAck,TResult? Function()?  mcpRemoveAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
-return err(_that.message,_that.kind);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
-return pullRequestStatusAck(_that.status);case WorkerReply_PullRequestChecksAck() when pullRequestChecksAck != null:
-return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAck() when projectPullRequestsAck != null:
-return projectPullRequestsAck(_that.prs);case _:
+return err(_that.message,_that.kind);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
+return gitActionScriptsAck(_that.view);case WorkerReply_SetGitCommitScriptAck() when setGitCommitScriptAck != null:
+return setGitCommitScriptAck(_that.changed);case WorkerReply_ResetGitCommitScriptAck() when resetGitCommitScriptAck != null:
+return resetGitCommitScriptAck(_that.changed);case WorkerReply_SetGitPrScriptAck() when setGitPrScriptAck != null:
+return setGitPrScriptAck(_that.changed);case WorkerReply_ResetGitPrScriptAck() when resetGitPrScriptAck != null:
+return resetGitPrScriptAck(_that.changed);case WorkerReply_ShortcutSettingsAck() when shortcutSettingsAck != null:
+return shortcutSettingsAck(_that.view);case WorkerReply_SetShortcutBindingAck() when setShortcutBindingAck != null:
+return setShortcutBindingAck();case WorkerReply_ResetShortcutBindingAck() when resetShortcutBindingAck != null:
+return resetShortcutBindingAck();case WorkerReply_McpSettingsAck() when mcpSettingsAck != null:
+return mcpSettingsAck(_that.view);case WorkerReply_McpAddFromCatalogAck() when mcpAddFromCatalogAck != null:
+return mcpAddFromCatalogAck();case WorkerReply_McpToggleAck() when mcpToggleAck != null:
+return mcpToggleAck();case WorkerReply_McpRemoveAck() when mcpRemoveAck != null:
+return mcpRemoveAck();case _:
   return null;
 
 }
@@ -332,43 +386,43 @@ as ErrKind,
 /// @nodoc
 
 
-class WorkerReply_PullRequestStatusAck extends WorkerReply {
-  const WorkerReply_PullRequestStatusAck({this.status}): super._();
+class WorkerReply_GitActionScriptsAck extends WorkerReply {
+  const WorkerReply_GitActionScriptsAck({required this.view}): super._();
   
 
- final  PullRequestStatusDto? status;
+ final  GitActionScriptsView view;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
 @pragma('vm:prefer-inline')
-$WorkerReply_PullRequestStatusAckCopyWith<WorkerReply_PullRequestStatusAck> get copyWith => _$WorkerReply_PullRequestStatusAckCopyWithImpl<WorkerReply_PullRequestStatusAck>(this, _$identity);
+$WorkerReply_GitActionScriptsAckCopyWith<WorkerReply_GitActionScriptsAck> get copyWith => _$WorkerReply_GitActionScriptsAckCopyWithImpl<WorkerReply_GitActionScriptsAck>(this, _$identity);
 
 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_PullRequestStatusAck&&(identical(other.status, status) || other.status == status));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_GitActionScriptsAck&&(identical(other.view, view) || other.view == view));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,status);
+int get hashCode => Object.hash(runtimeType,view);
 
 @override
 String toString() {
-  return 'WorkerReply.pullRequestStatusAck(status: $status)';
+  return 'WorkerReply.gitActionScriptsAck(view: $view)';
 }
 
 
 }
 
 /// @nodoc
-abstract mixin class $WorkerReply_PullRequestStatusAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_PullRequestStatusAckCopyWith(WorkerReply_PullRequestStatusAck value, $Res Function(WorkerReply_PullRequestStatusAck) _then) = _$WorkerReply_PullRequestStatusAckCopyWithImpl;
+abstract mixin class $WorkerReply_GitActionScriptsAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_GitActionScriptsAckCopyWith(WorkerReply_GitActionScriptsAck value, $Res Function(WorkerReply_GitActionScriptsAck) _then) = _$WorkerReply_GitActionScriptsAckCopyWithImpl;
 @useResult
 $Res call({
- PullRequestStatusDto? status
+ GitActionScriptsView view
 });
 
 
@@ -376,19 +430,19 @@ $Res call({
 
 }
 /// @nodoc
-class _$WorkerReply_PullRequestStatusAckCopyWithImpl<$Res>
-    implements $WorkerReply_PullRequestStatusAckCopyWith<$Res> {
-  _$WorkerReply_PullRequestStatusAckCopyWithImpl(this._self, this._then);
+class _$WorkerReply_GitActionScriptsAckCopyWithImpl<$Res>
+    implements $WorkerReply_GitActionScriptsAckCopyWith<$Res> {
+  _$WorkerReply_GitActionScriptsAckCopyWithImpl(this._self, this._then);
 
-  final WorkerReply_PullRequestStatusAck _self;
-  final $Res Function(WorkerReply_PullRequestStatusAck) _then;
+  final WorkerReply_GitActionScriptsAck _self;
+  final $Res Function(WorkerReply_GitActionScriptsAck) _then;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? status = freezed,}) {
-  return _then(WorkerReply_PullRequestStatusAck(
-status: freezed == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
-as PullRequestStatusDto?,
+@pragma('vm:prefer-inline') $Res call({Object? view = null,}) {
+  return _then(WorkerReply_GitActionScriptsAck(
+view: null == view ? _self.view : view // ignore: cast_nullable_to_non_nullable
+as GitActionScriptsView,
   ));
 }
 
@@ -398,51 +452,43 @@ as PullRequestStatusDto?,
 /// @nodoc
 
 
-class WorkerReply_PullRequestChecksAck extends WorkerReply {
-  const WorkerReply_PullRequestChecksAck({final  List<CheckDto>? checks}): _checks = checks,super._();
+class WorkerReply_SetGitCommitScriptAck extends WorkerReply {
+  const WorkerReply_SetGitCommitScriptAck({required this.changed}): super._();
   
 
- final  List<CheckDto>? _checks;
- List<CheckDto>? get checks {
-  final value = _checks;
-  if (value == null) return null;
-  if (_checks is EqualUnmodifiableListView) return _checks;
-  // ignore: implicit_dynamic_type
-  return EqualUnmodifiableListView(value);
-}
-
+ final  bool changed;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
 @pragma('vm:prefer-inline')
-$WorkerReply_PullRequestChecksAckCopyWith<WorkerReply_PullRequestChecksAck> get copyWith => _$WorkerReply_PullRequestChecksAckCopyWithImpl<WorkerReply_PullRequestChecksAck>(this, _$identity);
+$WorkerReply_SetGitCommitScriptAckCopyWith<WorkerReply_SetGitCommitScriptAck> get copyWith => _$WorkerReply_SetGitCommitScriptAckCopyWithImpl<WorkerReply_SetGitCommitScriptAck>(this, _$identity);
 
 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_PullRequestChecksAck&&const DeepCollectionEquality().equals(other._checks, _checks));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_SetGitCommitScriptAck&&(identical(other.changed, changed) || other.changed == changed));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_checks));
+int get hashCode => Object.hash(runtimeType,changed);
 
 @override
 String toString() {
-  return 'WorkerReply.pullRequestChecksAck(checks: $checks)';
+  return 'WorkerReply.setGitCommitScriptAck(changed: $changed)';
 }
 
 
 }
 
 /// @nodoc
-abstract mixin class $WorkerReply_PullRequestChecksAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_PullRequestChecksAckCopyWith(WorkerReply_PullRequestChecksAck value, $Res Function(WorkerReply_PullRequestChecksAck) _then) = _$WorkerReply_PullRequestChecksAckCopyWithImpl;
+abstract mixin class $WorkerReply_SetGitCommitScriptAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_SetGitCommitScriptAckCopyWith(WorkerReply_SetGitCommitScriptAck value, $Res Function(WorkerReply_SetGitCommitScriptAck) _then) = _$WorkerReply_SetGitCommitScriptAckCopyWithImpl;
 @useResult
 $Res call({
- List<CheckDto>? checks
+ bool changed
 });
 
 
@@ -450,19 +496,19 @@ $Res call({
 
 }
 /// @nodoc
-class _$WorkerReply_PullRequestChecksAckCopyWithImpl<$Res>
-    implements $WorkerReply_PullRequestChecksAckCopyWith<$Res> {
-  _$WorkerReply_PullRequestChecksAckCopyWithImpl(this._self, this._then);
+class _$WorkerReply_SetGitCommitScriptAckCopyWithImpl<$Res>
+    implements $WorkerReply_SetGitCommitScriptAckCopyWith<$Res> {
+  _$WorkerReply_SetGitCommitScriptAckCopyWithImpl(this._self, this._then);
 
-  final WorkerReply_PullRequestChecksAck _self;
-  final $Res Function(WorkerReply_PullRequestChecksAck) _then;
+  final WorkerReply_SetGitCommitScriptAck _self;
+  final $Res Function(WorkerReply_SetGitCommitScriptAck) _then;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? checks = freezed,}) {
-  return _then(WorkerReply_PullRequestChecksAck(
-checks: freezed == checks ? _self._checks : checks // ignore: cast_nullable_to_non_nullable
-as List<CheckDto>?,
+@pragma('vm:prefer-inline') $Res call({Object? changed = null,}) {
+  return _then(WorkerReply_SetGitCommitScriptAck(
+changed: null == changed ? _self.changed : changed // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 
@@ -472,51 +518,43 @@ as List<CheckDto>?,
 /// @nodoc
 
 
-class WorkerReply_ProjectPullRequestsAck extends WorkerReply {
-  const WorkerReply_ProjectPullRequestsAck({final  List<ProjectPagePullRequestDto>? prs}): _prs = prs,super._();
+class WorkerReply_ResetGitCommitScriptAck extends WorkerReply {
+  const WorkerReply_ResetGitCommitScriptAck({required this.changed}): super._();
   
 
- final  List<ProjectPagePullRequestDto>? _prs;
- List<ProjectPagePullRequestDto>? get prs {
-  final value = _prs;
-  if (value == null) return null;
-  if (_prs is EqualUnmodifiableListView) return _prs;
-  // ignore: implicit_dynamic_type
-  return EqualUnmodifiableListView(value);
-}
-
+ final  bool changed;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
 @pragma('vm:prefer-inline')
-$WorkerReply_ProjectPullRequestsAckCopyWith<WorkerReply_ProjectPullRequestsAck> get copyWith => _$WorkerReply_ProjectPullRequestsAckCopyWithImpl<WorkerReply_ProjectPullRequestsAck>(this, _$identity);
+$WorkerReply_ResetGitCommitScriptAckCopyWith<WorkerReply_ResetGitCommitScriptAck> get copyWith => _$WorkerReply_ResetGitCommitScriptAckCopyWithImpl<WorkerReply_ResetGitCommitScriptAck>(this, _$identity);
 
 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ProjectPullRequestsAck&&const DeepCollectionEquality().equals(other._prs, _prs));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ResetGitCommitScriptAck&&(identical(other.changed, changed) || other.changed == changed));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_prs));
+int get hashCode => Object.hash(runtimeType,changed);
 
 @override
 String toString() {
-  return 'WorkerReply.projectPullRequestsAck(prs: $prs)';
+  return 'WorkerReply.resetGitCommitScriptAck(changed: $changed)';
 }
 
 
 }
 
 /// @nodoc
-abstract mixin class $WorkerReply_ProjectPullRequestsAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_ProjectPullRequestsAckCopyWith(WorkerReply_ProjectPullRequestsAck value, $Res Function(WorkerReply_ProjectPullRequestsAck) _then) = _$WorkerReply_ProjectPullRequestsAckCopyWithImpl;
+abstract mixin class $WorkerReply_ResetGitCommitScriptAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_ResetGitCommitScriptAckCopyWith(WorkerReply_ResetGitCommitScriptAck value, $Res Function(WorkerReply_ResetGitCommitScriptAck) _then) = _$WorkerReply_ResetGitCommitScriptAckCopyWithImpl;
 @useResult
 $Res call({
- List<ProjectPagePullRequestDto>? prs
+ bool changed
 });
 
 
@@ -524,23 +562,447 @@ $Res call({
 
 }
 /// @nodoc
-class _$WorkerReply_ProjectPullRequestsAckCopyWithImpl<$Res>
-    implements $WorkerReply_ProjectPullRequestsAckCopyWith<$Res> {
-  _$WorkerReply_ProjectPullRequestsAckCopyWithImpl(this._self, this._then);
+class _$WorkerReply_ResetGitCommitScriptAckCopyWithImpl<$Res>
+    implements $WorkerReply_ResetGitCommitScriptAckCopyWith<$Res> {
+  _$WorkerReply_ResetGitCommitScriptAckCopyWithImpl(this._self, this._then);
 
-  final WorkerReply_ProjectPullRequestsAck _self;
-  final $Res Function(WorkerReply_ProjectPullRequestsAck) _then;
+  final WorkerReply_ResetGitCommitScriptAck _self;
+  final $Res Function(WorkerReply_ResetGitCommitScriptAck) _then;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? prs = freezed,}) {
-  return _then(WorkerReply_ProjectPullRequestsAck(
-prs: freezed == prs ? _self._prs : prs // ignore: cast_nullable_to_non_nullable
-as List<ProjectPagePullRequestDto>?,
+@pragma('vm:prefer-inline') $Res call({Object? changed = null,}) {
+  return _then(WorkerReply_ResetGitCommitScriptAck(
+changed: null == changed ? _self.changed : changed // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 
 
 }
+
+/// @nodoc
+
+
+class WorkerReply_SetGitPrScriptAck extends WorkerReply {
+  const WorkerReply_SetGitPrScriptAck({required this.changed}): super._();
+  
+
+ final  bool changed;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_SetGitPrScriptAckCopyWith<WorkerReply_SetGitPrScriptAck> get copyWith => _$WorkerReply_SetGitPrScriptAckCopyWithImpl<WorkerReply_SetGitPrScriptAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_SetGitPrScriptAck&&(identical(other.changed, changed) || other.changed == changed));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,changed);
+
+@override
+String toString() {
+  return 'WorkerReply.setGitPrScriptAck(changed: $changed)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_SetGitPrScriptAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_SetGitPrScriptAckCopyWith(WorkerReply_SetGitPrScriptAck value, $Res Function(WorkerReply_SetGitPrScriptAck) _then) = _$WorkerReply_SetGitPrScriptAckCopyWithImpl;
+@useResult
+$Res call({
+ bool changed
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_SetGitPrScriptAckCopyWithImpl<$Res>
+    implements $WorkerReply_SetGitPrScriptAckCopyWith<$Res> {
+  _$WorkerReply_SetGitPrScriptAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_SetGitPrScriptAck _self;
+  final $Res Function(WorkerReply_SetGitPrScriptAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? changed = null,}) {
+  return _then(WorkerReply_SetGitPrScriptAck(
+changed: null == changed ? _self.changed : changed // ignore: cast_nullable_to_non_nullable
+as bool,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_ResetGitPrScriptAck extends WorkerReply {
+  const WorkerReply_ResetGitPrScriptAck({required this.changed}): super._();
+  
+
+ final  bool changed;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_ResetGitPrScriptAckCopyWith<WorkerReply_ResetGitPrScriptAck> get copyWith => _$WorkerReply_ResetGitPrScriptAckCopyWithImpl<WorkerReply_ResetGitPrScriptAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ResetGitPrScriptAck&&(identical(other.changed, changed) || other.changed == changed));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,changed);
+
+@override
+String toString() {
+  return 'WorkerReply.resetGitPrScriptAck(changed: $changed)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_ResetGitPrScriptAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_ResetGitPrScriptAckCopyWith(WorkerReply_ResetGitPrScriptAck value, $Res Function(WorkerReply_ResetGitPrScriptAck) _then) = _$WorkerReply_ResetGitPrScriptAckCopyWithImpl;
+@useResult
+$Res call({
+ bool changed
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_ResetGitPrScriptAckCopyWithImpl<$Res>
+    implements $WorkerReply_ResetGitPrScriptAckCopyWith<$Res> {
+  _$WorkerReply_ResetGitPrScriptAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_ResetGitPrScriptAck _self;
+  final $Res Function(WorkerReply_ResetGitPrScriptAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? changed = null,}) {
+  return _then(WorkerReply_ResetGitPrScriptAck(
+changed: null == changed ? _self.changed : changed // ignore: cast_nullable_to_non_nullable
+as bool,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_ShortcutSettingsAck extends WorkerReply {
+  const WorkerReply_ShortcutSettingsAck({required this.view}): super._();
+  
+
+ final  ShortcutSettingsView view;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_ShortcutSettingsAckCopyWith<WorkerReply_ShortcutSettingsAck> get copyWith => _$WorkerReply_ShortcutSettingsAckCopyWithImpl<WorkerReply_ShortcutSettingsAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ShortcutSettingsAck&&(identical(other.view, view) || other.view == view));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,view);
+
+@override
+String toString() {
+  return 'WorkerReply.shortcutSettingsAck(view: $view)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_ShortcutSettingsAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_ShortcutSettingsAckCopyWith(WorkerReply_ShortcutSettingsAck value, $Res Function(WorkerReply_ShortcutSettingsAck) _then) = _$WorkerReply_ShortcutSettingsAckCopyWithImpl;
+@useResult
+$Res call({
+ ShortcutSettingsView view
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_ShortcutSettingsAckCopyWithImpl<$Res>
+    implements $WorkerReply_ShortcutSettingsAckCopyWith<$Res> {
+  _$WorkerReply_ShortcutSettingsAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_ShortcutSettingsAck _self;
+  final $Res Function(WorkerReply_ShortcutSettingsAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? view = null,}) {
+  return _then(WorkerReply_ShortcutSettingsAck(
+view: null == view ? _self.view : view // ignore: cast_nullable_to_non_nullable
+as ShortcutSettingsView,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_SetShortcutBindingAck extends WorkerReply {
+  const WorkerReply_SetShortcutBindingAck(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_SetShortcutBindingAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.setShortcutBindingAck()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class WorkerReply_ResetShortcutBindingAck extends WorkerReply {
+  const WorkerReply_ResetShortcutBindingAck(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ResetShortcutBindingAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.resetShortcutBindingAck()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class WorkerReply_McpSettingsAck extends WorkerReply {
+  const WorkerReply_McpSettingsAck({required this.view}): super._();
+  
+
+ final  McpSettingsView view;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_McpSettingsAckCopyWith<WorkerReply_McpSettingsAck> get copyWith => _$WorkerReply_McpSettingsAckCopyWithImpl<WorkerReply_McpSettingsAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_McpSettingsAck&&(identical(other.view, view) || other.view == view));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,view);
+
+@override
+String toString() {
+  return 'WorkerReply.mcpSettingsAck(view: $view)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_McpSettingsAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_McpSettingsAckCopyWith(WorkerReply_McpSettingsAck value, $Res Function(WorkerReply_McpSettingsAck) _then) = _$WorkerReply_McpSettingsAckCopyWithImpl;
+@useResult
+$Res call({
+ McpSettingsView view
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_McpSettingsAckCopyWithImpl<$Res>
+    implements $WorkerReply_McpSettingsAckCopyWith<$Res> {
+  _$WorkerReply_McpSettingsAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_McpSettingsAck _self;
+  final $Res Function(WorkerReply_McpSettingsAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? view = null,}) {
+  return _then(WorkerReply_McpSettingsAck(
+view: null == view ? _self.view : view // ignore: cast_nullable_to_non_nullable
+as McpSettingsView,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_McpAddFromCatalogAck extends WorkerReply {
+  const WorkerReply_McpAddFromCatalogAck(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_McpAddFromCatalogAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.mcpAddFromCatalogAck()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class WorkerReply_McpToggleAck extends WorkerReply {
+  const WorkerReply_McpToggleAck(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_McpToggleAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.mcpToggleAck()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class WorkerReply_McpRemoveAck extends WorkerReply {
+  const WorkerReply_McpRemoveAck(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_McpRemoveAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.mcpRemoveAck()';
+}
+
+
+}
+
+
+
 
 // dart format on

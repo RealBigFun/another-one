@@ -14,8 +14,9 @@ use tokio::sync::broadcast;
 
 use crate::frame::{
     ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, ChangedFileWire, Check,
-    EnabledAgentsViewWire, OpenInStateWire, ProjectActionWire, ProjectPagePullRequest,
-    ProjectSummary, PullRequestStatus, RecentCommitsWire, TaskSummary, ToolbarActionOutcome,
+    EnabledAgentsViewWire, GitActionScriptsView, McpSettingsView, OpenInStateWire,
+    ProjectActionWire, ProjectPagePullRequest, ProjectSummary, PullRequestStatus,
+    RecentCommitsWire, ShortcutSettingsView, TaskSummary, ToolbarActionOutcome,
 };
 
 /// Boxed-future return type for `DaemonRegistry` methods that are
@@ -595,6 +596,111 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         _action_id: &str,
     ) -> Result<String, String> {
         Err("unsupported on this daemon".to_string())
+    }
+
+    // ── Settings → Git Actions (`another-one-ojm.8`) ───────────────
+
+    /// Snapshot of the Settings → Git Actions page state. Mirrors
+    /// `LocalSession::read_git_action_scripts`. Default returns an
+    /// empty/default view for registries that don't surface settings
+    /// (the standalone sandbox).
+    fn read_git_action_scripts(&self) -> GitActionScriptsView {
+        GitActionScriptsView {
+            commit_script: String::new(),
+            commit_using_default: true,
+            pr_script: String::new(),
+            pr_using_default: true,
+        }
+    }
+
+    /// Replace the commit-message generation script. Returns whether
+    /// the on-disk store changed. Default `Err("not supported on
+    /// sandbox")`.
+    fn set_git_commit_script(&self, _script: &str) -> Result<bool, String> {
+        Err("not supported on sandbox".to_string())
+    }
+
+    /// Drop the commit-script override and revert to the built-in
+    /// default. Returns whether anything was removed.
+    fn reset_git_commit_script(&self) -> Result<bool, String> {
+        Err("not supported on sandbox".to_string())
+    }
+
+    /// Replace the PR title/body generation script. Returns whether
+    /// the on-disk store changed.
+    fn set_git_pr_script(&self, _script: &str) -> Result<bool, String> {
+        Err("not supported on sandbox".to_string())
+    }
+
+    /// Drop the PR-script override and revert to the built-in
+    /// default. Returns whether anything was removed.
+    fn reset_git_pr_script(&self) -> Result<bool, String> {
+        Err("not supported on sandbox".to_string())
+    }
+
+    // ── Settings → Keybindings (`another-one-ojm.8`) ───────────────
+
+    /// Snapshot of the Settings → Keybindings page. Mirrors
+    /// `LocalSession::read_shortcut_settings`. Default returns an
+    /// empty list for registries that don't surface settings.
+    fn read_shortcut_settings(&self) -> ShortcutSettingsView {
+        ShortcutSettingsView {
+            actions: Vec::new(),
+        }
+    }
+
+    /// Set / clear one shortcut binding. Empty `binding` clears the
+    /// action. Returns `Err` for unknown action ids — the daemon
+    /// surfaces those as `WorkerReply::Err { kind: UnknownId }`.
+    fn set_shortcut_binding(
+        &self,
+        _action_id: &str,
+        _binding: &str,
+    ) -> Result<(), String> {
+        Err("not supported on sandbox".to_string())
+    }
+
+    /// Reset one shortcut to its built-in default.
+    fn reset_shortcut_binding(&self, _action_id: &str) -> Result<(), String> {
+        Err("not supported on sandbox".to_string())
+    }
+
+    // ── Settings → MCP (`another-one-ojm.8`) ───────────────────────
+
+    /// Snapshot of the catalog + on-disk MCP registry. Mirrors
+    /// `LocalSession::read_mcp_settings`. Default returns empty lists
+    /// for registries that don't surface settings.
+    fn read_mcp_settings(&self) -> McpSettingsView {
+        McpSettingsView {
+            catalog_entries: Vec::new(),
+            registry_entries: Vec::new(),
+            sync_error_provider_ids: Vec::new(),
+        }
+    }
+
+    /// Add one catalog entry to the registry. No-op when the id
+    /// isn't a known catalog id or the entry's already in the
+    /// registry.
+    fn mcp_add_from_catalog(&self, _catalog_id: &str) -> Result<(), String> {
+        Err("not supported on sandbox".to_string())
+    }
+
+    /// Toggle one entry's enabled flag for one provider. Runs
+    /// `sync_all` on success. Returns `Err` for unknown provider ids
+    /// (surfaced as `WorkerReply::Err { kind: UnknownId }`).
+    fn mcp_toggle(
+        &self,
+        _entry_id: &str,
+        _provider_id: &str,
+        _enabled: bool,
+    ) -> Result<(), String> {
+        Err("not supported on sandbox".to_string())
+    }
+
+    /// Remove one entry from the registry. Runs `sync_all` on
+    /// success.
+    fn mcp_remove(&self, _entry_id: &str) -> Result<(), String> {
+        Err("not supported on sandbox".to_string())
     }
 }
 

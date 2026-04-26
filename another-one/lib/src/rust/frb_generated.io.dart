@@ -116,7 +116,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BranchCompareView dco_decode_box_autoadd_branch_compare_view(dynamic raw);
 
   @protected
+  GitActionScriptsView dco_decode_box_autoadd_git_action_scripts_view(
+    dynamic raw,
+  );
+
+  @protected
   InputEventDto dco_decode_box_autoadd_input_event_dto(dynamic raw);
+
+  @protected
+  McpSettingsView dco_decode_box_autoadd_mcp_settings_view(dynamic raw);
 
   @protected
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
@@ -142,7 +150,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  ToolbarActionOutcome dco_decode_box_autoadd_toolbar_action_outcome(
+  ShortcutSettingsView dco_decode_box_autoadd_shortcut_settings_view(
     dynamic raw,
   );
 
@@ -160,9 +168,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CellDto dco_decode_cell_dto(dynamic raw);
-
-  @protected
-  ChangedFile dco_decode_changed_file(dynamic raw);
 
   @protected
   ChangedFileDto dco_decode_changed_file_dto(dynamic raw);
@@ -210,9 +215,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CellDto> dco_decode_list_cell_dto(dynamic raw);
-
-  @protected
-  List<ChangedFile> dco_decode_list_changed_file(dynamic raw);
 
   @protected
   List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
@@ -433,9 +435,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TaskSummary dco_decode_task_summary(dynamic raw);
 
   @protected
-  ToolbarActionOutcome dco_decode_toolbar_action_outcome(dynamic raw);
-
-  @protected
   ToolbarActionOutcomeDto dco_decode_toolbar_action_outcome_dto(dynamic raw);
 
   @protected
@@ -556,7 +555,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  GitActionScriptsView sse_decode_box_autoadd_git_action_scripts_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   InputEventDto sse_decode_box_autoadd_input_event_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  McpSettingsView sse_decode_box_autoadd_mcp_settings_view(
     SseDeserializer deserializer,
   );
 
@@ -590,7 +599,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  ToolbarActionOutcome sse_decode_box_autoadd_toolbar_action_outcome(
+  ShortcutSettingsView sse_decode_box_autoadd_shortcut_settings_view(
     SseDeserializer deserializer,
   );
 
@@ -612,9 +621,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CellDto sse_decode_cell_dto(SseDeserializer deserializer);
-
-  @protected
-  ChangedFile sse_decode_changed_file(SseDeserializer deserializer);
 
   @protected
   ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer);
@@ -670,9 +676,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CellDto> sse_decode_list_cell_dto(SseDeserializer deserializer);
-
-  @protected
-  List<ChangedFile> sse_decode_list_changed_file(SseDeserializer deserializer);
 
   @protected
   List<ChangedFileDto> sse_decode_list_changed_file_dto(
@@ -953,11 +956,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TaskSummary sse_decode_task_summary(SseDeserializer deserializer);
 
   @protected
-  ToolbarActionOutcome sse_decode_toolbar_action_outcome(
-    SseDeserializer deserializer,
-  );
-
-  @protected
   ToolbarActionOutcomeDto sse_decode_toolbar_action_outcome_dto(
     SseDeserializer deserializer,
   );
@@ -1106,8 +1104,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_git_action_scripts_view(
+    GitActionScriptsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_input_event_dto(
     InputEventDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_mcp_settings_view(
+    McpSettingsView self,
     SseSerializer serializer,
   );
 
@@ -1148,8 +1158,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_box_autoadd_toolbar_action_outcome(
-    ToolbarActionOutcome self,
+  void sse_encode_box_autoadd_shortcut_settings_view(
+    ShortcutSettingsView self,
     SseSerializer serializer,
   );
 
@@ -1173,9 +1183,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_cell_dto(CellDto self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_changed_file(ChangedFile self, SseSerializer serializer);
 
   @protected
   void sse_encode_changed_file_dto(
@@ -1239,12 +1246,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_cell_dto(List<CellDto> self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_list_changed_file(
-    List<ChangedFile> self,
-    SseSerializer serializer,
-  );
 
   @protected
   void sse_encode_list_changed_file_dto(
@@ -1590,12 +1591,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_task_summary(TaskSummary self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_toolbar_action_outcome(
-    ToolbarActionOutcome self,
-    SseSerializer serializer,
-  );
 
   @protected
   void sse_encode_toolbar_action_outcome_dto(
