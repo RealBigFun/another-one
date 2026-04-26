@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Build the AnotherOne desktop AppImage.
+# Build the AnotherOne Linux AppImage from the Flutter desktop +
+# the mcp-shim cargo binary.
 #
-# Output: target/release/linux/AnotherOne-x86_64.AppImage
+# Output: target/release/linux/AnotherOne-<arch>.AppImage
 #
 # Layout assembled under target/release/linux/AppDir/:
-#   usr/bin/another-one
-#   usr/bin/another-one-mcp-shim
-#   usr/share/another-one/assets/...        (loaded via $APPDIR by assets.rs)
+#   usr/bin/another-one              # Flutter app launcher (wraps the bundle)
+#   usr/bin/another-one-mcp-shim     # mcp-shim cargo binary
+#   usr/lib/another-one/bundle/...   # Flutter build output (libapp.so + flutter_assets/)
 #   usr/share/applications/another-one.desktop
 #   usr/share/icons/hicolor/256x256/apps/another-one.png
 #
-# linuxdeploy synthesizes the root AppRun, top-level .desktop symlink,
-# and bundles the binary's dynamic dependencies. It's downloaded into
-# target/release/linux/tools/ on first run and reused thereafter.
+# linuxdeploy synthesizes the root AppRun, top-level .desktop
+# symlink, and bundles the binary's dynamic dependencies. It's
+# downloaded into target/release/linux/tools/ on first run and
+# reused thereafter.
 
 set -euo pipefail
 
@@ -74,28 +76,17 @@ PACKAGE_NAME="another-one"
 SHIM_NAME="another-one-mcp-shim"
 ARCH="$(uname -m)"
 
-# By default binaries come from the pinned Ubuntu 22.04 container
-# (GLIBC 2.35 floor, reproducible). Set ALLOW_HOST_BUILD=1 to skip
-# Docker and use the host toolchain — faster iteration but the
-# AppImage will only run on distros with ≥ host GLIBC.
-ALLOW_HOST_BUILD="${ALLOW_HOST_BUILD:-0}"
-if [[ "$ALLOW_HOST_BUILD" -eq 1 ]]; then
-  RELEASE_DIR="$ROOT_DIR/target/release"
-else
-  RELEASE_DIR="$ROOT_DIR/target/docker-linux/release"
-fi
+FLUTTER_DIR="$ROOT_DIR/$PACKAGE_NAME"
+SHIM_RELEASE_DIR="$ROOT_DIR/target/release"
+SHIM_BINARY_PATH="$SHIM_RELEASE_DIR/$SHIM_NAME"
 
 PACKAGE_DIR="$ROOT_DIR/target/release/linux"
 APPDIR="$PACKAGE_DIR/AppDir"
 TOOLS_DIR="$PACKAGE_DIR/tools"
 APPIMAGE_OUT="$PACKAGE_DIR/${APP_NAME}-${ARCH}.AppImage"
 
-BINARY_PATH="$RELEASE_DIR/$PACKAGE_NAME"
-SHIM_BINARY_PATH="$RELEASE_DIR/$SHIM_NAME"
-
-ASSETS_SOURCE="$ROOT_DIR/desktop/assets"
-DESKTOP_SOURCE="$ROOT_DIR/desktop/assets/app-icon/linux/another-one.desktop"
-ICON_SOURCE="$ROOT_DIR/desktop/assets/app-icon/linux/another-one.png"
+DESKTOP_SOURCE="$FLUTTER_DIR/packaging/linux/another-one.desktop"
+ICON_SOURCE="$FLUTTER_DIR/packaging/linux/another-one.png"
 
 LINUXDEPLOY_VERSION="continuous"
 LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/${LINUXDEPLOY_VERSION}/linuxdeploy-${ARCH}.AppImage"
@@ -110,20 +101,29 @@ if [[ ! -f "$ICON_SOURCE" ]]; then
   exit 1
 fi
 
-if [[ "$ALLOW_HOST_BUILD" -eq 1 ]]; then
-  echo "==> building $PACKAGE_NAME + $SHIM_NAME (release, host toolchain)"
-  (
-    cd "$ROOT_DIR"
-    cargo build -p "$PACKAGE_NAME" -p "$SHIM_NAME" --release
-  )
-else
-  "$ROOT_DIR/scripts/linux/build-in-container.sh"
-fi
+echo "==> building $PACKAGE_NAME (flutter desktop, release)"
+(
+  cd "$FLUTTER_DIR"
+  flutter build linux --release
+)
 
-if [[ ! -x "$BINARY_PATH" ]]; then
-  echo "Expected release binary at $BINARY_PATH after build." >&2
+FLUTTER_BUNDLE_DIR="$FLUTTER_DIR/build/linux/x64/release/bundle"
+if [[ ! -d "$FLUTTER_BUNDLE_DIR" ]]; then
+  echo "Expected Flutter bundle at $FLUTTER_BUNDLE_DIR after build." >&2
   exit 1
 fi
+FLUTTER_BINARY="$FLUTTER_BUNDLE_DIR/$PACKAGE_NAME"
+if [[ ! -x "$FLUTTER_BINARY" ]]; then
+  echo "Expected Flutter binary at $FLUTTER_BINARY." >&2
+  exit 1
+fi
+
+echo "==> building $SHIM_NAME (cargo, release)"
+(
+  cd "$ROOT_DIR"
+  cargo build -p "$SHIM_NAME" --release
+)
+
 if [[ ! -x "$SHIM_BINARY_PATH" ]]; then
   echo "Expected shim binary at $SHIM_BINARY_PATH after build." >&2
   exit 1
@@ -133,18 +133,30 @@ echo "==> assembling AppDir at $APPDIR"
 rm -rf "$APPDIR"
 mkdir -p \
   "$APPDIR/usr/bin" \
-  "$APPDIR/usr/share/$PACKAGE_NAME" \
+  "$APPDIR/usr/lib/$PACKAGE_NAME" \
   "$APPDIR/usr/share/applications" \
   "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 
-install -m 0755 "$BINARY_PATH" "$APPDIR/usr/bin/$PACKAGE_NAME"
-install -m 0755 "$SHIM_BINARY_PATH" "$APPDIR/usr/bin/$SHIM_NAME"
+# Copy the entire Flutter bundle (binary + libapp.so +
+# data/icudtl.dat + data/flutter_assets/...) under
+# /usr/lib/another-one/bundle, then drop a tiny launcher under
+# /usr/bin that exec()s into it. Keeping the bundle layout
+# intact preserves Flutter's relative-path lookups
+# (`data/flutter_assets/`, `lib/libapp.so`, `lib/libflutter_linux_gtk.so`).
+BUNDLE_DEST="$APPDIR/usr/lib/$PACKAGE_NAME/bundle"
+cp -r "$FLUTTER_BUNDLE_DIR" "$BUNDLE_DEST"
 
-# Copy the entire desktop/assets/ tree as the runtime asset root.
-# `desktop/src/assets.rs::linux_appimage_resource_root()` resolves
-# this via $APPDIR, so the binary loads fonts, icons, and SVGs from
-# inside the AppImage instead of the build-time CARGO_MANIFEST_DIR.
-cp -r "$ASSETS_SOURCE" "$APPDIR/usr/share/$PACKAGE_NAME/"
+cat > "$APPDIR/usr/bin/$PACKAGE_NAME" <<'LAUNCHER'
+#!/bin/sh
+# AppImage launcher — exec into the Flutter bundle's binary
+# while preserving the bundle's relative-path lookups.
+APPDIR_FALLBACK="$(dirname "$(readlink -f "$0")")/../.."
+APPDIR_BASE="${APPDIR:-$APPDIR_FALLBACK}"
+exec "$APPDIR_BASE/usr/lib/another-one/bundle/another-one" "$@"
+LAUNCHER
+chmod 0755 "$APPDIR/usr/bin/$PACKAGE_NAME"
+
+install -m 0755 "$SHIM_BINARY_PATH" "$APPDIR/usr/bin/$SHIM_NAME"
 
 install -m 0644 "$DESKTOP_SOURCE" "$APPDIR/usr/share/applications/$PACKAGE_NAME.desktop"
 install -m 0644 "$ICON_SOURCE" "$APPDIR/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
@@ -180,6 +192,8 @@ echo "==> running linuxdeploy"
   OUTPUT="$(basename "$APPIMAGE_OUT")" \
   "$LINUXDEPLOY" \
     --appdir "$APPDIR" \
+    --executable "$BUNDLE_DEST/$PACKAGE_NAME" \
+    --executable "$APPDIR/usr/bin/$SHIM_NAME" \
     --desktop-file "$APPDIR/usr/share/applications/$PACKAGE_NAME.desktop" \
     --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png" \
     --exclude-library 'libxkbcommon.so*' \

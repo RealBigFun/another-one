@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Build, ad-hoc sign, and DMG-package the AnotherOne macOS app.
+#
+# Flutter's macOS build already produces a `AnotherOne.app`
+# bundle with a correct Info.plist + Frameworks/ + Resources/
+# layout — we just need to drop the mcp-shim cargo binary into
+# Contents/MacOS/ alongside the Flutter binary so the embedded
+# daemon's MCP catalog entry can find it via current_exe-relative
+# path resolution.
 
 set -euo pipefail
 
@@ -46,97 +54,62 @@ ROOT_DIR="$(
 
 APP_NAME="AnotherOne"
 PACKAGE_NAME="another-one"
-BUNDLE_ID="dev.anotherone.desktop"
-MIN_MACOS_VERSION="11.0"
+SHIM_NAME="another-one-mcp-shim"
 
+FLUTTER_DIR="$ROOT_DIR/$PACKAGE_NAME"
 RELEASE_DIR="$ROOT_DIR/target/release"
+SHIM_BINARY_PATH="$RELEASE_DIR/$SHIM_NAME"
+
 PACKAGE_DIR="$RELEASE_DIR/macos"
 APP_BUNDLE="$PACKAGE_DIR/$APP_NAME.app"
-CONTENTS_DIR="$APP_BUNDLE/Contents"
-MACOS_DIR="$CONTENTS_DIR/MacOS"
-RESOURCES_DIR="$CONTENTS_DIR/Resources"
-ASSETS_DIR="$RESOURCES_DIR/assets"
-BINARY_PATH="$RELEASE_DIR/$PACKAGE_NAME"
 DMG_PATH="$PACKAGE_DIR/$APP_NAME.dmg"
 STAGING_DIR="$PACKAGE_DIR/dmg-staging"
 
-ICON_PATH="$ROOT_DIR/desktop/assets/app-icon/macos/$APP_NAME.icns"
-ASSETS_SOURCE="$ROOT_DIR/desktop/assets"
-
-if [[ ! -f "$ICON_PATH" ]]; then
-  echo "Expected macOS app icon at $ICON_PATH." >&2
-  exit 1
-fi
-
-SHIM_NAME="another-one-mcp-shim"
-SHIM_BINARY_PATH="$ROOT_DIR/target/release/$SHIM_NAME"
-
-echo "Building $PACKAGE_NAME + $SHIM_NAME for release..."
+echo "==> building $PACKAGE_NAME (flutter desktop, release)"
 (
-  cd "$ROOT_DIR"
-  cargo build -p "$PACKAGE_NAME" -p "$SHIM_NAME" --release
+  cd "$FLUTTER_DIR"
+  flutter build macos --release
 )
 
-if [[ ! -x "$BINARY_PATH" ]]; then
-  echo "Expected built binary at $BINARY_PATH, but it was not found or is not executable." >&2
+FLUTTER_APP_BUNDLE="$FLUTTER_DIR/build/macos/Build/Products/Release/$APP_NAME.app"
+if [[ ! -d "$FLUTTER_APP_BUNDLE" ]]; then
+  echo "Expected Flutter app bundle at $FLUTTER_APP_BUNDLE after build." >&2
   exit 1
 fi
 
+echo "==> building $SHIM_NAME (cargo, release)"
+(
+  cd "$ROOT_DIR"
+  cargo build -p "$SHIM_NAME" --release
+)
+
 if [[ ! -x "$SHIM_BINARY_PATH" ]]; then
-  echo "Expected shim binary at $SHIM_BINARY_PATH, but it was not found or is not executable." >&2
+  echo "Expected shim binary at $SHIM_BINARY_PATH after build." >&2
   echo "The daemon MCP catalog entry will not work without it." >&2
   exit 1
 fi
 
-echo "Assembling $APP_NAME.app..."
+echo "==> assembling $APP_NAME.app"
 rm -rf "$APP_BUNDLE" "$STAGING_DIR" "$DMG_PATH"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+mkdir -p "$PACKAGE_DIR"
+# `ditto` preserves macOS metadata (extended attrs, the .app's
+# Frameworks/ symlinks). Don't substitute `cp -r` — `cp` strips
+# the symlink semantics that Flutter's bundle relies on.
+ditto "$FLUTTER_APP_BUNDLE" "$APP_BUNDLE"
 
-install -m 755 "$BINARY_PATH" "$MACOS_DIR/$PACKAGE_NAME"
-# Bundle the shim next to the main exe. `shim_binary_path()` in
-# desktop/src/app.rs resolves the shim relative to current_exe,
-# so it has to live in Contents/MacOS/ alongside the main binary.
-install -m 755 "$SHIM_BINARY_PATH" "$MACOS_DIR/$SHIM_NAME"
-ditto "$ASSETS_SOURCE" "$ASSETS_DIR"
-install -m 644 "$ICON_PATH" "$RESOURCES_DIR/$APP_NAME.icns"
+# Drop the shim binary next to the Flutter binary. The bridge's
+# embedded daemon resolves `another-one-mcp-shim` relative to
+# `current_exe` (Contents/MacOS/<binary>), so the shim has to
+# live in the same directory.
+install -m 755 "$SHIM_BINARY_PATH" "$APP_BUNDLE/Contents/MacOS/$SHIM_NAME"
 
-cat > "$CONTENTS_DIR/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleDisplayName</key>
-  <string>$APP_NAME</string>
-  <key>CFBundleExecutable</key>
-  <string>$PACKAGE_NAME</string>
-  <key>CFBundleIconFile</key>
-  <string>$APP_NAME</string>
-  <key>CFBundleIdentifier</key>
-  <string>$BUNDLE_ID</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>$APP_NAME</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
-  <key>CFBundleVersion</key>
-  <string>0.1.0</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>$MIN_MACOS_VERSION</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-</dict>
-</plist>
-PLIST
-
-echo "Signing $APP_NAME.app with an ad-hoc identity..."
+echo "==> signing $APP_NAME.app with an ad-hoc identity"
+# --deep re-signs every nested bundle (Frameworks/FlutterMacOS.framework,
+# the embedded helpers Flutter ships, and the shim we just dropped in)
+# so Gatekeeper doesn't flag the inner artefacts as untrusted.
 codesign --force --deep --sign - "$APP_BUNDLE"
 
-echo "Creating $APP_NAME.dmg..."
+echo "==> creating $APP_NAME.dmg"
 mkdir -p "$STAGING_DIR"
 ditto "$APP_BUNDLE" "$STAGING_DIR/$APP_NAME.app"
 ln -s /Applications "$STAGING_DIR/Applications"
@@ -148,11 +121,12 @@ hdiutil create \
   "$DMG_PATH"
 rm -rf "$STAGING_DIR"
 
+echo ""
 echo "Created:"
 echo "  $APP_BUNDLE"
 echo "  $DMG_PATH"
 
 if [[ "$OPEN_DMG" -eq 1 ]]; then
-  echo "Opening $APP_NAME.dmg..."
+  echo "==> opening $DMG_PATH"
   open "$DMG_PATH"
 fi
