@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 352221479;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1494387154;
 
 // Section: executor
 
@@ -2263,6 +2263,65 @@ fn wire__crate__api__local_session__LocalSession_read_enabled_agents_impl(
         },
     )
 }
+fn wire__crate__api__local_session__LocalSession_read_open_in_settings_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "LocalSession_read_open_in_settings",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LocalSession>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok =
+                            crate::api::local_session::LocalSession::read_open_in_settings(
+                                &*api_that_guard,
+                            )
+                            .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__local_session__LocalSession_read_project_branches_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3246,6 +3305,69 @@ fn wire__crate__api__local_session__LocalSession_set_default_agent_impl(
                             api_agent_id,
                         )
                         .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__local_session__LocalSession_set_open_in_app_enabled_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "LocalSession_set_open_in_app_enabled",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LocalSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_app_id = <String>::sse_decode(&mut deserializer);
+            let api_enabled = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok =
+                            crate::api::local_session::LocalSession::set_open_in_app_enabled(
+                                &*api_that_guard,
+                                api_app_id,
+                                api_enabled,
+                            )
+                            .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -4769,6 +4891,18 @@ impl SseDecode for Vec<crate::api::local_session::OpenInAppDto> {
     }
 }
 
+impl SseDecode for Vec<crate::api::local_session::OpenInAppSettingsRow> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::local_session::OpenInAppSettingsRow>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4863,6 +4997,35 @@ impl SseDecode for crate::api::local_session::OpenInAppDto {
             label: var_label,
             description: var_description,
             icon_path: var_iconPath,
+        };
+    }
+}
+
+impl SseDecode for crate::api::local_session::OpenInAppSettingsRow {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_label = <String>::sse_decode(deserializer);
+        let mut var_description = <String>::sse_decode(deserializer);
+        let mut var_iconPath = <String>::sse_decode(deserializer);
+        let mut var_enabled = <bool>::sse_decode(deserializer);
+        return crate::api::local_session::OpenInAppSettingsRow {
+            id: var_id,
+            label: var_label,
+            description: var_description,
+            icon_path: var_iconPath,
+            enabled: var_enabled,
+        };
+    }
+}
+
+impl SseDecode for crate::api::local_session::OpenInSettingsView {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_availableApps =
+            <Vec<crate::api::local_session::OpenInAppSettingsRow>>::sse_decode(deserializer);
+        return crate::api::local_session::OpenInSettingsView {
+            available_apps: var_availableApps,
         };
     }
 }
@@ -5645,197 +5808,209 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        37 => wire__crate__api__local_session__LocalSession_read_project_branches_impl(
+        37 => wire__crate__api__local_session__LocalSession_read_open_in_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__local_session__LocalSession_read_project_github_url_impl(
+        38 => wire__crate__api__local_session__LocalSession_read_project_branches_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__local_session__LocalSession_read_pull_request_checks_impl(
+        39 => wire__crate__api__local_session__LocalSession_read_project_github_url_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        40 => wire__crate__api__local_session__LocalSession_read_recent_commits_impl(
+        40 => wire__crate__api__local_session__LocalSession_read_pull_request_checks_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        41 => wire__crate__api__local_session__LocalSession_remove_project_impl(
+        41 => wire__crate__api__local_session__LocalSession_read_recent_commits_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        42 => wire__crate__api__local_session__LocalSession_remove_task_impl(
+        42 => wire__crate__api__local_session__LocalSession_remove_project_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        43 => wire__crate__api__local_session__LocalSession_rename_task_impl(
+        43 => wire__crate__api__local_session__LocalSession_remove_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        44 => wire__crate__api__local_session__LocalSession_repo_default_commit_action_impl(
+        44 => wire__crate__api__local_session__LocalSession_rename_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        45 => wire__crate__api__local_session__LocalSession_resolved_branch_settings_impl(
+        45 => wire__crate__api__local_session__LocalSession_repo_default_commit_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        46 => wire__crate__api__local_session__LocalSession_run_project_action_impl(
+        46 => wire__crate__api__local_session__LocalSession_resolved_branch_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        47 => wire__crate__api__local_session__LocalSession_run_toolbar_git_action_impl(
+        47 => wire__crate__api__local_session__LocalSession_run_project_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        48 => wire__crate__api__local_session__LocalSession_save_project_action_impl(
+        48 => wire__crate__api__local_session__LocalSession_run_toolbar_git_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        49 => wire__crate__api__local_session__LocalSession_send_impl(
+        49 => wire__crate__api__local_session__LocalSession_save_project_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        50 => wire__crate__api__local_session__LocalSession_set_agent_enabled_impl(
+        50 => wire__crate__api__local_session__LocalSession_send_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__local_session__LocalSession_set_agent_launch_args_impl(
+        51 => wire__crate__api__local_session__LocalSession_set_agent_enabled_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => wire__crate__api__local_session__LocalSession_set_default_agent_impl(
+        52 => wire__crate__api__local_session__LocalSession_set_agent_launch_args_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        53 => wire__crate__api__local_session__LocalSession_set_project_branch_setting_impl(
+        53 => wire__crate__api__local_session__LocalSession_set_default_agent_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        54 => wire__crate__api__local_session__LocalSession_set_task_pinned_impl(
+        54 => wire__crate__api__local_session__LocalSession_set_open_in_app_enabled_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => wire__crate__api__local_session__LocalSession_slugify_branch_name_impl(
+        55 => wire__crate__api__local_session__LocalSession_set_project_branch_setting_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        56 => wire__crate__api__local_session__LocalSession_stage_all_changes_impl(
+        56 => wire__crate__api__local_session__LocalSession_set_task_pinned_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        57 => wire__crate__api__local_session__LocalSession_stage_changed_file_impl(
+        57 => wire__crate__api__local_session__LocalSession_slugify_branch_name_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        58 => wire__crate__api__local_session__LocalSession_submit_new_task_impl(
+        58 => wire__crate__api__local_session__LocalSession_stage_all_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        59 => wire__crate__api__local_session__LocalSession_subscribe_impl(
+        59 => wire__crate__api__local_session__LocalSession_stage_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        60 => wire__crate__api__local_session__LocalSession_subscribe_worker_replies_impl(
+        60 => wire__crate__api__local_session__LocalSession_submit_new_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => wire__crate__api__local_session__LocalSession_tab_resize_impl(
+        61 => wire__crate__api__local_session__LocalSession_subscribe_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        62 => wire__crate__api__local_session__LocalSession_toggle_section_tab_pinned_impl(
+        62 => wire__crate__api__local_session__LocalSession_subscribe_worker_replies_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => wire__crate__api__local_session__LocalSession_unstage_all_changes_impl(
+        63 => wire__crate__api__local_session__LocalSession_tab_resize_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        64 => wire__crate__api__local_session__LocalSession_unstage_changed_file_impl(
+        64 => wire__crate__api__local_session__LocalSession_toggle_section_tab_pinned_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        65 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+        65 => wire__crate__api__local_session__LocalSession_unstage_all_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        66 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
-        67 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
-        68 => {
+        66 => wire__crate__api__local_session__LocalSession_unstage_changed_file_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        67 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        68 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
+        69 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
+        70 => {
             wire__crate__api__local_session__local_connect_impl(port, ptr, rust_vec_len, data_len)
         }
-        69 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__resources__read_app_resource_sample_impl(
+        71 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
+        72 => wire__crate__api__resources__read_app_resource_sample_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        71 => wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len),
-        72 => {
+        73 => wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len),
+        74 => {
             wire__crate__api__pair__regenerate_local_pairing_impl(port, ptr, rust_vec_len, data_len)
         }
-        73 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -6218,6 +6393,47 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::OpenInAppDto>
     for crate::api::local_session::OpenInAppDto
 {
     fn into_into_dart(self) -> crate::api::local_session::OpenInAppDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::local_session::OpenInAppSettingsRow {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+            self.description.into_into_dart().into_dart(),
+            self.icon_path.into_into_dart().into_dart(),
+            self.enabled.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::local_session::OpenInAppSettingsRow
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::OpenInAppSettingsRow>
+    for crate::api::local_session::OpenInAppSettingsRow
+{
+    fn into_into_dart(self) -> crate::api::local_session::OpenInAppSettingsRow {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::local_session::OpenInSettingsView {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [self.available_apps.into_into_dart().into_dart()].into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::local_session::OpenInSettingsView
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::OpenInSettingsView>
+    for crate::api::local_session::OpenInSettingsView
+{
+    fn into_into_dart(self) -> crate::api::local_session::OpenInSettingsView {
         self
     }
 }
@@ -7016,6 +7232,16 @@ impl SseEncode for Vec<crate::api::local_session::OpenInAppDto> {
     }
 }
 
+impl SseEncode for Vec<crate::api::local_session::OpenInAppSettingsRow> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::local_session::OpenInAppSettingsRow>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -7083,6 +7309,27 @@ impl SseEncode for crate::api::local_session::OpenInAppDto {
         <String>::sse_encode(self.label, serializer);
         <String>::sse_encode(self.description, serializer);
         <String>::sse_encode(self.icon_path, serializer);
+    }
+}
+
+impl SseEncode for crate::api::local_session::OpenInAppSettingsRow {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.label, serializer);
+        <String>::sse_encode(self.description, serializer);
+        <String>::sse_encode(self.icon_path, serializer);
+        <bool>::sse_encode(self.enabled, serializer);
+    }
+}
+
+impl SseEncode for crate::api::local_session::OpenInSettingsView {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::local_session::OpenInAppSettingsRow>>::sse_encode(
+            self.available_apps,
+            serializer,
+        );
     }
 }
 

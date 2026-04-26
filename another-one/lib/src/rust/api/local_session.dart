@@ -11,7 +11,7 @@ part 'local_session.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `agent_def_to_dto`, `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`, `submit_direct_task`, `submit_worktree_task`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -319,6 +319,12 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// in the canonical AGENTS order — UI renders it as is.
   Future<EnabledAgentsView> readEnabledAgents();
 
+  /// Snapshot of every detected Open-In app on this host paired
+  /// with its current enabled flag. Drives the Settings → Open
+  /// In page (the titlebar dropdown still uses the narrower
+  /// `open_in_state` for its primary-action lookup).
+  Future<OpenInSettingsView> readOpenInSettings();
+
   /// List of available branches on `project_id`'s git repo.
   /// Wraps `ProjectStore::branch_names`. Powers the new-task
   /// modal's source-branch dropdown.
@@ -493,6 +499,13 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// Mark `agent_id` as the default agent. Mirrors GPUI's
   /// `set_default_agent`. Returns whether anything changed.
   Future<bool> setDefaultAgent({required String agentId});
+
+  /// Toggle one Open-In app's enabled flag in the user's Settings
+  /// → Open In page. Mirrors GPUI's `set_open_in_app_enabled`.
+  Future<void> setOpenInAppEnabled({
+    required String appId,
+    required bool enabled,
+  });
 
   /// Update the configured default branch or default-target branch
   /// for `project_id`'s root project. `field` must be one of
@@ -1051,6 +1064,67 @@ class OpenInAppDto {
           label == other.label &&
           description == other.description &&
           iconPath == other.iconPath;
+}
+
+/// One row of the Settings → Open In page. Carries everything the
+/// page renders (label + icon + description + per-host enabled
+/// flag). UI maps these to clickable rows that toggle through
+/// [`LocalSession::set_open_in_app_enabled`].
+class OpenInAppSettingsRow {
+  /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
+  /// `"zed"`, `"vscode"`, `"file-manager"`.
+  final String id;
+  final String label;
+  final String description;
+  final String iconPath;
+  final bool enabled;
+
+  const OpenInAppSettingsRow({
+    required this.id,
+    required this.label,
+    required this.description,
+    required this.iconPath,
+    required this.enabled,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      label.hashCode ^
+      description.hashCode ^
+      iconPath.hashCode ^
+      enabled.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OpenInAppSettingsRow &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          description == other.description &&
+          iconPath == other.iconPath &&
+          enabled == other.enabled;
+}
+
+/// Snapshot returned by [`LocalSession::read_open_in_settings`].
+class OpenInSettingsView {
+  /// Every Open-In app the host detected as installed, in
+  /// canonical order. Empty when no supported app is on the
+  /// host's PATH / installed.
+  final List<OpenInAppSettingsRow> availableApps;
+
+  const OpenInSettingsView({required this.availableApps});
+
+  @override
+  int get hashCode => availableApps.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OpenInSettingsView &&
+          runtimeType == other.runtimeType &&
+          availableApps == other.availableApps;
 }
 
 /// Snapshot returned by [`LocalSession::open_in_state`].

@@ -185,6 +185,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<OpenInAppDto> dco_decode_list_open_in_app_dto(dynamic raw);
 
   @protected
+  List<OpenInAppSettingsRow> dco_decode_list_open_in_app_settings_row(
+    dynamic raw,
+  );
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
@@ -209,6 +214,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   OpenInAppDto dco_decode_open_in_app_dto(dynamic raw);
+
+  @protected
+  OpenInAppSettingsRow dco_decode_open_in_app_settings_row(dynamic raw);
+
+  @protected
+  OpenInSettingsView dco_decode_open_in_settings_view(dynamic raw);
 
   @protected
   OpenInState dco_decode_open_in_state(dynamic raw);
@@ -523,6 +534,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<OpenInAppSettingsRow> sse_decode_list_open_in_app_settings_row(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
@@ -551,6 +567,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   OpenInAppDto sse_decode_open_in_app_dto(SseDeserializer deserializer);
+
+  @protected
+  OpenInAppSettingsRow sse_decode_open_in_app_settings_row(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  OpenInSettingsView sse_decode_open_in_settings_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   OpenInState sse_decode_open_in_state(SseDeserializer deserializer);
@@ -933,6 +959,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_open_in_app_settings_row(
+    List<OpenInAppSettingsRow> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
@@ -973,6 +1005,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_open_in_app_dto(OpenInAppDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_open_in_app_settings_row(
+    OpenInAppSettingsRow self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_open_in_settings_view(
+    OpenInSettingsView self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_open_in_state(OpenInState self, SseSerializer serializer);

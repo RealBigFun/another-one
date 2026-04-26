@@ -40,6 +40,7 @@ import 'rust/api/local_session.dart'
         ChangedFileDto,
         CheckDto,
         EnabledAgentsView,
+        OpenInSettingsView,
         OpenInState,
         ProjectActionDto,
         ProjectPagePullRequestDto,
@@ -684,6 +685,29 @@ abstract class DaemonConnection {
   }) {
     throw UnimplementedError(
       'setAgentLaunchArgs: requires Control::SetAgentLaunchArgs wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  // ── Settings → Open In ───────────────────────────────────────────
+
+  /// Snapshot of every detected Open-In app on this host paired
+  /// with its enabled flag. Empty list when no supported app is
+  /// installed.
+  Future<OpenInSettingsView> readOpenInSettings() {
+    throw UnimplementedError(
+      'readOpenInSettings: requires Control::ReadOpenInSettings wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Toggle an Open-In app's enabled flag.
+  Future<void> setOpenInAppEnabled({
+    required String appId,
+    required bool enabled,
+  }) {
+    throw UnimplementedError(
+      'setOpenInAppEnabled: requires Control::SetOpenInAppEnabled wire '
       'variant on the iroh transport (not yet implemented).',
     );
   }

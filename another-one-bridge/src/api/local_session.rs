@@ -1526,6 +1526,70 @@ impl LocalSession {
         Ok(state.project_store.set_default_agent(&agent_id))
     }
 
+    /// Snapshot of every detected Open-In app on this host paired
+    /// with its current enabled flag. Drives the Settings → Open
+    /// In page (the titlebar dropdown still uses the narrower
+    /// `open_in_state` for its primary-action lookup).
+    pub async fn read_open_in_settings(
+        &self,
+    ) -> anyhow::Result<OpenInSettingsView> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "read_open_in_settings: set_local_registry not called"
+            )
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "read_open_in_settings: RegistryState mutex poisoned"
+            )
+        })?;
+        let available = available_open_in_apps();
+        let enabled = state
+            .project_store
+            .enabled_open_in_apps(&available);
+        Ok(OpenInSettingsView {
+            available_apps: available
+                .iter()
+                .map(|app| OpenInAppSettingsRow {
+                    id: app.id().to_string(),
+                    label: app.label().to_string(),
+                    description: app.description().to_string(),
+                    icon_path: app.icon_path().to_string(),
+                    enabled: enabled.contains(app),
+                })
+                .collect(),
+        })
+    }
+
+    /// Toggle one Open-In app's enabled flag in the user's Settings
+    /// → Open In page. Mirrors GPUI's `set_open_in_app_enabled`.
+    pub async fn set_open_in_app_enabled(
+        &self,
+        app_id: String,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        let app = parse_open_in_app_id(&app_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "set_open_in_app_enabled: unknown app id `{app_id}`"
+            )
+        })?;
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "set_open_in_app_enabled: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "set_open_in_app_enabled: RegistryState mutex poisoned"
+            )
+        })?;
+        let available = available_open_in_apps();
+        state
+            .project_store
+            .set_open_in_app_enabled(app, enabled, &available);
+        Ok(())
+    }
+
     /// Replace the launch-args list for `agent_id`. Empty `args`
     /// removes the entry entirely (matches core's `set_agent_launch_args`
     /// → `remove_agent_launch_args` short-circuit).
@@ -3165,6 +3229,30 @@ pub struct AgentSettingsView {
     /// Every agent in `AGENTS` (canonical order), enabled-or-not.
     pub agents: Vec<AgentSettingsRow>,
     pub default_agent_id: Option<String>,
+}
+
+/// One row of the Settings → Open In page. Carries everything the
+/// page renders (label + icon + description + per-host enabled
+/// flag). UI maps these to clickable rows that toggle through
+/// [`LocalSession::set_open_in_app_enabled`].
+#[derive(Debug, Clone)]
+pub struct OpenInAppSettingsRow {
+    /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
+    /// `"zed"`, `"vscode"`, `"file-manager"`.
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub icon_path: String,
+    pub enabled: bool,
+}
+
+/// Snapshot returned by [`LocalSession::read_open_in_settings`].
+#[derive(Debug, Clone)]
+pub struct OpenInSettingsView {
+    /// Every Open-In app the host detected as installed, in
+    /// canonical order. Empty when no supported app is on the
+    /// host's PATH / installed.
+    pub available_apps: Vec<OpenInAppSettingsRow>,
 }
 
 fn agent_def_to_dto(

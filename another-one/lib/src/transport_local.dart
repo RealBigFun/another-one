@@ -739,6 +739,27 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<OpenInSettingsView> readOpenInSettings() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readOpenInSettings: LocalTransport not connected');
+    }
+    return session.readOpenInSettings();
+  }
+
+  @override
+  Future<void> setOpenInAppEnabled({
+    required String appId,
+    required bool enabled,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setOpenInAppEnabled: LocalTransport not connected');
+    }
+    await session.setOpenInAppEnabled(appId: appId, enabled: enabled);
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,
