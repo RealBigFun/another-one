@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `pr_to_dto`, `run_changed_file_action`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `run_changed_file_action`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -119,6 +119,18 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String query,
   });
 
+  /// Resolve the latest PullRequest status for `project_id`'s
+  /// current branch (open PR's number + url + state). Powers the
+  /// titlebar git-actions dropdown's Create PR / Draft PR
+  /// enabledness gate.
+  ///
+  /// Routes [`another_one_core::git_actions::find_latest_pull_request_status`]
+  /// inside `spawn_blocking`. Returns `Ok(None)` when the project
+  /// is unknown or no PR exists for the branch.
+  Future<PullRequestStatusDto?> findPullRequestStatus({
+    required String projectId,
+  });
+
   /// Ask the daemon to spawn the given tab's PTY if it isn't
   /// already running. See [`Self`] doc for the launch flow.
   Future<void> launchTab({required String sectionId, required String tabId});
@@ -161,6 +173,18 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String projectId,
     required String appId,
   });
+
+  /// Snapshot the active project's branch metadata: current
+  /// branch, ahead/behind counts. Powers the titlebar git-actions
+  /// split-button's primary-action selection (Commit when there
+  /// are changes, Push when ahead, Pull when behind, Fetch
+  /// otherwise — the changes-vs-clean side comes from
+  /// `read_changed_files`).
+  ///
+  /// Reads through `read_project_git_state` with
+  /// `include_metadata=true` (so ahead/behind populate) inside
+  /// `spawn_blocking`. Returns `Ok(None)` for unknown projects.
+  Future<ActiveGitStateDto?> readActiveGitState({required String projectId});
 
   /// Diff the project's current branch against `target_branch`
   /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
@@ -280,6 +304,24 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String projectId,
   });
 
+  /// Run a toolbar git action (Commit, Push, Pull, etc.) against
+  /// `project_id`. Routes
+  /// [`another_one_core::git_actions::execute_toolbar_git_action`]
+  /// via spawn_blocking.
+  ///
+  /// `action_id` is one of: `"commit"`, `"commit-and-push"`,
+  /// `"undo-last-commit"`, `"fetch"`, `"pull"`, `"push"`,
+  /// `"force-push"`, `"create-pr"`, `"create-draft-pr"`. Other
+  /// values error.
+  ///
+  /// Returns the toast message + warning/refresh flags so the UI
+  /// can surface a snackbar and decide whether to invalidate
+  /// changedFilesProvider / activeGitStateProvider.
+  Future<ToolbarActionOutcomeDto> runToolbarGitAction({
+    required String projectId,
+    required String actionId,
+  });
+
   /// Send raw PTY stdin bytes to the currently-attached tab.
   ///
   /// Looks up the tab's writer in `RegistryState::writers` and
@@ -352,6 +394,34 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String path,
     String? originalPath,
   });
+}
+
+/// Branch metadata snapshot for the active project — current branch
+/// name plus ahead/behind counts. Drives the titlebar's
+/// idle-primary-action selection.
+class ActiveGitStateDto {
+  final String? currentBranch;
+  final int aheadCount;
+  final int behindCount;
+
+  const ActiveGitStateDto({
+    this.currentBranch,
+    required this.aheadCount,
+    required this.behindCount,
+  });
+
+  @override
+  int get hashCode =>
+      currentBranch.hashCode ^ aheadCount.hashCode ^ behindCount.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ActiveGitStateDto &&
+          runtimeType == other.runtimeType &&
+          currentBranch == other.currentBranch &&
+          aheadCount == other.aheadCount &&
+          behindCount == other.behindCount;
 }
 
 /// FRB-friendly mirror of
@@ -757,6 +827,34 @@ class ProjectPagePullRequestDto {
 /// the badge palette and the row-level affordances.
 enum PullRequestStateDto { open, closed, merged }
 
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::PullRequestStatus`]. Drives
+/// the titlebar dropdown's Create PR / Draft PR enabledness — when
+/// a PR already exists for the branch, those rows are disabled.
+class PullRequestStatusDto {
+  final BigInt number;
+  final String url;
+  final PullRequestStateDto state;
+
+  const PullRequestStatusDto({
+    required this.number,
+    required this.url,
+    required this.state,
+  });
+
+  @override
+  int get hashCode => number.hashCode ^ url.hashCode ^ state.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PullRequestStatusDto &&
+          runtimeType == other.runtimeType &&
+          number == other.number &&
+          url == other.url &&
+          state == other.state;
+}
+
 /// FRB-friendly snapshot of the right sidebar's Commits pane data.
 class RecentCommitsView {
   /// Current branch — shown as the pane subtitle in GPUI.
@@ -838,4 +936,35 @@ class ResolvedProjectBranchSettingsDto {
           configuredDefaultTargetBranch ==
               other.configuredDefaultTargetBranch &&
           effectiveDefaultTargetBranch == other.effectiveDefaultTargetBranch;
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::ToolbarActionOutcome`]. The
+/// titlebar surfaces `toast_message` as a snackbar (warning palette
+/// when `warning` is true) and uses `refresh_git_state` to decide
+/// whether to invalidate the active changed-files / git-state
+/// providers after the call returns.
+class ToolbarActionOutcomeDto {
+  final String toastMessage;
+  final bool warning;
+  final bool refreshGitState;
+
+  const ToolbarActionOutcomeDto({
+    required this.toastMessage,
+    required this.warning,
+    required this.refreshGitState,
+  });
+
+  @override
+  int get hashCode =>
+      toastMessage.hashCode ^ warning.hashCode ^ refreshGitState.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ToolbarActionOutcomeDto &&
+          runtimeType == other.runtimeType &&
+          toastMessage == other.toastMessage &&
+          warning == other.warning &&
+          refreshGitState == other.refreshGitState;
 }

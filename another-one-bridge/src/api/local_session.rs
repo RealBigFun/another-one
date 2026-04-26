@@ -832,6 +832,182 @@ impl LocalSession {
         Ok(section_id)
     }
 
+    /// Snapshot the active project's branch metadata: current
+    /// branch, ahead/behind counts. Powers the titlebar git-actions
+    /// split-button's primary-action selection (Commit when there
+    /// are changes, Push when ahead, Pull when behind, Fetch
+    /// otherwise — the changes-vs-clean side comes from
+    /// `read_changed_files`).
+    ///
+    /// Reads through `read_project_git_state` with
+    /// `include_metadata=true` (so ahead/behind populate) inside
+    /// `spawn_blocking`. Returns `Ok(None)` for unknown projects.
+    pub async fn read_active_git_state(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Option<ActiveGitStateDto>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "read_active_git_state: set_local_registry not called"
+            )
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "read_active_git_state: RegistryState mutex poisoned"
+                )
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        };
+        let Some(project_path) = project_path else {
+            return Ok(None);
+        };
+        let state = tokio::task::spawn_blocking(move || {
+            another_one_core::project_store::read_project_git_state(
+                &project_path,
+                true,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("read_active_git_state join: {e}"))?;
+        Ok(Some(ActiveGitStateDto {
+            current_branch: state.current_branch,
+            ahead_count: state.ahead_count as u32,
+            behind_count: state.behind_count as u32,
+        }))
+    }
+
+    /// Resolve the latest PullRequest status for `project_id`'s
+    /// current branch (open PR's number + url + state). Powers the
+    /// titlebar git-actions dropdown's Create PR / Draft PR
+    /// enabledness gate.
+    ///
+    /// Routes [`another_one_core::git_actions::find_latest_pull_request_status`]
+    /// inside `spawn_blocking`. Returns `Ok(None)` when the project
+    /// is unknown or no PR exists for the branch.
+    pub async fn find_pull_request_status(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Option<PullRequestStatusDto>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "find_pull_request_status: set_local_registry not called"
+            )
+        })?;
+        let project_path_and_branch = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "find_pull_request_status: RegistryState mutex poisoned"
+                )
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .and_then(|project| {
+                    project
+                        .checkout
+                        .current_branch
+                        .clone()
+                        .map(|branch| (project.path.clone(), branch))
+                })
+        };
+        let Some((project_path, head_branch)) = project_path_and_branch else {
+            return Ok(None);
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            another_one_core::git_actions::find_latest_pull_request_status(
+                &project_path,
+                &head_branch,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("find_pull_request_status join: {e}"))?;
+        Ok(result.map(|pr| PullRequestStatusDto {
+            number: pr.number,
+            url: pr.url,
+            state: match pr.state {
+                another_one_core::git_actions::PullRequestState::Open => {
+                    PullRequestStateDto::Open
+                }
+                another_one_core::git_actions::PullRequestState::Closed => {
+                    PullRequestStateDto::Closed
+                }
+                another_one_core::git_actions::PullRequestState::Merged => {
+                    PullRequestStateDto::Merged
+                }
+            },
+        }))
+    }
+
+    /// Run a toolbar git action (Commit, Push, Pull, etc.) against
+    /// `project_id`. Routes
+    /// [`another_one_core::git_actions::execute_toolbar_git_action`]
+    /// via spawn_blocking.
+    ///
+    /// `action_id` is one of: `"commit"`, `"commit-and-push"`,
+    /// `"undo-last-commit"`, `"fetch"`, `"pull"`, `"push"`,
+    /// `"force-push"`, `"create-pr"`, `"create-draft-pr"`. Other
+    /// values error.
+    ///
+    /// Returns the toast message + warning/refresh flags so the UI
+    /// can surface a snackbar and decide whether to invalidate
+    /// changedFilesProvider / activeGitStateProvider.
+    pub async fn run_toolbar_git_action(
+        &self,
+        project_id: String,
+        action_id: String,
+    ) -> anyhow::Result<ToolbarActionOutcomeDto> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "run_toolbar_git_action: set_local_registry not called"
+            )
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "run_toolbar_git_action: RegistryState mutex poisoned"
+                )
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "run_toolbar_git_action: unknown project_id `{project_id}`"
+                    )
+                })?
+        };
+        let action = parse_toolbar_action_id(&action_id)?;
+        let outcome = tokio::task::spawn_blocking(move || {
+            let mut on_progress = |_msg: String| {};
+            another_one_core::git_actions::execute_toolbar_git_action(
+                &project_path,
+                action,
+                another_one_core::git_actions::GitActionSettings::default(),
+                &mut on_progress,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("run_toolbar_git_action join: {e}"))?;
+        outcome
+            .map(|o| ToolbarActionOutcomeDto {
+                toast_message: o.toast_message,
+                warning: o.warning,
+                refresh_git_state: o.refresh_git_state,
+            })
+            .map_err(|err| anyhow::anyhow!(err.message))
+    }
+
     /// Diff the project's current branch against `target_branch`
     /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
     /// Routes
@@ -1573,6 +1749,70 @@ where
         .await
         .map_err(|e| anyhow::anyhow!("changed-file action join: {e}"))?
         .map_err(|e| anyhow::anyhow!(e))
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::ToolbarActionOutcome`]. The
+/// titlebar surfaces `toast_message` as a snackbar (warning palette
+/// when `warning` is true) and uses `refresh_git_state` to decide
+/// whether to invalidate the active changed-files / git-state
+/// providers after the call returns.
+#[derive(Debug, Clone)]
+pub struct ToolbarActionOutcomeDto {
+    pub toast_message: String,
+    pub warning: bool,
+    pub refresh_git_state: bool,
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::PullRequestStatus`]. Drives
+/// the titlebar dropdown's Create PR / Draft PR enabledness — when
+/// a PR already exists for the branch, those rows are disabled.
+#[derive(Debug, Clone)]
+pub struct PullRequestStatusDto {
+    pub number: u64,
+    pub url: String,
+    pub state: PullRequestStateDto,
+}
+
+/// Branch metadata snapshot for the active project — current branch
+/// name plus ahead/behind counts. Drives the titlebar's
+/// idle-primary-action selection.
+#[derive(Debug, Clone)]
+pub struct ActiveGitStateDto {
+    pub current_branch: Option<String>,
+    pub ahead_count: u32,
+    pub behind_count: u32,
+}
+
+/// Action-id → core enum for [`LocalSession::run_toolbar_git_action`].
+/// Kept local since only the bridge consumes the string form.
+fn parse_toolbar_action_id(
+    id: &str,
+) -> anyhow::Result<another_one_core::git_actions::ToolbarGitAction> {
+    use another_one_core::git_actions::ToolbarGitAction;
+    Ok(match id {
+        "commit" => ToolbarGitAction::Commit,
+        "commit-and-push" => ToolbarGitAction::CommitAndPush,
+        "undo-last-commit" => ToolbarGitAction::UndoLastCommit,
+        "fetch" => ToolbarGitAction::Fetch,
+        "pull" => ToolbarGitAction::Pull,
+        "push" => ToolbarGitAction::Push { force: false },
+        "force-push" => ToolbarGitAction::Push { force: true },
+        "create-pr" => ToolbarGitAction::CreatePr {
+            draft: false,
+            base_branch: None,
+        },
+        "create-draft-pr" => ToolbarGitAction::CreatePr {
+            draft: true,
+            base_branch: None,
+        },
+        other => {
+            return Err(anyhow::anyhow!(
+                "run_toolbar_git_action: unknown action_id `{other}`"
+            ))
+        }
+    })
 }
 
 /// FRB-friendly mirror of

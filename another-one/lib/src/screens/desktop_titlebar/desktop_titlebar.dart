@@ -21,18 +21,24 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../rust/api/local_session.dart' show OpenInAppDto, OpenInState;
+import '../../state/active_git_state_provider.dart';
 import '../../state/active_project_provider.dart';
 import '../../state/build_info_provider.dart';
+import '../../state/changed_files_provider.dart';
 import '../../state/github_url_provider.dart';
 import '../../state/left_sidebar_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/open_in_provider.dart';
+import '../../state/pull_request_status_provider.dart';
 import '../../state/resource_sample_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
+import '../../widgets/app_icon.dart';
 import '../../widgets/hover_icon_button.dart';
+import '../../widgets/toolbar_spinner.dart';
 import '../pair_mobile/pair_mobile_modal.dart';
 
+part 'git_actions_button.dart';
 part 'open_in_button.dart';
 
 class DesktopTitlebar extends ConsumerWidget {
@@ -71,6 +77,7 @@ class DesktopTitlebar extends ConsumerWidget {
           const Spacer(),
           const _BuildChip(),
           const _OpenInButton(),
+          const _GitActionsButton(),
           const _ActiveProjectGithubButton(),
           const _PairMobileButton(),
           const SizedBox(width: AppTokens.space2),

@@ -334,6 +334,41 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<ActiveGitStateDto?> readActiveGitState(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readActiveGitState: LocalTransport not connected');
+    }
+    return session.readActiveGitState(projectId: projectId);
+  }
+
+  @override
+  Future<PullRequestStatusDto?> findPullRequestStatus(
+    String projectId,
+  ) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('findPullRequestStatus: LocalTransport not connected');
+    }
+    return session.findPullRequestStatus(projectId: projectId);
+  }
+
+  @override
+  Future<ToolbarActionOutcomeDto> runToolbarGitAction({
+    required String projectId,
+    required String actionId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('runToolbarGitAction: LocalTransport not connected');
+    }
+    return session.runToolbarGitAction(
+      projectId: projectId,
+      actionId: actionId,
+    );
+  }
+
+  @override
   Future<BranchCompareView?> readBranchCompareState({
     required String projectId,
     required String targetBranch,

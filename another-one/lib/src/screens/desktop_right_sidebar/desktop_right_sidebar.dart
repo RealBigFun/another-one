@@ -1312,7 +1312,9 @@ class _CommitRow extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _CommitRowHeader(
+          projectId: projectId,
           subject: commit.subject,
+          showUndoButton: isFirst,
           expanded: expanded,
           onToggle: () =>
               ref.read(commitRowExpandedProvider.notifier).toggle(_expandKey),
@@ -1327,23 +1329,28 @@ class _CommitRow extends ConsumerWidget {
   }
 }
 
-class _CommitRowHeader extends StatefulWidget {
+class _CommitRowHeader extends ConsumerStatefulWidget {
   const _CommitRowHeader({
+    required this.projectId,
     required this.subject,
+    required this.showUndoButton,
     required this.expanded,
     required this.onToggle,
   });
 
+  final String projectId;
   final String subject;
+  final bool showUndoButton;
   final bool expanded;
   final VoidCallback onToggle;
 
   @override
-  State<_CommitRowHeader> createState() => _CommitRowHeaderState();
+  ConsumerState<_CommitRowHeader> createState() => _CommitRowHeaderState();
 }
 
-class _CommitRowHeaderState extends State<_CommitRowHeader> {
+class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
   bool _hover = false;
+  bool _undoPending = false;
 
   @override
   Widget build(BuildContext context) {
@@ -1387,11 +1394,53 @@ class _CommitRowHeaderState extends State<_CommitRowHeader> {
                   ),
                 ),
               ),
+              if (widget.showUndoButton)
+                _IconActionButton(
+                  icon: 'discard',
+                  tooltip: 'Undo the most recent commit',
+                  pending: _undoPending,
+                  onPressed: _undoLastCommit,
+                ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _undoLastCommit() async {
+    setState(() => _undoPending = true);
+    final connection = ref.read(localConnectionProvider);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    try {
+      final outcome = await connection.runToolbarGitAction(
+        projectId: widget.projectId,
+        actionId: 'undo-last-commit',
+      );
+      if (mounted) {
+        messenger?.showSnackBar(
+          SnackBar(
+            content: Text(outcome.toastMessage),
+            backgroundColor: outcome.warning ? AppTokens.errorBg : null,
+          ),
+        );
+      }
+      if (outcome.refreshGitState) {
+        ref.invalidate(changedFilesProvider(widget.projectId));
+        ref.invalidate(recentCommitsProvider(widget.projectId));
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger?.showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: AppTokens.errorBg,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _undoPending = false);
+    }
   }
 }
 

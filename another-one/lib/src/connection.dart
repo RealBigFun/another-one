@@ -33,14 +33,17 @@ import 'dart:typed_data';
 import 'rust/api/iroh_client.dart';
 import 'rust/api/local_session.dart'
     show
+        ActiveGitStateDto,
         BranchCompareFileDto,
         BranchCompareView,
         ChangedFileDto,
         CheckDto,
         OpenInState,
         ProjectPagePullRequestDto,
+        PullRequestStatusDto,
         RecentCommitsView,
-        ResolvedProjectBranchSettingsDto;
+        ResolvedProjectBranchSettingsDto,
+        ToolbarActionOutcomeDto;
 import 'transport.dart';
 
 /// Unified interface for any daemon — local FFI or remote iroh —
@@ -259,6 +262,42 @@ abstract class DaemonConnection {
     throw UnimplementedError(
       'readCommitFileChanges: requires Control::ReadCommitFileChanges '
       'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Snapshot the active project's branch metadata: current branch
+  /// name, ahead/behind counts. Powers the titlebar git-actions
+  /// split-button's primary-action selection.
+  Future<ActiveGitStateDto?> readActiveGitState(String projectId) {
+    throw UnimplementedError(
+      'readActiveGitState: requires Control::ReadActiveGitState wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Latest pull-request status for `projectId`'s current branch.
+  /// Returns `null` when the project has no open PR. Drives the
+  /// Create PR / Draft PR enabledness in the titlebar dropdown.
+  Future<PullRequestStatusDto?> findPullRequestStatus(String projectId) {
+    throw UnimplementedError(
+      'findPullRequestStatus: requires Control::FindPullRequestStatus '
+      'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Run a toolbar git action against `projectId`. `actionId` is one
+  /// of `"commit"`, `"commit-and-push"`, `"undo-last-commit"`,
+  /// `"fetch"`, `"pull"`, `"push"`, `"force-push"`, `"create-pr"`,
+  /// `"create-draft-pr"`. Returns the toast message + warning /
+  /// refresh flags so callers can surface a snackbar and decide
+  /// whether to invalidate dependent providers.
+  Future<ToolbarActionOutcomeDto> runToolbarGitAction({
+    required String projectId,
+    required String actionId,
+  }) {
+    throw UnimplementedError(
+      'runToolbarGitAction: requires Control::RunToolbarGitAction wire '
+      'variant on the iroh transport (not yet implemented).',
     );
   }
 
