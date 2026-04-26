@@ -95,9 +95,12 @@ class DesktopTitlebar extends ConsumerWidget {
           const _PullRequestButton(),
           const _GitActionsButton(),
           const _PairMobileButton(),
-          const SizedBox(width: AppTokens.space2),
+          // The resource indicator already pads its own right
+          // edge with 6px (matching GPUI's `mr(px(6))`); the
+          // pair-mobile button does too. No extra spacers
+          // needed before/after — explicit `SizedBox(space2)`
+          // gaps were what tipped the row into 5.2px overflow.
           const _ResourceIndicator(),
-          const SizedBox(width: AppTokens.space2),
           _TitlebarChromeButton(
             assetPath: 'assets/icons/icons__right-sidebar-toggle.svg',
             tooltip: 'Show or hide the changed files sidebar',
