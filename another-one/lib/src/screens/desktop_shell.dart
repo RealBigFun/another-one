@@ -40,23 +40,30 @@ class DesktopShell extends ConsumerWidget {
     final leftOpen = ref.watch(leftSidebarOpenProvider);
     final rightOpen = ref.watch(rightSidebarOpenProvider);
     final settingsOpen = ref.watch(settingsOpenProvider);
+    // GPUI's `app.rs` returns ONLY the settings page (plus the toast
+    // layer) when `settings_open` is true — no left sidebar, no right
+    // sidebar, no main row. Settings is a full draw-area takeover, not
+    // a swap-the-center-pane mode. We mirror that by collapsing the
+    // chrome row to the SettingsPage when the provider flips on. The
+    // titlebar stays so the window keeps its drag region and controls
+    // (GPUI hides it because its custom titlebar is part of
+    // `main_row`; ours is a sibling of the body, so the equivalent
+    // here is just to hide both sidebars).
     return Scaffold(
       backgroundColor: AppTokens.terminalBg,
       body: Column(
         children: [
           const DesktopTitlebar(),
           Expanded(
-            child: Row(
-              children: [
-                if (leftOpen) const DesktopSidebar(),
-                Expanded(
-                  child: settingsOpen
-                      ? const SettingsPage()
-                      : const _MainArea(),
-                ),
-                if (rightOpen && !settingsOpen) const DesktopRightSidebar(),
-              ],
-            ),
+            child: settingsOpen
+                ? const SettingsPage()
+                : Row(
+                    children: [
+                      if (leftOpen) const DesktopSidebar(),
+                      const Expanded(child: _MainArea()),
+                      if (rightOpen) const DesktopRightSidebar(),
+                    ],
+                  ),
           ),
         ],
       ),
