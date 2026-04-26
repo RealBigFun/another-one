@@ -62,6 +62,8 @@ pub(crate) fn boot() -> Result<(), String> {
     let registry_state = Arc::new(Mutex::new(RegistryState::new(store)));
     set_local_registry(registry_state.clone());
 
+    crate::pty_drain::spawn_drain(registry_state.clone());
+
     thread::Builder::new()
         .name("another-one-embedded-daemon".into())
         .spawn(move || run(registry_state))
