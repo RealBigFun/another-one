@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `run_changed_file_action`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `run_changed_file_action`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -144,6 +144,21 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// failure as an error toast (matches GPUI's "no panel" gate).
   Future<List<ChangedFileDto>?> readChangedFiles({required String projectId});
 
+  /// Per-commit file change list for `project_id` / `commit_id`.
+  /// Powers the right-sidebar Commits pane's expandable per-row
+  /// file list. Routes
+  /// [`another_one_core::project_store::read_project_commit_file_changes`]
+  /// inside `spawn_blocking` so the FRB caller's tokio runtime
+  /// stays free.
+  ///
+  /// Returns `Ok(None)` when the project id is unknown — UI shows
+  /// the "Couldn't load file changes" empty state in that case.
+  /// Errors propagate from git (commit not in tree, etc.).
+  Future<List<BranchCompareFileDto>?> readCommitFileChanges({
+    required String projectId,
+    required String commitId,
+  });
+
   /// Resolve the GitHub remote URL for a project by shelling out to
   /// `git remote get-url origin` and normalising the result through
   /// [`another_one_core::git_actions::find_github_repo_url`].
@@ -266,6 +281,53 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String path,
     String? originalPath,
   });
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::BranchCompareFile`]. Each
+/// entry is one file changed inside a commit (or branch compare).
+/// `status` is the single git status char ('A', 'M', 'D', 'R', 'C',
+/// 'T') passed through verbatim — UI maps it via the same
+/// `changed_file_status_color` table the Changes pane uses.
+class BranchCompareFileDto {
+  final String path;
+
+  /// Set on rename/copy entries — the from-path. UI renders
+  /// "Renamed from {original_path}" beneath the row when present.
+  final String? originalPath;
+
+  /// Single status char as a 1-char string (FRB doesn't expose
+  /// `char` directly).
+  final String status;
+  final int additions;
+  final int deletions;
+
+  const BranchCompareFileDto({
+    required this.path,
+    this.originalPath,
+    required this.status,
+    required this.additions,
+    required this.deletions,
+  });
+
+  @override
+  int get hashCode =>
+      path.hashCode ^
+      originalPath.hashCode ^
+      status.hashCode ^
+      additions.hashCode ^
+      deletions.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BranchCompareFileDto &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          originalPath == other.originalPath &&
+          status == other.status &&
+          additions == other.additions &&
+          deletions == other.deletions;
 }
 
 /// FRB-friendly mirror of

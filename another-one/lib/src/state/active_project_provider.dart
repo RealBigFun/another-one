@@ -37,3 +37,33 @@ final activeProjectIdProvider = Provider<String?>((ref) {
   }
   return ref.watch(activeProjectPageProvider);
 });
+
+/// Branch name in focus right now — the active task's branch when a
+/// task is selected, or the project's current branch otherwise.
+/// Mirrors GPUI's fallback chain in `branch_commit_row`'s caller
+/// (`commit_state.current_branch.unwrap_or(active_section.branch_name)`).
+/// Returns `null` when nothing is focused or the project has no
+/// current branch (detached HEAD, fresh clone).
+final activeBranchNameProvider = Provider<String?>((ref) {
+  final projects =
+      ref.watch(desktopProjectsProvider).valueOrNull ?? const [];
+  final selection = ref.watch(selectedTabProvider);
+  if (selection != null) {
+    for (final project in projects) {
+      for (final task in project.tasks) {
+        if (task.sectionId == selection.sectionId) {
+          return task.branchName;
+        }
+      }
+    }
+  }
+  final pageId = ref.watch(activeProjectPageProvider);
+  if (pageId != null) {
+    for (final project in projects) {
+      if (project.id == pageId) {
+        return project.currentBranch;
+      }
+    }
+  }
+  return null;
+});

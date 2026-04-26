@@ -104,6 +104,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
+  BranchCompareFileDto dco_decode_branch_compare_file_dto(dynamic raw);
+
+  @protected
   BuildInfo dco_decode_build_info(dynamic raw);
 
   @protected
@@ -123,6 +126,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<BranchCompareFileDto> dco_decode_list_branch_compare_file_dto(
+    dynamic raw,
+  );
 
   @protected
   List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
@@ -173,6 +181,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
+
+  @protected
+  List<BranchCompareFileDto>? dco_decode_opt_list_branch_compare_file_dto(
+    dynamic raw,
+  );
 
   @protected
   List<ChangedFileDto>? dco_decode_opt_list_changed_file_dto(dynamic raw);
@@ -297,6 +310,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  BranchCompareFileDto sse_decode_branch_compare_file_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BuildInfo sse_decode_build_info(SseDeserializer deserializer);
 
   @protected
@@ -316,6 +334,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<BranchCompareFileDto> sse_decode_list_branch_compare_file_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<ChangedFileDto> sse_decode_list_changed_file_dto(
@@ -376,6 +399,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
+  List<BranchCompareFileDto>? sse_decode_opt_list_branch_compare_file_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<ChangedFileDto>? sse_decode_opt_list_changed_file_dto(
@@ -520,6 +548,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
+  void sse_encode_branch_compare_file_dto(
+    BranchCompareFileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_build_info(BuildInfo self, SseSerializer serializer);
 
   @protected
@@ -542,6 +576,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_branch_compare_file_dto(
+    List<BranchCompareFileDto> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_changed_file_dto(
@@ -620,6 +660,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_list_branch_compare_file_dto(
+    List<BranchCompareFileDto>? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_list_changed_file_dto(

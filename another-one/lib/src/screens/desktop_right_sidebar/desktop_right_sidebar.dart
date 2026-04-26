@@ -28,11 +28,18 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../rust/api/local_session.dart'
-    show ChangedFileDto, CheckBucket, CheckDto, CommitDto;
+    show
+        BranchCompareFileDto,
+        ChangedFileDto,
+        CheckBucket,
+        CheckDto,
+        CommitDto;
 import '../../state/active_project_provider.dart';
 import '../../state/changed_files_pending_provider.dart';
 import '../../state/changed_files_provider.dart';
 import '../../state/changes_section_collapse_provider.dart';
+import '../../state/commit_file_changes_provider.dart';
+import '../../state/commit_row_expanded_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/pr_checks_provider.dart';
 import '../../state/recent_commits_provider.dart';
@@ -1072,78 +1079,584 @@ class _CommitsPane extends ConsumerWidget {
       return const EmptyState(text: 'No project selected');
     }
     final commits = ref.watch(recentCommitsProvider(projectId));
+    final fallbackBranch = ref.watch(activeBranchNameProvider);
     return commits.when(
-      data: (view) {
-        if (view == null || view.commits.isEmpty) {
-          return const EmptyState(text: 'No commits on this branch yet');
-        }
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: AppTokens.space2),
-          itemCount: view.commits.length,
-          itemBuilder: (_, i) => _CommitRow(commit: view.commits[i]),
-        );
-      },
-      loading: () => const EmptyState(text: 'Reading recent commits…'),
-      error: (e, _) => EmptyState(text: 'Could not read commits: $e'),
+      data: (view) => _CommitsBody(
+        projectId: projectId,
+        view: view,
+        fallbackBranch: fallbackBranch,
+      ),
+      loading: () => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CommitsHeader(
+            branchName: fallbackBranch,
+            summary: 'Recent commits from HEAD.',
+          ),
+          const Expanded(child: EmptyState(text: 'Loading commits...')),
+        ],
+      ),
+      error: (e, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CommitsHeader(
+            branchName: fallbackBranch,
+            summary: 'Recent commits from HEAD.',
+          ),
+          Expanded(child: EmptyState(text: 'Could not read commits: $e')),
+        ],
+      ),
     );
   }
 }
 
-/// Single-line commit row: short SHA + subject + author + time.
-/// GPUI's `branch_commit_row` paints a richer expandable two-line
-/// layout with file lists; this is the flat baseline so the pane
-/// renders something useful while the diff bridge is built out.
-class _CommitRow extends StatelessWidget {
-  const _CommitRow({required this.commit});
+class _CommitsBody extends ConsumerWidget {
+  const _CommitsBody({
+    required this.projectId,
+    required this.view,
+    required this.fallbackBranch,
+  });
 
-  final CommitDto commit;
+  final String projectId;
+  final dynamic view; // RecentCommitsView? — keep loose to avoid extra import.
+  final String? fallbackBranch;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final v = view;
+    if (v == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CommitsHeader(
+            branchName: fallbackBranch,
+            summary: 'Recent commits from HEAD.',
+          ),
+          const Expanded(
+            child: EmptyState(text: 'No commits yet on this branch.'),
+          ),
+        ],
+      );
+    }
+    final List<CommitDto> commits = (v.commits as List).cast<CommitDto>();
+    final bool hasMore = v.hasMore as bool;
+    final String? branchName = (v.currentBranch as String?) ?? fallbackBranch;
+    final summary = hasMore
+        ? '${commits.length} shown'
+        : '${commits.length} recent commits';
+
+    if (commits.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CommitsHeader(branchName: branchName, summary: summary),
+          const Expanded(
+            child: EmptyState(text: 'No commits yet on this branch.'),
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _CommitsHeader(branchName: branchName, summary: summary),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: commits.length + (hasMore ? 1 : 0),
+            itemBuilder: (_, i) {
+              if (i == commits.length) {
+                return _LoadMoreCommitsRow(projectId: projectId);
+              }
+              return _CommitRow(
+                projectId: projectId,
+                commit: commits[i],
+                isFirst: i == 0,
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CommitsHeader extends StatelessWidget {
+  const _CommitsHeader({required this.branchName, required this.summary});
+
+  final String? branchName;
+  final String summary;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppTokens.space3,
-        vertical: AppTokens.space2,
+    final title = branchName != null
+        ? 'Recent commits on $branchName'
+        : 'Recent commits';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: AppTokens.divider, width: 0.5),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Text(
-                commit.shortId,
-                style: const TextStyle(
-                  fontFamily: AppTokens.fontFamilyMono,
-                  fontSize: AppTokens.fontSmall,
-                  color: AppTokens.textMuted,
-                ),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Color(0xE0FFFFFF), // white @ 0.88
+            ),
+          ),
+          Text(
+            summary,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Color(0x94FFFFFF), // muted, ~0.58
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadMoreCommitsRow extends ConsumerWidget {
+  const _LoadMoreCommitsRow({required this.projectId});
+
+  final String projectId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, bottom: 6),
+      child: Center(
+        child: _LoadMorePill(
+          onPressed: () {
+            ref.read(commitPageSizeProvider(projectId).notifier).update(
+                  (state) => state + kRecentCommitsPageSize,
+                );
+            ref.invalidate(recentCommitsProvider(projectId));
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _LoadMorePill extends StatefulWidget {
+  const _LoadMorePill({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  State<_LoadMorePill> createState() => _LoadMorePillState();
+}
+
+class _LoadMorePillState extends State<_LoadMorePill> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Show 20 more recent commits',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onPressed,
+          child: Container(
+            height: 30,
+            padding: const EdgeInsets.symmetric(horizontal: 7),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _hover ? AppTokens.overlayHover : Colors.transparent,
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: const Text(
+              'Load more',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Color(0xF0FFFFFF), // white @ 0.94
               ),
-              const SizedBox(width: AppTokens.space2),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Per-commit row matching `desktop/src/right_sidebar.rs::branch_commit_row`:
+/// chevron + subject (truncated medium) collapsed, plus an
+/// expanded panel below with author/time meta and the file list.
+/// `isFirst` toggles the optional "Undo last commit" button — left
+/// off here pending the titlebar git_actions toolbar bridge.
+class _CommitRow extends ConsumerWidget {
+  const _CommitRow({
+    required this.projectId,
+    required this.commit,
+    required this.isFirst,
+  });
+
+  final String projectId;
+  final CommitDto commit;
+  final bool isFirst;
+
+  String get _expandKey => '$projectId:${commit.id}';
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final expanded = ref.watch(commitRowExpandedProvider).contains(_expandKey);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _CommitRowHeader(
+          subject: commit.subject,
+          expanded: expanded,
+          onToggle: () =>
+              ref.read(commitRowExpandedProvider.notifier).toggle(_expandKey),
+        ),
+        if (expanded)
+          _CommitExpandedPanel(
+            projectId: projectId,
+            commit: commit,
+          ),
+      ],
+    );
+  }
+}
+
+class _CommitRowHeader extends StatefulWidget {
+  const _CommitRowHeader({
+    required this.subject,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final String subject;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  State<_CommitRowHeader> createState() => _CommitRowHeaderState();
+}
+
+class _CommitRowHeaderState extends State<_CommitRowHeader> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onToggle,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          constraints: const BoxConstraints(minHeight: 30),
+          padding: EdgeInsets.fromLTRB(
+            14,
+            widget.expanded ? 7 : 5,
+            14,
+            widget.expanded ? 7 : 5,
+          ),
+          decoration: BoxDecoration(
+            color: _hover ? const Color(0x0AFFFFFF) : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          ),
+          child: Row(
+            children: [
+              AppIcon(
+                widget.expanded ? 'chevron-down' : 'chevron-right',
+                size: 8,
+                color: const Color(0x94FFFFFF), // 0.58 white
+              ),
+              const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  commit.subject,
+                  widget.subject,
                   overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                   style: const TextStyle(
-                    fontSize: AppTokens.fontBody,
-                    color: AppTokens.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xF0FFFFFF), // 0.94 white
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 2),
+        ),
+      ),
+    );
+  }
+}
+
+class _CommitExpandedPanel extends ConsumerWidget {
+  const _CommitExpandedPanel({
+    required this.projectId,
+    required this.commit,
+  });
+
+  final String projectId;
+  final CommitDto commit;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final files = ref.watch(
+      commitFileChangesProvider(
+        CommitFileChangesKey(projectId: projectId, commitId: commit.id),
+      ),
+    );
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      decoration: BoxDecoration(
+        color: const Color(0x08FFFFFF), // white @ 0.03
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: AppTokens.divider),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Author + time meta line
           Padding(
-            padding: const EdgeInsets.only(left: 56),
-            child: Text(
-              '${commit.authorName} • ${commit.authoredRelative}',
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: AppTokens.fontCaption,
-                color: AppTokens.textMuted,
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    commit.authorName,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0x94FFFFFF), // 0.58
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  '·',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Color(0x94FFFFFF),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  commit.authoredRelative,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0x94FFFFFF),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          files.when(
+            data: (list) => _CommitFileList(
+              projectId: projectId,
+              commitId: commit.id,
+              files: list,
+            ),
+            loading: () => const Padding(
+              padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: ToolbarSpinner(
+                      size: 12,
+                      color: Color(0x94FFFFFF),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Loading file changes...',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0x94FFFFFF),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            error: (e, _) => const Padding(
+              padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
+              child: Text(
+                "Couldn't load file changes.",
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Color(0x94FFFFFF),
+                ),
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CommitFileList extends StatelessWidget {
+  const _CommitFileList({
+    required this.projectId,
+    required this.commitId,
+    required this.files,
+  });
+
+  final String projectId;
+  final String commitId;
+  final List<BranchCompareFileDto>? files;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = files;
+    if (list == null) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: Text(
+          "Couldn't load file changes.",
+          style: TextStyle(
+            fontSize: 11,
+            color: Color(0x94FFFFFF),
+          ),
+        ),
+      );
+    }
+    if (list.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: Text(
+          'No file changes in this commit.',
+          style: TextStyle(
+            fontSize: 11,
+            color: Color(0x94FFFFFF),
+          ),
+        ),
+      );
+    }
+    final caption = list.length == 1
+        ? '1 file changed'
+        : '${list.length} files changed';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 2),
+          child: Text(
+            caption,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: Color(0x94FFFFFF),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final file in list)
+                _BranchCompareFileRow(file: file),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BranchCompareFileRow extends StatelessWidget {
+  const _BranchCompareFileRow({required this.file});
+
+  final BranchCompareFileDto file;
+
+  @override
+  Widget build(BuildContext context) {
+    final fileName = _basename(file.path);
+    final parentDir = _parentDir(file.path);
+    final status = file.status.isEmpty ? 'M' : file.status;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: _statusColor(status),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        fileName,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xEBFFFFFF),
+                        ),
+                      ),
+                    ),
+                    if (parentDir != null) ...[
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          parentDir,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0x8FFFFFFF), // 0.56
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              if (file.additions > 0)
+                _DiffBadge(value: file.additions, positive: true),
+              if (file.deletions > 0) ...[
+                const SizedBox(width: 8),
+                _DiffBadge(value: file.deletions, positive: false),
+              ],
+            ],
+          ),
+          if (file.originalPath != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 30, top: 2),
+              child: Text(
+                'Renamed from ${file.originalPath}',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0x8FFFFFFF),
+                ),
+              ),
+            ),
         ],
       ),
     );

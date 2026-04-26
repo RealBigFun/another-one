@@ -6,10 +6,11 @@
 // `readRecentCommits`, which goes through
 // `read_project_branch_commit_state` on the daemon side.
 //
-// The page-size constant matches GPUI's
-// `RECENT_COMMITS_PAGE_SIZE` so the two clients show the same
-// cutoff. Future "Load more" pagination just bumps this on the
-// caller side and re-fetches.
+// Page size mirrors GPUI's `commit_page_size_for_project` (default
+// `RECENT_COMMITS_PAGE_SIZE`, bumped by `load_more_commits` in
+// `RECENT_COMMITS_PAGE_SIZE` increments). The "Load more" button
+// in the pane bumps `commitPageSizeProvider(projectId)` and
+// `ref.invalidate`s `recentCommitsProvider` to refetch.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -18,13 +19,18 @@ import 'local_connection_provider.dart';
 
 const int kRecentCommitsPageSize = 25;
 
+final commitPageSizeProvider = StateProvider.family<int, String>(
+  (ref, projectId) => kRecentCommitsPageSize,
+);
+
 final recentCommitsProvider =
     FutureProvider.family<RecentCommitsView?, String>((ref, projectId) async {
   final connection = ref.watch(localConnectionProvider);
+  final limit = ref.watch(commitPageSizeProvider(projectId));
   try {
     return await connection.readRecentCommits(
       projectId: projectId,
-      limit: kRecentCommitsPageSize,
+      limit: limit,
     );
   } on UnimplementedError {
     return null;

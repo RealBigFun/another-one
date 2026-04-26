@@ -662,6 +662,56 @@ impl LocalSession {
         .await
     }
 
+    /// Per-commit file change list for `project_id` / `commit_id`.
+    /// Powers the right-sidebar Commits pane's expandable per-row
+    /// file list. Routes
+    /// [`another_one_core::project_store::read_project_commit_file_changes`]
+    /// inside `spawn_blocking` so the FRB caller's tokio runtime
+    /// stays free.
+    ///
+    /// Returns `Ok(None)` when the project id is unknown — UI shows
+    /// the "Couldn't load file changes" empty state in that case.
+    /// Errors propagate from git (commit not in tree, etc.).
+    pub async fn read_commit_file_changes(
+        &self,
+        project_id: String,
+        commit_id: String,
+    ) -> anyhow::Result<Option<Vec<BranchCompareFileDto>>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "read_commit_file_changes: set_local_registry not called"
+            )
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "read_commit_file_changes: RegistryState mutex poisoned"
+                )
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        };
+        let Some(project_path) = project_path else {
+            return Ok(None);
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            another_one_core::project_store::read_project_commit_file_changes(
+                &project_path,
+                &commit_id,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("read_commit_file_changes join: {e}"))?
+        .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(Some(
+            result.files.into_iter().map(branch_compare_file_to_dto).collect(),
+        ))
+    }
+
     /// Pull-request CI checks for `project_id`'s current branch.
     /// Powers the right sidebar's Checks pane. Calls into
     /// [`another_one_core::git_actions::find_pull_request_checks`]
@@ -1230,6 +1280,37 @@ where
         .await
         .map_err(|e| anyhow::anyhow!("changed-file action join: {e}"))?
         .map_err(|e| anyhow::anyhow!(e))
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::BranchCompareFile`]. Each
+/// entry is one file changed inside a commit (or branch compare).
+/// `status` is the single git status char ('A', 'M', 'D', 'R', 'C',
+/// 'T') passed through verbatim — UI maps it via the same
+/// `changed_file_status_color` table the Changes pane uses.
+#[derive(Debug, Clone)]
+pub struct BranchCompareFileDto {
+    pub path: String,
+    /// Set on rename/copy entries — the from-path. UI renders
+    /// "Renamed from {original_path}" beneath the row when present.
+    pub original_path: Option<String>,
+    /// Single status char as a 1-char string (FRB doesn't expose
+    /// `char` directly).
+    pub status: String,
+    pub additions: i32,
+    pub deletions: i32,
+}
+
+fn branch_compare_file_to_dto(
+    f: another_one_core::project_store::BranchCompareFile,
+) -> BranchCompareFileDto {
+    BranchCompareFileDto {
+        path: f.path,
+        original_path: f.original_path,
+        status: f.status.to_string(),
+        additions: f.additions,
+        deletions: f.deletions,
+    }
 }
 
 /// FRB-friendly mirror of
