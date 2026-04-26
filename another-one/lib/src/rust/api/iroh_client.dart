@@ -4,13 +4,15 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'local_session.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `decode_ack_field`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`, `PendingTable`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -42,6 +44,21 @@ Future<IrohSession> irohConnect({
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
 abstract class IrohSession implements RustOpaqueInterface {
+  /// Issue a [`Control::AddProject`] under a Dart-allocated
+  /// `request_id` so the Dart layer can register a `Completer`
+  /// keyed by the same id before the frame goes out. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::AddProject`.
+  ///
+  /// Unlike the legacy fire-and-forget verbs above, mutator verbs
+  /// reply with an inline snapshot the issuer needs (see
+  /// `WorkerReply::ProjectAdded`), so the request id has to be
+  /// known *before* `send` runs — the Dart caller calls
+  /// [`next_request_id`] first, registers its completer, then
+  /// invokes this method with the id it allocated. That ordering
+  /// guarantees the reply can never beat the completer-table
+  /// insertion.
+  Future<void> addProject({required BigInt requestId, required String path});
+
   /// Subscribe this session to the live PTY byte stream for
   /// `(section_id, tab_id)`. The daemon will forward the attached
   /// tab's output as [`TY_DATA`] frames on the existing `subscribe`
@@ -53,15 +70,80 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
 
+  /// `another-one-ojm.5` — issue a `Control::CreateBranch` frame.
+  Future<void> createBranch({
+    required BigInt requestId,
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  });
+
+  /// `another-one-ojm.5` — issue a `Control::CreateReviewTask` frame.
+  Future<void> createReviewTask({
+    required BigInt requestId,
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  });
+
+  /// Issue a [`Control::CreateWorktreeTask`] under `request_id`.
+  /// The Dart side allocates the id (via [`next_request_id`]) and
+  /// registers a completer keyed by the same id before calling
+  /// here, so the matching `WorkerReply::TaskCreated` (or `Err`)
+  /// is dispatched into the awaiting future. Mirror of
+  /// `LocalSession::create_worktree_task`.
+  Future<void> createWorktreeTask({
+    required BigInt requestId,
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    AgentProvider? agentProvider,
+  });
+
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab();
 
+  /// `another-one-ojm.5` — issue a `Control::DiscardChangedFile`
+  /// frame.
+  Future<void> discardChangedFile({
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
+  });
+
+  /// Issue [`Control::FindProjectPullRequests`] under `request_id`.
+  Future<void> findProjectPullRequests({
+    required BigInt requestId,
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  });
+
+  /// Issue [`Control::FindPullRequestStatus`] under `request_id`.
+  /// The matching [`WorkerReply::PullRequestStatusAck`] (or
+  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
+  /// keyed by the same id.
+  Future<void> findPullRequestStatus({
+    required BigInt requestId,
+    required String projectId,
+  });
+
   /// Ask the daemon to launch the tab's PTY if it isn't already
   /// live. No-op on the daemon side if the tab is already running.
   /// After this, a subsequent `attach_tab` will receive bytes.
   Future<void> launchTab({required String sectionId, required String tabId});
+
+  /// Issue [`Control::ListProjectActions`] under `request_id`.
+  Future<void> listProjectActions({
+    required BigInt requestId,
+    required String projectId,
+  });
 
   /// Ask the daemon to send back its current project list as a
   /// [`WorkerReply::ProjectList`] frame. The reply arrives on
@@ -72,6 +154,23 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// verb to the completer-table model.
   Future<void> listProjects();
 
+  /// Send `Control::McpAddFromCatalog`.
+  Future<void> mcpAddFromCatalog({
+    required BigInt requestId,
+    required String catalogId,
+  });
+
+  /// Send `Control::McpRemove`.
+  Future<void> mcpRemove({required BigInt requestId, required String entryId});
+
+  /// Send `Control::McpToggle`.
+  Future<void> mcpToggle({
+    required BigInt requestId,
+    required String entryId,
+    required String providerId,
+    required bool enabled,
+  });
+
   /// Allocate the next per-session request id. Dart calls this
   /// before issuing a control verb so it can register a `Completer`
   /// in its dispatch map keyed by the same id. Strictly-monotonic
@@ -79,13 +178,23 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
-  /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
-  Future<BigInt> primaryBranchForProject({required String projectId});
+  /// Issue [`Control::OpenInState`] under `request_id`.
+  Future<void> openInState({required BigInt requestId});
 
-  /// Issue [`Control::ReadActiveGitState`] for `project_id`. Returns
-  /// the allocated `request_id` so the Dart caller can correlate
-  /// the daemon's reply.
-  Future<BigInt> readActiveGitState({required String projectId});
+  /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
+  Future<void> primaryBranchForProject({
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  /// Issue [`Control::ReadActiveGitState`] for `project_id`.
+  Future<void> readActiveGitState({
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  /// Issue [`Control::ReadAgentSettings`] under `request_id`.
+  Future<void> readAgentSettings({required BigInt requestId});
 
   /// Issue [`Control::ReadBranchCompareState`] for `project_id`
   /// against `target_branch`.
@@ -98,7 +207,10 @@ abstract class IrohSession implements RustOpaqueInterface {
   Future<BigInt> readBranchSettings({required String projectId});
 
   /// Issue [`Control::ReadChangedFiles`] for `project_id`.
-  Future<BigInt> readChangedFiles({required String projectId});
+  Future<void> readChangedFiles({
+    required BigInt requestId,
+    required String projectId,
+  });
 
   /// Issue [`Control::ReadCommitFileChanges`] for `project_id` /
   /// `commit_id`.
@@ -107,27 +219,107 @@ abstract class IrohSession implements RustOpaqueInterface {
     required String commitId,
   });
 
+  /// Issue [`Control::ReadEnabledAgents`] under `request_id`.
+  Future<void> readEnabledAgents({required BigInt requestId});
+
+  /// Send `Control::ReadGitActionScripts`.
+  Future<void> readGitActionScripts({required BigInt requestId});
+
+  /// Send `Control::ReadMcpSettings`.
+  Future<void> readMcpSettings({required BigInt requestId});
+
   /// Issue [`Control::ReadProjectBranches`] for `project_id`.
-  Future<BigInt> readProjectBranches({required String projectId});
+  Future<void> readProjectBranches({
+    required BigInt requestId,
+    required String projectId,
+  });
 
   /// Issue [`Control::ReadProjectGithubUrl`] for `project_id`.
-  Future<BigInt> readProjectGithubUrl({required String projectId});
+  Future<void> readProjectGithubUrl({
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  /// Issue [`Control::ReadPullRequestChecks`] under `request_id`.
+  Future<void> readPullRequestChecks({
+    required BigInt requestId,
+    required String projectId,
+  });
 
   /// Issue [`Control::ReadRecentCommits`] for `project_id` capped
   /// at `limit` entries.
-  Future<BigInt> readRecentCommits({
+  Future<void> readRecentCommits({
+    required BigInt requestId,
     required String projectId,
     required int limit,
   });
 
+  /// Send `Control::ReadShortcutSettings`.
+  Future<void> readShortcutSettings({required BigInt requestId});
+
+  /// Issue a [`Control::RemoveProject`] under a Dart-allocated
+  /// `request_id`. Same allocation contract as [`add_project`].
+  /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveProject`.
+  Future<void> removeProject({
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  /// Issue a [`Control::RemoveTask`] under `request_id`. Mirror of
+  /// `LocalSession::remove_task`.
+  Future<void> removeTask({
+    required BigInt requestId,
+    required String projectId,
+    required String taskId,
+  });
+
+  /// Issue a [`Control::RenameTask`] under `request_id`. Mirror of
+  /// `LocalSession::rename_task`.
+  Future<void> renameTask({
+    required BigInt requestId,
+    required String taskId,
+    required String newName,
+  });
+
   /// Issue [`Control::RepoDefaultCommitAction`] for `project_id`.
-  Future<BigInt> repoDefaultCommitAction({required String projectId});
+  Future<void> repoDefaultCommitAction({
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  /// Send `Control::ResetGitCommitScript`.
+  Future<void> resetGitCommitScript({required BigInt requestId});
+
+  /// Send `Control::ResetGitPrScript`.
+  Future<void> resetGitPrScript({required BigInt requestId});
+
+  /// Send `Control::ResetShortcutBinding`.
+  Future<void> resetShortcutBinding({
+    required BigInt requestId,
+    required String actionId,
+  });
 
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
   /// uses a fresh request_id but no caller correlates against it.
   Future<void> resize({required int cols, required int rows});
+
+  /// Issue [`Control::RunProjectAction`] under `request_id`.
+  Future<void> runProjectAction({
+    required BigInt requestId,
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  });
+
+  /// `another-one-ojm.5` — issue a `Control::RunToolbarGitAction`
+  /// frame.
+  Future<void> runToolbarGitAction({
+    required BigInt requestId,
+    required String projectId,
+    required String actionId,
+  });
 
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
@@ -141,9 +333,59 @@ abstract class IrohSession implements RustOpaqueInterface {
     String? branchName,
   });
 
+  /// Send `Control::SetGitCommitScript`.
+  Future<void> setGitCommitScript({
+    required BigInt requestId,
+    required String script,
+  });
+
+  /// Send `Control::SetGitPrScript`.
+  Future<void> setGitPrScript({
+    required BigInt requestId,
+    required String script,
+  });
+
+  /// Send `Control::SetShortcutBinding`.
+  Future<void> setShortcutBinding({
+    required BigInt requestId,
+    required String actionId,
+    required String binding,
+  });
+
+  /// Issue a [`Control::SetTaskPinned`] under `request_id`. Mirror
+  /// of `LocalSession::set_task_pinned`.
+  Future<void> setTaskPinned({
+    required BigInt requestId,
+    required String taskId,
+    required bool pinned,
+  });
+
   /// Issue [`Control::SlugifyBranchName`] for `name`. Pure verb —
   /// no project state involved on the daemon side.
-  Future<BigInt> slugifyBranchName({required String name});
+  Future<void> slugifyBranchName({
+    required BigInt requestId,
+    required String name,
+  });
+
+  /// `another-one-ojm.5` — issue a `Control::StageAllChanges` frame.
+  Future<void> stageAllChanges({
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  /// `another-one-ojm.5` — issue a `Control::StageChangedFile`
+  /// frame against the daemon. Fire-and-forget at the FRB level:
+  /// the matching `WorkerReply::StageChangedFileAck` arrives on
+  /// `subscribe_worker_replies` keyed to a fresh `request_id` the
+  /// Dart layer allocates via [`Self::next_request_id`]. The Dart
+  /// `IrohTransport` registers a `Completer` against that id
+  /// before calling, so the await-side awaits the ack from there.
+  Future<void> stageChangedFile({
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  });
 
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
@@ -163,6 +405,22 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// the daemon when nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
   Future<void> tabResize({required int cols, required int rows});
+
+  /// `another-one-ojm.5` — issue a `Control::UnstageAllChanges`
+  /// frame.
+  Future<void> unstageAllChanges({
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  /// `another-one-ojm.5` — issue a `Control::UnstageChangedFile`
+  /// frame. Same correlation contract as [`Self::stage_changed_file`].
+  Future<void> unstageChangedFile({
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  });
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
@@ -196,6 +454,11 @@ class ActiveGitStateWire {
 /// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
 /// `Shell` is the catch-all for plain-PTY tabs with no agent
 /// provider set.
+///
+/// Both `Serialize` and `Deserialize` are required because the
+/// type appears on both sides of the wire — daemon → client in
+/// `WorkerReply::ProjectList` (Deserialize) and client → daemon in
+/// `Control::CreateWorktreeTask` (Serialize).
 enum AgentProvider {
   claudeCode,
   cursorAgent,
@@ -610,6 +873,33 @@ class TaskSummary {
           targetProjectId == other.targetProjectId;
 }
 
+/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
+/// FRB-exposed via the `WorkerReply::ToolbarActionOutcomeAck` variant.
+class ToolbarActionOutcome {
+  final String toastMessage;
+  final bool warning;
+  final bool refreshGitState;
+
+  const ToolbarActionOutcome({
+    required this.toastMessage,
+    required this.warning,
+    required this.refreshGitState,
+  });
+
+  @override
+  int get hashCode =>
+      toastMessage.hashCode ^ warning.hashCode ^ refreshGitState.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ToolbarActionOutcome &&
+          runtimeType == other.runtimeType &&
+          toastMessage == other.toastMessage &&
+          warning == other.warning &&
+          refreshGitState == other.refreshGitState;
+}
+
 @freezed
 sealed class WorkerReply with _$WorkerReply {
   const WorkerReply._();
@@ -621,6 +911,16 @@ sealed class WorkerReply with _$WorkerReply {
     required List<ProjectSummary> projects,
   }) = WorkerReply_ProjectList;
 
+  /// Inline-snapshot reply to [`Control::AddProject`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectAdded`.
+  const factory WorkerReply.projectAdded({required ProjectSummary project}) =
+      WorkerReply_ProjectAdded;
+
+  /// Inline echo of [`Control::RemoveProject`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectRemoved`.
+  const factory WorkerReply.projectRemoved({required String projectId}) =
+      WorkerReply_ProjectRemoved;
+
   /// Uniform per-request failure frame. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
   /// callers in `ojm.2..8` map this to a Dart-level exception
@@ -630,6 +930,35 @@ sealed class WorkerReply with _$WorkerReply {
     required String message,
     required ErrKind kind,
   }) = WorkerReply_Err;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskCreated`.
+  /// Reply to [`Control::CreateWorktreeTask`].
+  const factory WorkerReply.taskCreated({
+    required String projectId,
+    required TaskSummary task,
+  }) = WorkerReply_TaskCreated;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRenamed`.
+  /// Reply to [`Control::RenameTask`].
+  const factory WorkerReply.taskRenamed({
+    required bool changed,
+    TaskSummary? task,
+  }) = WorkerReply_TaskRenamed;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskPinned`.
+  /// Reply to [`Control::SetTaskPinned`].
+  const factory WorkerReply.taskPinned({
+    required bool changed,
+    TaskSummary? task,
+  }) = WorkerReply_TaskPinned;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRemoved`.
+  /// Reply to [`Control::RemoveTask`].
+  const factory WorkerReply.taskRemoved({
+    required String projectId,
+    required String taskId,
+    required bool removed,
+  }) = WorkerReply_TaskRemoved;
 
   /// Reply to [`Control::SlugifyBranchName`]. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::SlugifyBranchNameAck`.
@@ -694,6 +1023,167 @@ sealed class WorkerReply with _$WorkerReply {
   /// `daemon-sandbox/src/frame.rs::WorkerReply::SetBranchSettingAck`.
   const factory WorkerReply.setBranchSettingAck({required bool changed}) =
       WorkerReply_SetBranchSettingAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::StageChangedFileAck`.
+  /// Carries the post-mutation `changed_files` snapshot inline so
+  /// the issuing client refreshes the right-sidebar Changes pane
+  /// without a follow-up `ReadChangedFiles` round-trip.
+  const factory WorkerReply.stageChangedFileAck({
+    required List<ChangedFileWire> changedFiles,
+  }) = WorkerReply_StageChangedFileAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
+  /// Same inline-snapshot semantics as
+  /// [`Self::StageChangedFileAck`].
+  const factory WorkerReply.unstageChangedFileAck({
+    required List<ChangedFileWire> changedFiles,
+  }) = WorkerReply_UnstageChangedFileAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
+  const factory WorkerReply.stageAllChangesAck({
+    required List<ChangedFileWire> changedFiles,
+  }) = WorkerReply_StageAllChangesAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
+  const factory WorkerReply.unstageAllChangesAck({
+    required List<ChangedFileWire> changedFiles,
+  }) = WorkerReply_UnstageAllChangesAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
+  const factory WorkerReply.discardChangedFileAck({
+    required List<ChangedFileWire> changedFiles,
+  }) = WorkerReply_DiscardChangedFileAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
+  /// Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
+  const factory WorkerReply.toolbarActionOutcomeAck({
+    required ToolbarActionOutcome outcome,
+  }) = WorkerReply_ToolbarActionOutcomeAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::CreateBranch`]. Mirror
+  /// of `daemon-sandbox/src/frame.rs::WorkerReply::CreateBranchAck`.
+  /// Carries the post-mutation `projects` snapshot inline so the
+  /// issuing client repaints the projects drawer without a follow-
+  /// up `ListProjects` round-trip.
+  const factory WorkerReply.createBranchAck({
+    required String sectionId,
+    required List<ProjectSummary> projects,
+  }) = WorkerReply_CreateBranchAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::CreateReviewTask`].
+  /// Same inline-snapshot semantics as
+  /// [`Self::CreateBranchAck`].
+  const factory WorkerReply.createReviewTaskAck({
+    required String sectionId,
+    required List<ProjectSummary> projects,
+  }) = WorkerReply_CreateReviewTaskAck;
+
+  /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
+  /// when the project has no PR for its current branch (or the
+  /// project id is unknown). Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestStatusAck`.
+  /// The payload reuses `local_session::PullRequestStatusDto`
+  /// directly so FRB produces a single Dart class regardless of
+  /// transport.
+  const factory WorkerReply.pullRequestStatusAck({
+    PullRequestStatusDto? status,
+  }) = WorkerReply_PullRequestStatusAck;
+
+  /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
+  /// payload: `Some(list)` = PR exists (list may be empty),
+  /// `None` = no PR or unknown project. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestChecksAck`.
+  /// Reuses `local_session::CheckDto` directly so FRB produces a
+  /// single Dart class regardless of transport.
+  const factory WorkerReply.pullRequestChecksAck({List<CheckDto>? checks}) =
+      WorkerReply_PullRequestChecksAck;
+
+  /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
+  /// covers the unknown-project case. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectPullRequestsAck`.
+  /// Reuses `local_session::ProjectPagePullRequestDto` directly.
+  const factory WorkerReply.projectPullRequestsAck({
+    List<ProjectPagePullRequestDto>? prs,
+  }) = WorkerReply_ProjectPullRequestsAck;
+
+  /// Reply to [`Control::OpenInState`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::OpenInStateAck`.
+  /// Reuses `local_session::OpenInState` directly.
+  const factory WorkerReply.openInStateAck({required OpenInState state}) =
+      WorkerReply_OpenInStateAck;
+
+  /// Reply to [`Control::ListProjectActions`]. Reuses
+  /// `local_session::ProjectActionDto` directly.
+  const factory WorkerReply.projectActionsAck({
+    required List<ProjectActionDto> actions,
+  }) = WorkerReply_ProjectActionsAck;
+
+  /// Reply to [`Control::ReadEnabledAgents`]. Reuses
+  /// `local_session::EnabledAgentsView` directly.
+  const factory WorkerReply.enabledAgentsAck({
+    required EnabledAgentsView view,
+  }) = WorkerReply_EnabledAgentsAck;
+
+  /// Reply to [`Control::ReadAgentSettings`]. Reuses
+  /// `local_session::AgentSettingsView` directly.
+  const factory WorkerReply.agentSettingsAck({
+    required AgentSettingsView view,
+  }) = WorkerReply_AgentSettingsAck;
+
+  /// Reply to [`Control::RunProjectAction`]. Single-shot Ack —
+  /// `tab_id` is the freshly-minted uuid for the spawned tab.
+  const factory WorkerReply.runProjectActionAck({required String tabId}) =
+      WorkerReply_RunProjectActionAck;
+
+  /// Reply to `Control::ReadGitActionScripts`.
+  const factory WorkerReply.gitActionScriptsAck({
+    required GitActionScriptsView view,
+  }) = WorkerReply_GitActionScriptsAck;
+
+  /// Reply to `Control::SetGitCommitScript`.
+  const factory WorkerReply.setGitCommitScriptAck({required bool changed}) =
+      WorkerReply_SetGitCommitScriptAck;
+
+  /// Reply to `Control::ResetGitCommitScript`.
+  const factory WorkerReply.resetGitCommitScriptAck({required bool changed}) =
+      WorkerReply_ResetGitCommitScriptAck;
+
+  /// Reply to `Control::SetGitPrScript`.
+  const factory WorkerReply.setGitPrScriptAck({required bool changed}) =
+      WorkerReply_SetGitPrScriptAck;
+
+  /// Reply to `Control::ResetGitPrScript`.
+  const factory WorkerReply.resetGitPrScriptAck({required bool changed}) =
+      WorkerReply_ResetGitPrScriptAck;
+
+  /// Reply to `Control::ReadShortcutSettings`.
+  const factory WorkerReply.shortcutSettingsAck({
+    required ShortcutSettingsView view,
+  }) = WorkerReply_ShortcutSettingsAck;
+
+  /// Reply to `Control::SetShortcutBinding`.
+  const factory WorkerReply.setShortcutBindingAck() =
+      WorkerReply_SetShortcutBindingAck;
+
+  /// Reply to `Control::ResetShortcutBinding`.
+  const factory WorkerReply.resetShortcutBindingAck() =
+      WorkerReply_ResetShortcutBindingAck;
+
+  /// Reply to `Control::ReadMcpSettings`.
+  const factory WorkerReply.mcpSettingsAck({required McpSettingsView view}) =
+      WorkerReply_McpSettingsAck;
+
+  /// Reply to `Control::McpAddFromCatalog`.
+  const factory WorkerReply.mcpAddFromCatalogAck() =
+      WorkerReply_McpAddFromCatalogAck;
+
+  /// Reply to `Control::McpToggle`.
+  const factory WorkerReply.mcpToggleAck() = WorkerReply_McpToggleAck;
+
+  /// Reply to `Control::McpRemove`.
+  const factory WorkerReply.mcpRemoveAck() = WorkerReply_McpRemoveAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`
