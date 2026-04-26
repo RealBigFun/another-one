@@ -11,7 +11,7 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
-import 'rust/api/local_session.dart' show PullRequestStatusDto;
+import 'rust/api/local_session.dart' show CheckDto, PullRequestStatusDto;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -279,6 +279,36 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       WorkerReply_Err(:final message) => throw StateError(message),
       _ => throw StateError(
         'unexpected WorkerReply for findPullRequestStatus: $reply',
+      ),
+    };
+  }
+
+  /// CI checks attached to `projectId`'s current PR. Three-state
+  /// return mirrors the daemon contract:
+  ///   * `Some(list)` — PR exists, here are its rows.
+  ///   * `null` — no PR for the current branch, or unknown project.
+  ///   * Throws — gh CLI / network failure (`WorkerReply::Err`).
+  ///
+  /// Routes through [_sendControlAndAwait] so the matching
+  /// `PullRequestChecksAck` reply is dispatched against this
+  /// session's completer table.
+  @override
+  Future<List<CheckDto>?> readPullRequestChecks(String projectId) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.readPullRequestChecks(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_PullRequestChecksAck(:final checks) => checks,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+        'unexpected WorkerReply for readPullRequestChecks: $reply',
       ),
     };
   }

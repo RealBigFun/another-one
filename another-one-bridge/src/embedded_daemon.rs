@@ -40,8 +40,8 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, PullRequestState, PullRequestStatus, TabSummary,
-    TaskSummary,
+    AgentProvider, Check, CheckBucket, ProjectKind, ProjectSummary, PullRequestState,
+    PullRequestStatus, TabSummary, TaskSummary,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -349,6 +349,34 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             state: map_pull_request_state(status.state),
         }))
     }
+
+    fn read_pull_request_checks(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<Vec<Check>>, String> {
+        // Same shape as `find_pull_request_status`: snapshot the
+        // project path under the registry mutex, drop the lock,
+        // then shell out via core's gh-CLI helper. The three-state
+        // contract (`Some(list)` / `None` / `Err(_)`) maps onto
+        // `WorkerReply::PullRequestChecksAck` / `WorkerReply::Err`
+        // upstream. Mirrors `LocalSession::read_pull_request_checks`.
+        let project_path = self.with_state(|state| {
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        });
+        let Some(Some(project_path)) = project_path else {
+            return Ok(None);
+        };
+        match another_one_core::git_actions::find_pull_request_checks(&project_path, None) {
+            Ok(Some(checks)) => Ok(Some(checks.into_iter().map(map_check).collect())),
+            Ok(None) => Ok(None),
+            Err(message) => Err(message),
+        }
+    }
 }
 
 fn map_pull_request_state(
@@ -358,6 +386,29 @@ fn map_pull_request_state(
         another_one_core::git_actions::PullRequestState::Open => PullRequestState::Open,
         another_one_core::git_actions::PullRequestState::Closed => PullRequestState::Closed,
         another_one_core::git_actions::PullRequestState::Merged => PullRequestState::Merged,
+    }
+}
+
+fn map_check(check: another_one_core::git_actions::PullRequestCheck) -> Check {
+    Check {
+        name: check.name,
+        state: check.state,
+        bucket: map_check_bucket(check.bucket),
+        description: check.description,
+        link: check.link,
+        duration_text: check.duration_text,
+    }
+}
+
+fn map_check_bucket(
+    bucket: another_one_core::git_actions::PullRequestCheckBucket,
+) -> CheckBucket {
+    match bucket {
+        another_one_core::git_actions::PullRequestCheckBucket::Pass => CheckBucket::Pass,
+        another_one_core::git_actions::PullRequestCheckBucket::Fail => CheckBucket::Fail,
+        another_one_core::git_actions::PullRequestCheckBucket::Pending => CheckBucket::Pending,
+        another_one_core::git_actions::PullRequestCheckBucket::Skipping => CheckBucket::Skipping,
+        another_one_core::git_actions::PullRequestCheckBucket::Cancel => CheckBucket::Cancel,
     }
 }
 

@@ -95,6 +95,16 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
+  /// Issue [`Control::ReadPullRequestChecks`] under `request_id`.
+  /// The matching [`WorkerReply::PullRequestChecksAck`] (or
+  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
+  /// keyed by the same id. Same caller-allocates-id contract as
+  /// [`Self::find_pull_request_status`].
+  Future<void> readPullRequestChecks({
+    required BigInt requestId,
+    required String projectId,
+  });
+
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
@@ -355,6 +365,15 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.pullRequestStatusAck({
     PullRequestStatusDto? status,
   }) = WorkerReply_PullRequestStatusAck;
+
+  /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
+  /// payload: `Some(list)` = PR exists (list may be empty),
+  /// `None` = no PR or unknown project. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestChecksAck`.
+  /// Reuses `local_session::CheckDto` directly so FRB produces a
+  /// single Dart class regardless of transport.
+  const factory WorkerReply.pullRequestChecksAck({List<CheckDto>? checks}) =
+      WorkerReply_PullRequestChecksAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

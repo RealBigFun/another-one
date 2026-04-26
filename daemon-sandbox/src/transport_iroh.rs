@@ -506,6 +506,20 @@ async fn handle_control(
             };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ReadPullRequestChecks { project_id } => {
+            // Same shape as FindPullRequestStatus — Ok(Some/None) →
+            // PullRequestChecksAck, Err → WorkerReply::Err. The
+            // three-state contract is documented on
+            // `DaemonRegistry::read_pull_request_checks`.
+            let reply = match registry.read_pull_request_checks(&project_id) {
+                Ok(checks) => WorkerReply::PullRequestChecksAck { checks },
+                Err(message) => WorkerReply::Err {
+                    message,
+                    kind: ErrKind::Internal,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

@@ -3285,7 +3285,12 @@ fn branch_compare_file_to_dto(
 /// [`another_one_core::git_actions::PullRequestCheckBucket`].
 /// Drives the glyph + colour for each check row on the right
 /// sidebar's Checks pane.
-#[derive(Debug, Clone, Copy)]
+///
+/// Wire form mirrors `daemon-sandbox/src/frame.rs::CheckBucket`
+/// — snake_case strings — so the iroh wire and the LocalSession
+/// path produce the same Dart enum value.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CheckBucket {
     Pass,
     Fail,
@@ -3298,7 +3303,13 @@ pub enum CheckBucket {
 /// [`another_one_core::git_actions::PullRequestCheck`]. Mostly raw
 /// — UI maps `bucket` to glyph/colour and `state` is the verbatim
 /// string `gh pr checks` returned ("pass", "in_progress", etc.).
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` are derived so the iroh wire's
+/// `WorkerReply::PullRequestChecksAck` payload can reuse this
+/// struct directly (instead of carrying a parallel mirror in
+/// `crate::api::iroh_client`). Same parity-via-single-source-of-
+/// truth move as `PullRequestStatusDto` above.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckDto {
     /// Check name (e.g. "build / linux", "lint").
     pub name: String,

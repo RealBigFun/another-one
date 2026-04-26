@@ -432,12 +432,14 @@ abstract class DaemonConnection {
   ///     (possibly empty when no checks are configured).
   ///   * `null` — no PR for the current branch, or unknown project.
   ///   * Throw — gh CLI missing, network error, etc.
-  Future<List<CheckDto>?> readPullRequestChecks(String projectId) {
-    throw UnimplementedError(
-      'readPullRequestChecks: requires Control::ReadPullRequestChecks '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  ///
+  /// Both transports implement this against their respective code
+  /// paths: `LocalTransport` calls
+  /// `LocalSession::read_pull_request_checks` directly;
+  /// `IrohTransport` issues `Control::ReadPullRequestChecks` and
+  /// dispatches the `WorkerReply::PullRequestChecksAck` reply
+  /// through its completer table (`another-one-ojm.6`).
+  Future<List<CheckDto>?> readPullRequestChecks(String projectId);
 
   /// Stage one changed file via `git add`. `originalPath` is set
   /// only on rename/copy entries — git needs both source and

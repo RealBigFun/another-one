@@ -140,6 +140,10 @@ enum Control {
     /// [`WorkerReply::PullRequestStatusAck`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::FindPullRequestStatus`.
     FindPullRequestStatus { project_id: String },
+    /// Read CI checks attached to `project_id`'s current PR. Reply
+    /// variant is [`WorkerReply::PullRequestChecksAck`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadPullRequestChecks`.
+    ReadPullRequestChecks { project_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -179,6 +183,15 @@ pub enum WorkerReply {
     /// directly — see the comment above on parallel-mirror-avoidance.
     PullRequestStatusAck {
         status: Option<crate::api::local_session::PullRequestStatusDto>,
+    },
+    /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
+    /// payload: `Some(list)` = PR exists (list may be empty),
+    /// `None` = no PR or unknown project. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestChecksAck`.
+    /// Reuses `local_session::CheckDto` directly so FRB produces a
+    /// single Dart class regardless of transport.
+    PullRequestChecksAck {
+        checks: Option<Vec<crate::api::local_session::CheckDto>>,
     },
 }
 
@@ -887,6 +900,20 @@ impl IrohSession {
         project_id: String,
     ) -> anyhow::Result<()> {
         self.send_control(request_id, Control::FindPullRequestStatus { project_id })
+            .await
+    }
+
+    /// Issue [`Control::ReadPullRequestChecks`] under `request_id`.
+    /// The matching [`WorkerReply::PullRequestChecksAck`] (or
+    /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
+    /// keyed by the same id. Same caller-allocates-id contract as
+    /// [`Self::find_pull_request_status`].
+    pub async fn read_pull_request_checks(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadPullRequestChecks { project_id })
             .await
     }
 

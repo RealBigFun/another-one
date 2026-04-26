@@ -165,6 +165,14 @@ pub enum Control {
     /// Hard failures (gh CLI missing, network error) come back as
     /// [`WorkerReply::Err`] instead.
     FindPullRequestStatus { project_id: String },
+    /// Read the CI checks attached to `project_id`'s current PR —
+    /// drives the right-sidebar Checks pane. Reply variant is
+    /// [`WorkerReply::PullRequestChecksAck`] with a three-state
+    /// payload: `Some(list)` = PR exists (list may be empty),
+    /// `None` = no PR or unknown project. gh CLI / network failures
+    /// come back as [`WorkerReply::Err`] so the UI can surface a
+    /// toast rather than rendering a silent empty state.
+    ReadPullRequestChecks { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -280,6 +288,13 @@ pub enum WorkerReply {
     PullRequestStatusAck {
         status: Option<PullRequestStatus>,
     },
+    /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
+    /// payload mirrors the GPUI desktop's
+    /// `core::git_actions::find_pull_request_checks` contract:
+    ///   * `Some(list)` — PR exists, here are its check rows.
+    ///   * `None` — no PR for the branch, or unknown project id.
+    /// gh CLI / network failures come back as [`WorkerReply::Err`].
+    PullRequestChecksAck { checks: Option<Vec<Check>> },
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —
@@ -432,6 +447,33 @@ pub enum PullRequestState {
     Open,
     Closed,
     Merged,
+}
+
+/// Lossy wire projection of `core::git_actions::PullRequestCheck`.
+/// One row per CI check on the project's current PR; drives the
+/// right-sidebar Checks pane on every connected client. Bucket is
+/// already classified server-side so mobile doesn't have to
+/// re-derive the colour mapping from the freeform `state` string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Check {
+    pub name: String,
+    pub state: String,
+    pub bucket: CheckBucket,
+    pub description: Option<String>,
+    pub link: Option<String>,
+    pub duration_text: Option<String>,
+}
+
+/// Mirror of `core::git_actions::PullRequestCheckBucket`. Wire form
+/// is snake_case; clients render glyph + colour off this.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckBucket {
+    Pass,
+    Fail,
+    Pending,
+    Skipping,
+    Cancel,
 }
 
 /// Mirror of `core::agents::AgentProviderKind`. Wire-serialised as

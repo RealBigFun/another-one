@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{ProjectSummary, PullRequestStatus};
+use crate::frame::{Check, ProjectSummary, PullRequestStatus};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -170,6 +170,27 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         &self,
         _project_id: &str,
     ) -> Result<Option<PullRequestStatus>, String> {
+        Ok(None)
+    }
+
+    /// Read CI checks attached to `project_id`'s current PR. Three-
+    /// state return:
+    ///   * `Ok(Some(list))` — PR exists, these are its check rows
+    ///     (list may be empty when no checks are configured).
+    ///   * `Ok(None)` — no PR for the current branch, or unknown
+    ///     project.
+    ///   * `Err(_)` — gh CLI missing, network failure, or any other
+    ///     hard error. The daemon surfaces this as
+    ///     [`crate::frame::WorkerReply::Err`] so the UI can render
+    ///     a toast instead of a silent empty state.
+    ///
+    /// Default impl returns `Ok(None)` so the standalone sandbox's
+    /// in-memory shape stays self-contained. The bridge override
+    /// delegates to `another_one_core::git_actions::find_pull_request_checks`.
+    fn read_pull_request_checks(
+        &self,
+        _project_id: &str,
+    ) -> Result<Option<Vec<Check>>, String> {
         Ok(None)
     }
 }
