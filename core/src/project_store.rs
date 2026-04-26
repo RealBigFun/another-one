@@ -1760,6 +1760,37 @@ impl ProjectStore {
             self.save();
         }
     }
+
+    /// Persist the agent session id discovered after a successful
+    /// PTY launch (e.g. Claude Code wrote `<id>.jsonl` under
+    /// `~/.claude/projects/<sanitised-cwd>/`). On the next launch
+    /// of this tab `resolve_claude_session` finds the existing
+    /// JSONL and the agent resumes its conversation instead of
+    /// minting a fresh one. No-op if the section / tab no longer
+    /// exists (the user closed the tab between launch and discovery)
+    /// or if the persisted session is already this exact ref.
+    pub fn set_tab_session(
+        &mut self,
+        section_key: &str,
+        tab_id: &str,
+        session: crate::agents::TerminalSessionRef,
+    ) {
+        let section = match self.terminal_sections.get_mut(section_key) {
+            Some(s) => s,
+            None => return,
+        };
+        let tab = match section.tabs.iter_mut().find(|t| t.id == tab_id) {
+            Some(t) => t,
+            None => return,
+        };
+        let mut config = tab.launch_config.clone().unwrap_or_default();
+        if config.session.as_ref() == Some(&session) {
+            return;
+        }
+        config.session = Some(session);
+        tab.launch_config = Some(config);
+        self.save();
+    }
 }
 
 pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {

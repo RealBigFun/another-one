@@ -120,8 +120,21 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
                     // attached viewers in `attach_tab`); no extra
                     // bookkeeping needed here.
                 }
-                Ok(TerminalLaunchReply::SessionDiscovered { .. }) => {
-                    // Session restoration is desktop-side only.
+                Ok(TerminalLaunchReply::SessionDiscovered { key, session }) => {
+                    // GPUI's `AnotherOneApp` used to write the
+                    // discovered Claude / Codex session id back into
+                    // the persisted tab's launch_config; the bridge
+                    // owns that responsibility now. Without this,
+                    // every app restart mints a fresh session uuid
+                    // and the agent starts a brand-new conversation.
+                    if let Ok(mut state) = registry.lock() {
+                        let section_key = key.section_id.store_key();
+                        state.project_store.set_tab_session(
+                            &section_key,
+                            &key.tab_id,
+                            session,
+                        );
+                    }
                 }
                 Ok(TerminalLaunchReply::Exited { key, .. })
                 | Ok(TerminalLaunchReply::Failed { key, .. }) => {
