@@ -895,6 +895,34 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         deletions: f.deletions,
       );
 
+  @override
+  Future<ls.BranchCompareView?> readBranchCompareState({
+    required String projectId,
+    required String targetBranch,
+  }) async {
+    final reply = await _sendControlAndAwait(
+      () => _session!.readBranchCompareState(
+        projectId: projectId,
+        targetBranch: targetBranch,
+      ),
+    );
+    return reply.maybeWhen(
+      branchCompareAck: (view) => view == null
+          ? null
+          : ls.BranchCompareView(
+              currentBranch: view.currentBranch,
+              targetBranch: view.targetBranch,
+              files: view.files
+                  .map(_branchCompareFileWireToDto)
+                  .toList(growable: false),
+            ),
+      err: _throwErr,
+      orElse: () => throw StateError(
+        'readBranchCompareState: unexpected reply variant ${reply.runtimeType}',
+      ),
+    );
+  }
+
   ls.ChangedFileDto _changedFileWireToDto(ChangedFileWire f) =>
       ls.ChangedFileDto(
         path: f.path,

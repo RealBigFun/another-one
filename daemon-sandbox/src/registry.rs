@@ -14,8 +14,8 @@ use tokio::sync::broadcast;
 
 use crate::frame::{
     ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, BranchCompareFileWire,
-    ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView, McpSettingsView,
-    OpenInStateWire, ProjectActionWire, ProjectPagePullRequest, ProjectSummary,
+    BranchCompareWire, ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView,
+    McpSettingsView, OpenInStateWire, ProjectActionWire, ProjectPagePullRequest, ProjectSummary,
     PullRequestStatus, RecentCommitsWire, ShortcutSettingsView, TaskSummary,
     ToolbarActionOutcome,
 };
@@ -353,6 +353,18 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         _project_id: &str,
         _commit_id: &str,
     ) -> Result<Option<Vec<BranchCompareFileWire>>, String> {
+        Ok(None)
+    }
+
+    /// Diff `project_id`'s current branch against `target_branch`
+    /// (= `target..HEAD`). Returns `None` for unknown projects;
+    /// `Err` for git failures (target branch missing, etc.). Sister
+    /// to `LocalSession::read_branch_compare_state`.
+    fn read_branch_compare_state(
+        &self,
+        _project_id: &str,
+        _target_branch: &str,
+    ) -> Result<Option<BranchCompareWire>, String> {
         Ok(None)
     }
 

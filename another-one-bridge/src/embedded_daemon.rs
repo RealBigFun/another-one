@@ -47,10 +47,10 @@ use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
-    AgentSummaryWire, BranchCompareFileWire, ChangedFileWire, Check, CheckBucket, CommitWire,
-    EnabledAgentsViewWire, GitActionScriptsView, McpCatalogEntryDto, McpServerDto,
-    McpSettingsView, McpSourceDto, McpTransportKindDto, OpenInAppWire, OpenInStateWire,
-    ProjectActionAccessWire, ProjectActionIconWire, ProjectActionKindWire,
+    AgentSummaryWire, BranchCompareFileWire, BranchCompareWire, ChangedFileWire, Check,
+    CheckBucket, CommitWire, EnabledAgentsViewWire, GitActionScriptsView, McpCatalogEntryDto,
+    McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto, OpenInAppWire,
+    OpenInStateWire, ProjectActionAccessWire, ProjectActionIconWire, ProjectActionKindWire,
     ProjectActionScopeWire, ProjectActionWire, ProjectKind, ProjectPagePullRequest,
     ProjectSummary, PullRequestState, PullRequestStatus, RecentCommitsWire, ShortcutSettingsRow,
     ShortcutSettingsView, TabSummary, TaskSummary, ToolbarActionOutcome,
@@ -682,6 +682,31 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 .map(branch_compare_file_to_wire)
                 .collect(),
         ))
+    }
+
+    fn read_branch_compare_state(
+        &self,
+        project_id: &str,
+        target_branch: &str,
+    ) -> Result<Option<BranchCompareWire>, String> {
+        let Some(project_path) = self.project_path(project_id) else {
+            return Ok(None);
+        };
+        let result = tokio::task::block_in_place(|| {
+            another_one_core::project_store::read_project_branch_compare_state(
+                &project_path,
+                target_branch,
+            )
+        })?;
+        Ok(Some(BranchCompareWire {
+            current_branch: result.current_branch,
+            target_branch: result.target_branch,
+            files: result
+                .files
+                .into_iter()
+                .map(branch_compare_file_to_wire)
+                .collect(),
+        }))
     }
 
     fn stage_changed_file<'a>(

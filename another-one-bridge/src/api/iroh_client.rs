@@ -228,6 +228,13 @@ enum Control {
         project_id: String,
         commit_id: String,
     },
+    /// Diff a project's current branch against a target branch.
+    /// Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadBranchCompareState`.
+    ReadBranchCompareState {
+        project_id: String,
+        target_branch: String,
+    },
     /// `another-one-ojm.5` — stage one changed file. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::StageChangedFile`.
     /// Reply is `WorkerReply::StageChangedFileAck` carrying the
@@ -428,6 +435,9 @@ pub enum WorkerReply {
     CommitFileChangesAck {
         files: Option<Vec<BranchCompareFileWire>>,
     },
+    /// Reply to [`Control::ReadBranchCompareState`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchCompareAck`.
+    BranchCompareAck { view: Option<BranchCompareWire> },
     /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
     /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::StageChangedFileAck`.
     /// Carries the post-mutation `changed_files` snapshot inline so
@@ -576,6 +586,14 @@ pub struct BranchCompareFileWire {
     pub status: String,
     pub additions: i32,
     pub deletions: i32,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::BranchCompareWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BranchCompareWire {
+    pub current_branch: Option<String>,
+    pub target_branch: String,
+    pub files: Vec<BranchCompareFileWire>,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
@@ -1961,6 +1979,25 @@ impl IrohSession {
             Control::ReadCommitFileChanges {
                 project_id,
                 commit_id,
+            },
+        )
+        .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::ReadBranchCompareState`] for `project_id`
+    /// against `target_branch`.
+    pub async fn read_branch_compare_state(
+        &self,
+        project_id: String,
+        target_branch: String,
+    ) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(
+            id,
+            Control::ReadBranchCompareState {
+                project_id,
+                target_branch,
             },
         )
         .await?;

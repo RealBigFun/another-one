@@ -321,6 +321,14 @@ pub enum Control {
         project_id: String,
         commit_id: String,
     },
+    /// Diff `project_id`'s current branch against `target_branch`
+    /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
+    /// Reply is [`WorkerReply::BranchCompareAck`] with `None` for
+    /// unknown projects. Errors propagate as [`WorkerReply::Err`].
+    ReadBranchCompareState {
+        project_id: String,
+        target_branch: String,
+    },
     /// `another-one-ojm.5` — stage one changed file via `git add -A`.
     /// `original_path` is set only on rename/copy entries — git needs
     /// both source and destination to resolve the rename pair. Reply
@@ -706,6 +714,9 @@ pub enum WorkerReply {
     CommitFileChangesAck {
         files: Option<Vec<BranchCompareFileWire>>,
     },
+    /// Reply to [`Control::ReadBranchCompareState`]. `view == None`
+    /// when the project id is unknown.
+    BranchCompareAck { view: Option<BranchCompareWire> },
     /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
     /// Carries the post-mutation `changed_files` snapshot inline so
     /// the issuing client refreshes the right-sidebar Changes pane
@@ -833,6 +844,15 @@ pub struct BranchCompareFileWire {
     pub status: String,
     pub additions: i32,
     pub deletions: i32,
+}
+
+/// Wire mirror of the bridge's `BranchCompareView` (FRB-bound).
+/// Powers the right sidebar's Compare pane.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchCompareWire {
+    pub current_branch: Option<String>,
+    pub target_branch: String,
+    pub files: Vec<BranchCompareFileWire>,
 }
 
 /// Wire mirror of the bridge's `CommitDto` (FRB-bound). Carries

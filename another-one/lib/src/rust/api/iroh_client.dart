@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -86,6 +86,13 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// the allocated `request_id` so the Dart caller can correlate
   /// the daemon's reply.
   Future<BigInt> readActiveGitState({required String projectId});
+
+  /// Issue [`Control::ReadBranchCompareState`] for `project_id`
+  /// against `target_branch`.
+  Future<BigInt> readBranchCompareState({
+    required String projectId,
+    required String targetBranch,
+  });
 
   /// Issue [`Control::ReadChangedFiles`] for `project_id`.
   Future<BigInt> readChangedFiles({required String projectId});
@@ -224,6 +231,32 @@ class BranchCompareFileWire {
           status == other.status &&
           additions == other.additions &&
           deletions == other.deletions;
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::BranchCompareWire`.
+class BranchCompareWire {
+  final String? currentBranch;
+  final String targetBranch;
+  final List<BranchCompareFileWire> files;
+
+  const BranchCompareWire({
+    this.currentBranch,
+    required this.targetBranch,
+    required this.files,
+  });
+
+  @override
+  int get hashCode =>
+      currentBranch.hashCode ^ targetBranch.hashCode ^ files.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BranchCompareWire &&
+          runtimeType == other.runtimeType &&
+          currentBranch == other.currentBranch &&
+          targetBranch == other.targetBranch &&
+          files == other.files;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ChangedFileWire`.
@@ -592,6 +625,11 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.commitFileChangesAck({
     List<BranchCompareFileWire>? files,
   }) = WorkerReply_CommitFileChangesAck;
+
+  /// Reply to [`Control::ReadBranchCompareState`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchCompareAck`.
+  const factory WorkerReply.branchCompareAck({BranchCompareWire? view}) =
+      WorkerReply_BranchCompareAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

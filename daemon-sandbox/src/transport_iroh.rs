@@ -837,6 +837,18 @@ async fn handle_control(
                 send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
             }
         },
+        Control::ReadBranchCompareState {
+            project_id,
+            target_branch,
+        } => match registry.read_branch_compare_state(&project_id, &target_branch) {
+            Ok(view) => {
+                let reply = WorkerReply::BranchCompareAck { view };
+                send_worker_reply(outbound_tx, request_id, &reply).await?;
+            }
+            Err(message) => {
+                send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+            }
+        },
         Control::CreateReviewTask {
             project_id,
             pull_request_number,
