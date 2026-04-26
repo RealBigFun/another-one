@@ -91,6 +91,28 @@ impl Drop for EndpointHandle {
 /// must be `Send + Sync` (the daemon's tokio tasks hold them across
 /// awaits) and have 'static lifetime (so an `Arc<dyn DaemonRegistry>`
 /// can cross thread boundaries).
+///
+/// Renamed from `TerminalRegistry` (foundation task `another-one-ojm.1`):
+/// the trait grew to host project / task / git / agent / MCP verbs
+/// alongside the original terminal attach/resize methods. The seven
+/// domain children of `another-one-ojm` (`.2..8`) extend it method-by-
+/// method:
+///
+/// - `.2` — project mutation (`add_project`, `remove_project`).
+/// - `.3` — task mutation (`create_task`, `rename_task`,
+///   `set_task_pinned`, `remove_task`).
+/// - `.4` — git state read (`read_changed_files`,
+///   `read_recent_commits`, `read_branch_settings`).
+/// - `.5` — git mutation (`stage_changed_file`, `discard_changed_file`,
+///   `run_toolbar_git_action`, `create_branch`).
+/// - `.6` — pull requests + checks (`find_project_pull_requests`,
+///   `read_pull_request_checks`, `create_review_task`).
+/// - `.7` — custom actions + Open In + agents (`list_project_actions`,
+///   `run_project_action`, `read_open_in_state`).
+/// - `.8` — settings (`read_git_action_scripts`, `set_shortcut_binding`,
+///   `read_mcp_settings`).
+///
+/// This task only renames; the new methods land in their own PRs.
 pub trait DaemonRegistry: Send + Sync + 'static {
     /// Snapshot of projects + tasks + tabs as of now. The daemon
     /// calls this on every `Control::ListProjects`, so cheap.

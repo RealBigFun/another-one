@@ -5,7 +5,7 @@
 //!
 //!   1. Loads the on-disk `ProjectStore` and constructs a
 //!      [`RegistryState`].
-//!   2. Wraps it in a `BridgeTerminalRegistry` that mirrors
+//!   2. Wraps it in a `BridgeDaemonRegistry` that mirrors
 //!      `desktop::DesktopTerminalRegistry`'s semantics but reads
 //!      from the bridge's own state (no `AnotherOneApp` to project
 //!      from).
@@ -101,7 +101,7 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
 
     let weak = Arc::downgrade(&registry_state);
     drop(registry_state);
-    let registry: Arc<dyn DaemonRegistry> = Arc::new(BridgeTerminalRegistry::new(weak));
+    let registry: Arc<dyn DaemonRegistry> = Arc::new(BridgeDaemonRegistry::new(weak));
 
     let paths = match daemon_paths() {
         Ok(p) => p,
@@ -170,11 +170,11 @@ impl LocalPairInfo for EndpointHandlePairAdapter {
 /// directly. For now `list_projects` flattens the in-memory store
 /// the same way `LocalSession::list_projects` does (see
 /// `api/local_session.rs::flatten_project_store`).
-struct BridgeTerminalRegistry {
+struct BridgeDaemonRegistry {
     inner: Weak<Mutex<RegistryState>>,
 }
 
-impl BridgeTerminalRegistry {
+impl BridgeDaemonRegistry {
     fn new(inner: Weak<Mutex<RegistryState>>) -> Self {
         Self { inner }
     }
@@ -186,7 +186,7 @@ impl BridgeTerminalRegistry {
     }
 }
 
-impl DaemonRegistry for BridgeTerminalRegistry {
+impl DaemonRegistry for BridgeDaemonRegistry {
     fn list_projects(&self) -> Vec<ProjectSummary> {
         // Project flattening mirrors `LocalSession::list_projects`'s
         // `flatten_project_store`. Worktree-kind projects collapse
