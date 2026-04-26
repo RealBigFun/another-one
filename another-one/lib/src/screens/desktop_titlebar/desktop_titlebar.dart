@@ -132,6 +132,8 @@ class _ResourceIndicator extends ConsumerStatefulWidget {
 
 class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
   bool _hover = false;
+  final OverlayPortalController _popover = OverlayPortalController();
+  final LayerLink _link = LayerLink();
 
   @override
   Widget build(BuildContext context) {
@@ -142,83 +144,360 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
     final memLabel = usage != null && usage.memoryMib > 0
         ? '${usage.memoryMib.toStringAsFixed(1)} MB'
         : '— MB';
+    final open = _popover.isShowing;
     return Padding(
       padding: const EdgeInsets.only(right: 6),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: Tooltip(
-          message: 'Show resource usage',
-          child: Container(
-            width: 176,
-            height: 28,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: _hover
-                  ? AppTokens.overlayHoverStrong
-                  : AppTokens.overlayRest,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: AppTokens.border),
-            ),
-            child: Row(
-              children: [
-                SvgPicture.asset(
-                  'assets/icons/icons__resource-usage.svg',
-                  width: 11,
-                  height: 11,
-                  colorFilter: const ColorFilter.mode(
-                    AppTokens.toggleIconColor,
-                    BlendMode.srcIn,
+      child: CompositedTransformTarget(
+        link: _link,
+        child: OverlayPortal(
+          controller: _popover,
+          overlayChildBuilder: (context) =>
+              _buildPopover(context, usage, cpuLabel, memLabel),
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hover = true),
+            onExit: (_) => setState(() => _hover = false),
+            child: Tooltip(
+              message: 'Show resource usage',
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(_popover.toggle),
+                child: Container(
+                  width: 176,
+                  height: 28,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: open
+                        ? AppTokens.overlayActive
+                        : (_hover
+                            ? AppTokens.overlayHoverStrong
+                            : AppTokens.overlayRest),
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(color: AppTokens.border),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      SizedBox(
-                        width: 46,
-                        child: Text(
-                          cpuLabel,
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xC7FFFFFF),
-                          ),
+                      SvgPicture.asset(
+                        'assets/icons/icons__resource-usage.svg',
+                        width: 11,
+                        height: 11,
+                        colorFilter: const ColorFilter.mode(
+                          AppTokens.toggleIconColor,
+                          BlendMode.srcIn,
                         ),
                       ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 4),
-                        child: Text(
-                          '|',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0x5CFFFFFF),
-                          ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 74,
-                        child: Text(
-                          memLabel,
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xC7FFFFFF),
-                          ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            SizedBox(
+                              width: 46,
+                              child: Text(
+                                cpuLabel,
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Color(0xC7FFFFFF),
+                                ),
+                              ),
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 4),
+                              child: Text(
+                                '|',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Color(0x5CFFFFFF),
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 74,
+                              child: Text(
+                                memLabel,
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Color(0xC7FFFFFF),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Popover panel — port of GPUI's `resource_indicator_panel`.
+  /// 360w, rounded(14), bg #2b2d31, border white@0.08. Header
+  /// (`RESOURCE USAGE` muted + refresh icon), APP SHELL section
+  /// (3 stat cards: CPU / MEM / SESSIONS), TERMINAL SESSIONS
+  /// section (currently an empty-state — the hierarchical tree
+  /// needs a richer bridge surface, tracked as another-one #72).
+  Widget _buildPopover(
+    BuildContext context,
+    ResourceUsage? usage,
+    String cpuLabel,
+    String memLabel,
+  ) {
+    return Stack(
+      children: [
+        // Outside-tap dismiss.
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => setState(_popover.hide),
+          ),
+        ),
+        CompositedTransformFollower(
+          link: _link,
+          targetAnchor: Alignment.bottomRight,
+          followerAnchor: Alignment.topRight,
+          offset: const Offset(0, 6),
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              width: 360,
+              decoration: BoxDecoration(
+                color: AppTokens.cardBg,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppTokens.border),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x66000000),
+                    blurRadius: 16,
+                    offset: Offset(0, 6),
+                  ),
+                ],
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'RESOURCE USAGE',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0x7AFFFFFF),
+                              letterSpacing: 0.6,
+                            ),
+                          ),
+                        ),
+                        _PopoverIconButton(
+                          asset: 'assets/icons/icons__refresh.svg',
+                          tooltip: 'Refresh resource usage',
+                          onTap: () {
+                            // Tap-fire a manual refresh: the
+                            // notifier polls every 1.5s anyway,
+                            // but a click signals "reset cadence
+                            // now" — invalidate forces a fresh
+                            // snapshot.
+                            ref.invalidate(resourceUsageProvider);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  // APP SHELL heading
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
+                    child: Text(
+                      'APP SHELL',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xE5FFFFFF),
+                      ),
+                    ),
+                  ),
+                  // Stat cards
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _StatCard(
+                            title: 'APP CPU',
+                            value: cpuLabel,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _StatCard(
+                            title: 'APP MEM',
+                            value: memLabel,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          // Session count requires the hierarchical
+                          // sampler — show em-dash until that lands
+                          // (#72), matching how the indicator's own
+                          // labels show "— %" / "— MB" pre-sample.
+                          child: _StatCard(
+                            title: 'SESSIONS',
+                            value: '—',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // TERMINAL SESSIONS section
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 16, 20, 10),
+                    child: Text(
+                      'TERMINAL SESSIONS',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xE5FFFFFF),
+                      ),
+                    ),
+                  ),
+                  // Empty state — hierarchical sampler is the
+                  // follow-up tracked under bd #72. Until that
+                  // lands, the panel only has the app-level row.
+                  Padding(
+                    padding:
+                        const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0x14000000),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text(
+                        'No active terminal sessions',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0x94FFFFFF),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PopoverIconButton extends StatefulWidget {
+  const _PopoverIconButton({
+    required this.asset,
+    required this.tooltip,
+    required this.onTap,
+  });
+  final String asset;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  State<_PopoverIconButton> createState() => _PopoverIconButtonState();
+}
+
+class _PopoverIconButtonState extends State<_PopoverIconButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: Container(
+            width: 24,
+            height: 24,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _hover ? AppTokens.overlayHoverStrong : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: SvgPicture.asset(
+              widget.asset,
+              width: 14,
+              height: 14,
+              colorFilter: const ColorFilter.mode(
+                Color(0xEBFFFFFF),
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  const _StatCard({required this.title, required this.value});
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF363941),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Color(0x7AFFFFFF),
+              letterSpacing: 0.6,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Color(0xDBFFFFFF),
+            ),
+          ),
+        ],
       ),
     );
   }
