@@ -468,6 +468,17 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
         .unwrap_or((false, None))
     }
+
+    fn set_task_pinned(&self, task_id: &str, pinned: bool) -> (bool, Option<TaskSummary>) {
+        self.with_state(|state| {
+            let changed = state.project_store.set_task_pinned(task_id, pinned);
+            if changed {
+                state.project_store.save();
+            }
+            (changed, lookup_task_summary(state, task_id))
+        })
+        .unwrap_or((false, None))
+    }
 }
 
 /// Wire `frame::AgentProvider` → core `AgentProviderKind`. Mirror of

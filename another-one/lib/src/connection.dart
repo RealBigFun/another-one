@@ -174,13 +174,11 @@ abstract class DaemonConnection {
   /// through `Control::RenameTask` + `WorkerReply::TaskRenamed`.
   Future<bool> renameTask(String taskId, String newName);
 
-  /// Pin or unpin a task. Returns whether state changed.
-  Future<bool> setTaskPinned(String taskId, bool pinned) {
-    throw UnimplementedError(
-      'setTaskPinned: requires Control::SetTaskPinned wire variant '
-      'on the iroh transport (not yet implemented).',
-    );
-  }
+  /// Pin or unpin a task. Returns whether state changed (false on
+  /// idempotent re-set or unknown id). Implemented on both
+  /// transports (another-one-ojm.3) — IrohTransport routes through
+  /// `Control::SetTaskPinned` + `WorkerReply::TaskPinned`.
+  Future<bool> setTaskPinned(String taskId, bool pinned);
 
   /// Remove a task from the daemon's store. The on-disk worktree
   /// branch is left untouched.

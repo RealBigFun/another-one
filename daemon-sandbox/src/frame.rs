@@ -183,6 +183,11 @@ pub enum Control {
     /// post-rename inline `TaskSummary` and a `changed` flag — an
     /// unknown id or no-op rename returns `changed = false`.
     RenameTask { task_id: String, new_name: String },
+    /// Pin or unpin a task. Pinned tasks float to the top of their
+    /// project's task list. Reply is [`WorkerReply::TaskPinned`]
+    /// with the inline `TaskSummary` and a `changed` flag (idempotent
+    /// re-set returns `false`).
+    SetTaskPinned { task_id: String, pinned: bool },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -303,6 +308,13 @@ pub enum WorkerReply {
     /// unknown id or a no-op rename — in that case `task` is the
     /// pre-existing snapshot (or absent if the id was unknown).
     TaskRenamed {
+        changed: bool,
+        task: Option<TaskSummary>,
+    },
+    /// Reply to [`Control::SetTaskPinned`]. `changed` is `false` for
+    /// an idempotent re-set of the same value, or an unknown id.
+    /// `task` is the post-mutation snapshot when the task exists.
+    TaskPinned {
         changed: bool,
         task: Option<TaskSummary>,
     },

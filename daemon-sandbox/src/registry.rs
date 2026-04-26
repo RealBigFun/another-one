@@ -209,6 +209,13 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     fn rename_task(&self, _task_id: &str, _new_name: &str) -> (bool, Option<TaskSummary>) {
         (false, None)
     }
+
+    /// Pin or unpin a task. Returns `(changed, task)`: `changed` is
+    /// `false` for an idempotent re-set, `task` is the post-
+    /// mutation snapshot. Default returns `(false, None)`.
+    fn set_task_pinned(&self, _task_id: &str, _pinned: bool) -> (bool, Option<TaskSummary>) {
+        (false, None)
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

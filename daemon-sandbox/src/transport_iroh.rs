@@ -528,6 +528,11 @@ async fn handle_control(
             let reply = WorkerReply::TaskRenamed { changed, task };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::SetTaskPinned { task_id, pinned } => {
+            let (changed, task) = registry.set_task_pinned(&task_id, pinned);
+            let reply = WorkerReply::TaskPinned { changed, task };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

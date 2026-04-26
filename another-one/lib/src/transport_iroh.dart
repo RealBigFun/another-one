@@ -429,4 +429,26 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         ),
     };
   }
+
+  @override
+  Future<bool> setTaskPinned(String taskId, bool pinned) async {
+    final reply = await _sendControlAndAwait((id) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.setTaskPinned(
+        requestId: BigInt.from(id),
+        taskId: taskId,
+        pinned: pinned,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_TaskPinned(:final changed) => changed,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'setTaskPinned: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
 }

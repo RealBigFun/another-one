@@ -147,6 +147,8 @@ enum Control {
     },
     /// Mirror of `daemon-sandbox/src/frame.rs::Control::RenameTask`.
     RenameTask { task_id: String, new_name: String },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetTaskPinned`.
+    SetTaskPinned { task_id: String, pinned: bool },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -187,6 +189,12 @@ pub enum WorkerReply {
     /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRenamed`.
     /// Reply to [`Control::RenameTask`].
     TaskRenamed {
+        changed: bool,
+        task: Option<TaskSummary>,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskPinned`.
+    /// Reply to [`Control::SetTaskPinned`].
+    TaskPinned {
         changed: bool,
         task: Option<TaskSummary>,
     },
@@ -917,6 +925,18 @@ impl IrohSession {
         new_name: String,
     ) -> anyhow::Result<()> {
         self.send_control(request_id, Control::RenameTask { task_id, new_name })
+            .await
+    }
+
+    /// Issue a [`Control::SetTaskPinned`] under `request_id`. Mirror
+    /// of `LocalSession::set_task_pinned`.
+    pub async fn set_task_pinned(
+        &self,
+        request_id: u64,
+        task_id: String,
+        pinned: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetTaskPinned { task_id, pinned })
             .await
     }
 

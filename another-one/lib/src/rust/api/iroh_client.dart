@@ -110,6 +110,14 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
 
+  /// Issue a [`Control::SetTaskPinned`] under `request_id`. Mirror
+  /// of `LocalSession::set_task_pinned`.
+  Future<void> setTaskPinned({
+    required BigInt requestId,
+    required String taskId,
+    required bool pinned,
+  });
+
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
   Stream<Uint8List> subscribe();
@@ -370,6 +378,13 @@ sealed class WorkerReply with _$WorkerReply {
     required bool changed,
     TaskSummary? task,
   }) = WorkerReply_TaskRenamed;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskPinned`.
+  /// Reply to [`Control::SetTaskPinned`].
+  const factory WorkerReply.taskPinned({
+    required bool changed,
+    TaskSummary? task,
+  }) = WorkerReply_TaskPinned;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`
