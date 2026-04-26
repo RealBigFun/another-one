@@ -135,6 +135,9 @@ enum Control {
         pair_token: Option<String>,
         protocol_version: u32,
     },
+    /// Compute the canonical branch slug for free-text input.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SlugifyBranchName`.
+    SlugifyBranchName { name: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -166,6 +169,9 @@ pub enum WorkerReply {
         #[serde(rename = "err_kind")]
         kind: ErrKind,
     },
+    /// Reply to [`Control::SlugifyBranchName`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::SlugifyBranchNameAck`.
+    SlugifyBranchNameAck { slug: String },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -851,6 +857,24 @@ impl IrohSession {
             Control::LaunchTab { section_id, tab_id },
         )
         .await
+    }
+
+    // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
+    //
+    // Each method allocates a `request_id`, sends the matching
+    // `Control::*` frame, and returns the id so the Dart caller can
+    // correlate the daemon's reply through its
+    // `Map<int, Completer<WorkerReply>>` dispatch table. The reply
+    // arrives on the `subscribe_worker_replies` stream tagged with
+    // the same id.
+
+    /// Issue [`Control::SlugifyBranchName`] for `name`. Pure verb —
+    /// no project state involved on the daemon side.
+    pub async fn slugify_branch_name(&self, name: String) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(id, Control::SlugifyBranchName { name })
+            .await?;
+        Ok(id)
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

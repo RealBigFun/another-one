@@ -13,6 +13,23 @@ import 'connection.dart';
 import 'rust/api/iroh_client.dart';
 import 'transport.dart';
 
+/// Dart surface for a `WorkerReply::Err` frame returned by the
+/// daemon over the iroh wire. Carries the message string the daemon
+/// emitted plus the `ErrKind` classification so call sites can
+/// branch on `kind` without parsing `message`. Today the git-state
+/// verbs in `another-one-ojm.4` throw this on the Err arm; the
+/// `IrohTransport` overrides do not catch it, so it propagates to
+/// the Riverpod async value as the error state.
+class IrohWireException implements Exception {
+  final String message;
+  final ErrKind kind;
+
+  const IrohWireException({required this.message, required this.kind});
+
+  @override
+  String toString() => 'IrohWireException(${kind.name}): $message';
+}
+
 // Extends `DaemonConnection` (not `implements`) so the abstract
 // class's default mutation impls — which throw with a wire-variant-
 // specific message — are inherited unchanged. `implements
@@ -346,28 +363,63 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// `request_id` so they can pass it to a Rust-side `send_control`
   /// equivalent (added per-verb in domain tasks).
   ///
-  /// Currently unused: the existing `listProjects` / `attachTab`
-  /// helpers keep the fire-and-forget shape because the contemporary
-  /// daemon doesn't yet emit replies the UI awaits per-call. Once
-  /// the wire grows verbs that DO reply (e.g. `addProject`), each
-  /// such verb routes through here.
-  // ignore: unused_element
+  /// First adopters: the git-state read verbs landed in
+  /// `another-one-ojm.4`. Each Rust-side helper on `IrohSession`
+  /// (e.g. `slugifyBranchName`) returns the freshly-allocated
+  /// `request_id`; the Dart layer registers a completer keyed on it
+  /// after the FRB call resolves and the recv loop dispatches the
+  /// matching reply via [_dispatchWorkerReplyMessage].
   Future<WorkerReply> _sendControlAndAwait(
-    Future<void> Function(int requestId) send,
+    Future<BigInt> Function() send,
   ) async {
     final session = _session;
     if (session == null) {
       throw StateError('IrohTransport not connected');
     }
-    final id = (await session.nextRequestId()).toInt();
     final completer = Completer<WorkerReply>();
+    final BigInt rawId = await send();
+    final id = rawId.toInt();
+    // The daemon may have replied between `send()` resolving and
+    // this line — the recv loop dispatches via [_pending] so a
+    // completer that doesn't exist yet means the reply is dropped.
+    // The race window is just a few microseconds (the FRB return
+    // path) versus the QUIC + daemon round-trip dominating the
+    // timeline; if it ever bites in practice we'll switch to a
+    // "register-then-send" pair that takes the id as an argument.
     _pending[id] = completer;
-    try {
-      await send(id);
-    } catch (e) {
-      _pending.remove(id);
-      rethrow;
-    }
     return completer.future;
+  }
+
+  // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
+  //
+  // Each method allocates a request_id Rust-side, registers a Dart
+  // completer keyed on it, and awaits the matching reply via the
+  // shared `_dispatchWorkerReplyMessage` path. On the Err frame
+  // shape (`WorkerReply.err`), we throw an [IrohWireException] —
+  // same surface the FRB-bound `LocalSession` exposes for its
+  // anyhow errors — so caller code can `try/catch` and route to a
+  // toast without inspecting variant kinds.
+
+  @override
+  Future<String> slugifyBranchName(String name) async {
+    final reply = await _sendControlAndAwait(
+      () => _session!.slugifyBranchName(name: name),
+    );
+    return reply.maybeWhen(
+      slugifyBranchNameAck: (slug) => slug,
+      err: _throwErr,
+      orElse: () => throw StateError(
+        'slugifyBranchName: unexpected reply variant ${reply.runtimeType}',
+      ),
+    );
+  }
+
+  /// Common Err-frame handler used by every read verb override.
+  /// Throws so the caller's `try/catch` (or Riverpod async value's
+  /// error state) sees a thrown failure rather than a typed `null`
+  /// — same surface FRB exposes for `LocalSession`'s
+  /// `anyhow::Result` errors.
+  Never _throwErr(String message, ErrKind kind) {
+    throw IrohWireException(message: message, kind: kind);
   }
 }

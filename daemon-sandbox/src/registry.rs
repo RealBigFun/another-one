@@ -155,6 +155,25 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// attach briefly). Default impl is a no-op for registries that
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
+
+    // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
+    //
+    // Sister methods to the per-verb signatures in
+    // `another-one-bridge::api::local_session::LocalSession::*`. Each
+    // returns the same shape (ignoring FRB-vs-wire DTO differences)
+    // and follows the same `Ok(None) ⇒ unknown project` contract.
+    //
+    // Default impls forward to plumbing that doesn't need a real
+    // project store (slugify) or return empty for sandbox registries
+    // that can't answer. The bridge's `BridgeDaemonRegistry` overrides
+    // each method with a real delegation as the verbs land.
+
+    /// Compute the canonical branch slug for a free-text input.
+    /// Pure — no project state involved. Default impl forwards to
+    /// [`another_one_core::project_store::slugify_branch_name`].
+    fn slugify_branch_name(&self, name: &str) -> String {
+        another_one_core::project_store::slugify_branch_name(name)
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

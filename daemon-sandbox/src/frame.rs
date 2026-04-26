@@ -157,6 +157,11 @@ pub enum Control {
         #[serde(default)]
         protocol_version: u32,
     },
+    /// Compute the canonical branch slug for a free-text input.
+    /// Powers the Create Branch modal's live `Branch: …` preview.
+    /// Pure function — no project state involved. Reply is
+    /// [`WorkerReply::SlugifyBranchNameAck`] with the slug.
+    SlugifyBranchName { name: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -265,6 +270,8 @@ pub enum WorkerReply {
         #[serde(rename = "err_kind")]
         kind: ErrKind,
     },
+    /// Reply to [`Control::SlugifyBranchName`].
+    SlugifyBranchNameAck { slug: String },
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —

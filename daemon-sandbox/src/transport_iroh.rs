@@ -491,6 +491,11 @@ async fn handle_control(
             // drop it rather than error.
             debug!("stray Control::Hello from already-paired peer; ignored");
         }
+        Control::SlugifyBranchName { name } => {
+            let slug = registry.slugify_branch_name(&name);
+            let reply = WorkerReply::SlugifyBranchNameAck { slug };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

@@ -88,6 +88,10 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
 
+  /// Issue [`Control::SlugifyBranchName`] for `name`. Pure verb —
+  /// no project state involved on the daemon side.
+  Future<BigInt> slugifyBranchName({required String name});
+
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
   Stream<Uint8List> subscribe();
@@ -329,6 +333,11 @@ sealed class WorkerReply with _$WorkerReply {
     required String message,
     required ErrKind kind,
   }) = WorkerReply_Err;
+
+  /// Reply to [`Control::SlugifyBranchName`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::SlugifyBranchNameAck`.
+  const factory WorkerReply.slugifyBranchNameAck({required String slug}) =
+      WorkerReply_SlugifyBranchNameAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`
