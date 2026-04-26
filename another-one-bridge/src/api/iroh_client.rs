@@ -149,6 +149,10 @@ enum Control {
     /// repo. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::RepoDefaultCommitAction`.
     RepoDefaultCommitAction { project_id: String },
+    /// Snapshot the active project's branch metadata — current
+    /// branch + ahead/behind counts. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadActiveGitState`.
+    ReadActiveGitState { project_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -192,6 +196,21 @@ pub enum WorkerReply {
     /// Reply to [`Control::RepoDefaultCommitAction`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::RepoDefaultCommitActionAck`.
     RepoDefaultCommitActionAck { action: Option<String> },
+    /// Reply to [`Control::ReadActiveGitState`]. `state == None`
+    /// when the project id is unknown. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ActiveGitStateAck`.
+    ActiveGitStateAck {
+        state: Option<ActiveGitStateWire>,
+    },
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
+/// FRB-exposed via the `WorkerReply::ActiveGitStateAck` variant.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ActiveGitStateWire {
+    pub current_branch: Option<String>,
+    pub ahead_count: u32,
+    pub behind_count: u32,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -917,6 +936,16 @@ impl IrohSession {
     pub async fn repo_default_commit_action(&self, project_id: String) -> anyhow::Result<u64> {
         let id = self.next_request_id();
         self.send_control(id, Control::RepoDefaultCommitAction { project_id })
+            .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::ReadActiveGitState`] for `project_id`. Returns
+    /// the allocated `request_id` so the Dart caller can correlate
+    /// the daemon's reply.
+    pub async fn read_active_git_state(&self, project_id: String) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(id, Control::ReadActiveGitState { project_id })
             .await?;
         Ok(id)
     }

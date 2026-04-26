@@ -40,9 +40,9 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    ActiveGitStateWire, AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
 };
-use daemon_sandbox::{EndpointHandle, DaemonRegistry};
+use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
 use crate::local_pair::{set_local_pair_info, LocalPairInfo};
 use crate::local_registry::set_local_registry;
@@ -346,6 +346,39 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                         "commit-and-push".to_string()
                     }
                 })
+        })
+        .flatten()
+    }
+
+    fn read_active_git_state(&self, project_id: &str) -> Option<ActiveGitStateWire> {
+        let project_path = self.project_path(project_id)?;
+        // The git invocation can shell out — wrap in `block_in_place`
+        // so the daemon's tokio worker isn't held across the syscall.
+        let state = tokio::task::block_in_place(|| {
+            another_one_core::project_store::read_project_git_state(&project_path, true)
+        });
+        Some(ActiveGitStateWire {
+            current_branch: state.current_branch,
+            ahead_count: state.ahead_count as u32,
+            behind_count: state.behind_count as u32,
+        })
+    }
+}
+
+impl BridgeDaemonRegistry {
+    /// Resolve a project id to its on-disk path by snapshot of the
+    /// in-memory store. Used by every git-state read verb that shells
+    /// out — the caller drops the registry lock before the (blocking)
+    /// git work, so a hung `git status` doesn't block every other
+    /// registry method for the duration.
+    fn project_path(&self, project_id: &str) -> Option<std::path::PathBuf> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
         })
         .flatten()
     }

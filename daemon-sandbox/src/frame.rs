@@ -177,6 +177,18 @@ pub enum Control {
     /// `None` when no preference has been recorded — UI defaults to
     /// `"commit"` in that case.
     RepoDefaultCommitAction { project_id: String },
+    /// Snapshot the active project's branch metadata: current branch
+    /// name + ahead / behind counts. Powers the titlebar git-actions
+    /// split-button's primary-action selection (Push when ahead, Pull
+    /// when behind, Fetch otherwise — Commit comes from the
+    /// changes-vs-clean side via `ReadChangedFiles`).
+    ///
+    /// Sister verb to `LocalSession::read_active_git_state`. Reads
+    /// through `core::project_store::read_project_git_state` with
+    /// `include_metadata=true` on the daemon's project root path.
+    /// Reply is [`WorkerReply::ActiveGitStateAck`] with a `None`
+    /// payload when the project id is unknown.
+    ReadActiveGitState { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -297,6 +309,28 @@ pub enum WorkerReply {
     /// None` means the user hasn't recorded a preference; UI
     /// defaults to `"commit"`.
     RepoDefaultCommitActionAck { action: Option<String> },
+    /// Reply to [`Control::ReadActiveGitState`]. `state == None`
+    /// when the project id is unknown — UI shows the empty state
+    /// rather than surfacing an error.
+    ActiveGitStateAck {
+        state: Option<ActiveGitStateWire>,
+    },
+}
+
+/// Wire mirror of the bridge's `ActiveGitStateDto` (FRB-bound) and
+/// the underlying `core::project_store::ProjectGitState`. Carries the
+/// metadata the titlebar's idle-primary-action selection needs.
+///
+/// Defined as a wire-side mirror rather than reusing the FRB DTO
+/// because daemon-sandbox can't depend on the bridge crate (cycle —
+/// the bridge embeds daemon-sandbox). The bridge's `embedded_daemon`
+/// converts between this shape and the FRB DTO; the field set
+/// matches one-for-one so the conversion is mechanical.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveGitStateWire {
+    pub current_branch: Option<String>,
+    pub ahead_count: u32,
+    pub behind_count: u32,
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —

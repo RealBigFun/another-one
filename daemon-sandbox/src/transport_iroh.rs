@@ -511,6 +511,11 @@ async fn handle_control(
             let reply = WorkerReply::RepoDefaultCommitActionAck { action };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ReadActiveGitState { project_id } => {
+            let state = registry.read_active_git_state(&project_id);
+            let reply = WorkerReply::ActiveGitStateAck { state };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

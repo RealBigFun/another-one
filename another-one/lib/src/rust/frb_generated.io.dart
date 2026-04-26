@@ -92,6 +92,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ActiveGitStateDto dco_decode_active_git_state_dto(dynamic raw);
 
   @protected
+  ActiveGitStateWire dco_decode_active_git_state_wire(dynamic raw);
+
+  @protected
   AgentProvider dco_decode_agent_provider(dynamic raw);
 
   @protected
@@ -108,6 +111,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ActiveGitStateDto dco_decode_box_autoadd_active_git_state_dto(dynamic raw);
+
+  @protected
+  ActiveGitStateWire dco_decode_box_autoadd_active_git_state_wire(dynamic raw);
 
   @protected
   AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw);
@@ -299,6 +305,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ActiveGitStateDto? dco_decode_opt_box_autoadd_active_git_state_dto(
+    dynamic raw,
+  );
+
+  @protected
+  ActiveGitStateWire? dco_decode_opt_box_autoadd_active_git_state_wire(
     dynamic raw,
   );
 
@@ -510,6 +521,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ActiveGitStateWire sse_decode_active_git_state_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   AgentProvider sse_decode_agent_provider(SseDeserializer deserializer);
 
   @protected
@@ -528,6 +544,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ActiveGitStateDto sse_decode_box_autoadd_active_git_state_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ActiveGitStateWire sse_decode_box_autoadd_active_git_state_wire(
     SseDeserializer deserializer,
   );
 
@@ -767,6 +788,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ActiveGitStateDto? sse_decode_opt_box_autoadd_active_git_state_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ActiveGitStateWire? sse_decode_opt_box_autoadd_active_git_state_wire(
     SseDeserializer deserializer,
   );
 
@@ -1034,6 +1060,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_active_git_state_wire(
+    ActiveGitStateWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_agent_provider(AgentProvider self, SseSerializer serializer);
 
   @protected
@@ -1060,6 +1092,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_active_git_state_dto(
     ActiveGitStateDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_active_git_state_wire(
+    ActiveGitStateWire self,
     SseSerializer serializer,
   );
 
@@ -1351,6 +1389,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_active_git_state_dto(
     ActiveGitStateDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_active_git_state_wire(
+    ActiveGitStateWire? self,
     SseSerializer serializer,
   );
 

@@ -11,6 +11,7 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
+import 'rust/api/local_session.dart' as ls;
 import 'transport.dart';
 
 /// Dart surface for a `WorkerReply::Err` frame returned by the
@@ -452,6 +453,26 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       err: _throwErr,
       orElse: () => throw StateError(
         'repoDefaultCommitAction: unexpected reply variant ${reply.runtimeType}',
+      ),
+    );
+  }
+
+  @override
+  Future<ls.ActiveGitStateDto?> readActiveGitState(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      () => _session!.readActiveGitState(projectId: projectId),
+    );
+    return reply.maybeWhen(
+      activeGitStateAck: (state) => state == null
+          ? null
+          : ls.ActiveGitStateDto(
+              currentBranch: state.currentBranch,
+              aheadCount: state.aheadCount,
+              behindCount: state.behindCount,
+            ),
+      err: _throwErr,
+      orElse: () => throw StateError(
+        'readActiveGitState: unexpected reply variant ${reply.runtimeType}',
       ),
     );
   }

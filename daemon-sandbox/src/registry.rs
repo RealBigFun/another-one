@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::ProjectSummary;
+use crate::frame::{ActiveGitStateWire, ProjectSummary};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -194,6 +194,16 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// root repo. Returns `"commit"` / `"commit-and-push"` / `None`.
     /// Sister to `LocalSession::repo_default_commit_action`.
     fn repo_default_commit_action(&self, _project_id: &str) -> Option<String> {
+        None
+    }
+
+    /// Snapshot the active project's branch metadata — current
+    /// branch name + ahead / behind counts. Sister to
+    /// `LocalSession::read_active_git_state`. May shell out to git;
+    /// implementations should arrange for `block_in_place` or
+    /// `spawn_blocking` so the daemon's tokio worker isn't held
+    /// across the syscalls.
+    fn read_active_git_state(&self, _project_id: &str) -> Option<ActiveGitStateWire> {
         None
     }
 }

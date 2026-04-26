@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -82,6 +82,11 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
   Future<BigInt> primaryBranchForProject({required String projectId});
 
+  /// Issue [`Control::ReadActiveGitState`] for `project_id`. Returns
+  /// the allocated `request_id` so the Dart caller can correlate
+  /// the daemon's reply.
+  Future<BigInt> readActiveGitState({required String projectId});
+
   /// Issue [`Control::ReadProjectBranches`] for `project_id`.
   Future<BigInt> readProjectBranches({required String projectId});
 
@@ -119,6 +124,33 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// the daemon when nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
   Future<void> tabResize({required int cols, required int rows});
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
+/// FRB-exposed via the `WorkerReply::ActiveGitStateAck` variant.
+class ActiveGitStateWire {
+  final String? currentBranch;
+  final int aheadCount;
+  final int behindCount;
+
+  const ActiveGitStateWire({
+    this.currentBranch,
+    required this.aheadCount,
+    required this.behindCount,
+  });
+
+  @override
+  int get hashCode =>
+      currentBranch.hashCode ^ aheadCount.hashCode ^ behindCount.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ActiveGitStateWire &&
+          runtimeType == other.runtimeType &&
+          currentBranch == other.currentBranch &&
+          aheadCount == other.aheadCount &&
+          behindCount == other.behindCount;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form
@@ -363,6 +395,12 @@ sealed class WorkerReply with _$WorkerReply {
   /// `daemon-sandbox/src/frame.rs::WorkerReply::RepoDefaultCommitActionAck`.
   const factory WorkerReply.repoDefaultCommitActionAck({String? action}) =
       WorkerReply_RepoDefaultCommitActionAck;
+
+  /// Reply to [`Control::ReadActiveGitState`]. `state == None`
+  /// when the project id is unknown. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ActiveGitStateAck`.
+  const factory WorkerReply.activeGitStateAck({ActiveGitStateWire? state}) =
+      WorkerReply_ActiveGitStateAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`
