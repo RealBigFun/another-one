@@ -6723,8 +6723,13 @@ impl AnotherOneApp {
             return;
         };
 
+        let root_project_id = self
+            .project_store
+            .root_project_id_for_project(&success.original_project_id)
+            .unwrap_or_else(|| success.original_project_id.clone());
+
         self.insert_and_open_task(
-            success.original_project_id.clone(),
+            root_project_id,
             project.id.clone(),
             TaskKind::Worktree,
             success.task_name.clone(),
