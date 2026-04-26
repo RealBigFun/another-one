@@ -9,9 +9,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'local_session.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`
+// These functions are ignored because they are not marked as `pub`: `agent_def_to_dto`, `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`, `submit_direct_task`, `submit_worktree_task`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -214,6 +214,11 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String appId,
   });
 
+  /// Default branch GPUI seeds the new-task modal with for
+  /// `project_id`. Wraps `ProjectStore::primary_branch_for_project`
+  /// with `prefer_default=true`.
+  Future<String?> primaryBranchForProject({required String projectId});
+
   /// Snapshot the active project's branch metadata: current
   /// branch, ahead/behind counts. Powers the titlebar git-actions
   /// split-button's primary-action selection (Commit when there
@@ -268,6 +273,20 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String projectId,
     required String commitId,
   });
+
+  /// Snapshot of agents the user has enabled on this host plus
+  /// the id of the one they've picked as default. Drives the
+  /// new-task modal's agent multi-select. The returned list is
+  /// in the canonical AGENTS order — UI renders it as is.
+  Future<EnabledAgentsView> readEnabledAgents();
+
+  /// List of available branches on `project_id`'s git repo.
+  /// Wraps `ProjectStore::branch_names`. Powers the new-task
+  /// modal's source-branch dropdown.
+  ///
+  /// Returns an empty list for unknown projects — same
+  /// behaviour the core helper has.
+  Future<List<String>> readProjectBranches({required String projectId});
 
   /// Resolve the GitHub remote URL for a project by shelling out to
   /// `git remote get-url origin` and normalising the result through
@@ -463,6 +482,32 @@ abstract class LocalSession implements RustOpaqueInterface {
     String? originalPath,
   });
 
+  /// Submit the new-task modal: spawns a worktree task or a
+  /// direct-mode task depending on `worktree_mode`. Mirrors
+  /// `desktop/src/app.rs::submit_new_task_modal` +
+  /// `launch_task_request`.
+  ///
+  /// `agent_ids` is the new-task modal's multi-select picks; the
+  /// resulting `TerminalLaunchConfig` is built via
+  /// `terminal_launch_config_for_selected_agents` (so an empty
+  /// set + a `Shell` sentinel pass through to a default
+  /// `TerminalLaunchConfig` exactly the same way GPUI does).
+  ///
+  /// `branch_mode_existing=true` reuses an existing branch in
+  /// the worktree path; `false` cuts a new branch from
+  /// `source_branch`. Ignored when `worktree_mode=false`
+  /// (Direct mode always uses the project's current branch).
+  ///
+  /// Returns the new task's section_id so the UI can navigate.
+  Future<String> submitNewTask({
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    required List<String> agentIds,
+    required bool branchModeExisting,
+    required bool worktreeMode,
+  });
+
   /// Stream PTY bytes for the attached tab into a Dart sink.
   /// One-shot subscription; the second call returns
   /// "already subscribed".
@@ -518,6 +563,39 @@ class ActiveGitStateDto {
           currentBranch == other.currentBranch &&
           aheadCount == other.aheadCount &&
           behindCount == other.behindCount;
+}
+
+/// FRB-friendly mirror of one entry in
+/// [`another_one_core::agents::AGENTS`]. Carries everything the
+/// new-task modal's agent multi-select needs to render a chip
+/// (label + icon path) without the UI side hard-coding a copy.
+class AgentSummaryDto {
+  /// Stable id used by the bridge's `submit_new_task` verb.
+  final String id;
+  final String label;
+  final String iconPath;
+  final AgentProvider? provider;
+
+  const AgentSummaryDto({
+    required this.id,
+    required this.label,
+    required this.iconPath,
+    this.provider,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ label.hashCode ^ iconPath.hashCode ^ provider.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AgentSummaryDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          iconPath == other.iconPath &&
+          provider == other.provider;
 }
 
 /// FRB-friendly mirror of
@@ -773,6 +851,27 @@ class CommitDto {
           subject == other.subject &&
           authorName == other.authorName &&
           authoredRelative == other.authoredRelative;
+}
+
+/// Snapshot returned by [`LocalSession::read_enabled_agents`].
+/// Pairs the enabled-agents list with the user's preferred default
+/// (the chip the modal pre-checks on open).
+class EnabledAgentsView {
+  final List<AgentSummaryDto> agents;
+  final String? defaultAgentId;
+
+  const EnabledAgentsView({required this.agents, this.defaultAgentId});
+
+  @override
+  int get hashCode => agents.hashCode ^ defaultAgentId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EnabledAgentsView &&
+          runtimeType == other.runtimeType &&
+          agents == other.agents &&
+          defaultAgentId == other.defaultAgentId;
 }
 
 /// FRB-friendly mirror of [`OpenInAppKind`] with the

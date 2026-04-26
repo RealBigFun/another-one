@@ -999,6 +999,282 @@ impl LocalSession {
             }))
     }
 
+    /// List of available branches on `project_id`'s git repo.
+    /// Wraps `ProjectStore::branch_names`. Powers the new-task
+    /// modal's source-branch dropdown.
+    ///
+    /// Returns an empty list for unknown projects — same
+    /// behaviour the core helper has.
+    pub async fn read_project_branches(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Vec<String>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "read_project_branches: set_local_registry not called"
+            )
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "read_project_branches: RegistryState mutex poisoned"
+            )
+        })?;
+        Ok(state.project_store.branch_names(&project_id))
+    }
+
+    /// Submit the new-task modal: spawns a worktree task or a
+    /// direct-mode task depending on `worktree_mode`. Mirrors
+    /// `desktop/src/app.rs::submit_new_task_modal` +
+    /// `launch_task_request`.
+    ///
+    /// `agent_ids` is the new-task modal's multi-select picks; the
+    /// resulting `TerminalLaunchConfig` is built via
+    /// `terminal_launch_config_for_selected_agents` (so an empty
+    /// set + a `Shell` sentinel pass through to a default
+    /// `TerminalLaunchConfig` exactly the same way GPUI does).
+    ///
+    /// `branch_mode_existing=true` reuses an existing branch in
+    /// the worktree path; `false` cuts a new branch from
+    /// `source_branch`. Ignored when `worktree_mode=false`
+    /// (Direct mode always uses the project's current branch).
+    ///
+    /// Returns the new task's section_id so the UI can navigate.
+    pub async fn submit_new_task(
+        &self,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_ids: Vec<String>,
+        branch_mode_existing: bool,
+        worktree_mode: bool,
+    ) -> anyhow::Result<String> {
+        let trimmed = task_name.trim().to_string();
+        if trimmed.is_empty() {
+            anyhow::bail!("submit_new_task: task_name must not be blank");
+        }
+        let agent_set: std::collections::HashSet<String> =
+            agent_ids.into_iter().collect();
+        let launch_config =
+            another_one_core::agents::terminal_launch_config_for_selected_agents(
+                &agent_set,
+            );
+
+        if worktree_mode {
+            return self
+                .submit_worktree_task(project_id, trimmed, source_branch, branch_mode_existing, launch_config)
+                .await;
+        }
+        self.submit_direct_task(project_id, trimmed, source_branch, launch_config)
+    }
+
+    async fn submit_worktree_task(
+        &self,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        branch_mode_existing: bool,
+        launch_config: another_one_core::agents::TerminalLaunchConfig,
+    ) -> anyhow::Result<String> {
+        let (project_path, project_name, target_project_id) = {
+            let registry = local_registry().ok_or_else(|| {
+                anyhow::anyhow!("submit_worktree_task: set_local_registry not called")
+            })?;
+            let state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("submit_worktree_task: RegistryState mutex poisoned"))?;
+            let project = state
+                .project_store
+                .project(&project_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("submit_worktree_task: unknown project_id `{project_id}`")
+                })?;
+            (project.path.clone(), project.name.clone(), project.id.clone())
+        };
+        let branch_mode = if branch_mode_existing {
+            another_one_core::project_store::TaskWorktreeBranchMode::ExistingBranch {
+                branch: source_branch,
+            }
+        } else {
+            another_one_core::project_store::TaskWorktreeBranchMode::NewBranchFrom {
+                source_branch,
+            }
+        };
+
+        let mut rx = another_one_core::project_service::spawn_task_creation(
+            target_project_id.clone(),
+            project_path,
+            project_name,
+            task_name.clone(),
+            task_name,
+            branch_mode,
+            launch_config,
+        );
+        let reply = rx
+            .recv()
+            .await
+            .map_err(|_| anyhow::anyhow!("task creation worker dropped"))?;
+        let success = reply
+            .result
+            .map_err(|f| anyhow::anyhow!("create task: {}", f.message))?;
+
+        let section_id = {
+            let registry = local_registry().ok_or_else(|| {
+                anyhow::anyhow!("submit_worktree_task: set_local_registry vanished")
+            })?;
+            let mut state = registry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("submit_worktree_task: registry mutex poisoned"))?;
+            let inserted_worktree = state
+                .project_store
+                .insert_prepared_project(success.project.clone());
+            let worktree_project_id = if inserted_worktree {
+                success.project.project.id.clone()
+            } else {
+                state
+                    .project_store
+                    .projects
+                    .iter()
+                    .find(|p| p.path == success.project.project.path)
+                    .map(|p| p.id.clone())
+                    .unwrap_or_else(|| success.project.project.id.clone())
+            };
+            let task_id = uuid::Uuid::new_v4().to_string();
+            let section = another_one_core::section::SectionId::for_task(
+                &worktree_project_id,
+                &success.branch_name,
+                &task_id,
+            );
+            let section_key = section.store_key();
+            state
+                .project_store
+                .insert_task(another_one_core::project_store::Task {
+                    id: task_id,
+                    name: success.task_name,
+                    kind: another_one_core::project_store::TaskKind::Worktree,
+                    root_project_id: target_project_id,
+                    target_project_id: worktree_project_id.clone(),
+                    branch_name: success.branch_name,
+                    section_id: section_key.clone(),
+                    worktree_project_id: Some(worktree_project_id),
+                    tabs: Vec::new(),
+                    active_tab_id: String::new(),
+                    next_tab_id: 0,
+                    cwd: None,
+                });
+            state.project_store.save();
+            section_key
+        };
+        self.list_projects().await?;
+        Ok(section_id)
+    }
+
+    fn submit_direct_task(
+        &self,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        _launch_config: another_one_core::agents::TerminalLaunchConfig,
+    ) -> anyhow::Result<String> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("submit_direct_task: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("submit_direct_task: RegistryState mutex poisoned")
+        })?;
+        let project = state
+            .project_store
+            .project(&project_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!("submit_direct_task: unknown project_id `{project_id}`")
+            })?;
+        let project_id_owned = project.id.clone();
+        let branch_name = state
+            .project_store
+            .current_branch_name(&project_id_owned)
+            .filter(|b| !b.is_empty())
+            .unwrap_or_else(|| {
+                if source_branch.is_empty() {
+                    "main".to_string()
+                } else {
+                    source_branch
+                }
+            });
+        let task_id = uuid::Uuid::new_v4().to_string();
+        let section = another_one_core::section::SectionId::for_task(
+            &project_id_owned,
+            &branch_name,
+            &task_id,
+        );
+        let section_key = section.store_key();
+        state
+            .project_store
+            .insert_task(another_one_core::project_store::Task {
+                id: task_id,
+                name: task_name,
+                kind: another_one_core::project_store::TaskKind::Direct,
+                root_project_id: project_id_owned.clone(),
+                target_project_id: project_id_owned,
+                branch_name,
+                section_id: section_key.clone(),
+                worktree_project_id: None,
+                tabs: Vec::new(),
+                active_tab_id: String::new(),
+                next_tab_id: 0,
+                cwd: None,
+            });
+        state.project_store.save();
+        Ok(section_key)
+    }
+
+    /// Default branch GPUI seeds the new-task modal with for
+    /// `project_id`. Wraps `ProjectStore::primary_branch_for_project`
+    /// with `prefer_default=true`.
+    pub async fn primary_branch_for_project(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Option<String>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "primary_branch_for_project: set_local_registry not called"
+            )
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "primary_branch_for_project: RegistryState mutex poisoned"
+            )
+        })?;
+        Ok(state
+            .project_store
+            .primary_branch_for_project(&project_id, true)
+            .map(|branch| branch.name))
+    }
+
+    /// Snapshot of agents the user has enabled on this host plus
+    /// the id of the one they've picked as default. Drives the
+    /// new-task modal's agent multi-select. The returned list is
+    /// in the canonical AGENTS order — UI renders it as is.
+    pub async fn read_enabled_agents(
+        &self,
+    ) -> anyhow::Result<EnabledAgentsView> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("read_enabled_agents: set_local_registry not called")
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("read_enabled_agents: RegistryState mutex poisoned")
+        })?;
+        let enabled =
+            another_one_core::agents::effective_enabled_agents(
+                state.project_store.ui.enabled_agents.as_ref(),
+            );
+        let agents = enabled.iter().map(agent_def_to_dto).collect();
+        let default_agent_id =
+            state.project_store.default_agent_id().map(str::to_string);
+        Ok(EnabledAgentsView {
+            agents,
+            default_agent_id,
+        })
+    }
+
     /// Project actions configured for `project_id` — the merged
     /// list of per-project + global custom actions, in the same
     /// order GPUI's titlebar split-button dropdown renders. Per-
@@ -2543,6 +2819,39 @@ fn map_agent_provider_back(kind: AgentProvider) -> AgentProviderKind {
         // `None` upstream of this fn; gate it here so the match is
         // exhaustive.
         AgentProvider::Shell => AgentProviderKind::ClaudeCode,
+    }
+}
+
+/// FRB-friendly mirror of one entry in
+/// [`another_one_core::agents::AGENTS`]. Carries everything the
+/// new-task modal's agent multi-select needs to render a chip
+/// (label + icon path) without the UI side hard-coding a copy.
+#[derive(Debug, Clone)]
+pub struct AgentSummaryDto {
+    /// Stable id used by the bridge's `submit_new_task` verb.
+    pub id: String,
+    pub label: String,
+    pub icon_path: String,
+    pub provider: Option<AgentProvider>,
+}
+
+/// Snapshot returned by [`LocalSession::read_enabled_agents`].
+/// Pairs the enabled-agents list with the user's preferred default
+/// (the chip the modal pre-checks on open).
+#[derive(Debug, Clone)]
+pub struct EnabledAgentsView {
+    pub agents: Vec<AgentSummaryDto>,
+    pub default_agent_id: Option<String>,
+}
+
+fn agent_def_to_dto(
+    agent: &&'static another_one_core::agents::AgentDef,
+) -> AgentSummaryDto {
+    AgentSummaryDto {
+        id: agent.id.to_string(),
+        label: agent.label.to_string(),
+        icon_path: agent.icon.to_string(),
+        provider: agent.provider.map(map_agent_provider),
     }
 }
 

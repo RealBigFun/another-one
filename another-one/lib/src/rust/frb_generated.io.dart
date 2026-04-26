@@ -90,6 +90,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider dco_decode_agent_provider(dynamic raw);
 
   @protected
+  AgentSummaryDto dco_decode_agent_summary_dto(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
 
   @protected
@@ -144,10 +147,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CommitDto dco_decode_commit_dto(dynamic raw);
 
   @protected
+  EnabledAgentsView dco_decode_enabled_agents_view(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<AgentSummaryDto> dco_decode_list_agent_summary_dto(dynamic raw);
 
   @protected
   List<BranchCompareFileDto> dco_decode_list_branch_compare_file_dto(
@@ -382,6 +391,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider sse_decode_agent_provider(SseDeserializer deserializer);
 
   @protected
+  AgentSummaryDto sse_decode_agent_summary_dto(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
@@ -452,10 +464,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CommitDto sse_decode_commit_dto(SseDeserializer deserializer);
 
   @protected
+  EnabledAgentsView sse_decode_enabled_agents_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<AgentSummaryDto> sse_decode_list_agent_summary_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<BranchCompareFileDto> sse_decode_list_branch_compare_file_dto(
@@ -736,6 +758,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_agent_provider(AgentProvider self, SseSerializer serializer);
 
   @protected
+  void sse_encode_agent_summary_dto(
+    AgentSummaryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
@@ -820,10 +848,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_commit_dto(CommitDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_enabled_agents_view(
+    EnabledAgentsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_agent_summary_dto(
+    List<AgentSummaryDto> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_branch_compare_file_dto(

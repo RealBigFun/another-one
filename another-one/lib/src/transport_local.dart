@@ -592,6 +592,56 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<List<String>> readProjectBranches(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readProjectBranches: LocalTransport not connected');
+    }
+    return session.readProjectBranches(projectId: projectId);
+  }
+
+  @override
+  Future<String?> primaryBranchForProject(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('primaryBranchForProject: LocalTransport not connected');
+    }
+    return session.primaryBranchForProject(projectId: projectId);
+  }
+
+  @override
+  Future<EnabledAgentsView> readEnabledAgents() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readEnabledAgents: LocalTransport not connected');
+    }
+    return session.readEnabledAgents();
+  }
+
+  @override
+  Future<String> submitNewTask({
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    required List<String> agentIds,
+    required bool branchModeExisting,
+    required bool worktreeMode,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('submitNewTask: LocalTransport not connected');
+    }
+    return session.submitNewTask(
+      projectId: projectId,
+      taskName: taskName,
+      sourceBranch: sourceBranch,
+      agentIds: agentIds,
+      branchModeExisting: branchModeExisting,
+      worktreeMode: worktreeMode,
+    );
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,

@@ -38,6 +38,7 @@ import 'rust/api/local_session.dart'
         BranchCompareView,
         ChangedFileDto,
         CheckDto,
+        EnabledAgentsView,
         OpenInState,
         ProjectActionDto,
         ProjectPagePullRequestDto,
@@ -544,6 +545,52 @@ abstract class DaemonConnection {
   }) {
     throw UnimplementedError(
       'runProjectAction: requires Control::RunProjectAction wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  // ── New-task modal data ──────────────────────────────────────────
+
+  /// Branch names available for `projectId`. Powers the new-task
+  /// modal's source-branch dropdown.
+  Future<List<String>> readProjectBranches(String projectId) {
+    throw UnimplementedError(
+      'readProjectBranches: requires Control::ReadProjectBranches wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Default branch the new-task modal seeds for `projectId`.
+  /// `null` when the project has no current branch (fresh repo).
+  Future<String?> primaryBranchForProject(String projectId) {
+    throw UnimplementedError(
+      'primaryBranchForProject: requires Control::PrimaryBranchForProject '
+      'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Snapshot of the user-enabled agents on this host plus the
+  /// preferred default. Drives the new-task modal's multi-select.
+  Future<EnabledAgentsView> readEnabledAgents() {
+    throw UnimplementedError(
+      'readEnabledAgents: requires Control::ReadEnabledAgents wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Submit the new-task modal. Routes to either the worktree or
+  /// direct path based on `worktreeMode`. Returns the new task's
+  /// `sectionId`.
+  Future<String> submitNewTask({
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    required List<String> agentIds,
+    required bool branchModeExisting,
+    required bool worktreeMode,
+  }) {
+    throw UnimplementedError(
+      'submitNewTask: requires Control::SubmitNewTask wire '
       'variant on the iroh transport (not yet implemented).',
     );
   }
