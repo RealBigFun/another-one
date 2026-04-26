@@ -345,6 +345,25 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<void> discardChangedFile({
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('discardChangedFile: LocalTransport not connected');
+    }
+    await session.discardChangedFile(
+      projectId: projectId,
+      path: path,
+      originalPath: originalPath,
+      untracked: untracked,
+    );
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,

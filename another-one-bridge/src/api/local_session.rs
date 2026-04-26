@@ -622,6 +622,38 @@ impl LocalSession {
         .await
     }
 
+    /// Discard one file's changes. Untracked files are deleted; tracked
+    /// files are restored from HEAD via `git restore` (with checkout
+    /// fallback for older git). Mirrors GPUI's `revert_changed_file`
+    /// behaviour: returns success even on no-op, errors only when
+    /// every git invocation fails.
+    pub async fn discard_changed_file(
+        &self,
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+        untracked: bool,
+    ) -> anyhow::Result<()> {
+        run_changed_file_action(
+            &project_id,
+            move |project_path| {
+                let mut changed = another_one_core::project_store::ChangedFile::default();
+                changed.path = path.clone();
+                changed.original_path = original_path;
+                changed.untracked = untracked;
+                if another_one_core::project_store::revert_changed_file(
+                    &project_path,
+                    &changed,
+                ) {
+                    Ok(())
+                } else {
+                    Err(format!("Could not discard {path}"))
+                }
+            },
+        )
+        .await
+    }
+
     /// Unstage every currently-staged change.
     pub async fn unstage_all_changes(&self, project_id: String) -> anyhow::Result<()> {
         run_changed_file_action(&project_id, |project_path| {

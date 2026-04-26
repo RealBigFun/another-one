@@ -24,12 +24,15 @@
 // have a place to land without re-laying-out the chrome each time.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../rust/api/local_session.dart'
     show ChangedFileDto, CheckBucket, CheckDto, CommitDto;
 import '../../state/active_project_provider.dart';
+import '../../state/changed_files_pending_provider.dart';
 import '../../state/changed_files_provider.dart';
+import '../../state/changes_section_collapse_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/pr_checks_provider.dart';
 import '../../state/recent_commits_provider.dart';
@@ -39,6 +42,7 @@ import '../../widgets/app_icon.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/pill.dart';
 import '../../widgets/run_mutation.dart';
+import '../../widgets/toolbar_spinner.dart';
 
 const double _rightSidebarWidth = 320;
 
@@ -149,21 +153,23 @@ class _ChangesPane extends ConsumerWidget {
             if (staged.isNotEmpty)
               _ChangedFilesSection(
                 projectId: projectId,
-                title: 'Staged',
+                title: 'Staged Changes',
+                sectionKey: 'staged',
                 files: staged,
                 group: _ChangeGroup.staged,
               ),
             if (uncommitted.isNotEmpty)
               _ChangedFilesSection(
                 projectId: projectId,
-                title: 'Uncommitted',
+                title: 'Changes',
+                sectionKey: 'uncommitted',
                 files: uncommitted,
                 group: _ChangeGroup.uncommitted,
               ),
           ],
         );
       },
-      loading: () => const EmptyState(text: 'Reading working tree…'),
+      loading: () => const EmptyState(text: 'Loading changes...'),
       error: (e, _) => EmptyState(text: 'Could not read changes: $e'),
     );
   }
@@ -203,12 +209,14 @@ class _ChangedFilesSection extends ConsumerWidget {
   const _ChangedFilesSection({
     required this.projectId,
     required this.title,
+    required this.sectionKey,
     required this.files,
     required this.group,
   });
 
   final String projectId;
   final String title;
+  final String sectionKey;
   final List<ChangedFileDto> files;
   final _ChangeGroup group;
 
@@ -224,6 +232,10 @@ class _ChangedFilesSection extends ConsumerWidget {
       (a, f) => a +
           (group == _ChangeGroup.staged ? f.stagedDeletions : f.unstagedDeletions),
     );
+    final collapseKey = '$projectId:$sectionKey';
+    final collapsed =
+        ref.watch(changesSectionCollapseProvider).contains(collapseKey);
+    final pending = ref.watch(changedFilesPendingProvider(projectId));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -232,137 +244,242 @@ class _ChangedFilesSection extends ConsumerWidget {
           fileCount: files.length,
           additions: additions,
           deletions: deletions,
-          group: group,
+          collapsed: collapsed,
+          actionsBusy: pending.actionsBusy,
+          stageAllPending:
+              pending.isProjectActionPending(ProjectAction.stageAll),
+          unstageAllPending:
+              pending.isProjectActionPending(ProjectAction.unstageAll),
+          discardAllPending:
+              pending.isProjectActionPending(ProjectAction.discardAll),
+          onToggleCollapse: () => ref
+              .read(changesSectionCollapseProvider.notifier)
+              .toggle(collapseKey),
           onStageAll: group == _ChangeGroup.uncommitted
               ? () => _stageAll(context, ref)
               : null,
           onUnstageAll: group == _ChangeGroup.staged
               ? () => _unstageAll(context, ref)
               : null,
+          onDiscardAll: group == _ChangeGroup.uncommitted
+              ? () => _discardAll(context, ref)
+              : null,
         ),
-        for (final file in files)
-          _ChangedFileRow(
-            projectId: projectId,
-            file: file,
-            group: group,
-          ),
+        if (!collapsed)
+          for (final file in files)
+            _ChangedFileRow(
+              projectId: projectId,
+              file: file,
+              group: group,
+            ),
       ],
     );
   }
 
   Future<void> _stageAll(BuildContext context, WidgetRef ref) async {
-    final connection = ref.read(localConnectionProvider);
-    await runMutation<bool>(
-      context,
-      () async {
-        await connection.stageAllChanges(projectId);
-        return true;
-      },
-      errorPrefix: 'Could not stage all changes',
-    );
+    await _withProjectPending(ref, ProjectAction.stageAll, () async {
+      final connection = ref.read(localConnectionProvider);
+      await runMutation<bool>(
+        context,
+        () async {
+          await connection.stageAllChanges(projectId);
+          return true;
+        },
+        errorPrefix: 'Could not stage all changes',
+      );
+    });
     ref.invalidate(changedFilesProvider(projectId));
   }
 
   Future<void> _unstageAll(BuildContext context, WidgetRef ref) async {
-    final connection = ref.read(localConnectionProvider);
-    await runMutation<bool>(
-      context,
-      () async {
-        await connection.unstageAllChanges(projectId);
-        return true;
-      },
-      errorPrefix: 'Could not unstage all changes',
-    );
+    await _withProjectPending(ref, ProjectAction.unstageAll, () async {
+      final connection = ref.read(localConnectionProvider);
+      await runMutation<bool>(
+        context,
+        () async {
+          await connection.unstageAllChanges(projectId);
+          return true;
+        },
+        errorPrefix: 'Could not unstage all changes',
+      );
+    });
     ref.invalidate(changedFilesProvider(projectId));
+  }
+
+  Future<void> _discardAll(BuildContext context, WidgetRef ref) async {
+    final ok = await showDiscardConfirmDialog(context, files: files);
+    if (!ok || !context.mounted) return;
+    await _withProjectPending(ref, ProjectAction.discardAll, () async {
+      final connection = ref.read(localConnectionProvider);
+      // Loop the per-file discard verb because core has no
+      // discard-all primitive (revert_changed_file is per-path).
+      // Partial discard is still useful, so collect failures and
+      // surface them at the end rather than aborting on first error.
+      final List<String> failures = [];
+      for (final f in files) {
+        try {
+          await connection.discardChangedFile(
+            projectId: projectId,
+            path: f.path,
+            originalPath: f.originalPath,
+            untracked: f.untracked,
+          );
+        } catch (e) {
+          failures.add('${f.path}: $e');
+        }
+      }
+      if (failures.isNotEmpty && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not discard ${failures.length} file(s)'),
+            backgroundColor: AppTokens.errorBg,
+          ),
+        );
+      }
+    });
+    ref.invalidate(changedFilesProvider(projectId));
+  }
+
+  Future<void> _withProjectPending(
+    WidgetRef ref,
+    ProjectAction action,
+    Future<void> Function() body,
+  ) async {
+    final notifier = ref.read(changedFilesPendingProvider(projectId).notifier);
+    notifier.startProject(action);
+    try {
+      await body();
+    } finally {
+      notifier.endProject(action);
+    }
   }
 }
 
-class _ChangedFilesSectionHeader extends StatelessWidget {
+class _ChangedFilesSectionHeader extends StatefulWidget {
   const _ChangedFilesSectionHeader({
     required this.title,
     required this.fileCount,
     required this.additions,
     required this.deletions,
-    required this.group,
+    required this.collapsed,
+    required this.actionsBusy,
+    required this.stageAllPending,
+    required this.unstageAllPending,
+    required this.discardAllPending,
+    required this.onToggleCollapse,
     required this.onStageAll,
     required this.onUnstageAll,
+    required this.onDiscardAll,
   });
 
   final String title;
   final int fileCount;
   final int additions;
   final int deletions;
-  final _ChangeGroup group;
+  final bool collapsed;
+  final bool actionsBusy;
+  final bool stageAllPending;
+  final bool unstageAllPending;
+  final bool discardAllPending;
+  final VoidCallback onToggleCollapse;
   final VoidCallback? onStageAll;
   final VoidCallback? onUnstageAll;
+  final VoidCallback? onDiscardAll;
+
+  @override
+  State<_ChangedFilesSectionHeader> createState() =>
+      _ChangedFilesSectionHeaderState();
+}
+
+class _ChangedFilesSectionHeaderState
+    extends State<_ChangedFilesSectionHeader> {
+  bool _hover = false;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppTokens.space3,
-        AppTokens.space2,
-        AppTokens.space2,
-        AppTokens.space1,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: AppTokens.fontSmall,
-              fontWeight: FontWeight.w600,
-              color: AppTokens.textPrimary,
-              letterSpacing: 0.4,
-            ),
-          ),
-          const SizedBox(width: AppTokens.space2),
-          Text(
-            '$fileCount',
-            style: const TextStyle(
-              fontSize: AppTokens.fontCaption,
-              color: AppTokens.textMuted,
-            ),
-          ),
-          const Spacer(),
-          if (additions > 0)
-            Text(
-              '+$additions',
-              style: const TextStyle(
-                fontSize: AppTokens.fontCaption,
-                fontWeight: FontWeight.w600,
-                color: AppTokens.diffAdded,
+    return Tooltip(
+      message: 'Expand or collapse this section',
+      waitDuration: const Duration(milliseconds: 500),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onToggleCollapse,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: _hover
+                  ? const Color(0x08FFFFFF) // white @ 0.03
+                  : Colors.transparent,
+              border: const Border(
+                bottom: BorderSide(color: AppTokens.divider, width: 0.5),
               ),
             ),
-          if (deletions > 0) ...[
-            const SizedBox(width: 4),
-            Text(
-              '-$deletions',
-              style: const TextStyle(
-                fontSize: AppTokens.fontCaption,
-                fontWeight: FontWeight.w600,
-                color: AppTokens.diffRemoved,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      AppIcon(
+                        widget.collapsed ? 'chevron-right' : 'chevron-down',
+                        size: 10,
+                        color: const Color(0xBDFFFFFF), // 0.74 white
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          '${widget.title} (${widget.fileCount})',
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xEBFFFFFF),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _DiffBadge(value: widget.additions, positive: true),
+                const SizedBox(width: 8),
+                _DiffBadge(value: widget.deletions, positive: false),
+                if (widget.onStageAll case final cb?) ...[
+                  const SizedBox(width: 8),
+                  _IconActionButton(
+                    icon: 'plus',
+                    tooltip: 'Stage All Changes',
+                    onPressed: cb,
+                    enabled: !widget.actionsBusy,
+                    pending: widget.stageAllPending,
+                  ),
+                ],
+                if (widget.onUnstageAll case final cb?) ...[
+                  const SizedBox(width: 8),
+                  _IconActionButton(
+                    icon: 'minus',
+                    tooltip: 'Unstage all files in this section',
+                    onPressed: cb,
+                    enabled: !widget.actionsBusy,
+                    pending: widget.unstageAllPending,
+                  ),
+                ],
+                if (widget.onDiscardAll case final cb?) ...[
+                  const SizedBox(width: 8),
+                  _IconActionButton(
+                    icon: 'discard',
+                    tooltip: 'Discard All Changes',
+                    onPressed: cb,
+                    enabled: !widget.actionsBusy,
+                    pending: widget.discardAllPending,
+                  ),
+                ],
+              ],
             ),
-          ],
-          if (onStageAll case final cb?) ...[
-            const SizedBox(width: AppTokens.space2),
-            _IconActionButton(
-              icon: 'plus',
-              tooltip: 'Stage all changes',
-              onPressed: cb,
-            ),
-          ],
-          if (onUnstageAll case final cb?) ...[
-            const SizedBox(width: AppTokens.space2),
-            _IconActionButton(
-              icon: 'pin-off',
-              tooltip: 'Unstage all changes',
-              onPressed: cb,
-            ),
-          ],
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -381,6 +498,7 @@ class _ChangedFileRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final pending = ref.watch(changedFilesPendingProvider(projectId));
     final fileName = _basename(file.path);
     final parentDir = _parentDir(file.path);
     final status = _rowStatus(file, group);
@@ -390,137 +508,199 @@ class _ChangedFileRow extends ConsumerWidget {
     final deletions = group == _ChangeGroup.staged
         ? file.stagedDeletions
         : file.unstagedDeletions;
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppTokens.space3,
-        vertical: AppTokens.space1,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 14,
-            child: Text(
-              status,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: AppTokens.fontSmall,
-                fontWeight: FontWeight.w600,
-                fontFamily: AppTokens.fontFamilyMono,
-                color: _statusColor(status),
-              ),
-            ),
-          ),
-          const SizedBox(width: AppTokens.space2),
-          Expanded(
-            child: RichText(
-              overflow: TextOverflow.ellipsis,
-              text: TextSpan(
-                style: const TextStyle(
-                  fontSize: AppTokens.fontBody,
-                  color: AppTokens.textPrimary,
-                ),
+    final filePending = pending.isFilePending(file.path);
+    final actionsBusy = pending.actionsBusy;
+    final projectMutationsPending = pending.projectMutationsPending;
+    // Mirror desktop/src/right_sidebar.rs::changed_file_row exactly:
+    //   pl(22) pr(14) mx(4), rounded_md, hover white@0.04
+    //   gap 12 between (status+name+parent) cluster and stats+actions
+    //   status: min_w 18, bold 12px, status_color
+    //   name + parent share gap(6); name truncated, parent dir to the
+    //   right (truncated, smaller, muted)
+    return _RowHover(
+      child: Padding(
+        padding: const EdgeInsets.only(left: 22, right: 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  SizedBox(
+                    width: 18,
+                    child: Text(
+                      status,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _statusColor(status),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: Text(
+                      fileName,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xF0FFFFFF),
+                      ),
+                    ),
+                  ),
                   if (parentDir != null) ...[
-                    TextSpan(
-                      text: '$parentDir/',
-                      style: const TextStyle(color: AppTokens.textMuted),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        parentDir,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0x94FFFFFF),
+                        ),
+                      ),
                     ),
                   ],
-                  TextSpan(text: fileName),
                 ],
               ),
             ),
-          ),
-          if (additions > 0 || deletions > 0) ...[
-            const SizedBox(width: AppTokens.space2),
+            const SizedBox(width: 12),
             if (additions > 0)
-              Text(
-                '+$additions',
-                style: const TextStyle(
-                  fontSize: AppTokens.fontCaption,
-                  fontWeight: FontWeight.w600,
-                  color: AppTokens.diffAdded,
-                ),
-              ),
+              _DiffBadge(value: additions, positive: true),
             if (deletions > 0) ...[
-              const SizedBox(width: 3),
-              Text(
-                '-$deletions',
-                style: const TextStyle(
-                  fontSize: AppTokens.fontCaption,
-                  fontWeight: FontWeight.w600,
-                  color: AppTokens.diffRemoved,
-                ),
-              ),
+              const SizedBox(width: 8),
+              _DiffBadge(value: deletions, positive: false),
             ],
+            const SizedBox(width: 8),
+            if (group == _ChangeGroup.uncommitted) ...[
+              _IconActionButton(
+                icon: 'plus',
+                tooltip: 'Stage File',
+                onPressed: () => _stage(context, ref),
+                enabled: !actionsBusy,
+                pending: filePending,
+              ),
+              const SizedBox(width: 4),
+              _IconActionButton(
+                icon: 'discard',
+                tooltip: 'Discard File Changes',
+                onPressed: () => _confirmDiscard(context, ref),
+                enabled: !actionsBusy && !projectMutationsPending,
+              ),
+            ] else
+              _IconActionButton(
+                icon: 'minus',
+                tooltip: 'Unstage file',
+                onPressed: () => _unstage(context, ref),
+                enabled: !actionsBusy,
+                pending: filePending,
+              ),
           ],
-          const SizedBox(width: AppTokens.space2),
-          if (group == _ChangeGroup.uncommitted)
-            _IconActionButton(
-              icon: 'plus',
-              tooltip: 'Stage this file',
-              onPressed: () => _stage(context, ref),
-            )
-          else
-            _IconActionButton(
-              icon: 'pin-off',
-              tooltip: 'Unstage this file',
-              onPressed: () => _unstage(context, ref),
-            ),
-        ],
+        ),
       ),
     );
   }
 
+  Future<void> _confirmDiscard(BuildContext context, WidgetRef ref) async {
+    final ok = await showDiscardConfirmDialog(context, files: [file]);
+    if (!ok || !context.mounted) return;
+    await _withFilePending(ref, () async {
+      final connection = ref.read(localConnectionProvider);
+      await runMutation<bool>(
+        context,
+        () async {
+          await connection.discardChangedFile(
+            projectId: projectId,
+            path: file.path,
+            originalPath: file.originalPath,
+            untracked: file.untracked,
+          );
+          return true;
+        },
+        errorPrefix: 'Could not discard ${file.path}',
+      );
+    });
+    ref.invalidate(changedFilesProvider(projectId));
+  }
+
   Future<void> _stage(BuildContext context, WidgetRef ref) async {
-    final connection = ref.read(localConnectionProvider);
-    await runMutation<bool>(
-      context,
-      () async {
-        await connection.stageChangedFile(
-          projectId: projectId,
-          path: file.path,
-          originalPath: file.originalPath,
-        );
-        return true;
-      },
-      errorPrefix: 'Could not stage ${file.path}',
-    );
+    await _withFilePending(ref, () async {
+      final connection = ref.read(localConnectionProvider);
+      await runMutation<bool>(
+        context,
+        () async {
+          await connection.stageChangedFile(
+            projectId: projectId,
+            path: file.path,
+            originalPath: file.originalPath,
+          );
+          return true;
+        },
+        errorPrefix: 'Could not stage ${file.path}',
+      );
+    });
     ref.invalidate(changedFilesProvider(projectId));
   }
 
   Future<void> _unstage(BuildContext context, WidgetRef ref) async {
-    final connection = ref.read(localConnectionProvider);
-    await runMutation<bool>(
-      context,
-      () async {
-        await connection.unstageChangedFile(
-          projectId: projectId,
-          path: file.path,
-          originalPath: file.originalPath,
-        );
-        return true;
-      },
-      errorPrefix: 'Could not unstage ${file.path}',
-    );
+    await _withFilePending(ref, () async {
+      final connection = ref.read(localConnectionProvider);
+      await runMutation<bool>(
+        context,
+        () async {
+          await connection.unstageChangedFile(
+            projectId: projectId,
+            path: file.path,
+            originalPath: file.originalPath,
+          );
+          return true;
+        },
+        errorPrefix: 'Could not unstage ${file.path}',
+      );
+    });
     ref.invalidate(changedFilesProvider(projectId));
+  }
+
+  Future<void> _withFilePending(
+    WidgetRef ref,
+    Future<void> Function() body,
+  ) async {
+    final notifier = ref.read(changedFilesPendingProvider(projectId).notifier);
+    notifier.startFile(file.path);
+    try {
+      await body();
+    } finally {
+      notifier.endFile(file.path);
+    }
   }
 }
 
-/// Mirrors `desktop/src/right_sidebar.rs::changed_file_status_color`
-/// — A=green, D=red, R/C=blue, anything else (M/T) amber.
+/// Mirrors `desktop/src/right_sidebar.rs::changed_file_status_color`.
+/// These differ from the diff-badge colors (which are paler) — the
+/// status chars sit alone in the gutter and need higher saturation
+/// to read at a glance. HSL values from the GPUI source, computed
+/// once into sRGB constants here so we don't re-compute every
+/// build.
+///
+/// A → hsla(135/360, 0.70, 0.68) = #74E691
+/// D → hsla(0, 0.72, 0.68)       = #E87373
+/// R/C → hsla(210/360, 0.72, 0.72) = #7BB6E0
+/// other → hsla(50/360, 0.90, 0.60) = #F5C229
 Color _statusColor(String status) {
   switch (status) {
     case 'A':
-      return AppTokens.diffAdded;
+      return const Color(0xFF74E691);
     case 'D':
-      return AppTokens.diffRemoved;
+      return const Color(0xFFE87373);
     case 'R':
     case 'C':
-      return AppTokens.accent;
+      return const Color(0xFF7BB6E0);
     default:
-      return AppTokens.warningIcon;
+      return const Color(0xFFF5C229);
   }
 }
 
@@ -535,24 +715,319 @@ String? _parentDir(String path) {
   return path.substring(0, i);
 }
 
-/// Small in-row icon button used for per-file and per-section
-/// actions. Sized like GPUI's `changed_file_action_button`.
+/// In-row icon button matching GPUI's `changed_file_action_button`:
+/// 28×28, rounded_md, 16px svg, icon at white@0.72, hover bg
+/// white@0.08, opacity 0.35 when disabled.
+///
+/// `pending: true` swaps the icon for a [ToolbarSpinner] (GPUI's
+/// `changed_file_action_pending` substitution).
+/// `enabled: false` greys the button to opacity 0.35, hides hover
+/// bg, and disables the click handler — mirrors GPUI's
+/// `enabled: !actions_busy` gate.
 class _IconActionButton extends StatefulWidget {
   const _IconActionButton({
     required this.icon,
     required this.tooltip,
     required this.onPressed,
+    this.enabled = true,
+    this.pending = false,
   });
 
   final String icon;
   final String tooltip;
   final VoidCallback onPressed;
+  final bool enabled;
+  final bool pending;
 
   @override
   State<_IconActionButton> createState() => _IconActionButtonState();
 }
 
 class _IconActionButtonState extends State<_IconActionButton> {
+  bool _hover = false;
+
+  static const Color _iconColor = Color(0xB8FFFFFF); // white @ 0.72
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.pending) {
+      return const SizedBox(
+        width: 28,
+        height: 28,
+        child: Center(
+          child: ToolbarSpinner(size: 14, color: _iconColor),
+        ),
+      );
+    }
+    final container = Opacity(
+      opacity: widget.enabled ? 1.0 : 0.35,
+      child: Container(
+        width: 28,
+        height: 28,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: widget.enabled && _hover
+              ? AppTokens.overlayHoverStrong
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: AppIcon(
+          widget.icon,
+          size: 16,
+          color: _iconColor,
+        ),
+      ),
+    );
+    if (!widget.enabled) return container;
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onPressed,
+          child: container,
+        ),
+      ),
+    );
+  }
+}
+
+/// Wraps a Changes-pane row so the whole row gets a subtle
+/// white@0.04 hover background — mirrors `changed_file_row`'s
+/// `hover(row_hover)` rule. The row content itself stays
+/// non-interactive (only the per-row buttons are clickable).
+class _RowHover extends StatefulWidget {
+  const _RowHover({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_RowHover> createState() => _RowHoverState();
+}
+
+class _RowHoverState extends State<_RowHover> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        decoration: BoxDecoration(
+          color: _hover ? const Color(0x0AFFFFFF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// `+N` / `-N` diff badge matching `git_diff_badge`: semibold,
+/// font 11px (font_px capped at 11), green/red HSL constants from
+/// `desktop/src/right_sidebar.rs`.
+class _DiffBadge extends StatelessWidget {
+  const _DiffBadge({required this.value, required this.positive});
+
+  final int value;
+  final bool positive;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      positive ? '+$value' : '-$value',
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        color: positive ? AppTokens.diffAdded : AppTokens.diffRemoved,
+      ),
+    );
+  }
+}
+
+/// Confirmation modal mirroring
+/// `desktop/src/right_sidebar.rs::discard_confirm_modal`: 320px
+/// card, "Confirm Discard" title, "This action cannot be undone."
+/// caption, Cancel + Discard (danger-bg) buttons. Returns true when
+/// the user confirmed.
+///
+/// Keyboard parity: Esc cancels, Enter confirms — same bindings GPUI
+/// installs via `on_key_down` on the overlay.
+Future<bool> showDiscardConfirmDialog(
+  BuildContext context, {
+  required List<ChangedFileDto> files,
+}) async {
+  final fileCount = files.length;
+  final message = fileCount == 1
+      ? 'Discard changes to "${_basename(files[0].path)}"?'
+      : 'Discard changes to $fileCount files?';
+  final result = await showDialog<bool>(
+    context: context,
+    barrierColor: const Color(0x80000000),
+    builder: (ctx) => Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: EdgeInsets.zero,
+      child: Shortcuts(
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.escape):
+              _DiscardDismissIntent(),
+          SingleActivator(LogicalKeyboardKey.enter):
+              _DiscardConfirmIntent(),
+          SingleActivator(LogicalKeyboardKey.numpadEnter):
+              _DiscardConfirmIntent(),
+        },
+        child: Actions(
+          actions: {
+            _DiscardDismissIntent: CallbackAction<_DiscardDismissIntent>(
+              onInvoke: (_) {
+                Navigator.of(ctx).pop(false);
+                return null;
+              },
+            ),
+            _DiscardConfirmIntent: CallbackAction<_DiscardConfirmIntent>(
+              onInvoke: (_) {
+                Navigator.of(ctx).pop(true);
+                return null;
+              },
+            ),
+          },
+          child: Focus(
+            autofocus: true,
+            child: _DiscardCard(message: message),
+          ),
+        ),
+      ),
+    ),
+  );
+  return result ?? false;
+}
+
+class _DiscardDismissIntent extends Intent {
+  const _DiscardDismissIntent();
+}
+
+class _DiscardConfirmIntent extends Intent {
+  const _DiscardConfirmIntent();
+}
+
+class _DiscardCard extends StatelessWidget {
+  const _DiscardCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 320,
+      decoration: BoxDecoration(
+        color: AppTokens.cardBg,
+        borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+        border: Border.all(color: AppTokens.border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 24,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Confirm Discard',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppTokens.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTokens.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'This action cannot be undone.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppTokens.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                _DialogButton(
+                  label: 'Cancel',
+                  tooltip: 'Close without discarding changes',
+                  fontWeight: FontWeight.w500,
+                  background: AppTokens.overlayHoverStrong,
+                  hoverBg: const Color(0x24FFFFFF), // white @ 0.14
+                  onPressed: () => Navigator.of(context).pop(false),
+                ),
+                const SizedBox(width: 8),
+                _DialogButton(
+                  label: 'Discard',
+                  tooltip: 'Permanently discard the selected changes',
+                  fontWeight: FontWeight.w600,
+                  // hsla(0, 0.62, 0.50) ≈ #cf3030 ; hover 0.58 lightness ≈ #db4f4f
+                  background: const Color(0xFFCF3030),
+                  hoverBg: const Color(0xFFDB4F4F),
+                  onPressed: () => Navigator.of(context).pop(true),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DialogButton extends StatefulWidget {
+  const _DialogButton({
+    required this.label,
+    required this.tooltip,
+    required this.fontWeight,
+    required this.background,
+    required this.hoverBg,
+    required this.onPressed,
+  });
+
+  final String label;
+  final String tooltip;
+  final FontWeight fontWeight;
+  final Color background;
+  final Color hoverBg;
+  final VoidCallback onPressed;
+
+  @override
+  State<_DialogButton> createState() => _DialogButtonState();
+}
+
+class _DialogButtonState extends State<_DialogButton> {
   bool _hover = false;
 
   @override
@@ -567,17 +1042,18 @@ class _IconActionButtonState extends State<_IconActionButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onPressed,
           child: Container(
-            width: 18,
-            height: 18,
-            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             decoration: BoxDecoration(
-              color: _hover ? AppTokens.overlayHover : Colors.transparent,
-              borderRadius: BorderRadius.circular(AppTokens.radiusXs),
+              color: _hover ? widget.hoverBg : widget.background,
+              borderRadius: BorderRadius.circular(AppTokens.radiusMd),
             ),
-            child: AppIcon(
-              widget.icon,
-              size: 11,
-              color: AppTokens.textSecondary,
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: widget.fontWeight,
+                color: AppTokens.textPrimary,
+              ),
             ),
           ),
         ),

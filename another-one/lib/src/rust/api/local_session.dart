@@ -75,6 +75,18 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// Idempotent.
   Future<void> detachTab();
 
+  /// Discard one file's changes. Untracked files are deleted; tracked
+  /// files are restored from HEAD via `git restore` (with checkout
+  /// fallback for older git). Mirrors GPUI's `revert_changed_file`
+  /// behaviour: returns success even on no-op, errors only when
+  /// every git invocation fails.
+  Future<void> discardChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+    required bool untracked,
+  });
+
   /// Ask the daemon to spawn the given tab's PTY if it isn't
   /// already running. See [`Self`] doc for the launch flow.
   Future<void> launchTab({required String sectionId, required String tabId});

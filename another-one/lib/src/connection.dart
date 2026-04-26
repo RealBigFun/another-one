@@ -300,6 +300,23 @@ abstract class DaemonConnection {
       'variant on the iroh transport (not yet implemented).',
     );
   }
+
+  /// Discard one file's changes. Untracked files are deleted from
+  /// disk; tracked files are restored from HEAD. `untracked` is
+  /// passed through verbatim so the daemon picks the right code
+  /// path. Mirrors `core::revert_changed_file`. This action is
+  /// destructive and should always be gated behind a confirmation.
+  Future<void> discardChangedFile({
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
+  }) {
+    throw UnimplementedError(
+      'discardChangedFile: requires Control::DiscardChangedFile wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
 }
 
 /// In-memory list of active [DaemonConnection]s. Holds N regardless
