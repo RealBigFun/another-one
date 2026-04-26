@@ -508,8 +508,8 @@ abstract class DaemonConnection {
   /// project is unknown — matches `ProjectStore::project_actions`.
   Future<List<ProjectActionDto>> listProjectActions(String projectId) {
     throw UnimplementedError(
-      'listProjectActions: requires Control::ListProjectActions wire '
-      'variant on the iroh transport (not yet implemented).',
+      'listProjectActions: this DaemonConnection variant has not '
+      'implemented list_project_actions.',
     );
   }
 

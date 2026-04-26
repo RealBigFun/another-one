@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{OpenInStateWire, ProjectSummary};
+use crate::frame::{OpenInStateWire, ProjectActionWire, ProjectSummary};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -164,6 +164,14 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// (the sandbox binary has no host editor detection).
     fn open_in_state(&self) -> Option<OpenInStateWire> {
         None
+    }
+
+    /// Project + global custom actions for `project_id`, in the same
+    /// dropdown order GPUI's titlebar split-button renders. Empty
+    /// list when the project is unknown. Default impl returns empty
+    /// (the sandbox binary has no project store).
+    fn list_project_actions(&self, _project_id: &str) -> Vec<ProjectActionWire> {
+        Vec::new()
     }
 }
 

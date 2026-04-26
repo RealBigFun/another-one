@@ -11,7 +11,7 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
-import 'rust/api/local_session.dart' show OpenInState;
+import 'rust/api/local_session.dart' show OpenInState, ProjectActionDto;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -265,6 +265,21 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       throw StateError('IrohTransport: not connected — cannot read open_in_state');
     }
     return session.openInState();
+  }
+
+  /// Project + global custom actions for `projectId`, in the same
+  /// dropdown order GPUI's titlebar split-button renders. Empty
+  /// list when the project is unknown — matches
+  /// `ProjectStore::project_actions` behaviour.
+  @override
+  Future<List<ProjectActionDto>> listProjectActions(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError(
+        'IrohTransport: not connected — cannot list project actions',
+      );
+    }
+    return session.listProjectActions(projectId: projectId);
   }
 
   @override

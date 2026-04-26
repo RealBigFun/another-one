@@ -1388,6 +1388,10 @@ enum ProjectActionAccessDto { default_, readOnly, workspaceWrite, fullAccess }
 /// run-on-worktree-create flag, scope, and the kind-specific
 /// payload. UI maps `icon` to its asset path via
 /// `ProjectActionIconDto.icon_path` (Dart-side helper).
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `ProjectActionWire` shape directly into this DTO; field names
+/// align by design.
 class ProjectActionDto {
   final String id;
   final String name;
@@ -1432,6 +1436,11 @@ class ProjectActionDto {
 /// kebab-case ids round-trip the GPUI on-disk format
 /// (`projects.json`) so a user can switch desktop binaries without
 /// the icon picker resetting.
+///
+/// `Deserialize` exists so the iroh transport can decode the wire
+/// payload (`ProjectActionIconWire` from `daemon-sandbox`) directly
+/// into this DTO. Wire form is kebab-case to match
+/// `core::project_store::ProjectActionIcon`'s on-disk shape.
 enum ProjectActionIconDto { play, test, lint, configure, build, debug, agent }
 
 @freezed

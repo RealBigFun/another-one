@@ -419,6 +419,11 @@ async fn handle_control(
             };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ListProjectActions { project_id } => {
+            let actions = registry.list_project_actions(&project_id);
+            let reply = WorkerReply::ProjectActionsAck { actions };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
         Control::AttachTab { section_id, tab_id } => {
             // Drop any prior attachment on this connection.
             if let Some(prev) = attached.take() {

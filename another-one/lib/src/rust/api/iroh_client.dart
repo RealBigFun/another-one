@@ -4,15 +4,15 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
-import '../lib.dart';
 import 'local_session.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `decode_ack_state`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `request_and_await`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
+// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `decode_ack_field`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `request_and_await`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`, `PendingTable`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -64,6 +64,15 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// live. No-op on the daemon side if the tab is already running.
   /// After this, a subsequent `attach_tab` will receive bytes.
   Future<void> launchTab({required String sectionId, required String tabId});
+
+  /// Project + global custom actions for `project_id`, in the same
+  /// order GPUI's titlebar split-button dropdown renders. Empty
+  /// list when the project is unknown — matches
+  /// `ProjectStore::project_actions` behaviour. Daemon-side mirror
+  /// is `LocalSession::list_project_actions`.
+  Future<List<ProjectActionDto>> listProjectActions({
+    required String projectId,
+  });
 
   /// Ask the daemon to send back its current project list as a
   /// [`WorkerReply::ProjectList`] frame. The reply arrives on
@@ -140,29 +149,6 @@ enum AgentProvider {
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
 /// snake_case; the Dart side gets a freezed enum via FRB.
 enum ErrKind { unknownId, unsupported, unauthorised, internal }
-
-/// Map of `request_id` → oneshot waiter for the recv loop to deliver
-/// the raw JSON payload of a worker-reply frame. Populated by
-/// per-verb FRB methods before sending; drained by the recv loop on
-/// matching reply or by `IrohSession::close` when the session ends.
-class PendingTable {
-  final Map<BigInt, SenderValue> waiters;
-
-  const PendingTable({required this.waiters});
-
-  static Future<PendingTable> default_() =>
-      RustLib.instance.api.crateApiIrohClientPendingTableDefault();
-
-  @override
-  int get hashCode => waiters.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is PendingTable &&
-          runtimeType == other.runtimeType &&
-          waiters == other.waiters;
-}
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ProjectKind`.
 enum ProjectKind { root, worktree }

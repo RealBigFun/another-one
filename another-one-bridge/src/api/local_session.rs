@@ -3786,7 +3786,13 @@ fn agent_def_to_dto(
 /// kebab-case ids round-trip the GPUI on-disk format
 /// (`projects.json`) so a user can switch desktop binaries without
 /// the icon picker resetting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Deserialize` exists so the iroh transport can decode the wire
+/// payload (`ProjectActionIconWire` from `daemon-sandbox`) directly
+/// into this DTO. Wire form is kebab-case to match
+/// `core::project_store::ProjectActionIcon`'s on-disk shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ProjectActionIconDto {
     Play,
     Test,
@@ -3802,7 +3808,8 @@ pub enum ProjectActionIconDto {
 /// "project first, global last" because that's how the dropdown row
 /// order treats them — global rows render with a globe glyph beside
 /// the action label.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ProjectActionScopeDto {
     Project,
     Global,
@@ -3813,7 +3820,8 @@ pub enum ProjectActionScopeDto {
 /// the agent-mode CLI's permission flag — `default` passes nothing
 /// extra, the other three map to `--read-only`, `--workspace-write`,
 /// `--full-access` (Claude Code today; other providers ignore).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ProjectActionAccessDto {
     Default,
     ReadOnly,
@@ -3825,7 +3833,11 @@ pub enum ProjectActionAccessDto {
 /// [`another_one_core::project_store::ProjectActionKind`]. The Dart
 /// side discriminates on the variant; FRB emits a sealed-class
 /// hierarchy with `Shell` and `Agent` subclasses.
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `ProjectActionKindWire` (externally-tagged via serde default)
+/// directly into this enum.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub enum ProjectActionKindDto {
     /// A shell command typed verbatim into a freshly-spawned PTY.
     /// `command` is run as `<command>\n` so multi-line input works
@@ -3850,7 +3862,11 @@ pub enum ProjectActionKindDto {
 /// run-on-worktree-create flag, scope, and the kind-specific
 /// payload. UI maps `icon` to its asset path via
 /// `ProjectActionIconDto.icon_path` (Dart-side helper).
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `ProjectActionWire` shape directly into this DTO; field names
+/// align by design.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct ProjectActionDto {
     pub id: String,
     pub name: String,

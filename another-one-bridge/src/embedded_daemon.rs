@@ -37,13 +37,17 @@ use another_one_core::daemon_embed::{
 use another_one_core::open_in::OpenInAppKind;
 use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
+use another_one_core::project_store::{
+    ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind, ProjectActionScope,
+};
 use another_one_core::project_store::ProjectStore;
 use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, OpenInAppWire, OpenInStateWire, ProjectKind, ProjectSummary, TabSummary,
-    TaskSummary,
+    AgentProvider, OpenInAppWire, OpenInStateWire, ProjectActionAccessWire,
+    ProjectActionIconWire, ProjectActionKindWire, ProjectActionScopeWire, ProjectActionWire,
+    ProjectKind, ProjectSummary, TabSummary, TaskSummary,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -336,6 +340,22 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             }
         })
     }
+
+    fn list_project_actions(&self, project_id: &str) -> Vec<ProjectActionWire> {
+        // Mirrors `LocalSession::list_project_actions`. Returns the
+        // pre-merged project + global list in dropdown order;
+        // unknown project ids fall through to an empty Vec, matching
+        // `ProjectStore::project_actions`.
+        self.with_state(|state| {
+            state
+                .project_store
+                .project_actions(project_id)
+                .into_iter()
+                .map(project_action_to_wire)
+                .collect()
+        })
+        .unwrap_or_default()
+    }
 }
 
 /// Filter [`OpenInAppKind::all`] down to what the host says is
@@ -447,6 +467,63 @@ fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {
     match kind {
         CoreProjectKind::Root => ProjectKind::Root,
         CoreProjectKind::Worktree => ProjectKind::Worktree,
+    }
+}
+
+fn project_action_to_wire(action: ProjectAction) -> ProjectActionWire {
+    let kind = match action.kind {
+        ProjectActionKind::Shell { command } => ProjectActionKindWire::Shell { command },
+        ProjectActionKind::Agent {
+            prompt,
+            provider,
+            model,
+            traits,
+            mode,
+            access,
+        } => ProjectActionKindWire::Agent {
+            prompt,
+            provider: map_agent_provider(provider),
+            model,
+            traits,
+            mode,
+            access: map_project_action_access(access),
+        },
+    };
+    ProjectActionWire {
+        id: action.id,
+        name: action.name,
+        icon: map_project_action_icon(action.icon),
+        run_on_worktree_create: action.run_on_worktree_create,
+        scope: map_project_action_scope(action.scope),
+        kind,
+    }
+}
+
+fn map_project_action_icon(icon: ProjectActionIcon) -> ProjectActionIconWire {
+    match icon {
+        ProjectActionIcon::Play => ProjectActionIconWire::Play,
+        ProjectActionIcon::Test => ProjectActionIconWire::Test,
+        ProjectActionIcon::Lint => ProjectActionIconWire::Lint,
+        ProjectActionIcon::Configure => ProjectActionIconWire::Configure,
+        ProjectActionIcon::Build => ProjectActionIconWire::Build,
+        ProjectActionIcon::Debug => ProjectActionIconWire::Debug,
+        ProjectActionIcon::Agent => ProjectActionIconWire::Agent,
+    }
+}
+
+fn map_project_action_scope(scope: ProjectActionScope) -> ProjectActionScopeWire {
+    match scope {
+        ProjectActionScope::Project => ProjectActionScopeWire::Project,
+        ProjectActionScope::Global => ProjectActionScopeWire::Global,
+    }
+}
+
+fn map_project_action_access(access: ProjectActionAccess) -> ProjectActionAccessWire {
+    match access {
+        ProjectActionAccess::Default => ProjectActionAccessWire::Default,
+        ProjectActionAccess::ReadOnly => ProjectActionAccessWire::ReadOnly,
+        ProjectActionAccess::WorkspaceWrite => ProjectActionAccessWire::WorkspaceWrite,
+        ProjectActionAccess::FullAccess => ProjectActionAccessWire::FullAccess,
     }
 }
 

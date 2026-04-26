@@ -129,6 +129,12 @@ pub enum Control {
     /// `connection.dart::openProjectInApp` for why. Reply:
     /// [`WorkerReply::OpenInStateAck`].
     OpenInState,
+    /// List the merged project + global custom actions for `project_id`,
+    /// in the same order the desktop's titlebar split-button dropdown
+    /// renders. Empty list when the project is unknown — matches
+    /// `ProjectStore::project_actions` behaviour. Reply:
+    /// [`WorkerReply::ProjectActionsAck`].
+    ListProjectActions { project_id: String },
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -252,6 +258,11 @@ pub enum WorkerReply {
     /// canonical `OpenInAppKind::all()` order; `preferred_app_id`
     /// is `None` when no Open-In app is detected on the host.
     OpenInStateAck { state: OpenInStateWire },
+    /// Reply to [`Control::ListProjectActions`]. Empty `actions` is a
+    /// valid result (unknown project, or project with no custom
+    /// actions configured) — clients render the empty state rather
+    /// than treating it as an error.
+    ProjectActionsAck { actions: Vec<ProjectActionWire> },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same
@@ -460,6 +471,89 @@ pub struct OpenInStateWire {
     /// Id of the app the titlebar's primary action launches, or
     /// `None` when no app is enabled at all.
     pub preferred_app_id: Option<String>,
+}
+
+/// Wire projection of `another_one_core::project_store::ProjectAction`.
+/// Field-for-field compatible with
+/// `another_one_bridge::api::local_session::ProjectActionDto` so the
+/// bridge can deserialize the wire JSON straight into the FRB-exposed
+/// DTO without a mapping pass — same reason `OpenInAppWire` mirrors
+/// `OpenInAppDto`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectActionWire {
+    pub id: String,
+    pub name: String,
+    pub icon: ProjectActionIconWire,
+    pub run_on_worktree_create: bool,
+    pub scope: ProjectActionScopeWire,
+    pub kind: ProjectActionKindWire,
+}
+
+/// Wire mirror of `core::project_store::ProjectActionIcon`. Stable
+/// kebab-case ids match the GPUI on-disk format (`projects.json`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionIconWire {
+    Play,
+    Test,
+    Lint,
+    Configure,
+    Build,
+    Debug,
+    Agent,
+}
+
+/// Wire mirror of `core::project_store::ProjectActionScope`. Project
+/// rows render before global rows in the dropdown.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionScopeWire {
+    Project,
+    Global,
+}
+
+/// Wire mirror of `core::project_store::ProjectActionAccess`. Fed
+/// through to the agent CLI's permission flag at run time —
+/// `default` passes nothing extra, the other three map to
+/// `--read-only`, `--workspace-write`, `--full-access`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectActionAccessWire {
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    FullAccess,
+}
+
+/// Wire mirror of `core::project_store::ProjectActionKind`. Tagged
+/// union — `kind: "shell"` carries `command`, `kind: "agent"`
+/// carries the prompt + provider-specific knobs.
+///
+/// This has to use the same `#[serde(tag = ...)]` discriminator that
+/// the FRB-bound `ProjectActionKindDto` uses on the Dart side; FRB
+/// emits a sealed-class hierarchy, and serde decodes it from the
+/// internally-tagged shape produced by the daemon.
+///
+/// FRB-bound mirror uses an externally-tagged shape (the default for
+/// Rust enums without serde annotations); we match that here so the
+/// bridge-side `ProjectActionKindDto` decodes the same JSON without
+/// needing a separate intermediate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProjectActionKindWire {
+    Shell {
+        command: String,
+    },
+    Agent {
+        prompt: String,
+        provider: AgentProvider,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        traits: Option<String>,
+        #[serde(default)]
+        mode: Option<String>,
+        access: ProjectActionAccessWire,
+    },
 }
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the

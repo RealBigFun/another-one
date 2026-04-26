@@ -132,6 +132,10 @@ enum Control {
     /// FRB-bound enum since no Dart-side broadcast consumer needs
     /// it). Mirror of `daemon-sandbox/src/frame.rs::Control::OpenInState`.
     OpenInState,
+    /// List the merged project + global custom actions for `project_id`.
+    /// Reply: `WorkerReply::ProjectActionsAck`. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ListProjectActions`.
+    ListProjectActions { project_id: String },
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
@@ -518,6 +522,7 @@ pub struct IrohSession {
     /// `ListProjects` keeps the broadcast path because the Dart UI
     /// fans the result out to multiple listeners (project drawer,
     /// titlebar, status header).
+    #[frb(ignore)]
     pending: Arc<StdMutex<PendingTable>>,
     /// Monotonic per-session request id allocator. Starts at 1 because
     /// `0` is reserved for daemon-pushed (unsolicited) frames — see
@@ -532,6 +537,13 @@ pub struct IrohSession {
 /// the raw JSON payload of a worker-reply frame. Populated by
 /// per-verb FRB methods before sending; drained by the recv loop on
 /// matching reply or by `IrohSession::close` when the session ends.
+///
+/// `#[frb(ignore)]` keeps this off the FRB-bound surface — it's an
+/// internal book-keeping type with no Dart equivalent. Without the
+/// ignore, FRB picks it up via the `pub`-walked iroh_client module
+/// and tries to emit Dart bindings for `HashMap<u64, oneshot::Sender>`,
+/// which it can't represent.
+#[frb(ignore)]
 #[derive(Default)]
 struct PendingTable {
     waiters: HashMap<u64, oneshot::Sender<serde_json::Value>>,
@@ -939,7 +951,28 @@ impl IrohSession {
             .request_and_await(Control::OpenInState)
             .await
             .context("open_in_state: request failed")?;
-        decode_ack_state(value, "open_in_state_ack", "open_in_state")
+        decode_ack_field(value, "open_in_state_ack", "state", "open_in_state")
+    }
+
+    /// Project + global custom actions for `project_id`, in the same
+    /// order GPUI's titlebar split-button dropdown renders. Empty
+    /// list when the project is unknown — matches
+    /// `ProjectStore::project_actions` behaviour. Daemon-side mirror
+    /// is `LocalSession::list_project_actions`.
+    pub async fn list_project_actions(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Vec<crate::api::local_session::ProjectActionDto>> {
+        let value = self
+            .request_and_await(Control::ListProjectActions { project_id })
+            .await
+            .context("list_project_actions: request failed")?;
+        decode_ack_field(
+            value,
+            "project_actions_ack",
+            "actions",
+            "list_project_actions",
+        )
     }
 
     /// Allocate a request id, register a oneshot in [`Self::pending`],
@@ -1052,8 +1085,8 @@ impl IrohSession {
     }
 }
 
-/// Decode a worker-reply JSON value as an Ack of the named `kind`.
-/// Returns the strongly-typed payload nested at the named `field` key.
+/// Decode a worker-reply JSON value as an Ack of the named `kind`,
+/// returning the strongly-typed payload nested at `field`.
 ///
 /// Two failure modes:
 ///   - The daemon emitted `WorkerReply::Err` instead of the expected
@@ -1065,9 +1098,10 @@ impl IrohSession {
 ///
 /// `verb_name` is included in the error so a log line points at the
 /// originating call without the call site having to wrap on its own.
-fn decode_ack_state<T: for<'de> serde::Deserialize<'de>>(
+fn decode_ack_field<T: for<'de> serde::Deserialize<'de>>(
     value: serde_json::Value,
     expected_kind: &str,
+    field: &str,
     verb_name: &str,
 ) -> anyhow::Result<T> {
     let kind = value
@@ -1092,14 +1126,14 @@ fn decode_ack_state<T: for<'de> serde::Deserialize<'de>>(
             "{verb_name}: unexpected reply kind `{kind}` (expected `{expected_kind}`)"
         );
     }
-    let state = value
-        .get("state")
+    let payload = value
+        .get(field)
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "{verb_name}: missing `state` field on `{expected_kind}` reply"
+                "{verb_name}: missing `{field}` field on `{expected_kind}` reply"
             )
         })?
         .clone();
-    serde_json::from_value::<T>(state)
-        .with_context(|| format!("{verb_name}: decode `{expected_kind}.state`"))
+    serde_json::from_value::<T>(payload)
+        .with_context(|| format!("{verb_name}: decode `{expected_kind}.{field}`"))
 }
