@@ -334,6 +334,34 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<String> createBranch({
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('createBranch: LocalTransport not connected');
+    }
+    return session.createBranch(
+      projectId: projectId,
+      branchName: branchName,
+      useCurrentTask: useCurrentTask,
+      migrateChanges: migrateChanges,
+    );
+  }
+
+  @override
+  Future<String> slugifyBranchName(String name) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('slugifyBranchName: LocalTransport not connected');
+    }
+    return session.slugifyBranchName(name: name);
+  }
+
+  @override
   Future<ActiveGitStateDto?> readActiveGitState(String projectId) async {
     final session = _session;
     if (session == null) {

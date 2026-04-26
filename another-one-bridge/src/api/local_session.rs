@@ -832,6 +832,134 @@ impl LocalSession {
         Ok(section_id)
     }
 
+    /// Create a new branch from HEAD on `project_id`. When
+    /// `use_current_task` is true, switches the current checkout
+    /// (no new worktree). Otherwise a new worktree is created
+    /// next to the existing project, optionally migrating any
+    /// uncommitted changes.
+    ///
+    /// Returns the new task's `section_id` for the worktree case;
+    /// empty string for the current-task case (the caller's UI
+    /// just dismisses the modal). Routes
+    /// [`another_one_core::project_service::spawn_branch_creation`].
+    pub async fn create_branch(
+        &self,
+        project_id: String,
+        branch_name: String,
+        use_current_task: bool,
+        migrate_changes: bool,
+    ) -> anyhow::Result<String> {
+        let (project_path, project_name, target_project_id) = {
+            let registry = local_registry().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "create_branch: set_local_registry not called"
+                )
+            })?;
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!("create_branch: RegistryState mutex poisoned")
+            })?;
+            let project = state
+                .project_store
+                .project(&project_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "create_branch: unknown project_id `{project_id}`"
+                    )
+                })?;
+            (
+                project.path.clone(),
+                project.name.clone(),
+                project.id.clone(),
+            )
+        };
+        let mut rx = another_one_core::project_service::spawn_branch_creation(
+            target_project_id.clone(),
+            project_path,
+            branch_name,
+            use_current_task,
+            migrate_changes,
+        );
+        let reply = rx.recv().await.map_err(|_| {
+            anyhow::anyhow!("branch creation worker dropped before reply")
+        })?;
+        let success = reply
+            .result
+            .map_err(|f| anyhow::anyhow!("create branch: {}", f.message))?;
+
+        if let Some(prepared) = success.project {
+            // Worktree mode — insert the new project + task and
+            // return the section_id so the caller can navigate.
+            let section_id = {
+                let registry = local_registry().ok_or_else(|| {
+                    anyhow::anyhow!("create_branch: set_local_registry vanished")
+                })?;
+                let mut state = registry.lock().map_err(|_| {
+                    anyhow::anyhow!("create_branch: registry mutex poisoned")
+                })?;
+                let inserted_worktree = state
+                    .project_store
+                    .insert_prepared_project(prepared.clone());
+                let worktree_project_id = if inserted_worktree {
+                    prepared.project.id.clone()
+                } else {
+                    state
+                        .project_store
+                        .projects
+                        .iter()
+                        .find(|p| p.path == prepared.project.path)
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| prepared.project.id.clone())
+                };
+                let task_id = uuid::Uuid::new_v4().to_string();
+                let section = another_one_core::section::SectionId::for_task(
+                    &worktree_project_id,
+                    &success.branch_name,
+                    &task_id,
+                );
+                let section_key = section.store_key();
+                state
+                    .project_store
+                    .insert_task(another_one_core::project_store::Task {
+                        id: task_id,
+                        name: success.task_name,
+                        kind: another_one_core::project_store::TaskKind::Worktree,
+                        root_project_id: target_project_id,
+                        target_project_id: worktree_project_id.clone(),
+                        branch_name: success.branch_name,
+                        section_id: section_key.clone(),
+                        worktree_project_id: Some(worktree_project_id),
+                        tabs: Vec::new(),
+                        active_tab_id: String::new(),
+                        next_tab_id: 0,
+                        cwd: None,
+                    });
+                state.project_store.save();
+                section_key
+            };
+            self.list_projects().await?;
+            Ok(section_id)
+        } else {
+            // Current-task mode — branch swap on the existing
+            // checkout, no new project. Refresh the project list
+            // so the UI sees the updated current branch and
+            // dismiss the modal.
+            let _ = project_name; // unused in this branch
+            self.list_projects().await?;
+            Ok(String::new())
+        }
+    }
+
+    /// Compute the canonical branch slug for a free-text input.
+    /// Mirrors GPUI's live preview that updates beneath the
+    /// branch-name input. Routes
+    /// [`another_one_core::project_store::slugify_branch_name`].
+    /// Takes `&self` only so FRB binds it as an instance method
+    /// on `LocalSession` — it doesn't actually read session state.
+    pub async fn slugify_branch_name(&self, name: String) -> String {
+        let _ = self;
+        another_one_core::project_store::slugify_branch_name(&name)
+    }
+
     /// Snapshot the active project's branch metadata: current
     /// branch, ahead/behind counts. Powers the titlebar git-actions
     /// split-button's primary-action selection (Commit when there

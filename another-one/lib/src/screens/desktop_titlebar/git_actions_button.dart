@@ -370,10 +370,14 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                     enabled: canCreatePr,
                     onTap: () => _run(projectId, _GitActionId.createDraftPr),
                   ),
-                  // Create Branch is filed as a cross-module blocker
-                  // — it opens a dedicated modal that hasn't been
-                  // ported. The trailing divider + row land when
-                  // that lands.
+                  const _MenuDivider(),
+                  _GitActionRow(
+                    icon: 'git-branch',
+                    label: 'Create Branch',
+                    tooltip: 'Create a branch in this task or a new worktree',
+                    enabled: !_running,
+                    onTap: () => _openCreateBranch(projectId),
+                  ),
                 ],
               ),
             ),
@@ -381,6 +385,11 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
         ),
       ],
     );
+  }
+
+  void _openCreateBranch(String projectId) {
+    setState(_menu.hide);
+    showCreateBranchModal(context: context, projectId: projectId);
   }
 
   Future<void> _run(String projectId, _GitActionId action) async {

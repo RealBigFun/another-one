@@ -48,6 +48,23 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// per-viewer state on the registry. Idempotent.
   Future<void> close();
 
+  /// Create a new branch from HEAD on `project_id`. When
+  /// `use_current_task` is true, switches the current checkout
+  /// (no new worktree). Otherwise a new worktree is created
+  /// next to the existing project, optionally migrating any
+  /// uncommitted changes.
+  ///
+  /// Returns the new task's `section_id` for the worktree case;
+  /// empty string for the current-task case (the caller's UI
+  /// just dismisses the modal). Routes
+  /// [`another_one_core::project_service::spawn_branch_creation`].
+  Future<String> createBranch({
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  });
+
   /// Spawn a review task for a pull request — clones into a
   /// worktree at the PR's head branch, prepares the project,
   /// inserts both into the daemon's store, and returns the new
@@ -352,6 +369,14 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// `ProjectList` reply on every call so the sort updates
   /// immediately.
   Future<bool> setTaskPinned({required String taskId, required bool pinned});
+
+  /// Compute the canonical branch slug for a free-text input.
+  /// Mirrors GPUI's live preview that updates beneath the
+  /// branch-name input. Routes
+  /// [`another_one_core::project_store::slugify_branch_name`].
+  /// Takes `&self` only so FRB binds it as an instance method
+  /// on `LocalSession` — it doesn't actually read session state.
+  Future<String> slugifyBranchName({required String name});
 
   /// `git add -A` on the project root — stage every change.
   Future<void> stageAllChanges({required String projectId});

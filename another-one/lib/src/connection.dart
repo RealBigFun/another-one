@@ -265,6 +265,33 @@ abstract class DaemonConnection {
     );
   }
 
+  /// Create a new branch from HEAD on `projectId`. When
+  /// `useCurrentTask` is true the existing checkout switches in
+  /// place; otherwise a new worktree is created and (optionally)
+  /// uncommitted changes are migrated into it. Returns the new
+  /// task's `sectionId` for the worktree case, empty string for
+  /// the current-task case.
+  Future<String> createBranch({
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  }) {
+    throw UnimplementedError(
+      'createBranch: requires Control::CreateBranch wire variant on '
+      'the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Compute the canonical branch slug for a free-text input.
+  /// Powers the Create Branch modal's live `Branch: …` preview.
+  Future<String> slugifyBranchName(String name) {
+    throw UnimplementedError(
+      'slugifyBranchName: requires Control::SlugifyBranchName wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
   /// Snapshot the active project's branch metadata: current branch
   /// name, ahead/behind counts. Powers the titlebar git-actions
   /// split-button's primary-action selection.
