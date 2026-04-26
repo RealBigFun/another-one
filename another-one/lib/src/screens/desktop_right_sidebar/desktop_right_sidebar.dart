@@ -35,6 +35,7 @@ import '../../rust/api/local_session.dart'
         CheckBucket,
         CheckDto,
         CommitDto;
+import '../../state/active_git_action_provider.dart';
 import '../../state/active_project_provider.dart';
 import '../../state/branch_compare_provider.dart';
 import '../../state/branch_settings_provider.dart';
@@ -1350,10 +1351,13 @@ class _CommitRowHeader extends ConsumerStatefulWidget {
 
 class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
   bool _hover = false;
-  bool _undoPending = false;
 
   @override
   Widget build(BuildContext context) {
+    final activeAction =
+        ref.watch(activeGitActionProvider(widget.projectId));
+    final undoPending = activeAction == 'undo-last-commit';
+    final actionsBusy = activeAction != null;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
@@ -1398,7 +1402,8 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
                 _IconActionButton(
                   icon: 'discard',
                   tooltip: 'Undo the most recent commit',
-                  pending: _undoPending,
+                  pending: undoPending,
+                  enabled: !actionsBusy,
                   onPressed: _undoLastCommit,
                 ),
             ],
@@ -1409,7 +1414,9 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
   }
 
   Future<void> _undoLastCommit() async {
-    setState(() => _undoPending = true);
+    final notifier =
+        ref.read(activeGitActionProvider(widget.projectId).notifier);
+    notifier.start('undo-last-commit');
     final connection = ref.read(localConnectionProvider);
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
@@ -1439,7 +1446,7 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
         );
       }
     } finally {
-      if (mounted) setState(() => _undoPending = false);
+      notifier.clear();
     }
   }
 }

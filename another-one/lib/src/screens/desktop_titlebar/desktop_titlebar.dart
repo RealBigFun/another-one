@@ -22,6 +22,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../rust/api/local_session.dart'
     show OpenInAppDto, OpenInState, PullRequestStateDto;
+import '../../state/active_git_action_provider.dart';
 import '../../state/active_git_state_provider.dart';
 import '../../state/active_project_provider.dart';
 import '../../state/build_info_provider.dart';
@@ -31,6 +32,7 @@ import '../../state/left_sidebar_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/open_in_provider.dart';
 import '../../state/pull_request_status_provider.dart';
+import '../../state/repo_default_commit_action_provider.dart';
 import '../../state/resource_sample_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
@@ -78,10 +80,13 @@ class DesktopTitlebar extends ConsumerWidget {
           // stable until then.
           const Spacer(),
           const _BuildChip(),
+          // Custom Actions button — port pending custom-actions
+          // module (another-one-29i). Slot is intentionally absent
+          // until that lands.
           const _OpenInButton(),
-          const _GitActionsButton(),
-          const _PullRequestButton(),
           const _ActiveProjectGithubButton(),
+          const _PullRequestButton(),
+          const _GitActionsButton(),
           const _PairMobileButton(),
           const SizedBox(width: AppTokens.space2),
           const _ResourceIndicator(),

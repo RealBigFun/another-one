@@ -960,6 +960,41 @@ impl LocalSession {
         another_one_core::project_store::slugify_branch_name(&name)
     }
 
+    /// User's preferred default commit action for the active
+    /// project's root repo (`"commit"` or `"commit-and-push"`).
+    /// `None` when no preference has been recorded — UI defaults to
+    /// `"commit"` in that case, matching GPUI's
+    /// `resolve_idle_primary_git_action` fallback.
+    pub async fn repo_default_commit_action(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Option<String>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "repo_default_commit_action: set_local_registry not called"
+            )
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "repo_default_commit_action: RegistryState mutex poisoned"
+            )
+        })?;
+        let Some(project) = state.project_store.project(&project_id) else {
+            return Ok(None);
+        };
+        Ok(state
+            .project_store
+            .repo_default_commit_action(&project.repo_id)
+            .map(|a| match a {
+                another_one_core::project_store::RepoDefaultCommitAction::Commit => {
+                    "commit".to_string()
+                }
+                another_one_core::project_store::RepoDefaultCommitAction::CommitAndPush => {
+                    "commit-and-push".to_string()
+                }
+            }))
+    }
+
     /// Snapshot the active project's branch metadata: current
     /// branch, ahead/behind counts. Powers the titlebar git-actions
     /// split-button's primary-action selection (Commit when there

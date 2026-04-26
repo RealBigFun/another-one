@@ -362,6 +362,17 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<String?> repoDefaultCommitAction(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError(
+        'repoDefaultCommitAction: LocalTransport not connected',
+      );
+    }
+    return session.repoDefaultCommitAction(projectId: projectId);
+  }
+
+  @override
   Future<ActiveGitStateDto?> readActiveGitState(String projectId) async {
     final session = _session;
     if (session == null) {

@@ -292,6 +292,16 @@ abstract class DaemonConnection {
     );
   }
 
+  /// User's preferred default commit action for the active
+  /// project's root repo. Returns `"commit"`, `"commit-and-push"`,
+  /// or `null` when no preference has been recorded.
+  Future<String?> repoDefaultCommitAction(String projectId) {
+    throw UnimplementedError(
+      'repoDefaultCommitAction: requires Control::RepoDefaultCommitAction '
+      'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
   /// Snapshot the active project's branch metadata: current branch
   /// name, ahead/behind counts. Powers the titlebar git-actions
   /// split-button's primary-action selection.

@@ -312,6 +312,13 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// reply on success so the sidebar redraws.
   Future<bool> renameTask({required String taskId, required String newName});
 
+  /// User's preferred default commit action for the active
+  /// project's root repo (`"commit"` or `"commit-and-push"`).
+  /// `None` when no preference has been recorded — UI defaults to
+  /// `"commit"` in that case, matching GPUI's
+  /// `resolve_idle_primary_git_action` fallback.
+  Future<String?> repoDefaultCommitAction({required String projectId});
+
   /// Snapshot the resolved branch settings for `project_id` —
   /// configured + effective values for default and target branch
   /// plus the available branch list for the dropdown.

@@ -11,6 +11,9 @@ part of 'desktop_titlebar.dart';
 
 /// Each menu row's id maps 1:1 to the bridge action_id strings
 /// recognised by `LocalSession::run_toolbar_git_action`.
+/// `undo-last-commit` is also a valid wire id but it doesn't have
+/// a dropdown row — it lives on the first-commit row in the
+/// right-sidebar Commits pane.
 enum _GitActionId {
   commit('commit'),
   commitAndPush('commit-and-push'),
@@ -25,6 +28,23 @@ enum _GitActionId {
   final String wireId;
 }
 
+/// Mirrors GPUI's `resolve_active_git_action_presentation`: maps
+/// each running action to the in-progress label + danger flag.
+({String label, bool danger})? _activeActionPresentation(String? wireId) {
+  return switch (wireId) {
+    'commit' => (label: 'Committing...', danger: false),
+    'commit-and-push' => (label: 'Committing & Pushing...', danger: false),
+    'undo-last-commit' => (label: 'Undoing Last Commit...', danger: true),
+    'fetch' => (label: 'Fetching...', danger: false),
+    'pull' => (label: 'Pulling...', danger: false),
+    'push' => (label: 'Pushing...', danger: false),
+    'force-push' => (label: 'Force Pushing...', danger: true),
+    'create-pr' => (label: 'Creating PR...', danger: false),
+    'create-draft-pr' => (label: 'Creating Draft PR...', danger: false),
+    _ => null,
+  };
+}
+
 class _PrimaryAction {
   const _PrimaryAction({
     required this.action,
@@ -37,16 +57,28 @@ class _PrimaryAction {
   final String icon;
 }
 
-/// Mirrors GPUI's `idle_titlebar_primary_git_action`: pick whichever
-/// action the user is most likely to want next. Fetch is the
-/// always-safe fallback when the working tree is clean and the
-/// branch is in sync with its remote.
+/// Mirrors GPUI's `resolve_idle_primary_git_action`: pick whichever
+/// action the user is most likely to want next. When changes
+/// exist, the user's repo-level commit-action preference picks
+/// between Commit and CommitAndPush; otherwise ahead/behind
+/// counts pick Push/Pull; Fetch is the always-safe fallback.
+///
+/// `commitPreference` mirrors `repo_default_commit_action`'s
+/// optional return — `null` falls back to plain Commit.
 _PrimaryAction _computePrimaryAction({
   required bool hasChanges,
   required int aheadCount,
   required int behindCount,
+  required String? commitPreference,
 }) {
   if (hasChanges) {
+    if (commitPreference == 'commit-and-push') {
+      return const _PrimaryAction(
+        action: _GitActionId.commitAndPush,
+        label: 'Commit & Push',
+        icon: 'cloud-upload',
+      );
+    }
     return const _PrimaryAction(
       action: _GitActionId.commit,
       label: 'Commit',
@@ -94,7 +126,8 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
   final LayerLink _link = LayerLink();
   bool _bodyHover = false;
   bool _chevronHover = false;
-  bool _running = false;
+
+  static const Color _dangerText = Color(0xFFEB7B7B);
 
   @override
   Widget build(BuildContext context) {
@@ -102,6 +135,9 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
     if (projectId == null) return const SizedBox.shrink();
     final files = ref.watch(changedFilesProvider(projectId)).valueOrNull;
     final gitState = ref.watch(activeGitStateProvider(projectId)).valueOrNull;
+    final commitPreference =
+        ref.watch(repoDefaultCommitActionProvider(projectId)).valueOrNull;
+    final activeAction = ref.watch(activeGitActionProvider(projectId));
     final hasChanges = (files?.isNotEmpty) ?? false;
     final aheadCount = gitState?.aheadCount ?? 0;
     final behindCount = gitState?.behindCount ?? 0;
@@ -109,8 +145,10 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
       hasChanges: hasChanges,
       aheadCount: aheadCount,
       behindCount: behindCount,
+      commitPreference: commitPreference,
     );
 
+    final running = activeAction != null;
     final menuOpen = _menu.isShowing;
     final containerBg = menuOpen
         ? const Color(0x1AFFFFFF) // white @ 0.10
@@ -126,6 +164,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
             ctx,
             projectId: projectId,
             hasChanges: hasChanges,
+            running: running,
           ),
           child: Container(
             width: _buttonW,
@@ -137,8 +176,12 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
             ),
             child: Row(
               children: [
-                _buildPrimaryHalf(projectId, primary),
-                _buildChevronHalf(projectId),
+                _buildPrimaryHalf(
+                  projectId,
+                  primary,
+                  activeAction: activeAction,
+                ),
+                _buildChevronHalf(projectId, running: running),
               ],
             ),
           ),
@@ -147,8 +190,20 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
     );
   }
 
-  Widget _buildPrimaryHalf(String projectId, _PrimaryAction primary) {
-    final interactive = !_running;
+  Widget _buildPrimaryHalf(
+    String projectId,
+    _PrimaryAction primary, {
+    required String? activeAction,
+  }) {
+    final running = activeAction != null;
+    final interactive = !running;
+    final presentation = _activeActionPresentation(activeAction);
+    final danger = presentation?.danger ?? false;
+    final label = presentation?.label ?? primary.label;
+    final iconColor =
+        danger ? _dangerText : const Color(0xEBFFFFFF); // 0.92
+    final textColor =
+        danger ? _dangerText : const Color(0xDBFFFFFF); // 0.86
     return Expanded(
       child: MouseRegion(
         cursor: interactive
@@ -172,27 +227,20 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
             alignment: Alignment.centerLeft,
             child: Row(
               children: [
-                if (_running)
-                  const ToolbarSpinner(
-                    size: 12,
-                    color: Color(0xEBFFFFFF),
-                  )
+                if (running)
+                  ToolbarSpinner(size: 12, color: iconColor)
                 else
-                  AppIcon(
-                    primary.icon,
-                    size: 14,
-                    color: const Color(0xEBFFFFFF), // white @ 0.92
-                  ),
+                  AppIcon(primary.icon, size: 14, color: iconColor),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    primary.label,
+                    label,
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xDBFFFFFF), // white @ 0.86
+                      color: textColor,
                     ),
                   ),
                 ),
@@ -204,8 +252,8 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
     );
   }
 
-  Widget _buildChevronHalf(String projectId) {
-    final interactive = !_running;
+  Widget _buildChevronHalf(String projectId, {required bool running}) {
+    final interactive = !running;
     return MouseRegion(
       cursor: interactive
           ? SystemMouseCursors.click
@@ -251,11 +299,12 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
     BuildContext context, {
     required String projectId,
     required bool hasChanges,
+    required bool running,
   }) {
     final pr = ref.watch(pullRequestStatusProvider(projectId));
     final hasExistingPr = pr.valueOrNull != null;
     final lookupChecked = pr.hasValue;
-    final canCreatePr = !_running && lookupChecked && !hasExistingPr;
+    final canCreatePr = !running && lookupChecked && !hasExistingPr;
     return Stack(
       children: [
         Positioned.fill(
@@ -295,7 +344,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                     label: 'Commit',
                     tooltip:
                         'Commit changes, staging all files first if needed',
-                    enabled: hasChanges && !_running,
+                    enabled: hasChanges && !running,
                     onTap: () => _run(projectId, _GitActionId.commit),
                   ),
                   _GitActionRow(
@@ -303,7 +352,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                     label: 'Commit & Push',
                     tooltip: 'Commit changes and push, staging all files '
                         'first if needed',
-                    enabled: hasChanges && !_running,
+                    enabled: hasChanges && !running,
                     onTap: () => _run(projectId, _GitActionId.commitAndPush),
                   ),
                   const _MenuDivider(),
@@ -313,7 +362,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                     tooltip:
                         'Fetch remote updates without changing the local '
                         'checkout',
-                    enabled: !_running,
+                    enabled: !running,
                     onTap: () => _run(projectId, _GitActionId.fetch),
                   ),
                   _GitActionRow(
@@ -327,7 +376,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                           0,
                     ),
                     tooltip: 'Pull remote updates with fast-forward only',
-                    enabled: !_running,
+                    enabled: !running,
                     onTap: () => _run(projectId, _GitActionId.pull),
                   ),
                   _GitActionRow(
@@ -342,7 +391,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                     ),
                     tooltip:
                         'Push the current checked-out branch to its remote',
-                    enabled: !_running,
+                    enabled: !running,
                     onTap: () => _run(projectId, _GitActionId.push),
                   ),
                   _GitActionRow(
@@ -350,7 +399,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                     label: 'Force Push',
                     tooltip: 'Force-push with lease to overwrite the remote '
                         'branch if needed',
-                    enabled: !_running,
+                    enabled: !running,
                     danger: true,
                     onTap: () => _run(projectId, _GitActionId.forcePush),
                   ),
@@ -375,7 +424,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                     icon: 'git-branch',
                     label: 'Create Branch',
                     tooltip: 'Create a branch in this task or a new worktree',
-                    enabled: !_running,
+                    enabled: !running,
                     onTap: () => _openCreateBranch(projectId),
                   ),
                 ],
@@ -393,10 +442,10 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
   }
 
   Future<void> _run(String projectId, _GitActionId action) async {
-    setState(() {
-      _menu.hide();
-      _running = true;
-    });
+    setState(_menu.hide);
+    final notifier =
+        ref.read(activeGitActionProvider(projectId).notifier);
+    notifier.start(action.wireId);
     final connection = ref.read(localConnectionProvider);
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
@@ -427,7 +476,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
         );
       }
     } finally {
-      if (mounted) setState(() => _running = false);
+      notifier.clear();
     }
   }
 }
