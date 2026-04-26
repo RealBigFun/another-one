@@ -151,18 +151,22 @@ abstract class DaemonConnection {
   }
 
   /// Create a worktree task on `projectId`. Returns the new task's
-  /// `sectionId` so callers can navigate to it.
+  /// `sectionId` so callers can navigate to it. Heavy on the daemon
+  /// — the worktree git operations + project preparation can take
+  /// tens of seconds; callers should disable the trigger UI until
+  /// the future resolves rather than offer a cancel button (the
+  /// daemon worker has no cancellation channel today).
+  ///
+  /// Implemented on both transports (another-one-ojm.3): LocalTransport
+  /// goes straight through `LocalSession::create_worktree_task`,
+  /// IrohTransport routes through `Control::CreateWorktreeTask` +
+  /// `WorkerReply::TaskCreated`.
   Future<String> createWorktreeTask({
     required String projectId,
     required String taskName,
     required String sourceBranch,
     AgentProvider? agentProvider,
-  }) {
-    throw UnimplementedError(
-      'createWorktreeTask: requires Control::CreateTask wire variant '
-      'on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Rename a task. Returns whether the on-disk store actually
   /// changed (false on unknown id or no-op rename).

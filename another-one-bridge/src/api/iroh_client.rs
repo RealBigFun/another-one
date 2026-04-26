@@ -135,6 +135,16 @@ enum Control {
         pair_token: Option<String>,
         protocol_version: u32,
     },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::CreateWorktreeTask`.
+    /// Heavy: the daemon spawns a worker thread for the actual git
+    /// worktree creation + project preparation, so the matching
+    /// `WorkerReply::TaskCreated` may arrive tens of seconds later.
+    CreateWorktreeTask {
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_provider: Option<AgentProvider>,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -165,6 +175,12 @@ pub enum WorkerReply {
         message: String,
         #[serde(rename = "err_kind")]
         kind: ErrKind,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskCreated`.
+    /// Reply to [`Control::CreateWorktreeTask`].
+    TaskCreated {
+        project_id: String,
+        task: TaskSummary,
     },
 }
 
@@ -280,7 +296,12 @@ pub enum ProjectKind {
 /// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
 /// `Shell` is the catch-all for plain-PTY tabs with no agent
 /// provider set.
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
+///
+/// Both `Serialize` and `Deserialize` are required because the
+/// type appears on both sides of the wire — daemon → client in
+/// `WorkerReply::ProjectList` (Deserialize) and client → daemon in
+/// `Control::CreateWorktreeTask` (Serialize).
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentProvider {
     ClaudeCode,
@@ -849,6 +870,32 @@ impl IrohSession {
         self.send_control(
             self.next_request_id(),
             Control::LaunchTab { section_id, tab_id },
+        )
+        .await
+    }
+
+    /// Issue a [`Control::CreateWorktreeTask`] under `request_id`.
+    /// The Dart side allocates the id (via [`next_request_id`]) and
+    /// registers a completer keyed by the same id before calling
+    /// here, so the matching `WorkerReply::TaskCreated` (or `Err`)
+    /// is dispatched into the awaiting future. Mirror of
+    /// `LocalSession::create_worktree_task`.
+    pub async fn create_worktree_task(
+        &self,
+        request_id: u64,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_provider: Option<AgentProvider>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::CreateWorktreeTask {
+                project_id,
+                task_name,
+                source_branch,
+                agent_provider,
+            },
         )
         .await
     }

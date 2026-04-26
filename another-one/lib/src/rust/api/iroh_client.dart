@@ -53,6 +53,20 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
 
+  /// Issue a [`Control::CreateWorktreeTask`] under `request_id`.
+  /// The Dart side allocates the id (via [`next_request_id`]) and
+  /// registers a completer keyed by the same id before calling
+  /// here, so the matching `WorkerReply::TaskCreated` (or `Err`)
+  /// is dispatched into the awaiting future. Mirror of
+  /// `LocalSession::create_worktree_task`.
+  Future<void> createWorktreeTask({
+    required BigInt requestId,
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    AgentProvider? agentProvider,
+  });
+
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
@@ -112,6 +126,11 @@ abstract class IrohSession implements RustOpaqueInterface {
 /// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
 /// `Shell` is the catch-all for plain-PTY tabs with no agent
 /// provider set.
+///
+/// Both `Serialize` and `Deserialize` are required because the
+/// type appears on both sides of the wire — daemon → client in
+/// `WorkerReply::ProjectList` (Deserialize) and client → daemon in
+/// `Control::CreateWorktreeTask` (Serialize).
 enum AgentProvider {
   claudeCode,
   cursorAgent,
@@ -329,6 +348,13 @@ sealed class WorkerReply with _$WorkerReply {
     required String message,
     required ErrKind kind,
   }) = WorkerReply_Err;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskCreated`.
+  /// Reply to [`Control::CreateWorktreeTask`].
+  const factory WorkerReply.taskCreated({
+    required String projectId,
+    required TaskSummary task,
+  }) = WorkerReply_TaskCreated;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

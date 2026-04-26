@@ -157,6 +157,27 @@ pub enum Control {
         #[serde(default)]
         protocol_version: u32,
     },
+    /// Create a worktree task on `project_id`. Spawns a fresh git
+    /// worktree from `source_branch` (the new branch is named after
+    /// the slugified `task_name`), prepares the project, and inserts
+    /// both the worktree project and the task into the daemon's
+    /// store. Reply is [`WorkerReply::TaskCreated`] carrying the
+    /// inline post-mutation [`TaskSummary`] so the issuer can update
+    /// its tree without a `ListProjects` follow-up.
+    ///
+    /// `agent_provider == None` launches a plain shell on the new
+    /// task's first tab; any concrete provider selects the
+    /// corresponding agent CLI.
+    ///
+    /// Heavy filesystem work (git worktree + prepare_project) runs
+    /// on a worker thread inside the daemon — clients can expect
+    /// tens of seconds before the reply arrives.
+    CreateWorktreeTask {
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_provider: Option<AgentProvider>,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -264,6 +285,14 @@ pub enum WorkerReply {
         message: String,
         #[serde(rename = "err_kind")]
         kind: ErrKind,
+    },
+    /// Reply to [`Control::CreateWorktreeTask`]. Carries the inline
+    /// post-mutation [`TaskSummary`] plus the `project_id` it was
+    /// inserted under so the issuer can locate the task in its
+    /// project tree without a follow-up `ListProjects`.
+    TaskCreated {
+        project_id: String,
+        task: TaskSummary,
     },
 }
 

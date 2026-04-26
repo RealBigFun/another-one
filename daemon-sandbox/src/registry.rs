@@ -5,12 +5,27 @@
 //! task + tab mapped to a throwaway shell) and by the desktop crate
 //! (where the impl wraps `AnotherOneApp`'s real terminal runtimes).
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::ProjectSummary;
+use crate::frame::{AgentProvider, ProjectSummary, TaskSummary};
+
+/// Boxed future type for `DaemonRegistry` methods that are async on
+/// the embedder side (e.g. spawn a worker thread + await its reply).
+/// Pinning + boxing are unavoidable because the trait must remain
+/// dyn-compatible — `async fn in trait` produces an unnamed return
+/// type that callers can't object-erase.
+///
+/// Lifetime parameter `'a` is the borrow of `&self` the method took
+/// when it produced the future. Most embedder impls don't need to
+/// borrow self across the await (they clone `Arc`s or upgrade
+/// `Weak`s and own the result), but the `'a` is there so an impl
+/// CAN borrow if it wants to.
+pub type RegistryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -155,6 +170,37 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// attach briefly). Default impl is a no-op for registries that
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
+
+    // ── Task mutation (another-one-ojm.3) ─────────────────────────
+    //
+    // Mirror of `LocalSession`'s task mutation methods. Heavy ones
+    // return `RegistryFuture` so the embedder can spawn worker
+    // threads and `.await` them; the lightweight ones (`rename`,
+    // `set_pinned`, `remove`) are sync because the FRB caller's
+    // implementations are also sync after the registry lock is
+    // taken.
+
+    /// Create a worktree task on `project_id`. Returns the inserted
+    /// task's [`TaskSummary`] — the caller wraps it in
+    /// [`crate::frame::WorkerReply::TaskCreated`]. The future runs
+    /// the heavy `core::project_service::spawn_task_creation` worker
+    /// thread under the hood; clients can expect tens of seconds
+    /// before resolution. Default impl returns an `unsupported`
+    /// error so a sandbox / test registry doesn't have to stub
+    /// every domain method.
+    fn create_worktree_task(
+        &self,
+        _project_id: String,
+        _task_name: String,
+        _source_branch: String,
+        _agent_provider: Option<AgentProvider>,
+    ) -> RegistryFuture<'_, anyhow::Result<TaskSummary>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "create_worktree_task: registry impl does not support task creation"
+            ))
+        })
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

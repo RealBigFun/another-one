@@ -55,12 +55,13 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_TaskCreated value)?  taskCreated,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
-return err(_that);case _:
+return err(_that);case WorkerReply_TaskCreated() when taskCreated != null:
+return taskCreated(_that);case _:
   return orElse();
 
 }
@@ -78,12 +79,13 @@ return err(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_TaskCreated value)  taskCreated,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that);case WorkerReply_Err():
-return err(_that);}
+return err(_that);case WorkerReply_TaskCreated():
+return taskCreated(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -97,12 +99,13 @@ return err(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_TaskCreated value)?  taskCreated,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
-return err(_that);case _:
+return err(_that);case WorkerReply_TaskCreated() when taskCreated != null:
+return taskCreated(_that);case _:
   return null;
 
 }
@@ -119,11 +122,12 @@ return err(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String projectId,  TaskSummary task)?  taskCreated,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
-return err(_that.message,_that.kind);case _:
+return err(_that.message,_that.kind);case WorkerReply_TaskCreated() when taskCreated != null:
+return taskCreated(_that.projectId,_that.task);case _:
   return orElse();
 
 }
@@ -141,11 +145,12 @@ return err(_that.message,_that.kind);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String projectId,  TaskSummary task)  taskCreated,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
-return err(_that.message,_that.kind);}
+return err(_that.message,_that.kind);case WorkerReply_TaskCreated():
+return taskCreated(_that.projectId,_that.task);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -159,11 +164,12 @@ return err(_that.message,_that.kind);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String projectId,  TaskSummary task)?  taskCreated,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
-return err(_that.message,_that.kind);case _:
+return err(_that.message,_that.kind);case WorkerReply_TaskCreated() when taskCreated != null:
+return taskCreated(_that.projectId,_that.task);case _:
   return null;
 
 }
@@ -305,6 +311,74 @@ class _$WorkerReply_ErrCopyWithImpl<$Res>
 message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,kind: null == kind ? _self.kind : kind // ignore: cast_nullable_to_non_nullable
 as ErrKind,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_TaskCreated extends WorkerReply {
+  const WorkerReply_TaskCreated({required this.projectId, required this.task}): super._();
+  
+
+ final  String projectId;
+ final  TaskSummary task;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_TaskCreatedCopyWith<WorkerReply_TaskCreated> get copyWith => _$WorkerReply_TaskCreatedCopyWithImpl<WorkerReply_TaskCreated>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_TaskCreated&&(identical(other.projectId, projectId) || other.projectId == projectId)&&(identical(other.task, task) || other.task == task));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,projectId,task);
+
+@override
+String toString() {
+  return 'WorkerReply.taskCreated(projectId: $projectId, task: $task)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_TaskCreatedCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_TaskCreatedCopyWith(WorkerReply_TaskCreated value, $Res Function(WorkerReply_TaskCreated) _then) = _$WorkerReply_TaskCreatedCopyWithImpl;
+@useResult
+$Res call({
+ String projectId, TaskSummary task
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_TaskCreatedCopyWithImpl<$Res>
+    implements $WorkerReply_TaskCreatedCopyWith<$Res> {
+  _$WorkerReply_TaskCreatedCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_TaskCreated _self;
+  final $Res Function(WorkerReply_TaskCreated) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? projectId = null,Object? task = null,}) {
+  return _then(WorkerReply_TaskCreated(
+projectId: null == projectId ? _self.projectId : projectId // ignore: cast_nullable_to_non_nullable
+as String,task: null == task ? _self.task : task // ignore: cast_nullable_to_non_nullable
+as TaskSummary,
   ));
 }
 

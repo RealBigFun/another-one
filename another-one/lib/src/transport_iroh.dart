@@ -346,12 +346,10 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// `request_id` so they can pass it to a Rust-side `send_control`
   /// equivalent (added per-verb in domain tasks).
   ///
-  /// Currently unused: the existing `listProjects` / `attachTab`
-  /// helpers keep the fire-and-forget shape because the contemporary
-  /// daemon doesn't yet emit replies the UI awaits per-call. Once
-  /// the wire grows verbs that DO reply (e.g. `addProject`), each
-  /// such verb routes through here.
-  // ignore: unused_element
+  /// Each domain verb landing in `another-one-ojm.2..8` routes its
+  /// reply through this helper. `addProject` etc. land alongside
+  /// the wire variants; today (post-foundation, pre-domain-children)
+  /// only the task-mutation verbs in this file use it.
   Future<WorkerReply> _sendControlAndAwait(
     Future<void> Function(int requestId) send,
   ) async {
@@ -369,5 +367,44 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       rethrow;
     }
     return completer.future;
+  }
+
+  // ── Task mutation (another-one-ojm.3) ───────────────────────────
+  //
+  // Mirror of `LocalTransport`'s overrides — same input shape, same
+  // return type, same error-vs-success contract. Each verb:
+  //   1. Allocates a request_id via [_sendControlAndAwait].
+  //   2. Issues the matching `Control::*` frame on the live session.
+  //   3. Awaits the daemon's `WorkerReply::*Ack` and unwraps it.
+  //   4. Surfaces `WorkerReply::Err` as a `StateError(message)` so
+  //      the UI can show a toast without parsing the kind string.
+
+  @override
+  Future<String> createWorktreeTask({
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    AgentProvider? agentProvider,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.createWorktreeTask(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        taskName: taskName,
+        sourceBranch: sourceBranch,
+        agentProvider: agentProvider,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_TaskCreated(:final task) => task.sectionId,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'createWorktreeTask: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
   }
 }
