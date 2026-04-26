@@ -20,7 +20,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../rust/api/local_session.dart' show OpenInAppDto, OpenInState;
+import '../../rust/api/local_session.dart'
+    show OpenInAppDto, OpenInState, PullRequestStateDto;
 import '../../state/active_git_state_provider.dart';
 import '../../state/active_project_provider.dart';
 import '../../state/build_info_provider.dart';
@@ -78,6 +79,7 @@ class DesktopTitlebar extends ConsumerWidget {
           const _BuildChip(),
           const _OpenInButton(),
           const _GitActionsButton(),
+          const _PullRequestButton(),
           const _ActiveProjectGithubButton(),
           const _PairMobileButton(),
           const SizedBox(width: AppTokens.space2),
@@ -253,6 +255,90 @@ class _PairMobileButton extends StatelessWidget {
       icon: 'qr-code',
       tooltip: 'Pair a mobile device with the embedded daemon',
       onPressed: () => showPairMobileModal(context),
+    );
+  }
+}
+
+/// State-tinted pill linking to the active project's PR. Mirrors
+/// `desktop/src/titlebar.rs::titlebar_pull_request_button`. Hidden
+/// when no PR exists for the current branch; otherwise the bg /
+/// border / glyph all share the same state hue (open green,
+/// closed grey, merged purple) at three opacity rungs (.13 bg,
+/// .46 border, .20 hover bg).
+class _PullRequestButton extends ConsumerStatefulWidget {
+  const _PullRequestButton();
+
+  @override
+  ConsumerState<_PullRequestButton> createState() =>
+      _PullRequestButtonState();
+}
+
+class _PullRequestButtonState extends ConsumerState<_PullRequestButton> {
+  // HSL → sRGB constants from desktop/src/titlebar.rs.
+  // hsla(160/360, 0.84, 0.35) ≈ #0FA170
+  static const Color _openColor = Color(0xFF0FA170);
+  // hsla(240/360, 0.04, 0.46) ≈ #71727A
+  static const Color _closedColor = Color(0xFF71727A);
+  // hsla(262/360, 0.83, 0.58) ≈ #8C44E0
+  static const Color _mergedColor = Color(0xFF8C44E0);
+
+  bool _hover = false;
+
+  Color _stateColor(PullRequestStateDto state) => switch (state) {
+        PullRequestStateDto.open => _openColor,
+        PullRequestStateDto.closed => _closedColor,
+        PullRequestStateDto.merged => _mergedColor,
+      };
+
+  String _tooltip(PullRequestStateDto state) => switch (state) {
+        PullRequestStateDto.open => 'Open pull request in GitHub',
+        PullRequestStateDto.closed => 'Open closed pull request in GitHub',
+        PullRequestStateDto.merged => 'Open merged pull request in GitHub',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final projectId = ref.watch(activeProjectIdProvider);
+    if (projectId == null) return const SizedBox.shrink();
+    final pr = ref.watch(pullRequestStatusProvider(projectId)).valueOrNull;
+    if (pr == null) return const SizedBox.shrink();
+    final color = _stateColor(pr.state);
+    final bg = _hover
+        ? color.withValues(alpha: 0.20)
+        : color.withValues(alpha: 0.13);
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Tooltip(
+        message: _tooltip(pr.state),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hover = true),
+          onExit: (_) => setState(() => _hover = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () async {
+              final uri = Uri.tryParse(pr.url);
+              if (uri == null) return;
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            },
+            child: Container(
+              width: 32,
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: color.withValues(alpha: 0.46)),
+              ),
+              child: AppIcon(
+                'pull-request',
+                size: 13,
+                color: color,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
