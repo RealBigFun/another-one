@@ -141,6 +141,10 @@ enum Control {
     /// Branch names available on a project's repo. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadProjectBranches`.
     ReadProjectBranches { project_id: String },
+    /// Default branch the new-task modal seeds for a project.
+    /// Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::PrimaryBranchForProject`.
+    PrimaryBranchForProject { project_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -178,6 +182,9 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadProjectBranches`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectBranchesAck`.
     ProjectBranchesAck { branches: Vec<String> },
+    /// Reply to [`Control::PrimaryBranchForProject`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::PrimaryBranchAck`.
+    PrimaryBranchAck { branch: Option<String> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -887,6 +894,14 @@ impl IrohSession {
     pub async fn read_project_branches(&self, project_id: String) -> anyhow::Result<u64> {
         let id = self.next_request_id();
         self.send_control(id, Control::ReadProjectBranches { project_id })
+            .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
+    pub async fn primary_branch_for_project(&self, project_id: String) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(id, Control::PrimaryBranchForProject { project_id })
             .await?;
         Ok(id)
     }

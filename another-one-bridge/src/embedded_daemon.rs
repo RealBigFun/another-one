@@ -321,6 +321,16 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         self.with_state(|state| state.project_store.branch_names(project_id))
             .unwrap_or_default()
     }
+
+    fn primary_branch_for_project(&self, project_id: &str) -> Option<String> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .primary_branch_for_project(project_id, true)
+                .map(|branch| branch.name)
+        })
+        .flatten()
+    }
 }
 
 /// Flatten the bridge's `RegistryState` into the iroh wire's

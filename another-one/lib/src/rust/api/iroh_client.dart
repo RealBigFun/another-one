@@ -79,6 +79,9 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
+  /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
+  Future<BigInt> primaryBranchForProject({required String projectId});
+
   /// Issue [`Control::ReadProjectBranches`] for `project_id`.
   Future<BigInt> readProjectBranches({required String projectId});
 
@@ -347,6 +350,11 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.projectBranchesAck({
     required List<String> branches,
   }) = WorkerReply_ProjectBranchesAck;
+
+  /// Reply to [`Control::PrimaryBranchForProject`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::PrimaryBranchAck`.
+  const factory WorkerReply.primaryBranchAck({String? branch}) =
+      WorkerReply_PrimaryBranchAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

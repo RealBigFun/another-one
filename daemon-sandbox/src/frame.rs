@@ -167,6 +167,10 @@ pub enum Control {
     /// [`WorkerReply::ProjectBranchesAck`] with an empty list when
     /// the project id is unknown.
     ReadProjectBranches { project_id: String },
+    /// Default branch the new-task modal seeds for `project_id`.
+    /// Reply is [`WorkerReply::PrimaryBranchAck`] with `None` when
+    /// the project has no current branch (fresh repo).
+    PrimaryBranchForProject { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -280,6 +284,9 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadProjectBranches`]. Empty list for
     /// unknown projects.
     ProjectBranchesAck { branches: Vec<String> },
+    /// Reply to [`Control::PrimaryBranchForProject`]. `None` when
+    /// the project has no current branch yet.
+    PrimaryBranchAck { branch: Option<String> },
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —

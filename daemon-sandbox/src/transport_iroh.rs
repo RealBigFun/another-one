@@ -501,6 +501,11 @@ async fn handle_control(
             let reply = WorkerReply::ProjectBranchesAck { branches };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::PrimaryBranchForProject { project_id } => {
+            let branch = registry.primary_branch_for_project(&project_id);
+            let reply = WorkerReply::PrimaryBranchAck { branch };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

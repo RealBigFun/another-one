@@ -181,6 +181,14 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     fn read_project_branches(&self, _project_id: &str) -> Vec<String> {
         Vec::new()
     }
+
+    /// Default branch the new-task modal seeds for `project_id`.
+    /// Returns `None` when the project has no current branch yet
+    /// (fresh repo). Sister to
+    /// `LocalSession::primary_branch_for_project`.
+    fn primary_branch_for_project(&self, _project_id: &str) -> Option<String> {
+        None
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

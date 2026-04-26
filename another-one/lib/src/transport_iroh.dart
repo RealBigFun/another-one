@@ -428,6 +428,20 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     );
   }
 
+  @override
+  Future<String?> primaryBranchForProject(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      () => _session!.primaryBranchForProject(projectId: projectId),
+    );
+    return reply.maybeWhen(
+      primaryBranchAck: (branch) => branch,
+      err: _throwErr,
+      orElse: () => throw StateError(
+        'primaryBranchForProject: unexpected reply variant ${reply.runtimeType}',
+      ),
+    );
+  }
+
   /// Common Err-frame handler used by every read verb override.
   /// Throws so the caller's `try/catch` (or Riverpod async value's
   /// error state) sees a thrown failure rather than a typed `null`
