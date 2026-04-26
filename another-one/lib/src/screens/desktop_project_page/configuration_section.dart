@@ -324,8 +324,17 @@ class _BranchTriggerPillState extends State<_BranchTriggerPill> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: Container(
+          // Pin both axes — parent `_BranchConfigRow`'s outer Column
+          // is `crossAxisAlignment: stretch`, so its inner Row hands
+          // every non-flex child loose constraints (0..∞ on the
+          // major axis). With only `minWidth` the Container would
+          // size to ∞ and the Expanded below would blow up with
+          // "RenderFlex children have non-zero flex but incoming
+          // width constraints are unbounded". `tightFor(width: 220)`
+          // gives the pill the same 220px GPUI uses without leaving
+          // the upper bound open.
           height: 36,
-          constraints: const BoxConstraints(minWidth: 220),
+          constraints: const BoxConstraints.tightFor(width: 220),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color:
