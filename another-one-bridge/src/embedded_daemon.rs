@@ -47,13 +47,13 @@ use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
-    AgentSummaryWire, ChangedFileWire, Check, CheckBucket, CommitWire, EnabledAgentsViewWire,
-    GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView, McpSourceDto,
-    McpTransportKindDto, OpenInAppWire, OpenInStateWire, ProjectActionAccessWire,
-    ProjectActionIconWire, ProjectActionKindWire, ProjectActionScopeWire, ProjectActionWire,
-    ProjectKind, ProjectPagePullRequest, ProjectSummary, PullRequestState, PullRequestStatus,
-    RecentCommitsWire, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
-    ToolbarActionOutcome,
+    AgentSummaryWire, BranchCompareFileWire, ChangedFileWire, Check, CheckBucket, CommitWire,
+    EnabledAgentsViewWire, GitActionScriptsView, McpCatalogEntryDto, McpServerDto,
+    McpSettingsView, McpSourceDto, McpTransportKindDto, OpenInAppWire, OpenInStateWire,
+    ProjectActionAccessWire, ProjectActionIconWire, ProjectActionKindWire,
+    ProjectActionScopeWire, ProjectActionWire, ProjectKind, ProjectPagePullRequest,
+    ProjectSummary, PullRequestState, PullRequestStatus, RecentCommitsWire, ShortcutSettingsRow,
+    ShortcutSettingsView, TabSummary, TaskSummary, ToolbarActionOutcome,
 };
 use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
@@ -660,6 +660,30 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             commits: result.commits.into_iter().map(commit_to_wire).collect(),
         }))
     }
+
+    fn read_commit_file_changes(
+        &self,
+        project_id: &str,
+        commit_id: &str,
+    ) -> Result<Option<Vec<BranchCompareFileWire>>, String> {
+        let Some(project_path) = self.project_path(project_id) else {
+            return Ok(None);
+        };
+        let result = tokio::task::block_in_place(|| {
+            another_one_core::project_store::read_project_commit_file_changes(
+                &project_path,
+                commit_id,
+            )
+        })?;
+        Ok(Some(
+            result
+                .files
+                .into_iter()
+                .map(branch_compare_file_to_wire)
+                .collect(),
+        ))
+    }
+
     fn stage_changed_file<'a>(
         &'a self,
         project_id: &'a str,
@@ -2011,6 +2035,18 @@ fn commit_to_wire(c: another_one_core::project_store::BranchCommit) -> CommitWir
         subject: c.subject,
         author_name: c.author_name,
         authored_relative: c.authored_relative,
+    }
+}
+
+fn branch_compare_file_to_wire(
+    f: another_one_core::project_store::BranchCompareFile,
+) -> BranchCompareFileWire {
+    BranchCompareFileWire {
+        path: f.path,
+        original_path: f.original_path,
+        status: f.status.to_string(),
+        additions: f.additions,
+        deletions: f.deletions,
     }
 }
 

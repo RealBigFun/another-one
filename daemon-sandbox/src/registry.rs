@@ -13,10 +13,11 @@ use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
 use crate::frame::{
-    ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, ChangedFileWire, Check,
-    EnabledAgentsViewWire, GitActionScriptsView, McpSettingsView, OpenInStateWire,
-    ProjectActionWire, ProjectPagePullRequest, ProjectSummary, PullRequestStatus,
-    RecentCommitsWire, ShortcutSettingsView, TaskSummary, ToolbarActionOutcome,
+    ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, BranchCompareFileWire,
+    ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView, McpSettingsView,
+    OpenInStateWire, ProjectActionWire, ProjectPagePullRequest, ProjectSummary,
+    PullRequestStatus, RecentCommitsWire, ShortcutSettingsView, TaskSummary,
+    ToolbarActionOutcome,
 };
 
 /// Boxed-future return type for `DaemonRegistry` methods that are
@@ -341,6 +342,17 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         _project_id: &str,
         _limit: usize,
     ) -> Result<Option<RecentCommitsWire>, String> {
+        Ok(None)
+    }
+
+    /// Per-commit file-change list. Returns `None` for unknown
+    /// project ids; `Err` for git failures (commit pruned, etc.).
+    /// Sister to `LocalSession::read_commit_file_changes`.
+    fn read_commit_file_changes(
+        &self,
+        _project_id: &str,
+        _commit_id: &str,
+    ) -> Result<Option<Vec<BranchCompareFileWire>>, String> {
         Ok(None)
     }
 

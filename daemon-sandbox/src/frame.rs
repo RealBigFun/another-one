@@ -313,6 +313,14 @@ pub enum Control {
     /// Reply is [`WorkerReply::RecentCommitsAck`] with `None` when
     /// the project id is unknown.
     ReadRecentCommits { project_id: String, limit: u32 },
+    /// Per-commit file-change list for the right sidebar's expandable
+    /// Commits rows. Reply is [`WorkerReply::CommitFileChangesAck`]
+    /// with `None` for an unknown project. Errors propagate as
+    /// [`WorkerReply::Err`] (commit pruned, etc.).
+    ReadCommitFileChanges {
+        project_id: String,
+        commit_id: String,
+    },
     /// `another-one-ojm.5` — stage one changed file via `git add -A`.
     /// `original_path` is set only on rename/copy entries — git needs
     /// both source and destination to resolve the rename pair. Reply
@@ -693,6 +701,11 @@ pub enum WorkerReply {
     /// the project id is unknown. Errors propagate as
     /// [`WorkerReply::Err`].
     RecentCommitsAck { view: Option<RecentCommitsWire> },
+    /// Reply to [`Control::ReadCommitFileChanges`]. `files == None`
+    /// when the project id is unknown.
+    CommitFileChangesAck {
+        files: Option<Vec<BranchCompareFileWire>>,
+    },
     /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
     /// Carries the post-mutation `changed_files` snapshot inline so
     /// the issuing client refreshes the right-sidebar Changes pane
@@ -807,6 +820,19 @@ pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
     pub ahead_count: u32,
     pub behind_count: u32,
+}
+
+/// Wire mirror of the bridge's `BranchCompareFileDto` (FRB-bound).
+/// One entry per file changed inside a commit (or branch compare).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchCompareFileWire {
+    pub path: String,
+    pub original_path: Option<String>,
+    /// Single git status char ('A', 'M', 'D', 'R', 'C', 'T') as a
+    /// 1-char string.
+    pub status: String,
+    pub additions: i32,
+    pub deletions: i32,
 }
 
 /// Wire mirror of the bridge's `CommitDto` (FRB-bound). Carries

@@ -222,6 +222,12 @@ enum Control {
     /// Recent commits on a project's current branch. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadRecentCommits`.
     ReadRecentCommits { project_id: String, limit: u32 },
+    /// Per-commit file-change list. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadCommitFileChanges`.
+    ReadCommitFileChanges {
+        project_id: String,
+        commit_id: String,
+    },
     /// `another-one-ojm.5` — stage one changed file. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::StageChangedFile`.
     /// Reply is `WorkerReply::StageChangedFileAck` carrying the
@@ -417,6 +423,11 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadRecentCommits`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::RecentCommitsAck`.
     RecentCommitsAck { view: Option<RecentCommitsWire> },
+    /// Reply to [`Control::ReadCommitFileChanges`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::CommitFileChangesAck`.
+    CommitFileChangesAck {
+        files: Option<Vec<BranchCompareFileWire>>,
+    },
     /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
     /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::StageChangedFileAck`.
     /// Carries the post-mutation `changed_files` snapshot inline so
@@ -555,6 +566,16 @@ pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
     pub ahead_count: u32,
     pub behind_count: u32,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::BranchCompareFileWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BranchCompareFileWire {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub status: String,
+    pub additions: i32,
+    pub deletions: i32,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
@@ -1925,6 +1946,25 @@ impl IrohSession {
             },
         )
         .await
+    }
+
+    /// Issue [`Control::ReadCommitFileChanges`] for `project_id` /
+    /// `commit_id`.
+    pub async fn read_commit_file_changes(
+        &self,
+        project_id: String,
+        commit_id: String,
+    ) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(
+            id,
+            Control::ReadCommitFileChanges {
+                project_id,
+                commit_id,
+            },
+        )
+        .await?;
+        Ok(id)
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

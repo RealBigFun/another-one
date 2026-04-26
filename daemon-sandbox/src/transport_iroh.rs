@@ -825,6 +825,18 @@ async fn handle_control(
                 }
             }
         }
+        Control::ReadCommitFileChanges {
+            project_id,
+            commit_id,
+        } => match registry.read_commit_file_changes(&project_id, &commit_id) {
+            Ok(files) => {
+                let reply = WorkerReply::CommitFileChangesAck { files };
+                send_worker_reply(outbound_tx, request_id, &reply).await?;
+            }
+            Err(message) => {
+                send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+            }
+        },
         Control::CreateReviewTask {
             project_id,
             pull_request_number,
