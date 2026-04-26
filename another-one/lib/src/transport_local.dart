@@ -805,6 +805,40 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<ShortcutSettingsView> readShortcutSettings() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readShortcutSettings: LocalTransport not connected');
+    }
+    return session.readShortcutSettings();
+  }
+
+  @override
+  Future<void> setShortcutBinding({
+    required String actionId,
+    required String binding,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setShortcutBinding: LocalTransport not connected');
+    }
+    await session.setShortcutBinding(
+      actionId: actionId,
+      binding: binding,
+    );
+  }
+
+  @override
+  Future<void> resetShortcutBinding(String actionId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError(
+          'resetShortcutBinding: LocalTransport not connected');
+    }
+    await session.resetShortcutBinding(actionId: actionId);
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,

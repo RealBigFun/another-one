@@ -212,6 +212,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ProjectSummary> dco_decode_list_project_summary(dynamic raw);
 
   @protected
+  List<ShortcutSettingsRow> dco_decode_list_shortcut_settings_row(dynamic raw);
+
+  @protected
   List<TabSummary> dco_decode_list_tab_summary(dynamic raw);
 
   @protected
@@ -324,6 +327,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ResourceSample dco_decode_resource_sample(dynamic raw);
+
+  @protected
+  ShortcutSettingsRow dco_decode_shortcut_settings_row(dynamic raw);
+
+  @protected
+  ShortcutSettingsView dco_decode_shortcut_settings_view(dynamic raw);
 
   @protected
   TabSummary dco_decode_tab_summary(dynamic raw);
@@ -570,6 +579,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<ShortcutSettingsRow> sse_decode_list_shortcut_settings_row(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<TabSummary> sse_decode_list_tab_summary(SseDeserializer deserializer);
 
   @protected
@@ -710,6 +724,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ResourceSample sse_decode_resource_sample(SseDeserializer deserializer);
+
+  @protected
+  ShortcutSettingsRow sse_decode_shortcut_settings_row(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ShortcutSettingsView sse_decode_shortcut_settings_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   TabSummary sse_decode_tab_summary(SseDeserializer deserializer);
@@ -1008,6 +1032,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_shortcut_settings_row(
+    List<ShortcutSettingsRow> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_tab_summary(
     List<TabSummary> self,
     SseSerializer serializer,
@@ -1184,6 +1214,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_resource_sample(
     ResourceSample self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_shortcut_settings_row(
+    ShortcutSettingsRow self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_shortcut_settings_view(
+    ShortcutSettingsView self,
     SseSerializer serializer,
   );
 

@@ -9,9 +9,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'local_session.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `agent_def_to_dto`, `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`, `submit_direct_task`, `submit_worktree_task`
+// These functions are ignored because they are not marked as `pub`: `agent_def_to_dto`, `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_shortcut_action_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`, `shortcut_action_id`, `submit_direct_task`, `submit_worktree_task`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -385,6 +385,11 @@ abstract class LocalSession implements RustOpaqueInterface {
     required int limit,
   });
 
+  /// Snapshot of the Settings → Keybindings page. Every shortcut
+  /// action paired with its current + default binding strings
+  /// (kebab-case modifier names, e.g. `cmd-shift-]`).
+  Future<ShortcutSettingsView> readShortcutSettings();
+
   /// Remove a project from the embedded daemon's store. Cascades
   /// to the project's tasks + terminal sections (see
   /// [`another_one_core::project_store::ProjectStore::remove_project`]).
@@ -420,6 +425,9 @@ abstract class LocalSession implements RustOpaqueInterface {
 
   /// Reset the PR script back to the built-in template.
   Future<bool> resetGitPrScript();
+
+  /// Reset one shortcut back to its default binding.
+  Future<void> resetShortcutBinding({required String actionId});
 
   /// Snapshot the resolved branch settings for `project_id` —
   /// configured + effective values for default and target branch
@@ -545,6 +553,14 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String projectId,
     required String field,
     String? branchName,
+  });
+
+  /// Set / clear / reset one shortcut binding. `binding` is the
+  /// kebab-case modifier string (e.g. `"cmd-shift-]"`); pass the
+  /// empty string to clear (the action becomes inert).
+  Future<void> setShortcutBinding({
+    required String actionId,
+    required String binding,
   });
 
   /// Pin or unpin a task. Pinned tasks float to the top of their
@@ -1488,6 +1504,63 @@ class ResolvedProjectBranchSettingsDto {
           configuredDefaultTargetBranch ==
               other.configuredDefaultTargetBranch &&
           effectiveDefaultTargetBranch == other.effectiveDefaultTargetBranch;
+}
+
+/// One row of the Settings → Keybindings page. Carries the
+/// human-readable label + the current binding string + the
+/// built-in default binding for "reset" affordances.
+class ShortcutSettingsRow {
+  /// Stable kebab-case id for the action (`cycle-projects`,
+  /// `new-task`, etc.). Round-trips through
+  /// [`LocalSession::set_shortcut_binding`].
+  final String id;
+  final String label;
+
+  /// Current binding string, e.g. `"cmd-shift-]"`. Empty when
+  /// the action has been intentionally cleared.
+  final String currentBinding;
+  final String defaultBinding;
+
+  const ShortcutSettingsRow({
+    required this.id,
+    required this.label,
+    required this.currentBinding,
+    required this.defaultBinding,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      label.hashCode ^
+      currentBinding.hashCode ^
+      defaultBinding.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ShortcutSettingsRow &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          currentBinding == other.currentBinding &&
+          defaultBinding == other.defaultBinding;
+}
+
+/// Snapshot returned by [`LocalSession::read_shortcut_settings`].
+class ShortcutSettingsView {
+  final List<ShortcutSettingsRow> actions;
+
+  const ShortcutSettingsView({required this.actions});
+
+  @override
+  int get hashCode => actions.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ShortcutSettingsView &&
+          runtimeType == other.runtimeType &&
+          actions == other.actions;
 }
 
 /// FRB-friendly mirror of

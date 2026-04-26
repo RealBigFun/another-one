@@ -1526,6 +1526,88 @@ impl LocalSession {
         Ok(state.project_store.set_default_agent(&agent_id))
     }
 
+    /// Snapshot of the Settings → Keybindings page. Every shortcut
+    /// action paired with its current + default binding strings
+    /// (kebab-case modifier names, e.g. `cmd-shift-]`).
+    pub async fn read_shortcut_settings(
+        &self,
+    ) -> anyhow::Result<ShortcutSettingsView> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "read_shortcut_settings: set_local_registry not called"
+            )
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "read_shortcut_settings: RegistryState mutex poisoned"
+            )
+        })?;
+        let shortcuts = &state.project_store.ui.shortcuts;
+        let rows = another_one_core::shortcuts::ALL_SHORTCUT_ACTIONS
+            .iter()
+            .map(|action| ShortcutSettingsRow {
+                id: shortcut_action_id(*action).to_string(),
+                label: action.label().to_string(),
+                current_binding: shortcuts.binding_for(*action).to_string(),
+                default_binding: action.default_binding().to_string(),
+            })
+            .collect();
+        Ok(ShortcutSettingsView { actions: rows })
+    }
+
+    /// Set / clear / reset one shortcut binding. `binding` is the
+    /// kebab-case modifier string (e.g. `"cmd-shift-]"`); pass the
+    /// empty string to clear (the action becomes inert).
+    pub async fn set_shortcut_binding(
+        &self,
+        action_id: String,
+        binding: String,
+    ) -> anyhow::Result<()> {
+        let action = parse_shortcut_action_id(&action_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "set_shortcut_binding: unknown action id `{action_id}`"
+            )
+        })?;
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "set_shortcut_binding: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "set_shortcut_binding: RegistryState mutex poisoned"
+            )
+        })?;
+        state
+            .project_store
+            .set_shortcut_binding(action, binding);
+        Ok(())
+    }
+
+    /// Reset one shortcut back to its default binding.
+    pub async fn reset_shortcut_binding(
+        &self,
+        action_id: String,
+    ) -> anyhow::Result<()> {
+        let action = parse_shortcut_action_id(&action_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "reset_shortcut_binding: unknown action id `{action_id}`"
+            )
+        })?;
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "reset_shortcut_binding: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "reset_shortcut_binding: RegistryState mutex poisoned"
+            )
+        })?;
+        state.project_store.reset_shortcut_binding(action);
+        Ok(())
+    }
+
     /// Snapshot of the Settings → Git Actions page state. Returns
     /// the user-customised commit + PR scripts if set, plus the
     /// resolved-current text (built-in default when no override).
@@ -3379,6 +3461,61 @@ pub struct GitActionScriptsView {
     pub commit_using_default: bool,
     pub pr_script: String,
     pub pr_using_default: bool,
+}
+
+/// One row of the Settings → Keybindings page. Carries the
+/// human-readable label + the current binding string + the
+/// built-in default binding for "reset" affordances.
+#[derive(Debug, Clone)]
+pub struct ShortcutSettingsRow {
+    /// Stable kebab-case id for the action (`cycle-projects`,
+    /// `new-task`, etc.). Round-trips through
+    /// [`LocalSession::set_shortcut_binding`].
+    pub id: String,
+    pub label: String,
+    /// Current binding string, e.g. `"cmd-shift-]"`. Empty when
+    /// the action has been intentionally cleared.
+    pub current_binding: String,
+    pub default_binding: String,
+}
+
+/// Snapshot returned by [`LocalSession::read_shortcut_settings`].
+#[derive(Debug, Clone)]
+pub struct ShortcutSettingsView {
+    pub actions: Vec<ShortcutSettingsRow>,
+}
+
+fn shortcut_action_id(
+    action: another_one_core::shortcuts::ShortcutAction,
+) -> &'static str {
+    use another_one_core::shortcuts::ShortcutAction;
+    match action {
+        ShortcutAction::CycleProjects => "cycle-projects",
+        ShortcutAction::NewTabInCurrentTask => "new-tab-in-current-task",
+        ShortcutAction::NewTask => "new-task",
+        ShortcutAction::CloseCurrentTab => "close-current-tab",
+        ShortcutAction::NextTab => "next-tab",
+        ShortcutAction::PreviousTab => "previous-tab",
+        ShortcutAction::NextTask => "next-task",
+        ShortcutAction::PreviousTask => "previous-task",
+    }
+}
+
+fn parse_shortcut_action_id(
+    id: &str,
+) -> Option<another_one_core::shortcuts::ShortcutAction> {
+    use another_one_core::shortcuts::ShortcutAction;
+    match id {
+        "cycle-projects" => Some(ShortcutAction::CycleProjects),
+        "new-tab-in-current-task" => Some(ShortcutAction::NewTabInCurrentTask),
+        "new-task" => Some(ShortcutAction::NewTask),
+        "close-current-tab" => Some(ShortcutAction::CloseCurrentTab),
+        "next-tab" => Some(ShortcutAction::NextTab),
+        "previous-tab" => Some(ShortcutAction::PreviousTab),
+        "next-task" => Some(ShortcutAction::NextTask),
+        "previous-task" => Some(ShortcutAction::PreviousTask),
+        _ => None,
+    }
 }
 
 fn agent_def_to_dto(

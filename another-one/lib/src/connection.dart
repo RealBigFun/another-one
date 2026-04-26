@@ -48,6 +48,7 @@ import 'rust/api/local_session.dart'
         PullRequestStatusDto,
         RecentCommitsView,
         ResolvedProjectBranchSettingsDto,
+        ShortcutSettingsView,
         ToolbarActionOutcomeDto;
 import 'transport.dart';
 
@@ -755,6 +756,37 @@ abstract class DaemonConnection {
     throw UnimplementedError(
       'resetGitPrScript: requires Control::ResetGitPrScript wire '
       'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  // ── Settings → Keybindings ───────────────────────────────────────
+
+  /// Snapshot of every shortcut action paired with its current
+  /// + default binding strings (kebab-case modifiers).
+  Future<ShortcutSettingsView> readShortcutSettings() {
+    throw UnimplementedError(
+      'readShortcutSettings: requires Control::ReadShortcutSettings '
+      'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Set / clear a shortcut binding. Empty `binding` clears the
+  /// action (it becomes inert).
+  Future<void> setShortcutBinding({
+    required String actionId,
+    required String binding,
+  }) {
+    throw UnimplementedError(
+      'setShortcutBinding: requires Control::SetShortcutBinding wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Reset a shortcut to its built-in default.
+  Future<void> resetShortcutBinding(String actionId) {
+    throw UnimplementedError(
+      'resetShortcutBinding: requires Control::ResetShortcutBinding '
+      'wire variant on the iroh transport (not yet implemented).',
     );
   }
 }
