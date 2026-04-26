@@ -20,12 +20,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'screens/desktop_project_page/desktop_project_page.dart';
 import 'screens/desktop_right_sidebar/desktop_right_sidebar.dart';
 import 'screens/desktop_shell.dart';
 import 'screens/desktop_sidebar/desktop_sidebar.dart';
 import 'screens/desktop_titlebar/desktop_titlebar.dart';
 import 'screens/new_task/new_task_modal.dart';
 import 'screens/pair_mobile/pair_mobile_modal.dart';
+import 'state/active_project_page_provider.dart';
 import 'state/local_connection_provider.dart';
 import 'tokens.dart';
 
@@ -52,6 +54,7 @@ Widget? surfaceFor(String name) {
     'pair-mobile' => const _ModalLauncher(_ModalKind.pairMobile),
     'new-task-first-project' =>
       const _ModalLauncher(_ModalKind.newTaskFirstProject),
+    'project-page-first' => const _ProjectPageLauncher(),
     _ => _UnknownSurface(name: name),
   };
 }
@@ -124,6 +127,43 @@ class _ModalLauncherState extends ConsumerState<_ModalLauncher> {
 
   @override
   Widget build(BuildContext context) => const DesktopShell();
+}
+
+/// Renders the project page in isolation against the first
+/// project the local daemon publishes — no sidebar, no titlebar,
+/// just the page itself for parity-screenshot work. Watches the
+/// project stream so it picks up the first arrival; the empty
+/// state shows until then.
+class _ProjectPageLauncher extends ConsumerWidget {
+  const _ProjectPageLauncher();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(localConnectionProvider);
+    final projects =
+        ref.watch(desktopProjectsProvider).valueOrNull ?? const [];
+    if (projects.isEmpty) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF1E1F22),
+        body: Center(
+          child: Text(
+            'Waiting for the local daemon to publish a project…',
+            style: TextStyle(color: AppTokens.textMuted),
+          ),
+        ),
+      );
+    }
+    // Set the active project page so any sidebar/titlebar surfaces
+    // rendered alongside this preview reflect the same state.
+    final first = projects.first;
+    Future.microtask(() => ref
+        .read(activeProjectPageProvider.notifier)
+        .state = first.id);
+    return Scaffold(
+      backgroundColor: const Color(0xFF1E1F22),
+      body: DesktopProjectPage(project: first),
+    );
+  }
 }
 
 /// Surfaced when `ANOTHER_ONE_SURFACE=<unknown>` — clear visual

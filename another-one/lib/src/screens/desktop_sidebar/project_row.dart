@@ -23,8 +23,13 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
   Widget build(BuildContext context) {
     final project = widget.project;
     final selection = ref.watch(selectedTabProvider);
-    final isActive = selection != null &&
-        project.tasks.any((t) => t.sectionId == selection.sectionId);
+    final activeProjectPage = ref.watch(activeProjectPageProvider);
+    // GPUI marks the row active in two cases: the user is viewing
+    // this project's overview page, OR a task under this project is
+    // the focused terminal. Either way the periwinkle outline shows.
+    final isActive = activeProjectPage == project.id ||
+        (selection != null &&
+            project.tasks.any((t) => t.sectionId == selection.sectionId));
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: AppTokens.space1,
@@ -39,7 +44,9 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
             onExit: (_) => setState(() => _rowHovered = false),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _expanded = !_expanded),
+              onTap: () => ref
+                  .read(activeProjectPageProvider.notifier)
+                  .state = project.id,
               onSecondaryTapDown: (details) =>
                   _showProjectMenu(details.globalPosition),
               child: Container(
@@ -78,10 +85,23 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                       ),
                     ),
                     const SizedBox(width: AppTokens.space2),
-                    AppIcon(
-                      _expanded ? 'chevron-down' : 'chevron-right',
-                      size: 12,
-                      color: AppTokens.chevron,
+                    // Chevron is its own gesture region so the tap
+                    // toggles expansion without bubbling up to the
+                    // row's "activate project page" handler. Mirrors
+                    // GPUI's `cx.stop_propagation()` on the chevron.
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () =>
+                          setState(() => _expanded = !_expanded),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: AppTokens.space1),
+                        child: AppIcon(
+                          _expanded ? 'chevron-down' : 'chevron-right',
+                          size: 12,
+                          color: AppTokens.chevron,
+                        ),
+                      ),
                     ),
                     const SizedBox(width: AppTokens.space2),
                     HoverIconButton(

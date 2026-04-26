@@ -22,6 +22,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../rust/api/iroh_client.dart';
+import '../../state/active_project_page_provider.dart';
 import '../../state/github_url_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/rename_target_provider.dart';
