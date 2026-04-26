@@ -123,6 +123,12 @@ enum Control {
     /// running. No-op if already live. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::LaunchTab`.
     LaunchTab { section_id: String, tab_id: String },
+    /// Add an on-disk project to the daemon's store. Daemon replies
+    /// with [`WorkerReply::ProjectAdded`] (post-mutation snapshot)
+    /// on success or [`WorkerReply::Err`] on a duplicate / failed
+    /// `prepare_project`. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::AddProject`.
+    AddProject { path: String },
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
@@ -156,6 +162,9 @@ pub enum WorkerReply {
     /// desktop sidebar. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectList`.
     ProjectList { projects: Vec<ProjectSummary> },
+    /// Inline-snapshot reply to [`Control::AddProject`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectAdded`.
+    ProjectAdded { project: ProjectSummary },
     /// Uniform per-request failure frame. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
     /// callers in `ojm.2..8` map this to a Dart-level exception
@@ -851,6 +860,24 @@ impl IrohSession {
             Control::LaunchTab { section_id, tab_id },
         )
         .await
+    }
+
+    /// Issue a [`Control::AddProject`] under a Dart-allocated
+    /// `request_id` so the Dart layer can register a `Completer`
+    /// keyed by the same id before the frame goes out. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::AddProject`.
+    ///
+    /// Unlike the legacy fire-and-forget verbs above, mutator verbs
+    /// reply with an inline snapshot the issuer needs (see
+    /// `WorkerReply::ProjectAdded`), so the request id has to be
+    /// known *before* `send` runs — the Dart caller calls
+    /// [`next_request_id`] first, registers its completer, then
+    /// invokes this method with the id it allocated. That ordering
+    /// guarantees the reply can never beat the completer-table
+    /// insertion.
+    pub async fn add_project(&self, request_id: u64, path: String) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::AddProject { path })
+            .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

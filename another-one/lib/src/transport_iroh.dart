@@ -334,7 +334,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
 
   /// Issue a control frame keyed by a freshly-allocated request_id
   /// and return a future that completes with the matching daemon
-  /// reply. Domain verbs landing in `another-one-ojm.2..8` will use
+  /// reply. Domain verbs landing in `another-one-ojm.2..8` use
   /// this in place of the existing fire-and-forget `session.foo()`
   /// pattern.
   ///
@@ -343,15 +343,8 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// dispatch map — taking it as a closure means each verb decides
   /// which `Control::*` variant + arguments to encode without this
   /// helper having to know about every variant. Callers receive the
-  /// `request_id` so they can pass it to a Rust-side `send_control`
-  /// equivalent (added per-verb in domain tasks).
-  ///
-  /// Currently unused: the existing `listProjects` / `attachTab`
-  /// helpers keep the fire-and-forget shape because the contemporary
-  /// daemon doesn't yet emit replies the UI awaits per-call. Once
-  /// the wire grows verbs that DO reply (e.g. `addProject`), each
-  /// such verb routes through here.
-  // ignore: unused_element
+  /// `request_id` so they can pass it to the Rust-side per-verb
+  /// `send_control` equivalent (added per-verb in domain tasks).
   Future<WorkerReply> _sendControlAndAwait(
     Future<void> Function(int requestId) send,
   ) async {
@@ -369,5 +362,49 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       rethrow;
     }
     return completer.future;
+  }
+
+  /// Add an on-disk project at `path` to the daemon's project store
+  /// over the iroh wire. Routes through `Control::AddProject` and
+  /// awaits the matching `WorkerReply::ProjectAdded` (or
+  /// `WorkerReply::Err`) via the per-session request-id dispatch
+  /// table.
+  ///
+  /// Returns `true` on a fresh insert, `false` on the duplicate-
+  /// path case (matches `LocalSession::addProject`'s contract). The
+  /// daemon side surfaces "already exists" as `WorkerReply::Err`
+  /// rather than a fake-success Ack — the Dart layer translates
+  /// that specific failure back into `false` so existing call
+  /// sites keep their boolean shape, and lets every other `Err`
+  /// throw a `StateError` for the UI's toast surface to render.
+  ///
+  /// Note: a future variant of this could route the duplicate
+  /// case via a typed `ErrKind` rather than message-substring
+  /// matching, but introducing a new `ErrKind` per soft-error
+  /// shape gates each variant on its own UI commitment (see the
+  /// `ErrKind` doc) — message matching keeps the wire stable
+  /// while the UX for "you already added this directory" is still
+  /// in flux.
+  @override
+  Future<bool> addProject(String path) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.addProject(requestId: BigInt.from(id), path: path),
+    );
+    return reply.when(
+      projectList: (_) => throw StateError(
+        'addProject: unexpected projectList reply from daemon',
+      ),
+      projectAdded: (_) => true,
+      err: (message, kind) {
+        // Soft-error: the user added the same directory twice. The
+        // daemon's bridge impl bails with this message; we pattern-
+        // match the prefix to keep the boolean Future<bool>
+        // contract. Any other Err is escalated.
+        if (message.contains('project at this path already exists')) {
+          return false;
+        }
+        throw StateError('addProject failed (${kind.name}): $message');
+      },
+    );
   }
 }
