@@ -46,6 +46,13 @@ class AppTokens {
   static const Color overlayHoverStrong = Color(0x14FFFFFF); // 0.08
   static const Color overlayActive = Color(0x1AFFFFFF); // 0.10
 
+  /// GPUI's `theme::toggle_icon_color(window)` for dark windows —
+  /// `hsla(226./360., 0.42, 0.72, 0.95)`. Used by the sidebar
+  /// toggle SVGs (left + right) and other periwinkle chrome glyphs
+  /// the GPUI build had on the titlebar (e.g. resource indicator
+  /// icon).
+  static const Color toggleIconColor = Color(0xF299A8D5);
+
   // ── Focus / accents ────────────────────────────────────────────────
   /// Cool periwinkle focus ring.
   static Color focusRing = HSLColor.fromAHSL(1.0, 220, 0.55, 0.60).toColor();

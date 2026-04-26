@@ -42,6 +42,21 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   StreamSubscription<WorkerReply>? _workerRepliesSub;
   TransportStatus _current = const TransportStatus.disconnected();
   bool _closed = false;
+  // Completes when the FFI `LocalSession` is live. Methods that
+  // need the session `await _ready.future` instead of throwing
+  // when `_session` is still null — `connect()` is non-blocking,
+  // so a FutureProvider firing at first widget build often
+  // arrives before the session lands. The first call queues; once
+  // `_connectAsync` completes the bridge handshake, every queued
+  // future resolves with the same `LocalSession`. On `close()` we
+  // complete with an error so still-queued futures don't hang.
+  final Completer<LocalSession> _ready = Completer<LocalSession>();
+
+  /// Resolves to the active `LocalSession`. Awaits the bridge
+  /// handshake on first call; subsequent calls return immediately
+  /// since the completer's already completed. Throws if the
+  /// transport was closed before connecting.
+  Future<LocalSession> _awaitSession() => _ready.future;
 
   // ── DaemonConnection identity ───────────────────────────────────
 
@@ -83,6 +98,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
         return;
       }
       _session = session;
+      if (!_ready.isCompleted) _ready.complete(session);
       _incomingSub = session.subscribe().listen(
         _incoming.add,
         onError: (err) => _publish(TransportStatus.error(err.toString())),
@@ -110,8 +126,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<void> listProjects() async {
-    final session = _session;
-    if (session == null) return;
+    final session = await _awaitSession();
     await session.listProjects();
   }
 
@@ -123,10 +138,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// [listProjects].
   @override
   Future<bool> addProject(String path) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('addProject: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.addProject(path: path);
   }
 
@@ -136,10 +148,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// ProjectList on completion.
   @override
   Future<void> removeProject(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('removeProject: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.removeProject(projectId: projectId);
   }
 
@@ -160,10 +169,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String sourceBranch,
     AgentProvider? agentProvider,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('createWorktreeTask: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.createWorktreeTask(
       projectId: projectId,
       taskName: taskName,
@@ -177,10 +183,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// ids or no-op renames).
   @override
   Future<bool> renameTask(String taskId, String newName) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('renameTask: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.renameTask(taskId: taskId, newName: newName);
   }
 
@@ -189,10 +192,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// idempotent re-set).
   @override
   Future<bool> setTaskPinned(String taskId, bool pinned) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setTaskPinned: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.setTaskPinned(taskId: taskId, pinned: pinned);
   }
 
@@ -201,10 +201,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// actually removed (false on unknown id).
   @override
   Future<bool> removeTask(String projectId, String taskId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('removeTask: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.removeTask(projectId: projectId, taskId: taskId);
   }
 
@@ -215,10 +212,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// project's lifetime; cache results aggressively.
   @override
   Future<String?> readProjectGithubUrl(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readProjectGithubUrl: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readProjectGithubUrl(projectId: projectId);
   }
 
@@ -229,10 +223,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// `ref.refresh` after mutating actions instead of subscribing.
   @override
   Future<OpenInState> openInState() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('openInState: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.openInState();
   }
 
@@ -245,10 +236,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String appId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('openProjectInApp: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.openProjectInApp(projectId: projectId, appId: appId);
   }
 
@@ -258,10 +246,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// an unknown project id — same gate the right sidebar applies.
   @override
   Future<List<ChangedFileDto>?> readChangedFiles(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readChangedFiles: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readChangedFiles(projectId: projectId);
   }
 
@@ -273,10 +258,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required int limit,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readRecentCommits: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readRecentCommits(projectId: projectId, limit: limit);
   }
 
@@ -285,10 +267,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String commitId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readCommitFileChanges: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readCommitFileChanges(
       projectId: projectId,
       commitId: commitId,
@@ -301,12 +280,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required int filterIndex,
     required String query,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError(
-        'findProjectPullRequests: LocalTransport not connected',
-      );
-    }
+    final session = await _awaitSession();
     return session.findProjectPullRequests(
       projectId: projectId,
       filterIndex: filterIndex,
@@ -321,10 +295,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String headBranch,
     AgentProvider? agentProvider,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('createReviewTask: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.createReviewTask(
       projectId: projectId,
       pullRequestNumber: BigInt.from(pullRequestNumber),
@@ -340,10 +311,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required bool useCurrentTask,
     required bool migrateChanges,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('createBranch: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.createBranch(
       projectId: projectId,
       branchName: branchName,
@@ -354,30 +322,19 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<String> slugifyBranchName(String name) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('slugifyBranchName: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.slugifyBranchName(name: name);
   }
 
   @override
   Future<String?> repoDefaultCommitAction(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError(
-        'repoDefaultCommitAction: LocalTransport not connected',
-      );
-    }
+    final session = await _awaitSession();
     return session.repoDefaultCommitAction(projectId: projectId);
   }
 
   @override
   Future<ActiveGitStateDto?> readActiveGitState(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readActiveGitState: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readActiveGitState(projectId: projectId);
   }
 
@@ -385,10 +342,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   Future<PullRequestStatusDto?> findPullRequestStatus(
     String projectId,
   ) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('findPullRequestStatus: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.findPullRequestStatus(projectId: projectId);
   }
 
@@ -397,10 +351,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String actionId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('runToolbarGitAction: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.runToolbarGitAction(
       projectId: projectId,
       actionId: actionId,
@@ -412,10 +363,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String targetBranch,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readBranchCompareState: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readBranchCompareState(
       projectId: projectId,
       targetBranch: targetBranch,
@@ -426,10 +374,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   Future<ResolvedProjectBranchSettingsDto?> readBranchSettings(
     String projectId,
   ) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readBranchSettings: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.resolvedBranchSettings(projectId: projectId);
   }
 
@@ -439,10 +384,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String field,
     String? branchName,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setBranchSetting: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.setProjectBranchSetting(
       projectId: projectId,
       field: field,
@@ -455,10 +397,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   /// for the three-state return contract.
   @override
   Future<List<CheckDto>?> readPullRequestChecks(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readPullRequestChecks: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readPullRequestChecks(projectId: projectId);
   }
 
@@ -468,10 +407,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String path,
     String? originalPath,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('stageChangedFile: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.stageChangedFile(
       projectId: projectId,
       path: path,
@@ -485,10 +421,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String path,
     String? originalPath,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('unstageChangedFile: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.unstageChangedFile(
       projectId: projectId,
       path: path,
@@ -498,19 +431,13 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<void> stageAllChanges(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('stageAllChanges: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.stageAllChanges(projectId: projectId);
   }
 
   @override
   Future<void> unstageAllChanges(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('unstageAllChanges: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.unstageAllChanges(projectId: projectId);
   }
 
@@ -521,10 +448,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required bool untracked,
     String? originalPath,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('discardChangedFile: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.discardChangedFile(
       projectId: projectId,
       path: path,
@@ -535,10 +459,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<List<ProjectActionDto>> listProjectActions(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('listProjectActions: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.listProjectActions(projectId: projectId);
   }
 
@@ -548,10 +469,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required ProjectActionDto action,
     required bool saveGlobalCopy,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('saveProjectAction: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.saveProjectAction(
       projectId: projectId,
       action: action,
@@ -564,10 +482,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String actionId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('deleteProjectAction: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.deleteProjectAction(
       projectId: projectId,
       actionId: actionId,
@@ -580,10 +495,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String actionId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('runProjectAction: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.runProjectAction(
       projectId: projectId,
       sectionId: sectionId,
@@ -593,28 +505,19 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<List<String>> readProjectBranches(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readProjectBranches: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readProjectBranches(projectId: projectId);
   }
 
   @override
   Future<String?> primaryBranchForProject(String projectId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('primaryBranchForProject: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.primaryBranchForProject(projectId: projectId);
   }
 
   @override
   Future<EnabledAgentsView> readEnabledAgents() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readEnabledAgents: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readEnabledAgents();
   }
 
@@ -627,10 +530,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required bool branchModeExisting,
     required bool worktreeMode,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('submitNewTask: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.submitNewTask(
       projectId: projectId,
       taskName: taskName,
@@ -646,10 +546,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String agentId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('addAgentToSection: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.addAgentToSection(
       sectionId: sectionId,
       agentId: agentId,
@@ -661,10 +558,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String tabId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('activateSectionTab: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.activateSectionTab(sectionId: sectionId, tabId: tabId);
   }
 
@@ -673,10 +567,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String tabId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('closeSectionTab: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.closeSectionTab(sectionId: sectionId, tabId: tabId);
   }
 
@@ -685,11 +576,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String tabId,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError(
-          'toggleSectionTabPinned: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.toggleSectionTabPinned(
       sectionId: sectionId,
       tabId: tabId,
@@ -698,10 +585,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<AgentSettingsView> readAgentSettings() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readAgentSettings: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readAgentSettings();
   }
 
@@ -710,19 +594,13 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String agentId,
     required bool enabled,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setAgentEnabled: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.setAgentEnabled(agentId: agentId, enabled: enabled);
   }
 
   @override
   Future<bool> setDefaultAgent(String agentId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setDefaultAgent: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.setDefaultAgent(agentId: agentId);
   }
 
@@ -731,19 +609,13 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String agentId,
     required List<String> args,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setAgentLaunchArgs: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.setAgentLaunchArgs(agentId: agentId, args: args);
   }
 
   @override
   Future<OpenInSettingsView> readOpenInSettings() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readOpenInSettings: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readOpenInSettings();
   }
 
@@ -752,64 +624,43 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String appId,
     required bool enabled,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setOpenInAppEnabled: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.setOpenInAppEnabled(appId: appId, enabled: enabled);
   }
 
   @override
   Future<GitActionScriptsView> readGitActionScripts() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readGitActionScripts: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readGitActionScripts();
   }
 
   @override
   Future<bool> setGitCommitScript(String script) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setGitCommitScript: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.setGitCommitScript(script: script);
   }
 
   @override
   Future<bool> resetGitCommitScript() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('resetGitCommitScript: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.resetGitCommitScript();
   }
 
   @override
   Future<bool> setGitPrScript(String script) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setGitPrScript: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.setGitPrScript(script: script);
   }
 
   @override
   Future<bool> resetGitPrScript() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('resetGitPrScript: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.resetGitPrScript();
   }
 
   @override
   Future<ShortcutSettingsView> readShortcutSettings() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readShortcutSettings: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readShortcutSettings();
   }
 
@@ -818,10 +669,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String actionId,
     required String binding,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('setShortcutBinding: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.setShortcutBinding(
       actionId: actionId,
       binding: binding,
@@ -830,29 +678,19 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<void> resetShortcutBinding(String actionId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError(
-          'resetShortcutBinding: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.resetShortcutBinding(actionId: actionId);
   }
 
   @override
   Future<McpSettingsView> readMcpSettings() async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('readMcpSettings: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     return session.readMcpSettings();
   }
 
   @override
   Future<void> mcpAddFromCatalog(String catalogId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('mcpAddFromCatalog: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.mcpAddFromCatalog(catalogId: catalogId);
   }
 
@@ -862,10 +700,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String providerId,
     required bool enabled,
   }) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('mcpToggle: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.mcpToggle(
       entryId: entryId,
       providerId: providerId,
@@ -875,10 +710,7 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<void> mcpRemove(String entryId) async {
-    final session = _session;
-    if (session == null) {
-      throw StateError('mcpRemove: LocalTransport not connected');
-    }
+    final session = await _awaitSession();
     await session.mcpRemove(entryId: entryId);
   }
 
@@ -887,15 +719,13 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String tabId,
   }) async {
-    final session = _session;
-    if (session == null) return;
+    final session = await _awaitSession();
     await session.attachTab(sectionId: sectionId, tabId: tabId);
   }
 
   @override
   Future<void> detachTab() async {
-    final session = _session;
-    if (session == null) return;
+    final session = await _awaitSession();
     await session.detachTab();
   }
 
@@ -904,26 +734,27 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String tabId,
   }) async {
-    final session = _session;
-    if (session == null) return;
+    final session = await _awaitSession();
     await session.launchTab(sectionId: sectionId, tabId: tabId);
   }
 
   @override
   Future<void> tabResize({required int cols, required int rows}) async {
-    final session = _session;
-    if (session == null) return;
+    final session = await _awaitSession();
     await session.tabResize(cols: cols, rows: rows);
   }
 
   @override
   void sendBytes(List<int> bytes) {
-    final session = _session;
-    if (session == null) return;
-    // Fire-and-forget: PTY stdin sends shouldn't block the UI thread,
-    // and the FRB call is already async-on-Rust-side. Errors surface
-    // via the byte stream's onError if the writer's gone.
-    unawaited(session.send(bytes: bytes));
+    // Fire-and-forget: PTY stdin sends shouldn't block the UI
+    // thread, and the FRB call is already async-on-Rust-side.
+    // Errors surface via the byte stream's onError if the
+    // writer's gone. `sendBytes` is sync (returns void), so we
+    // queue the work onto the ready completer rather than
+    // awaiting inline.
+    unawaited(_awaitSession().then((session) {
+      session.send(bytes: bytes);
+    }));
   }
 
   @override
@@ -942,6 +773,11 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     _closed = true;
     final session = _session;
     _session = null;
+    // Fail any pending `_awaitSession()` futures rather than
+    // letting them hang forever — the transport never came up.
+    if (!_ready.isCompleted) {
+      _ready.completeError(StateError('LocalTransport closed before connect'));
+    }
     await _incomingSub?.cancel();
     await _workerRepliesSub?.cancel();
     if (session != null) {

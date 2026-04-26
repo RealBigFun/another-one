@@ -130,6 +130,10 @@ class AnotherOneApp extends StatelessWidget {
       title: 'AnotherOne',
       theme: buildAppTheme(),
       home: home,
+      // Kill Material's diagonal "DEBUG" ribbon — it never
+      // existed in the GPUI build, and we run debug builds
+      // most of the time during development.
+      debugShowCheckedModeBanner: false,
     );
   }
 }

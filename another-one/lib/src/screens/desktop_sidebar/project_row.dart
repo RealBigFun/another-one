@@ -22,14 +22,12 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
   @override
   Widget build(BuildContext context) {
     final project = widget.project;
-    final selection = ref.watch(selectedTabProvider);
     final activeProjectPage = ref.watch(activeProjectPageProvider);
-    // GPUI marks the row active in two cases: the user is viewing
-    // this project's overview page, OR a task under this project is
-    // the focused terminal. Either way the periwinkle outline shows.
-    final isActive = activeProjectPage == project.id ||
-        (selection != null &&
-            project.tasks.any((t) => t.sectionId == selection.sectionId));
+    // Project rows highlight ONLY when the project's overview page
+    // is the active surface — selected-task does not bubble up to
+    // the parent row. Mirrors GPUI's `active = active_project_page
+    // .is_some_and(|id| id == root_id)` in `left_sidebar.rs`.
+    final isActive = activeProjectPage == project.id;
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: AppTokens.space1,

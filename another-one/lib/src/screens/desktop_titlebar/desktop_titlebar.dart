@@ -56,6 +56,7 @@ import '../create_branch/create_branch_modal.dart';
 import '../custom_action_modal/custom_action_modal.dart';
 import '../pair_mobile/pair_mobile_modal.dart';
 
+part 'chrome_button.dart';
 part 'custom_actions_button.dart';
 part 'git_actions_button.dart';
 part 'open_in_button.dart';
@@ -76,19 +77,12 @@ class DesktopTitlebar extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: AppTokens.space2),
       child: Row(
         children: [
-          HoverIconButton(
-            size: 28,
-            iconSize: 15,
-            iconColor: AppTokens.textPrimary,
-            restBg: AppTokens.overlayRest,
-            hoverBg: AppTokens.overlayHoverStrong,
-            showBorder: true,
-            icon: 'layout-split',
-            tooltip: 'Toggle sidebar',
+          _TitlebarChromeButton(
+            assetPath: 'assets/icons/icons__sidebar-toggle.svg',
+            tooltip: 'Show or hide the projects sidebar',
             onPressed: () =>
                 ref.read(leftSidebarOpenProvider.notifier).toggle(),
           ),
-          const SizedBox(width: AppTokens.space2),
           // Draggable region — Flutter doesn't expose a native
           // window-drag handle on Linux without `bitsdojo_window`,
           // which lands in Phase 4. Empty Spacer keeps the layout
@@ -104,15 +98,9 @@ class DesktopTitlebar extends ConsumerWidget {
           const SizedBox(width: AppTokens.space2),
           const _ResourceIndicator(),
           const SizedBox(width: AppTokens.space2),
-          HoverIconButton(
-            size: 28,
-            iconSize: 15,
-            iconColor: AppTokens.textPrimary,
-            restBg: AppTokens.overlayRest,
-            hoverBg: AppTokens.overlayHoverStrong,
-            showBorder: true,
-            icon: 'layout-split',
-            tooltip: 'Toggle right sidebar',
+          _TitlebarChromeButton(
+            assetPath: 'assets/icons/icons__right-sidebar-toggle.svg',
+            tooltip: 'Show or hide the changed files sidebar',
             onPressed: () =>
                 ref.read(rightSidebarOpenProvider.notifier).toggle(),
           ),
@@ -122,17 +110,31 @@ class DesktopTitlebar extends ConsumerWidget {
   }
 }
 
-/// Resource-usage indicator: CPU% + memory MB. Reads the
-/// `resourceUsageProvider`, which polls
-/// `core::platform::HeadlessPlatform::read_process_samples` every
-/// 1.5s through the FRB bridge and derives CPU% from cumulative-
-/// time deltas. Em-dashes show until the second sample arrives
-/// (CPU% needs a delta).
-class _ResourceIndicator extends ConsumerWidget {
+/// Resource-usage indicator — full bordered button mirroring
+/// GPUI's `desktop/src/resource_indicator.rs::resource_indicator_button`:
+///
+///   * 176w × 28h, rounded(11), border white@0.08, idle bg white@0.05,
+///     hover white@0.08.
+///   * Periwinkle `icons__resource-usage.svg` icon (11px) on the left.
+///   * Right cluster: 46w cpu_label, `|` separator (white@0.36), 74w
+///     mem_label. Both labels right-aligned, 12px / w500 / white@0.78.
+///
+/// Em-dashes show until the second sample arrives (CPU% needs a
+/// delta). Click target reserved for the future popover toggle —
+/// no-op today; the provider polls every 1.5s on its own.
+class _ResourceIndicator extends ConsumerStatefulWidget {
   const _ResourceIndicator();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ResourceIndicator> createState() =>
+      _ResourceIndicatorState();
+}
+
+class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
     final usage = ref.watch(resourceUsageProvider);
     final cpuLabel = usage?.cpuPercent != null
         ? '${usage!.cpuPercent!.toStringAsFixed(1)}%'
@@ -141,25 +143,82 @@ class _ResourceIndicator extends ConsumerWidget {
         ? '${usage.memoryMib.toStringAsFixed(1)} MB'
         : '— MB';
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppTokens.space2),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.public,
-            size: 12,
-            color: AppTokens.textPlaceholder,
-          ),
-          const SizedBox(width: AppTokens.space1),
-          Text(
-            '$cpuLabel  |  $memLabel',
-            style: const TextStyle(
-              fontFamily: AppTokens.fontFamilyMono,
-              fontSize: AppTokens.fontCaption,
-              color: AppTokens.textPlaceholder,
+      padding: const EdgeInsets.only(right: 6),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: Tooltip(
+          message: 'Show resource usage',
+          child: Container(
+            width: 176,
+            height: 28,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: _hover
+                  ? AppTokens.overlayHoverStrong
+                  : AppTokens.overlayRest,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: AppTokens.border),
+            ),
+            child: Row(
+              children: [
+                SvgPicture.asset(
+                  'assets/icons/icons__resource-usage.svg',
+                  width: 11,
+                  height: 11,
+                  colorFilter: const ColorFilter.mode(
+                    AppTokens.toggleIconColor,
+                    BlendMode.srcIn,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      SizedBox(
+                        width: 46,
+                        child: Text(
+                          cpuLabel,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xC7FFFFFF),
+                          ),
+                        ),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          '|',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0x5CFFFFFF),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 74,
+                        child: Text(
+                          memLabel,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xC7FFFFFF),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
