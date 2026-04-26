@@ -320,19 +320,16 @@ class _CustomActionsButtonState
     }
   }
 
-  /// Custom-action modal editor lives in module 29i.3. Until that
-  /// lands the button still works for actions saved by other means
-  /// (today: the GPUI desktop's modal, since the on-disk format is
-  /// shared). Surface a placeholder snackbar so the gap is loud
-  /// rather than silently no-op.
-  void _openModal(ProjectActionDto? edit) {
-    final verb = edit == null ? 'Add' : 'Edit';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$verb action: modal editor coming soon.'),
-        backgroundColor: AppTokens.cardBg,
-      ),
+  Future<void> _openModal(ProjectActionDto? edit) async {
+    final projectId = ref.read(activeProjectIdProvider);
+    if (projectId == null) return;
+    final saved = await showCustomActionModal(
+      context: context,
+      projectId: projectId,
+      existing: edit,
     );
+    if (!mounted || !saved) return;
+    ref.invalidate(projectActionsProvider(projectId));
   }
 }
 

@@ -53,6 +53,7 @@ import '../../widgets/app_icon.dart';
 import '../../widgets/hover_icon_button.dart';
 import '../../widgets/toolbar_spinner.dart';
 import '../create_branch/create_branch_modal.dart';
+import '../custom_action_modal/custom_action_modal.dart';
 import '../pair_mobile/pair_mobile_modal.dart';
 
 part 'custom_actions_button.dart';
