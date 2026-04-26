@@ -34,6 +34,7 @@ use another_one_core::agents::AgentProviderKind;
 use another_one_core::daemon_embed::{
     daemon_paths, key_from_wire, RegistryState, TabLaunchRequest,
 };
+use another_one_core::project_store::Project as CoreProject;
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
 use another_one_core::project_store::ProjectStore;
 use another_one_core::section::SectionId;
@@ -42,6 +43,7 @@ use another_one_core::terminal_types::TerminalRuntimeKey;
 use daemon_sandbox::frame::{
     AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
 };
+use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
 use crate::local_pair::{set_local_pair_info, LocalPairInfo};
@@ -309,6 +311,79 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
     }
+
+    /// Mirror of `LocalSession::add_project`: run `prepare_project`
+    /// on a background thread (via `spawn_project_add`), then take
+    /// the registry lock, insert, and project the post-mutation
+    /// snapshot under the same lock so a concurrent removal can't
+    /// race in between insertion and projection.
+    fn add_project<'a>(
+        &'a self,
+        path: String,
+    ) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
+        Box::pin(async move {
+            // Heavy disk + git work happens off the iroh writer
+            // task — `spawn_project_add` returns a one-shot
+            // broadcast receiver, same shape `LocalSession` uses.
+            let mut rx = another_one_core::project_service::spawn_project_add(
+                std::path::PathBuf::from(path),
+            );
+            let reply = rx
+                .recv()
+                .await
+                .map_err(|_| anyhow::anyhow!("project add worker dropped"))?;
+            let prepared = reply
+                .result
+                .map_err(|e| anyhow::anyhow!("prepare project: {e}"))?;
+            // Capture the new project id before moving `prepared`
+                // into `insert_prepared_project` (which mutates its
+                // `repo_id` field but leaves `id` untouched).
+            let new_project_id = prepared.project.id.clone();
+
+            let arc = self
+                .inner
+                .upgrade()
+                .ok_or_else(|| anyhow::anyhow!("add_project: registry state dropped"))?;
+            let mut guard = arc
+                .lock()
+                .map_err(|_| anyhow::anyhow!("add_project: RegistryState mutex poisoned"))?;
+            let inserted = guard.project_store.insert_prepared_project(prepared);
+            if !inserted {
+                // Same-path duplicate. The bridge's `LocalSession`
+                // returns `Ok(false)` here; over the wire we surface
+                // it as an error so the issuer doesn't have to
+                // distinguish "added a new one" from "no-op" by
+                // diffing trees. The Dart caller maps this back to
+                // `false` for backward compat with the old
+                // `Future<bool>` signature.
+                anyhow::bail!("project at this path already exists");
+            }
+            let project = guard
+                .project_store
+                .project(&new_project_id)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("add_project: inserted project missing from store")
+                })?;
+            Ok(project_to_frame(&guard, &project))
+        })
+    }
+
+    /// Mirror of `LocalSession::remove_project`. Takes the registry
+    /// lock and delegates to `project_store.remove_project`, which
+    /// cascades to tasks + terminal sections. Idempotent on unknown
+    /// ids — same semantics LocalSession exposes today.
+    fn remove_project(&self, project_id: &str) -> anyhow::Result<()> {
+        let arc = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("remove_project: registry state dropped"))?;
+        let mut guard = arc
+            .lock()
+            .map_err(|_| anyhow::anyhow!("remove_project: RegistryState mutex poisoned"))?;
+        guard.project_store.remove_project(project_id);
+        Ok(())
+    }
 }
 
 /// Flatten the bridge's `RegistryState` into the iroh wire's
@@ -319,78 +394,85 @@ impl DaemonRegistry for BridgeDaemonRegistry {
 /// `Task::target_project_id`, so mobile peers see the same tree
 /// the desktop sidebar paints.
 fn flatten_state_to_frame(state: &RegistryState) -> Vec<ProjectSummary> {
-    let store = &state.project_store;
-    store
+    state
+        .project_store
         .projects
         .iter()
         .filter(|project| matches!(project.kind, CoreProjectKind::Root))
-        .map(|project| {
-            let tasks = store
-                .tasks
-                .get(&project.id)
-                .cloned()
-                .unwrap_or_default()
+        .map(|project| project_to_frame(state, project))
+        .collect()
+}
+
+/// Project a single `core::project_store::Project` to its wire
+/// `frame::ProjectSummary`. Extracted from `flatten_state_to_frame`
+/// so the mutator paths (`add_project`, future `ojm.5`
+/// `BranchCreated`) can build the inline-snapshot reply for one
+/// project without re-flattening the whole store.
+fn project_to_frame(state: &RegistryState, project: &CoreProject) -> ProjectSummary {
+    let store = &state.project_store;
+    let tasks = store
+        .tasks
+        .get(&project.id)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|task| {
+            let section_key = task.section_id.clone();
+            let parsed_section = SectionId::from_store_key(&section_key);
+            let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
+            let tabs = task
+                .tabs
                 .into_iter()
-                .map(|task| {
-                    let section_key = task.section_id.clone();
-                    let parsed_section = SectionId::from_store_key(&section_key);
-                    let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
-                    let tabs = task
-                        .tabs
-                        .into_iter()
-                        .map(|tab| {
-                            let running = parsed_section
-                                .as_ref()
-                                .map(|section| TerminalRuntimeKey {
-                                    section_id: section.clone(),
-                                    tab_id: tab.id.clone(),
-                                })
-                                .map(|key| state.broadcasts.contains_key(&key))
-                                .unwrap_or(false);
-                            TabSummary {
-                                id: tab.id,
-                                title: tab.title,
-                                provider: tab.provider.map(map_agent_provider),
-                                running,
-                                pinned: tab.pinned,
-                                fixed_title: tab.fixed_title,
-                            }
-                        })
-                        .collect();
-                    let branch_view =
-                        store.branch_view(&task.target_project_id, &task.branch_name);
-                    let last_commit_relative = branch_view
+                .map(|tab| {
+                    let running = parsed_section
                         .as_ref()
-                        .map(|branch| branch.last_commit_relative.clone())
-                        .unwrap_or_default();
-                    let (lines_added, lines_removed) = branch_view
-                        .map(|branch| (branch.lines_added, branch.lines_removed))
-                        .unwrap_or((0, 0));
-                    TaskSummary {
-                        id: task.id,
-                        name: task.name,
-                        section_id: section_key,
-                        branch_name: task.branch_name,
-                        active_tab_id: task.active_tab_id,
-                        tabs,
-                        pinned: task_pinned,
-                        last_commit_relative,
-                        lines_added,
-                        lines_removed,
-                        target_project_id: task.target_project_id,
+                        .map(|section| TerminalRuntimeKey {
+                            section_id: section.clone(),
+                            tab_id: tab.id.clone(),
+                        })
+                        .map(|key| state.broadcasts.contains_key(&key))
+                        .unwrap_or(false);
+                    TabSummary {
+                        id: tab.id,
+                        title: tab.title,
+                        provider: tab.provider.map(map_agent_provider),
+                        running,
+                        pinned: tab.pinned,
+                        fixed_title: tab.fixed_title,
                     }
                 })
                 .collect();
-            ProjectSummary {
-                id: project.id.clone(),
-                name: project.name.clone(),
-                path: project.path.to_string_lossy().into_owned(),
-                kind: map_project_kind(project.kind),
-                current_branch: project.checkout.current_branch.clone(),
-                tasks,
+            let branch_view = store.branch_view(&task.target_project_id, &task.branch_name);
+            let last_commit_relative = branch_view
+                .as_ref()
+                .map(|branch| branch.last_commit_relative.clone())
+                .unwrap_or_default();
+            let (lines_added, lines_removed) = branch_view
+                .map(|branch| (branch.lines_added, branch.lines_removed))
+                .unwrap_or((0, 0));
+            TaskSummary {
+                id: task.id,
+                name: task.name,
+                section_id: section_key,
+                branch_name: task.branch_name,
+                active_tab_id: task.active_tab_id,
+                tabs,
+                pinned: task_pinned,
+                last_commit_relative,
+                lines_added,
+                lines_removed,
+                target_project_id: task.target_project_id,
             }
         })
-        .collect()
+        .collect();
+    ProjectSummary {
+        id: project.id.clone(),
+        name: project.name.clone(),
+        path: project.path.to_string_lossy().into_owned(),
+        kind: map_project_kind(project.kind),
+        current_branch: project.checkout.current_branch.clone(),
+        tasks,
+    }
 }
 
 fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {

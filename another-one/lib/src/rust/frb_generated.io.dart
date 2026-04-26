@@ -125,6 +125,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ProjectActionDto dco_decode_box_autoadd_project_action_dto(dynamic raw);
 
   @protected
+  ProjectSummary dco_decode_box_autoadd_project_summary(dynamic raw);
+
+  @protected
   PullRequestStatusDto dco_decode_box_autoadd_pull_request_status_dto(
     dynamic raw,
   );
@@ -551,6 +554,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ProjectActionDto sse_decode_box_autoadd_project_action_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ProjectSummary sse_decode_box_autoadd_project_summary(
     SseDeserializer deserializer,
   );
 
@@ -1090,6 +1098,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_project_action_dto(
     ProjectActionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_project_summary(
+    ProjectSummary self,
     SseSerializer serializer,
   );
 

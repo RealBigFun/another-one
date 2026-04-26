@@ -121,6 +121,28 @@ pub enum Control {
     /// are equal citizens in launching — neither is a "master" that
     /// gates the other.
     LaunchTab { section_id: String, tab_id: String },
+    /// Add an on-disk project directory to the daemon's project
+    /// store. Heavy `prepare_project` work runs on a background
+    /// thread on the daemon side so the iroh writer task isn't
+    /// blocked. Successful inserts reply with
+    /// [`WorkerReply::ProjectAdded`] carrying the post-mutation
+    /// project snapshot — the issuing client updates its tree from
+    /// the reply directly without a follow-up `ListProjects` round
+    /// trip (mutator inline-snapshot contract). A path that the
+    /// store already knows replies with [`WorkerReply::Err`] of
+    /// kind [`ErrKind::Internal`] (this is the rare "user added the
+    /// same dir twice" case; not worth a dedicated `err_kind`).
+    /// Mirror of `another-one-bridge/src/api/local_session.rs::add_project`.
+    AddProject { path: String },
+    /// Remove a project from the daemon's store by id. Cascades to
+    /// the project's tasks + terminal sections via
+    /// [`another_one_core::project_store::ProjectStore::remove_project`].
+    /// Idempotent — passing an unknown id is a silent no-op on the
+    /// store side, but the daemon still replies with
+    /// [`WorkerReply::ProjectRemoved`] echoing the id so the issuer
+    /// can drop any stale UI rows. Mirror of
+    /// `another-one-bridge/src/api/local_session.rs::remove_project`.
+    RemoveProject { project_id: String },
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -240,6 +262,20 @@ pub enum WorkerReply {
     /// (the mobile UI can still group them by `repo_id` if it
     /// wants a tree rendering later).
     ProjectList { projects: Vec<ProjectSummary> },
+    /// Response to [`Control::AddProject`] on success. Carries the
+    /// inline snapshot of the freshly-inserted project so the
+    /// issuing client can splice it into its tree without a
+    /// follow-up `ListProjects` (see the "Push vs pull" block above
+    /// for the contract). On a duplicate path or a `prepare_project`
+    /// failure the daemon emits [`WorkerReply::Err`] instead.
+    ProjectAdded { project: ProjectSummary },
+    /// Response to [`Control::RemoveProject`]. Echoes the id so the
+    /// issuer can drop the matching tree row even if its local
+    /// cache had already been pruned. Idempotent on the daemon
+    /// side: an unknown id still produces this reply rather than an
+    /// `Err` (mirrors `LocalSession::remove_project`'s anyhow-Ok-
+    /// even-on-unknown-id semantics).
+    ProjectRemoved { project_id: String },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same

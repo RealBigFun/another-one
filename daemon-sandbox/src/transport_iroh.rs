@@ -26,7 +26,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
+use crate::frame::{self, Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope};
 use crate::registry::{EndpointHandle, PairState, DaemonRegistry};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
@@ -483,6 +483,41 @@ async fn handle_control(
         }
         Control::LaunchTab { section_id, tab_id } => {
             registry.launch_tab(&section_id, &tab_id);
+        }
+        Control::AddProject { path } => {
+            // `add_project` is async — `prepare_project` runs on a
+            // background thread inside the bridge impl. We await
+            // the result here on the per-connection task; the
+            // outbound writer task is a separate task and keeps
+            // pumping any other queued frames in the meantime.
+            match registry.add_project(path).await {
+                Ok(project) => {
+                    let wire = WorkerReply::ProjectAdded { project };
+                    send_worker_reply(outbound_tx, request_id, &wire).await?;
+                }
+                Err(e) => {
+                    let wire = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &wire).await?;
+                }
+            }
+        }
+        Control::RemoveProject { project_id } => {
+            match registry.remove_project(&project_id) {
+                Ok(()) => {
+                    let wire = WorkerReply::ProjectRemoved { project_id };
+                    send_worker_reply(outbound_tx, request_id, &wire).await?;
+                }
+                Err(e) => {
+                    let wire = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &wire).await?;
+                }
+            }
         }
         Control::Hello { .. } => {
             // Hello is only meaningful as the *first* control frame

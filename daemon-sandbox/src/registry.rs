@@ -5,12 +5,29 @@
 //! task + tab mapped to a throwaway shell) and by the desktop crate
 //! (where the impl wraps `AnotherOneApp`'s real terminal runtimes).
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
 use crate::frame::ProjectSummary;
+
+/// Boxed-future return type for async methods on [`DaemonRegistry`].
+///
+/// `DaemonRegistry` is a trait object (callers hold
+/// `Arc<dyn DaemonRegistry>`), so methods can't be `async fn` directly
+/// — that desugars to a per-impl `impl Future`, which isn't object-safe
+/// before the dyn-async-fn-in-trait stabilisation lands and we'd need
+/// stricter MSRV bumps anyway. Instead, async methods return a
+/// `RegistryFuture<'_, T>` and the per-impl body wraps its work in
+/// `Box::pin(async move { … })`.
+///
+/// Used today by [`DaemonRegistry::add_project`]; future async verbs
+/// (e.g. `ojm.5`'s git mutators) reuse this alias rather than
+/// re-typing the boxed-future shape per method.
+pub type RegistryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -155,6 +172,39 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// attach briefly). Default impl is a no-op for registries that
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
+
+    /// Add an on-disk project at `path` to the daemon's store.
+    /// Returns the freshly-inserted project's wire summary on
+    /// success (so the iroh handler can emit it inline per the
+    /// mutator-snapshot contract); errors are surfaced as
+    /// `WorkerReply::Err` by the caller. Async because
+    /// `prepare_project` does heavy disk + git work — bridging
+    /// implementations dispatch to a background thread and `await`
+    /// the result here.
+    ///
+    /// A path the store already knows is an error
+    /// (`anyhow!("project at {path} already exists")`), not a
+    /// silent no-op: the issuing client tried to add the same
+    /// directory twice, so a typed failure is more honest than a
+    /// fake-success Ack would be. Mirror of
+    /// `another-one-bridge/src/api/local_session.rs::add_project`.
+    fn add_project<'a>(&'a self, _path: String) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
+        Box::pin(async { Err(anyhow::anyhow!("add_project: not supported on this registry")) })
+    }
+
+    /// Remove a project from the daemon's store by id. Cascades to
+    /// the project's tasks + terminal sections (see
+    /// [`another_one_core::project_store::ProjectStore::remove_project`]).
+    /// Idempotent — passing an unknown id is silently a no-op, just
+    /// like [`LocalSession::remove_project`]. Sync because the
+    /// underlying store mutation doesn't touch the network or run
+    /// any subprocess; the iroh handler can call this directly off
+    /// its dispatch loop.
+    fn remove_project(&self, _project_id: &str) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!(
+            "remove_project: not supported on this registry"
+        ))
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox
