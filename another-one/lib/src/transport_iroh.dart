@@ -492,6 +492,20 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     );
   }
 
+  @override
+  Future<String?> readProjectGithubUrl(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      () => _session!.readProjectGithubUrl(projectId: projectId),
+    );
+    return reply.maybeWhen(
+      projectGithubUrlAck: (url) => url,
+      err: _throwErr,
+      orElse: () => throw StateError(
+        'readProjectGithubUrl: unexpected reply variant ${reply.runtimeType}',
+      ),
+    );
+  }
+
   ls.ChangedFileDto _changedFileWireToDto(ChangedFileWire f) =>
       ls.ChangedFileDto(
         path: f.path,

@@ -195,6 +195,12 @@ pub enum Control {
     /// [`WorkerReply::ChangedFilesAck`] with a `None` payload when
     /// the project id is unknown.
     ReadChangedFiles { project_id: String },
+    /// Resolve `project_id`'s GitHub remote URL via
+    /// [`another_one_core::git_actions::find_github_repo_url`]. Reply
+    /// is [`WorkerReply::ProjectGithubUrlAck`] with `None` when the
+    /// project id is unknown, has no `origin`, or `origin` isn't
+    /// github.com.
+    ReadProjectGithubUrl { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -326,6 +332,10 @@ pub enum WorkerReply {
     ChangedFilesAck {
         files: Option<Vec<ChangedFileWire>>,
     },
+    /// Reply to [`Control::ReadProjectGithubUrl`]. `url == None`
+    /// when the project is untracked, has no `origin`, or `origin`
+    /// isn't a github.com URL.
+    ProjectGithubUrlAck { url: Option<String> },
 }
 
 /// Wire mirror of the bridge's `ActiveGitStateDto` (FRB-bound) and

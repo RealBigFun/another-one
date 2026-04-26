@@ -521,6 +521,11 @@ async fn handle_control(
             let reply = WorkerReply::ChangedFilesAck { files };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ReadProjectGithubUrl { project_id } => {
+            let url = registry.read_project_github_url(&project_id);
+            let reply = WorkerReply::ProjectGithubUrlAck { url };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

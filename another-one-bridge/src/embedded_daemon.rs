@@ -378,6 +378,13 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 .collect(),
         )
     }
+
+    fn read_project_github_url(&self, project_id: &str) -> Option<String> {
+        let project_path = self.project_path(project_id)?;
+        tokio::task::block_in_place(|| {
+            another_one_core::git_actions::find_github_repo_url(&project_path)
+        })
+    }
 }
 
 impl BridgeDaemonRegistry {

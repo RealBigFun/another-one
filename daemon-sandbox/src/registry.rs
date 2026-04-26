@@ -213,6 +213,14 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     fn read_changed_files(&self, _project_id: &str) -> Option<Vec<ChangedFileWire>> {
         None
     }
+
+    /// Resolve `project_id`'s GitHub remote URL. Returns `None` for
+    /// unknown projects, projects without an `origin`, or non-
+    /// github.com remotes. Sister to
+    /// `LocalSession::read_project_github_url`.
+    fn read_project_github_url(&self, _project_id: &str) -> Option<String> {
+        None
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

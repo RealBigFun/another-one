@@ -93,6 +93,9 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Issue [`Control::ReadProjectBranches`] for `project_id`.
   Future<BigInt> readProjectBranches({required String projectId});
 
+  /// Issue [`Control::ReadProjectGithubUrl`] for `project_id`.
+  Future<BigInt> readProjectGithubUrl({required String projectId});
+
   /// Issue [`Control::RepoDefaultCommitAction`] for `project_id`.
   Future<BigInt> repoDefaultCommitAction({required String projectId});
 
@@ -461,6 +464,11 @@ sealed class WorkerReply with _$WorkerReply {
   /// `daemon-sandbox/src/frame.rs::WorkerReply::ChangedFilesAck`.
   const factory WorkerReply.changedFilesAck({List<ChangedFileWire>? files}) =
       WorkerReply_ChangedFilesAck;
+
+  /// Reply to [`Control::ReadProjectGithubUrl`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectGithubUrlAck`.
+  const factory WorkerReply.projectGithubUrlAck({String? url}) =
+      WorkerReply_ProjectGithubUrlAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

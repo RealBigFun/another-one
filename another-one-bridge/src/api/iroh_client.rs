@@ -156,6 +156,9 @@ enum Control {
     /// Working-tree changes for a project. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadChangedFiles`.
     ReadChangedFiles { project_id: String },
+    /// Resolve a project's GitHub remote URL. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadProjectGithubUrl`.
+    ReadProjectGithubUrl { project_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -210,6 +213,9 @@ pub enum WorkerReply {
     ChangedFilesAck {
         files: Option<Vec<ChangedFileWire>>,
     },
+    /// Reply to [`Control::ReadProjectGithubUrl`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectGithubUrlAck`.
+    ProjectGithubUrlAck { url: Option<String> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
@@ -976,6 +982,14 @@ impl IrohSession {
     pub async fn read_changed_files(&self, project_id: String) -> anyhow::Result<u64> {
         let id = self.next_request_id();
         self.send_control(id, Control::ReadChangedFiles { project_id })
+            .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::ReadProjectGithubUrl`] for `project_id`.
+    pub async fn read_project_github_url(&self, project_id: String) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(id, Control::ReadProjectGithubUrl { project_id })
             .await?;
         Ok(id)
     }
