@@ -101,6 +101,7 @@ impl TerminalRegistry for SandboxRegistry {
                 last_commit_relative: String::new(),
                 lines_added: 0,
                 lines_removed: 0,
+                target_project_id: SANDBOX_PROJECT_ID.to_string(),
             }],
         }]
     }

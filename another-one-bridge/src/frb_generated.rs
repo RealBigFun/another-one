@@ -6384,6 +6384,7 @@ impl SseDecode for crate::api::iroh_client::TaskSummary {
         let mut var_lastCommitRelative = <String>::sse_decode(deserializer);
         let mut var_linesAdded = <i32>::sse_decode(deserializer);
         let mut var_linesRemoved = <i32>::sse_decode(deserializer);
+        let mut var_targetProjectId = <String>::sse_decode(deserializer);
         return crate::api::iroh_client::TaskSummary {
             id: var_id,
             name: var_name,
@@ -6395,6 +6396,7 @@ impl SseDecode for crate::api::iroh_client::TaskSummary {
             last_commit_relative: var_lastCommitRelative,
             lines_added: var_linesAdded,
             lines_removed: var_linesRemoved,
+            target_project_id: var_targetProjectId,
         };
     }
 }
@@ -7976,6 +7978,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::TaskSummary {
             self.last_commit_relative.into_into_dart().into_dart(),
             self.lines_added.into_into_dart().into_dart(),
             self.lines_removed.into_into_dart().into_dart(),
+            self.target_project_id.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -8968,6 +8971,7 @@ impl SseEncode for crate::api::iroh_client::TaskSummary {
         <String>::sse_encode(self.last_commit_relative, serializer);
         <i32>::sse_encode(self.lines_added, serializer);
         <i32>::sse_encode(self.lines_removed, serializer);
+        <String>::sse_encode(self.target_project_id, serializer);
     }
 }
 

@@ -30,7 +30,19 @@ final activeProjectIdProvider = Provider<String?>((ref) {
     for (final project in projects) {
       for (final task in project.tasks) {
         if (task.sectionId == selection.sectionId) {
-          return project.id;
+          // For worktree tasks `target_project_id` points at the
+          // worktree's own project entry rather than the root —
+          // so Open In, Git Actions, and Custom Actions resolve
+          // their working directory to the worktree path. Plain
+          // tasks have `target_project_id == root_project_id`,
+          // so this is also correct in the non-worktree case.
+          // Mirrors GPUI's `active_open_in_project_id`, which
+          // returns `section.project_id` (the worktree's id, not
+          // the root's). Pre-bridge daemons leave the field blank
+          // — fall back to `project.id` so old payloads still
+          // resolve to *something*.
+          final target = task.targetProjectId;
+          return target.isEmpty ? project.id : target;
         }
       }
     }

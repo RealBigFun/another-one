@@ -163,6 +163,14 @@ pub struct TaskSummary {
     /// merge base. UI renders `-N` in red next to `+N`.
     #[serde(default)]
     pub lines_removed: i32,
+    /// Project id this task's working directory belongs to —
+    /// root project id for plain tasks, the worktree's own project
+    /// id for worktree tasks. The titlebar's Open-In / Git Actions
+    /// / Custom Actions resolve their working dir through this id,
+    /// so a worktree task opens its worktree path (not the root).
+    /// Mirrors `core::project_store::Task::target_project_id`.
+    #[serde(default)]
+    pub target_project_id: String,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`

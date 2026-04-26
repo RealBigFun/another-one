@@ -4909,8 +4909,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskSummary dco_decode_task_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return TaskSummary(
       id: dco_decode_String(arr[0]),
       name: dco_decode_String(arr[1]),
@@ -4922,6 +4922,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       lastCommitRelative: dco_decode_String(arr[7]),
       linesAdded: dco_decode_i_32(arr[8]),
       linesRemoved: dco_decode_i_32(arr[9]),
+      targetProjectId: dco_decode_String(arr[10]),
     );
   }
 
@@ -6202,6 +6203,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_lastCommitRelative = sse_decode_String(deserializer);
     var var_linesAdded = sse_decode_i_32(deserializer);
     var var_linesRemoved = sse_decode_i_32(deserializer);
+    var var_targetProjectId = sse_decode_String(deserializer);
     return TaskSummary(
       id: var_id,
       name: var_name,
@@ -6213,6 +6215,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       lastCommitRelative: var_lastCommitRelative,
       linesAdded: var_linesAdded,
       linesRemoved: var_linesRemoved,
+      targetProjectId: var_targetProjectId,
     );
   }
 
@@ -7345,6 +7348,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.lastCommitRelative, serializer);
     sse_encode_i_32(self.linesAdded, serializer);
     sse_encode_i_32(self.linesRemoved, serializer);
+    sse_encode_String(self.targetProjectId, serializer);
   }
 
   @protected

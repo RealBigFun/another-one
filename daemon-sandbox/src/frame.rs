@@ -175,6 +175,16 @@ pub struct TaskSummary {
     /// merge base. Wire-additive, defaults to `0`.
     #[serde(default)]
     pub lines_removed: i32,
+    /// Project id this task targets for branch / Open-In / git
+    /// actions. Equals `root_project_id` for plain tasks, points at
+    /// the worktree's own `Project` entry for worktree tasks. The
+    /// titlebar's "Open In" + Git Actions + Custom Actions all
+    /// resolve their working directory through this id (matches
+    /// `core::project_store::Task::target_project_id`). Wire-
+    /// additive — older daemons leave it empty, in which case
+    /// callers fall back to the root project id.
+    #[serde(default)]
+    pub target_project_id: String,
 }
 
 /// Lossy wire projection of

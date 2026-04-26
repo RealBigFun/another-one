@@ -232,6 +232,14 @@ class TaskSummary {
   /// merge base. UI renders `-N` in red next to `+N`.
   final int linesRemoved;
 
+  /// Project id this task's working directory belongs to —
+  /// root project id for plain tasks, the worktree's own project
+  /// id for worktree tasks. The titlebar's Open-In / Git Actions
+  /// / Custom Actions resolve their working dir through this id,
+  /// so a worktree task opens its worktree path (not the root).
+  /// Mirrors `core::project_store::Task::target_project_id`.
+  final String targetProjectId;
+
   const TaskSummary({
     required this.id,
     required this.name,
@@ -243,6 +251,7 @@ class TaskSummary {
     required this.lastCommitRelative,
     required this.linesAdded,
     required this.linesRemoved,
+    required this.targetProjectId,
   });
 
   @override
@@ -256,7 +265,8 @@ class TaskSummary {
       pinned.hashCode ^
       lastCommitRelative.hashCode ^
       linesAdded.hashCode ^
-      linesRemoved.hashCode;
+      linesRemoved.hashCode ^
+      targetProjectId.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -272,7 +282,8 @@ class TaskSummary {
           pinned == other.pinned &&
           lastCommitRelative == other.lastCommitRelative &&
           linesAdded == other.linesAdded &&
-          linesRemoved == other.linesRemoved;
+          linesRemoved == other.linesRemoved &&
+          targetProjectId == other.targetProjectId;
 }
 
 @freezed

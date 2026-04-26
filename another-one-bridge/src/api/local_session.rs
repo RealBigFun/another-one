@@ -3007,6 +3007,7 @@ fn flatten_project_store(state: &RegistryState) -> Vec<ProjectSummary> {
                         last_commit_relative,
                         lines_added,
                         lines_removed,
+                        target_project_id: task.target_project_id,
                     }
                 })
                 .collect();
