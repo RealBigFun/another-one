@@ -11,7 +11,8 @@ use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
 use crate::frame::{
-    EnabledAgentsViewWire, OpenInStateWire, ProjectActionWire, ProjectSummary,
+    AgentSettingsViewWire, EnabledAgentsViewWire, OpenInStateWire, ProjectActionWire,
+    ProjectSummary,
 };
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
@@ -184,6 +185,18 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// the sandbox binary has no agents config to surface.
     fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
         EnabledAgentsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        }
+    }
+
+    /// Full agent registry — every entry in `core::agents::AGENTS`
+    /// paired with per-host enabled / default flags + per-agent
+    /// launch-args list. Drives the Settings → Agents page on a
+    /// remote client. Default impl returns an empty view; the
+    /// sandbox binary has no agents config.
+    fn read_agent_settings(&self) -> AgentSettingsViewWire {
+        AgentSettingsViewWire {
             agents: Vec::new(),
             default_agent_id: None,
         }

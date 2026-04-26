@@ -100,6 +100,12 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// host-local on the daemon — see `connection.dart::openProjectInApp`.
   Future<OpenInState> openInState();
 
+  /// Full agent registry — every entry in `core::agents::AGENTS`
+  /// paired with per-host enabled / default / launch-args.
+  /// Drives the Settings → Agents page on a remote client.
+  /// Daemon-side mirror is `LocalSession::read_agent_settings`.
+  Future<AgentSettingsView> readAgentSettings();
+
   /// Snapshot of agents the user has enabled on this host plus
   /// the preferred default. Drives the new-task modal's agent
   /// multi-select. Daemon-side mirror is

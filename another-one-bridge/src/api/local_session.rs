@@ -3540,7 +3540,11 @@ pub struct EnabledAgentsView {
 /// page renders (label + icon + enabled / default flags +
 /// per-agent launch args list) so the UI can update its state
 /// without re-issuing reads after every toggle.
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` mirrors `daemon-sandbox::frame::AgentSettingsRowWire`
+/// so the iroh transport decodes the wire JSON straight into this
+/// DTO.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct AgentSettingsRow {
     pub id: String,
     pub label: String,
@@ -3552,7 +3556,7 @@ pub struct AgentSettingsRow {
 }
 
 /// Snapshot returned by [`LocalSession::read_agent_settings`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct AgentSettingsView {
     /// Every agent in `AGENTS` (canonical order), enabled-or-not.
     pub agents: Vec<AgentSettingsRow>,

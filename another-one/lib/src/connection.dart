@@ -656,8 +656,8 @@ abstract class DaemonConnection {
   /// Drives the Settings → Agents page.
   Future<AgentSettingsView> readAgentSettings() {
     throw UnimplementedError(
-      'readAgentSettings: requires Control::ReadAgentSettings wire '
-      'variant on the iroh transport (not yet implemented).',
+      'readAgentSettings: this DaemonConnection variant has not '
+      'implemented read_agent_settings.',
     );
   }
 

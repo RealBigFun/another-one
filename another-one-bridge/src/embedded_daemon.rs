@@ -45,10 +45,10 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, AgentSummaryWire, EnabledAgentsViewWire, OpenInAppWire, OpenInStateWire,
-    ProjectActionAccessWire, ProjectActionIconWire, ProjectActionKindWire,
-    ProjectActionScopeWire, ProjectActionWire, ProjectKind, ProjectSummary, TabSummary,
-    TaskSummary,
+    AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire, AgentSummaryWire,
+    EnabledAgentsViewWire, OpenInAppWire, OpenInStateWire, ProjectActionAccessWire,
+    ProjectActionIconWire, ProjectActionKindWire, ProjectActionScopeWire, ProjectActionWire,
+    ProjectKind, ProjectSummary, TabSummary, TaskSummary,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -379,6 +379,43 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             }
         })
         .unwrap_or_else(|| EnabledAgentsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        })
+    }
+
+    fn read_agent_settings(&self) -> AgentSettingsViewWire {
+        // Mirrors `LocalSession::read_agent_settings`. Iterates the
+        // canonical `AGENTS` static (every agent, regardless of
+        // enabled state) and pairs each with the per-host flags so
+        // the Settings → Agents page can render every row in one
+        // pass.
+        self.with_state(|state| {
+            let default_agent_id = state
+                .project_store
+                .default_agent_id()
+                .map(str::to_string);
+            let agents = another_one_core::agents::AGENTS
+                .iter()
+                .map(|agent| AgentSettingsRowWire {
+                    id: agent.id.to_string(),
+                    label: agent.label.to_string(),
+                    icon_path: agent.icon.to_string(),
+                    provider: agent.provider.map(map_agent_provider),
+                    enabled: state.project_store.agent_enabled(agent.id),
+                    is_default: default_agent_id.as_deref() == Some(agent.id),
+                    launch_args: state
+                        .project_store
+                        .agent_launch_args(agent.id)
+                        .to_vec(),
+                })
+                .collect();
+            AgentSettingsViewWire {
+                agents,
+                default_agent_id,
+            }
+        })
+        .unwrap_or_else(|| AgentSettingsViewWire {
             agents: Vec::new(),
             default_agent_id: None,
         })

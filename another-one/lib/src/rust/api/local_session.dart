@@ -719,6 +719,10 @@ class ActiveGitStateDto {
 /// page renders (label + icon + enabled / default flags +
 /// per-agent launch args list) so the UI can update its state
 /// without re-issuing reads after every toggle.
+///
+/// `Deserialize` mirrors `daemon-sandbox::frame::AgentSettingsRowWire`
+/// so the iroh transport decodes the wire JSON straight into this
+/// DTO.
 class AgentSettingsRow {
   final String id;
   final String label;

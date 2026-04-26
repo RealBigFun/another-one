@@ -12,7 +12,7 @@ import 'dart:typed_data';
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
 import 'rust/api/local_session.dart'
-    show EnabledAgentsView, OpenInState, ProjectActionDto;
+    show AgentSettingsView, EnabledAgentsView, OpenInState, ProjectActionDto;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -295,6 +295,20 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       );
     }
     return session.readEnabledAgents();
+  }
+
+  /// Full agent registry — every entry in `core::agents::AGENTS`
+  /// paired with per-host enabled / default flags + launch args.
+  /// Drives the Settings → Agents page on a remote daemon.
+  @override
+  Future<AgentSettingsView> readAgentSettings() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError(
+        'IrohTransport: not connected — cannot read agent settings',
+      );
+    }
+    return session.readAgentSettings();
   }
 
   @override

@@ -140,6 +140,11 @@ pub enum Control {
     /// new-task modal's agent multi-select. Reply:
     /// [`WorkerReply::EnabledAgentsAck`].
     ReadEnabledAgents,
+    /// Full agent registry — every agent in `core::agents::AGENTS`
+    /// paired with its per-host enabled flag, default flag, and
+    /// launch-args list. Drives the Settings → Agents page. Reply:
+    /// [`WorkerReply::AgentSettingsAck`].
+    ReadAgentSettings,
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -272,6 +277,11 @@ pub enum WorkerReply {
     /// the canonical `core::agents::AGENTS` order — clients render
     /// without re-sorting.
     EnabledAgentsAck { view: EnabledAgentsViewWire },
+    /// Reply to [`Control::ReadAgentSettings`]. `view.agents`
+    /// contains every agent in `core::agents::AGENTS` (canonical
+    /// order) regardless of enabled state, so the Settings →
+    /// Agents page can render rows for every agent at once.
+    AgentSettingsAck { view: AgentSettingsViewWire },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same
@@ -586,6 +596,33 @@ pub struct AgentSummaryWire {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnabledAgentsViewWire {
     pub agents: Vec<AgentSummaryWire>,
+    pub default_agent_id: Option<String>,
+}
+
+/// Wire projection of
+/// [`another_one_bridge::api::local_session::AgentSettingsRow`].
+/// One row of the Settings → Agents page — label + icon paired with
+/// per-host enabled / default flags and the per-agent launch-args
+/// list. Field-compatible with the FRB DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSettingsRowWire {
+    pub id: String,
+    pub label: String,
+    pub icon_path: String,
+    pub provider: Option<AgentProvider>,
+    pub enabled: bool,
+    pub is_default: bool,
+    pub launch_args: Vec<String>,
+}
+
+/// Wire projection of
+/// [`another_one_bridge::api::local_session::AgentSettingsView`].
+/// Drives the Settings → Agents page; rows are in the canonical
+/// `core::agents::AGENTS` order so the page renders without
+/// re-sorting after each toggle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSettingsViewWire {
+    pub agents: Vec<AgentSettingsRowWire>,
     pub default_agent_id: Option<String>,
 }
 

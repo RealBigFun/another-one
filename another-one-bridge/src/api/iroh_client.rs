@@ -24,7 +24,7 @@ use flutter_rust_bridge::frb;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-use super::local_session::{EnabledAgentsView, OpenInState};
+use super::local_session::{AgentSettingsView, EnabledAgentsView, OpenInState};
 use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
@@ -141,6 +141,11 @@ enum Control {
     /// `WorkerReply::EnabledAgentsAck`. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadEnabledAgents`.
     ReadEnabledAgents,
+    /// Full agent registry (every entry in `core::agents::AGENTS`,
+    /// enabled or not) for the Settings → Agents page. Reply:
+    /// `WorkerReply::AgentSettingsAck`. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadAgentSettings`.
+    ReadAgentSettings,
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
@@ -990,6 +995,18 @@ impl IrohSession {
             .await
             .context("read_enabled_agents: request failed")?;
         decode_ack_field(value, "enabled_agents_ack", "view", "read_enabled_agents")
+    }
+
+    /// Full agent registry — every entry in `core::agents::AGENTS`
+    /// paired with per-host enabled / default / launch-args.
+    /// Drives the Settings → Agents page on a remote client.
+    /// Daemon-side mirror is `LocalSession::read_agent_settings`.
+    pub async fn read_agent_settings(&self) -> anyhow::Result<AgentSettingsView> {
+        let value = self
+            .request_and_await(Control::ReadAgentSettings)
+            .await
+            .context("read_agent_settings: request failed")?;
+        decode_ack_field(value, "agent_settings_ack", "view", "read_agent_settings")
     }
 
     /// Allocate a request id, register a oneshot in [`Self::pending`],
