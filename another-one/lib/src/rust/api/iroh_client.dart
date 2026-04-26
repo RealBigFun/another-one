@@ -42,6 +42,21 @@ Future<IrohSession> irohConnect({
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
 abstract class IrohSession implements RustOpaqueInterface {
+  /// Issue a [`Control::AddProject`] under a Dart-allocated
+  /// `request_id` so the Dart layer can register a `Completer`
+  /// keyed by the same id before the frame goes out. Mirror of
+  /// `daemon-sandbox/src/frame.rs::Control::AddProject`.
+  ///
+  /// Unlike the legacy fire-and-forget verbs above, mutator verbs
+  /// reply with an inline snapshot the issuer needs (see
+  /// `WorkerReply::ProjectAdded`), so the request id has to be
+  /// known *before* `send` runs — the Dart caller calls
+  /// [`next_request_id`] first, registers its completer, then
+  /// invokes this method with the id it allocated. That ordering
+  /// guarantees the reply can never beat the completer-table
+  /// insertion.
+  Future<void> addProject({required BigInt requestId, required String path});
+
   /// Subscribe this session to the live PTY byte stream for
   /// `(section_id, tab_id)`. The daemon will forward the attached
   /// tab's output as [`TY_DATA`] frames on the existing `subscribe`
@@ -92,6 +107,14 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// across the session; never returns 0 (reserved for push
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
+
+  /// Issue a [`Control::RemoveProject`] under a Dart-allocated
+  /// `request_id`. Same allocation contract as [`add_project`].
+  /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveProject`.
+  Future<void> removeProject({
+    required BigInt requestId,
+    required String projectId,
+  });
 
   /// Issue a [`Control::RemoveTask`] under `request_id`. Mirror of
   /// `LocalSession::remove_task`.
@@ -362,6 +385,16 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.projectList({
     required List<ProjectSummary> projects,
   }) = WorkerReply_ProjectList;
+
+  /// Inline-snapshot reply to [`Control::AddProject`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectAdded`.
+  const factory WorkerReply.projectAdded({required ProjectSummary project}) =
+      WorkerReply_ProjectAdded;
+
+  /// Inline echo of [`Control::RemoveProject`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectRemoved`.
+  const factory WorkerReply.projectRemoved({required String projectId}) =
+      WorkerReply_ProjectRemoved;
 
   /// Uniform per-request failure frame. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
