@@ -187,6 +187,20 @@ pub enum Control {
     /// (`git restore --staged -- .` with `git reset HEAD -- .`
     /// fallback). Reply is [`WorkerReply::UnstageAllChangesAck`].
     UnstageAllChanges { project_id: String },
+    /// `another-one-ojm.5` — discard one file's working-tree changes.
+    /// Untracked files are deleted from disk; tracked files are
+    /// restored from HEAD via `git restore` (with checkout fallback
+    /// for older git, mirroring `core::revert_changed_file`). The
+    /// `untracked` flag is passed through verbatim so the daemon
+    /// picks the right code path. Destructive — UI gates this
+    /// behind a confirm. Reply is
+    /// [`WorkerReply::DiscardChangedFileAck`].
+    DiscardChangedFile {
+        project_id: String,
+        path: String,
+        untracked: bool,
+        original_path: Option<String>,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -319,6 +333,10 @@ pub enum WorkerReply {
     },
     /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
     UnstageAllChangesAck {
+        changed_files: Vec<ChangedFile>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
+    DiscardChangedFileAck {
         changed_files: Vec<ChangedFile>,
     },
 }

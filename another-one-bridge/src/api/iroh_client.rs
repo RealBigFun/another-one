@@ -157,6 +157,14 @@ enum Control {
     /// `another-one-ojm.5` — unstage every staged change. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::UnstageAllChanges`.
     UnstageAllChanges { project_id: String },
+    /// `another-one-ojm.5` — discard one file's working-tree changes.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::DiscardChangedFile`.
+    DiscardChangedFile {
+        project_id: String,
+        path: String,
+        untracked: bool,
+        original_path: Option<String>,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -202,6 +210,8 @@ pub enum WorkerReply {
     StageAllChangesAck { changed_files: Vec<ChangedFile> },
     /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
     UnstageAllChangesAck { changed_files: Vec<ChangedFile> },
+    /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
+    DiscardChangedFileAck { changed_files: Vec<ChangedFile> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -972,6 +982,28 @@ impl IrohSession {
     ) -> anyhow::Result<()> {
         self.send_control(request_id, Control::UnstageAllChanges { project_id })
             .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::DiscardChangedFile`
+    /// frame.
+    pub async fn discard_changed_file(
+        &self,
+        request_id: u64,
+        project_id: String,
+        path: String,
+        untracked: bool,
+        original_path: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::DiscardChangedFile {
+                project_id,
+                path,
+                untracked,
+                original_path,
+            },
+        )
+        .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

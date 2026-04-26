@@ -58,6 +58,16 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab();
 
+  /// `another-one-ojm.5` — issue a `Control::DiscardChangedFile`
+  /// frame.
+  Future<void> discardChangedFile({
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
+  });
+
   /// Ask the daemon to launch the tab's PTY if it isn't already
   /// live. No-op on the daemon side if the tab is already running.
   /// After this, a subsequent `attach_tab` will receive bytes.
@@ -448,6 +458,11 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.unstageAllChangesAck({
     required List<ChangedFile> changedFiles,
   }) = WorkerReply_UnstageAllChangesAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
+  const factory WorkerReply.discardChangedFileAck({
+    required List<ChangedFile> changedFiles,
+  }) = WorkerReply_DiscardChangedFileAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

@@ -478,12 +478,7 @@ abstract class DaemonConnection {
     required String path,
     required bool untracked,
     String? originalPath,
-  }) {
-    throw UnimplementedError(
-      'discardChangedFile: requires Control::DiscardChangedFile wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   // ── Custom actions (titlebar split-button + modal editor) ───────
 

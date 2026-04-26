@@ -413,6 +413,44 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             .await
         })
     }
+
+    fn discard_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        untracked: bool,
+        original_path: Option<&'a str>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
+    > {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let path_arg = path.to_string();
+        let original_path = original_path.map(str::to_string);
+        Box::pin(async move {
+            run_changed_file_mutation(
+                &inner,
+                "discard_changed_file",
+                &project_id,
+                move |project_path| {
+                    let mut changed = another_one_core::project_store::ChangedFile::default();
+                    let path_for_err = path_arg.clone();
+                    changed.path = path_arg;
+                    changed.original_path = original_path;
+                    changed.untracked = untracked;
+                    if another_one_core::project_store::revert_changed_file(
+                        &project_path,
+                        &changed,
+                    ) {
+                        Ok(())
+                    } else {
+                        Err(format!("Could not discard {path_for_err}"))
+                    }
+                },
+            )
+            .await
+        })
+    }
 }
 
 /// Common scaffolding for the stage / unstage / discard / stage-all /

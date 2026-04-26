@@ -479,6 +479,37 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         );
     }
   }
+
+  /// `another-one-ojm.5` — discard one file's working-tree changes
+  /// over the iroh wire. Destructive — the calling UI gates this
+  /// behind a confirmation modal before invoking.
+  @override
+  Future<void> discardChangedFile({
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.discardChangedFile(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        path: path,
+        untracked: untracked,
+        originalPath: originalPath,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_DiscardChangedFileAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'discardChangedFile: unexpected reply variant $reply',
+        );
+    }
+  }
 }
 
 /// Exception thrown by `IrohTransport` mutator overrides when the

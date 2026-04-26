@@ -571,6 +571,29 @@ async fn handle_control(
                 }
             }
         }
+        Control::DiscardChangedFile {
+            project_id,
+            path,
+            untracked,
+            original_path,
+        } => {
+            let outcome = registry
+                .discard_changed_file(&project_id, &path, untracked, original_path.as_deref())
+                .await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::DiscardChangedFileAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
     }
     Ok(())
 }
