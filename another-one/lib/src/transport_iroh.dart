@@ -11,6 +11,8 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
+import 'rust/api/local_session.dart'
+    show GitActionScriptsView, McpSettingsView, ShortcutSettingsView;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -334,24 +336,17 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
 
   /// Issue a control frame keyed by a freshly-allocated request_id
   /// and return a future that completes with the matching daemon
-  /// reply. Domain verbs landing in `another-one-ojm.2..8` will use
-  /// this in place of the existing fire-and-forget `session.foo()`
-  /// pattern.
+  /// reply. Domain verbs landing in `another-one-ojm.2..8` use this
+  /// in place of the fire-and-forget `session.foo()` pattern that
+  /// the legacy `listProjects` / `attachTab` helpers retain.
   ///
   /// `send` is the caller-supplied closure that performs the actual
   /// FRB call once the request_id has been registered in the
   /// dispatch map — taking it as a closure means each verb decides
   /// which `Control::*` variant + arguments to encode without this
   /// helper having to know about every variant. Callers receive the
-  /// `request_id` so they can pass it to a Rust-side `send_control`
-  /// equivalent (added per-verb in domain tasks).
-  ///
-  /// Currently unused: the existing `listProjects` / `attachTab`
-  /// helpers keep the fire-and-forget shape because the contemporary
-  /// daemon doesn't yet emit replies the UI awaits per-call. Once
-  /// the wire grows verbs that DO reply (e.g. `addProject`), each
-  /// such verb routes through here.
-  // ignore: unused_element
+  /// `request_id` so they can pass it to the matching FRB method on
+  /// `IrohSession`.
   Future<WorkerReply> _sendControlAndAwait(
     Future<void> Function(int requestId) send,
   ) async {
@@ -369,5 +364,168 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       rethrow;
     }
     return completer.future;
+  }
+
+  /// Throw a developer-friendly error for a settings reply that
+  /// arrived in an unexpected variant. The wire only emits these
+  /// replies in response to specific calls, so a mismatch means the
+  /// daemon is buggy or has drifted out of lockstep with this
+  /// client. Surfaces the actual variant so logs are useful.
+  Never _unexpectedReply(String verb, WorkerReply reply) {
+    if (reply is WorkerReply_Err) {
+      throw StateError(
+        '$verb failed on the daemon: ${reply.message} '
+        '(err_kind=${reply.kind.name})',
+      );
+    }
+    throw StateError(
+      '$verb received unexpected WorkerReply variant '
+      '(${reply.runtimeType})',
+    );
+  }
+
+  // ── Settings → Git Actions (`another-one-ojm.8`) ────────────────
+
+  @override
+  Future<GitActionScriptsView> readGitActionScripts() async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.readGitActionScripts(requestId: BigInt.from(id)),
+    );
+    if (reply is WorkerReply_GitActionScriptsAck) return reply.view;
+    _unexpectedReply('readGitActionScripts', reply);
+  }
+
+  @override
+  Future<bool> setGitCommitScript(String script) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.setGitCommitScript(
+        requestId: BigInt.from(id),
+        script: script,
+      ),
+    );
+    if (reply is WorkerReply_SetGitCommitScriptAck) return reply.changed;
+    _unexpectedReply('setGitCommitScript', reply);
+  }
+
+  @override
+  Future<bool> resetGitCommitScript() async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.resetGitCommitScript(requestId: BigInt.from(id)),
+    );
+    if (reply is WorkerReply_ResetGitCommitScriptAck) return reply.changed;
+    _unexpectedReply('resetGitCommitScript', reply);
+  }
+
+  @override
+  Future<bool> setGitPrScript(String script) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.setGitPrScript(
+        requestId: BigInt.from(id),
+        script: script,
+      ),
+    );
+    if (reply is WorkerReply_SetGitPrScriptAck) return reply.changed;
+    _unexpectedReply('setGitPrScript', reply);
+  }
+
+  @override
+  Future<bool> resetGitPrScript() async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.resetGitPrScript(requestId: BigInt.from(id)),
+    );
+    if (reply is WorkerReply_ResetGitPrScriptAck) return reply.changed;
+    _unexpectedReply('resetGitPrScript', reply);
+  }
+
+  // ── Settings → Keybindings (`another-one-ojm.8`) ────────────────
+
+  @override
+  Future<ShortcutSettingsView> readShortcutSettings() async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.readShortcutSettings(requestId: BigInt.from(id)),
+    );
+    if (reply is WorkerReply_ShortcutSettingsAck) return reply.view;
+    _unexpectedReply('readShortcutSettings', reply);
+  }
+
+  @override
+  Future<void> setShortcutBinding({
+    required String actionId,
+    required String binding,
+  }) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.setShortcutBinding(
+        requestId: BigInt.from(id),
+        actionId: actionId,
+        binding: binding,
+      ),
+    );
+    if (reply is WorkerReply_SetShortcutBindingAck) return;
+    _unexpectedReply('setShortcutBinding', reply);
+  }
+
+  @override
+  Future<void> resetShortcutBinding(String actionId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.resetShortcutBinding(
+        requestId: BigInt.from(id),
+        actionId: actionId,
+      ),
+    );
+    if (reply is WorkerReply_ResetShortcutBindingAck) return;
+    _unexpectedReply('resetShortcutBinding', reply);
+  }
+
+  // ── Settings → MCP (`another-one-ojm.8`) ────────────────────────
+
+  @override
+  Future<McpSettingsView> readMcpSettings() async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.readMcpSettings(requestId: BigInt.from(id)),
+    );
+    if (reply is WorkerReply_McpSettingsAck) return reply.view;
+    _unexpectedReply('readMcpSettings', reply);
+  }
+
+  @override
+  Future<void> mcpAddFromCatalog(String catalogId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.mcpAddFromCatalog(
+        requestId: BigInt.from(id),
+        catalogId: catalogId,
+      ),
+    );
+    if (reply is WorkerReply_McpAddFromCatalogAck) return;
+    _unexpectedReply('mcpAddFromCatalog', reply);
+  }
+
+  @override
+  Future<void> mcpToggle({
+    required String entryId,
+    required String providerId,
+    required bool enabled,
+  }) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.mcpToggle(
+        requestId: BigInt.from(id),
+        entryId: entryId,
+        providerId: providerId,
+        enabled: enabled,
+      ),
+    );
+    if (reply is WorkerReply_McpToggleAck) return;
+    _unexpectedReply('mcpToggle', reply);
+  }
+
+  @override
+  Future<void> mcpRemove(String entryId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.mcpRemove(
+        requestId: BigInt.from(id),
+        entryId: entryId,
+      ),
+    );
+    if (reply is WorkerReply_McpRemoveAck) return;
+    _unexpectedReply('mcpRemove', reply);
   }
 }

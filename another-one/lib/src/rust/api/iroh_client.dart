@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'local_session.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
@@ -72,12 +73,60 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// verb to the completer-table model.
   Future<void> listProjects();
 
+  /// Send `Control::McpAddFromCatalog`. Reply arrives as
+  /// `WorkerReply::McpAddFromCatalogAck`.
+  Future<void> mcpAddFromCatalog({
+    required BigInt requestId,
+    required String catalogId,
+  });
+
+  /// Send `Control::McpRemove`. Reply arrives as
+  /// `WorkerReply::McpRemoveAck`.
+  Future<void> mcpRemove({required BigInt requestId, required String entryId});
+
+  /// Send `Control::McpToggle`. Reply arrives as
+  /// `WorkerReply::McpToggleAck`.
+  Future<void> mcpToggle({
+    required BigInt requestId,
+    required String entryId,
+    required String providerId,
+    required bool enabled,
+  });
+
   /// Allocate the next per-session request id. Dart calls this
   /// before issuing a control verb so it can register a `Completer`
   /// in its dispatch map keyed by the same id. Strictly-monotonic
   /// across the session; never returns 0 (reserved for push
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
+
+  /// Send `Control::ReadGitActionScripts`. Reply arrives via the
+  /// `subscribe_worker_replies` stream as
+  /// `WorkerReply::GitActionScriptsAck` keyed by `request_id`.
+  Future<void> readGitActionScripts({required BigInt requestId});
+
+  /// Send `Control::ReadMcpSettings`. Reply arrives as
+  /// `WorkerReply::McpSettingsAck { view }`.
+  Future<void> readMcpSettings({required BigInt requestId});
+
+  /// Send `Control::ReadShortcutSettings`. Reply arrives as
+  /// `WorkerReply::ShortcutSettingsAck { view }`.
+  Future<void> readShortcutSettings({required BigInt requestId});
+
+  /// Send `Control::ResetGitCommitScript`. Reply arrives as
+  /// `WorkerReply::ResetGitCommitScriptAck { changed }`.
+  Future<void> resetGitCommitScript({required BigInt requestId});
+
+  /// Send `Control::ResetGitPrScript`. Reply arrives as
+  /// `WorkerReply::ResetGitPrScriptAck { changed }`.
+  Future<void> resetGitPrScript({required BigInt requestId});
+
+  /// Send `Control::ResetShortcutBinding`. Reply arrives as
+  /// `WorkerReply::ResetShortcutBindingAck`.
+  Future<void> resetShortcutBinding({
+    required BigInt requestId,
+    required String actionId,
+  });
 
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
@@ -87,6 +136,28 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
+
+  /// Send `Control::SetGitCommitScript`. Reply arrives as
+  /// `WorkerReply::SetGitCommitScriptAck { changed }`.
+  Future<void> setGitCommitScript({
+    required BigInt requestId,
+    required String script,
+  });
+
+  /// Send `Control::SetGitPrScript`. Reply arrives as
+  /// `WorkerReply::SetGitPrScriptAck { changed }`.
+  Future<void> setGitPrScript({
+    required BigInt requestId,
+    required String script,
+  });
+
+  /// Send `Control::SetShortcutBinding`. Reply arrives as
+  /// `WorkerReply::SetShortcutBindingAck`.
+  Future<void> setShortcutBinding({
+    required BigInt requestId,
+    required String actionId,
+    required String binding,
+  });
 
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
@@ -329,6 +400,59 @@ sealed class WorkerReply with _$WorkerReply {
     required String message,
     required ErrKind kind,
   }) = WorkerReply_Err;
+
+  /// Reply to `Control::ReadGitActionScripts`. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::GitActionScriptsAck`.
+  const factory WorkerReply.gitActionScriptsAck({
+    required GitActionScriptsView view,
+  }) = WorkerReply_GitActionScriptsAck;
+
+  /// Reply to `Control::SetGitCommitScript`. The `changed` flag
+  /// is the post-mutation snapshot per the inline-snapshot
+  /// contract.
+  const factory WorkerReply.setGitCommitScriptAck({required bool changed}) =
+      WorkerReply_SetGitCommitScriptAck;
+
+  /// Reply to `Control::ResetGitCommitScript`.
+  const factory WorkerReply.resetGitCommitScriptAck({required bool changed}) =
+      WorkerReply_ResetGitCommitScriptAck;
+
+  /// Reply to `Control::SetGitPrScript`.
+  const factory WorkerReply.setGitPrScriptAck({required bool changed}) =
+      WorkerReply_SetGitPrScriptAck;
+
+  /// Reply to `Control::ResetGitPrScript`.
+  const factory WorkerReply.resetGitPrScriptAck({required bool changed}) =
+      WorkerReply_ResetGitPrScriptAck;
+
+  /// Reply to `Control::ReadShortcutSettings`.
+  const factory WorkerReply.shortcutSettingsAck({
+    required ShortcutSettingsView view,
+  }) = WorkerReply_ShortcutSettingsAck;
+
+  /// Reply to `Control::SetShortcutBinding`. Payload-free —
+  /// callers re-read the full snapshot if they need post-mutation
+  /// state.
+  const factory WorkerReply.setShortcutBindingAck() =
+      WorkerReply_SetShortcutBindingAck;
+
+  /// Reply to `Control::ResetShortcutBinding`.
+  const factory WorkerReply.resetShortcutBindingAck() =
+      WorkerReply_ResetShortcutBindingAck;
+
+  /// Reply to `Control::ReadMcpSettings`.
+  const factory WorkerReply.mcpSettingsAck({required McpSettingsView view}) =
+      WorkerReply_McpSettingsAck;
+
+  /// Reply to `Control::McpAddFromCatalog`.
+  const factory WorkerReply.mcpAddFromCatalogAck() =
+      WorkerReply_McpAddFromCatalogAck;
+
+  /// Reply to `Control::McpToggle`.
+  const factory WorkerReply.mcpToggleAck() = WorkerReply_McpToggleAck;
+
+  /// Reply to `Control::McpRemove`.
+  const factory WorkerReply.mcpRemoveAck() = WorkerReply_McpRemoveAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

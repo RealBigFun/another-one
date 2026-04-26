@@ -716,98 +716,66 @@ abstract class DaemonConnection {
   }
 
   // ── Settings → Git Actions ───────────────────────────────────────
+  //
+  // Wire-bound on both transports as of `another-one-ojm.8`:
+  // `LocalTransport` calls into the in-process `LocalSession`; the
+  // remote `IrohTransport` round-trips the call via the matching
+  // `Control::*` / `WorkerReply::*GitActionScript*` frame pair.
 
   /// Snapshot of both git-action LLM scripts (commit + PR), with
   /// the resolved-current text and a per-script "using default"
   /// flag.
-  Future<GitActionScriptsView> readGitActionScripts() {
-    throw UnimplementedError(
-      'readGitActionScripts: requires Control::ReadGitActionScripts wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<GitActionScriptsView> readGitActionScripts();
 
   /// Update the commit-message generation script. Empty / matching
-  /// the default reverts to the built-in template.
-  Future<bool> setGitCommitScript(String script) {
-    throw UnimplementedError(
-      'setGitCommitScript: requires Control::SetGitCommitScript wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  /// the default reverts to the built-in template. Returns whether
+  /// the on-disk store actually changed.
+  Future<bool> setGitCommitScript(String script);
 
   /// Reset the commit-message script back to the built-in default.
-  Future<bool> resetGitCommitScript() {
-    throw UnimplementedError(
-      'resetGitCommitScript: requires Control::ResetGitCommitScript wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  /// Returns whether anything was removed.
+  Future<bool> resetGitCommitScript();
 
   /// Update the PR title/body generation script.
-  Future<bool> setGitPrScript(String script) {
-    throw UnimplementedError(
-      'setGitPrScript: requires Control::SetGitPrScript wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<bool> setGitPrScript(String script);
 
   /// Reset the PR script back to the built-in default.
-  Future<bool> resetGitPrScript() {
-    throw UnimplementedError(
-      'resetGitPrScript: requires Control::ResetGitPrScript wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<bool> resetGitPrScript();
 
   // ── Settings → Keybindings ───────────────────────────────────────
+  //
+  // Wire-bound on both transports as of `another-one-ojm.8`. Unknown
+  // action ids surface as a daemon-side `WorkerReply::Err` with
+  // `kind == ErrKind.unknownId`; the transport implementations
+  // translate that into a `StateError` with the original message
+  // intact for logging.
 
   /// Snapshot of every shortcut action paired with its current
   /// + default binding strings (kebab-case modifiers).
-  Future<ShortcutSettingsView> readShortcutSettings() {
-    throw UnimplementedError(
-      'readShortcutSettings: requires Control::ReadShortcutSettings '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<ShortcutSettingsView> readShortcutSettings();
 
   /// Set / clear a shortcut binding. Empty `binding` clears the
   /// action (it becomes inert).
   Future<void> setShortcutBinding({
     required String actionId,
     required String binding,
-  }) {
-    throw UnimplementedError(
-      'setShortcutBinding: requires Control::SetShortcutBinding wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Reset a shortcut to its built-in default.
-  Future<void> resetShortcutBinding(String actionId) {
-    throw UnimplementedError(
-      'resetShortcutBinding: requires Control::ResetShortcutBinding '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<void> resetShortcutBinding(String actionId);
 
   // ── Settings → MCP ───────────────────────────────────────────────
+  //
+  // Wire-bound on both transports as of `another-one-ojm.8`. Toggle
+  // / remove run `sync_all` on the daemon so the harness's native
+  // config picks up the change before the ack returns.
 
   /// Snapshot of the MCP catalog + on-disk registry.
-  Future<McpSettingsView> readMcpSettings() {
-    throw UnimplementedError(
-      'readMcpSettings: requires Control::ReadMcpSettings wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<McpSettingsView> readMcpSettings();
 
-  /// Add a catalog entry to the registry.
-  Future<void> mcpAddFromCatalog(String catalogId) {
-    throw UnimplementedError(
-      'mcpAddFromCatalog: requires Control::McpAddFromCatalog wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  /// Add a catalog entry to the registry. No-op when the id isn't
+  /// a known catalog id or the entry's already in the registry.
+  Future<void> mcpAddFromCatalog(String catalogId);
 
   /// Toggle a registry entry's enabled flag for one provider.
   /// Runs `sync_all` on success.
@@ -815,20 +783,10 @@ abstract class DaemonConnection {
     required String entryId,
     required String providerId,
     required bool enabled,
-  }) {
-    throw UnimplementedError(
-      'mcpToggle: requires Control::McpToggle wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Remove a registry entry. Runs `sync_all` on success.
-  Future<void> mcpRemove(String entryId) {
-    throw UnimplementedError(
-      'mcpRemove: requires Control::McpRemove wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<void> mcpRemove(String entryId);
 }
 
 /// In-memory list of active [DaemonConnection]s. Holds N regardless

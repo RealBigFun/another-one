@@ -3575,7 +3575,11 @@ pub struct OpenInSettingsView {
 /// scripts (built-in default when there's no override) plus a
 /// `using_default` flag per script so the UI can flip the
 /// subtitle copy without re-checking.
-#[derive(Debug, Clone)]
+///
+/// `serde::Deserialize` is wired so the iroh wire's
+/// `WorkerReply::GitActionScriptsAck` (introduced in
+/// `another-one-ojm.8`) decodes straight into this struct.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct GitActionScriptsView {
     pub commit_script: String,
     pub commit_using_default: bool,
@@ -3586,7 +3590,7 @@ pub struct GitActionScriptsView {
 /// One row of the Settings → Keybindings page. Carries the
 /// human-readable label + the current binding string + the
 /// built-in default binding for "reset" affordances.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct ShortcutSettingsRow {
     /// Stable kebab-case id for the action (`cycle-projects`,
     /// `new-task`, etc.). Round-trips through
@@ -3600,13 +3604,14 @@ pub struct ShortcutSettingsRow {
 }
 
 /// Snapshot returned by [`LocalSession::read_shortcut_settings`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct ShortcutSettingsView {
     pub actions: Vec<ShortcutSettingsRow>,
 }
 
 /// FRB-friendly mirror of [`another_one_core::mcp::McpSource`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum McpSourceDto {
     Catalog,
     Custom,
@@ -3614,14 +3619,15 @@ pub enum McpSourceDto {
 }
 
 /// FRB-friendly mirror of [`another_one_core::mcp::McpTransport`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum McpTransportKindDto {
     Stdio,
     Http,
 }
 
 /// One row of the Settings → MCP page's registry section.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct McpServerDto {
     pub id: String,
     pub label: String,
@@ -3636,7 +3642,7 @@ pub struct McpServerDto {
 /// One row of the Settings → MCP page's catalog section. Carries
 /// the static metadata; the UI flips this into an `McpServerDto`
 /// row after `mcp_add_from_catalog`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct McpCatalogEntryDto {
     pub id: String,
     pub label: String,
@@ -3645,7 +3651,7 @@ pub struct McpCatalogEntryDto {
 }
 
 /// Snapshot returned by [`LocalSession::read_mcp_settings`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct McpSettingsView {
     pub catalog_entries: Vec<McpCatalogEntryDto>,
     pub registry_entries: Vec<McpServerDto>,

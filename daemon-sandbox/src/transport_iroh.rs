@@ -491,6 +491,255 @@ async fn handle_control(
             // drop it rather than error.
             debug!("stray Control::Hello from already-paired peer; ignored");
         }
+
+        // ── Settings → Git Actions (`another-one-ojm.8`) ───────────
+        Control::ReadGitActionScripts => {
+            let view = registry.read_git_action_scripts();
+            send_worker_reply(
+                outbound_tx,
+                request_id,
+                &WorkerReply::GitActionScriptsAck { view },
+            )
+            .await?;
+        }
+        Control::SetGitCommitScript { script } => {
+            match registry.set_git_commit_script(&script) {
+                Ok(changed) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::SetGitCommitScriptAck { changed },
+                    )
+                    .await?;
+                }
+                Err(message) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::Err {
+                            message,
+                            kind: crate::frame::ErrKind::Internal,
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
+        Control::ResetGitCommitScript => {
+            match registry.reset_git_commit_script() {
+                Ok(changed) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::ResetGitCommitScriptAck { changed },
+                    )
+                    .await?;
+                }
+                Err(message) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::Err {
+                            message,
+                            kind: crate::frame::ErrKind::Internal,
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
+        Control::SetGitPrScript { script } => {
+            match registry.set_git_pr_script(&script) {
+                Ok(changed) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::SetGitPrScriptAck { changed },
+                    )
+                    .await?;
+                }
+                Err(message) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::Err {
+                            message,
+                            kind: crate::frame::ErrKind::Internal,
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
+        Control::ResetGitPrScript => {
+            match registry.reset_git_pr_script() {
+                Ok(changed) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::ResetGitPrScriptAck { changed },
+                    )
+                    .await?;
+                }
+                Err(message) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::Err {
+                            message,
+                            kind: crate::frame::ErrKind::Internal,
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        // ── Settings → Keybindings (`another-one-ojm.8`) ───────────
+        Control::ReadShortcutSettings => {
+            let view = registry.read_shortcut_settings();
+            send_worker_reply(
+                outbound_tx,
+                request_id,
+                &WorkerReply::ShortcutSettingsAck { view },
+            )
+            .await?;
+        }
+        Control::SetShortcutBinding {
+            action_id,
+            binding,
+        } => match registry.set_shortcut_binding(&action_id, &binding) {
+            Ok(()) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::SetShortcutBindingAck,
+                )
+                .await?;
+            }
+            Err(message) => {
+                let kind = if message.contains("unknown action id") {
+                    crate::frame::ErrKind::UnknownId
+                } else {
+                    crate::frame::ErrKind::Internal
+                };
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::Err { message, kind },
+                )
+                .await?;
+            }
+        },
+        Control::ResetShortcutBinding { action_id } => {
+            match registry.reset_shortcut_binding(&action_id) {
+                Ok(()) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::ResetShortcutBindingAck,
+                    )
+                    .await?;
+                }
+                Err(message) => {
+                    let kind = if message.contains("unknown action id") {
+                        crate::frame::ErrKind::UnknownId
+                    } else {
+                        crate::frame::ErrKind::Internal
+                    };
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::Err { message, kind },
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        // ── Settings → MCP (`another-one-ojm.8`) ──────────────────
+        Control::ReadMcpSettings => {
+            let view = registry.read_mcp_settings();
+            send_worker_reply(
+                outbound_tx,
+                request_id,
+                &WorkerReply::McpSettingsAck { view },
+            )
+            .await?;
+        }
+        Control::McpAddFromCatalog { catalog_id } => {
+            match registry.mcp_add_from_catalog(&catalog_id) {
+                Ok(()) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::McpAddFromCatalogAck,
+                    )
+                    .await?;
+                }
+                Err(message) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::Err {
+                            message,
+                            kind: crate::frame::ErrKind::Internal,
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
+        Control::McpToggle {
+            entry_id,
+            provider_id,
+            enabled,
+        } => match registry.mcp_toggle(&entry_id, &provider_id, enabled) {
+            Ok(()) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::McpToggleAck,
+                )
+                .await?;
+            }
+            Err(message) => {
+                let kind = if message.contains("unknown provider id") {
+                    crate::frame::ErrKind::UnknownId
+                } else {
+                    crate::frame::ErrKind::Internal
+                };
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::Err { message, kind },
+                )
+                .await?;
+            }
+        },
+        Control::McpRemove { entry_id } => {
+            match registry.mcp_remove(&entry_id) {
+                Ok(()) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::McpRemoveAck,
+                    )
+                    .await?;
+                }
+                Err(message) => {
+                    send_worker_reply(
+                        outbound_tx,
+                        request_id,
+                        &WorkerReply::Err {
+                            message,
+                            kind: crate::frame::ErrKind::Internal,
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
     }
     Ok(())
 }

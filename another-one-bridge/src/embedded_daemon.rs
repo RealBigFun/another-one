@@ -40,7 +40,9 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    AgentProvider, GitActionScriptsView, McpCatalogEntryDto, McpServerDto,
+    McpSettingsView, McpSourceDto, McpTransportKindDto, ProjectKind, ProjectSummary,
+    ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -308,6 +310,303 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             }
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
+    }
+
+    // ── Settings → Git Actions (`another-one-ojm.8`) ───────────────
+
+    fn read_git_action_scripts(&self) -> GitActionScriptsView {
+        // Mirrors `LocalSession::read_git_action_scripts`. When the
+        // registry has been dropped (process shutdown) we surface
+        // built-in defaults so the wire still has something coherent
+        // to send back rather than failing the read.
+        self.with_state(|state| {
+            let store = &state.project_store;
+            GitActionScriptsView {
+                commit_script: store.git_commit_generation_script().to_string(),
+                commit_using_default: store
+                    .ui
+                    .git_commit_generation_script
+                    .is_none(),
+                pr_script: store.git_pr_generation_script().to_string(),
+                pr_using_default: store.ui.git_pr_generation_script.is_none(),
+            }
+        })
+        .unwrap_or_else(|| GitActionScriptsView {
+            commit_script: String::new(),
+            commit_using_default: true,
+            pr_script: String::new(),
+            pr_using_default: true,
+        })
+    }
+
+    fn set_git_commit_script(&self, script: &str) -> Result<bool, String> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_git_commit_generation_script(script.to_string())
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn reset_git_commit_script(&self) -> Result<bool, String> {
+        self.with_state(|state| {
+            state.project_store.reset_git_commit_generation_script()
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn set_git_pr_script(&self, script: &str) -> Result<bool, String> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_git_pr_generation_script(script.to_string())
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn reset_git_pr_script(&self) -> Result<bool, String> {
+        // Mirrors LocalSession's inline reset for the PR script —
+        // core only exposes the commit-script reset helper, so we
+        // null the override field directly and persist if changed.
+        self.with_state(|state| {
+            let removed = state
+                .project_store
+                .ui
+                .git_pr_generation_script
+                .take()
+                .is_some();
+            if removed {
+                state.project_store.save();
+            }
+            removed
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    // ── Settings → Keybindings (`another-one-ojm.8`) ───────────────
+
+    fn read_shortcut_settings(&self) -> ShortcutSettingsView {
+        self.with_state(|state| {
+            let shortcuts = &state.project_store.ui.shortcuts;
+            let actions = another_one_core::shortcuts::ALL_SHORTCUT_ACTIONS
+                .iter()
+                .map(|action| ShortcutSettingsRow {
+                    id: shortcut_action_id(*action).to_string(),
+                    label: action.label().to_string(),
+                    current_binding: shortcuts.binding_for(*action).to_string(),
+                    default_binding: action.default_binding().to_string(),
+                })
+                .collect();
+            ShortcutSettingsView { actions }
+        })
+        .unwrap_or(ShortcutSettingsView {
+            actions: Vec::new(),
+        })
+    }
+
+    fn set_shortcut_binding(
+        &self,
+        action_id: &str,
+        binding: &str,
+    ) -> Result<(), String> {
+        let action = parse_shortcut_action_id(action_id)
+            .ok_or_else(|| format!("unknown action id `{action_id}`"))?;
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_shortcut_binding(action, binding.to_string());
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn reset_shortcut_binding(&self, action_id: &str) -> Result<(), String> {
+        let action = parse_shortcut_action_id(action_id)
+            .ok_or_else(|| format!("unknown action id `{action_id}`"))?;
+        self.with_state(|state| {
+            state.project_store.reset_shortcut_binding(action);
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    // ── Settings → MCP (`another-one-ojm.8`) ───────────────────────
+
+    fn read_mcp_settings(&self) -> McpSettingsView {
+        // MCP registry is on-disk, not held in `RegistryState`, so
+        // this mirrors `LocalSession::read_mcp_settings` directly:
+        // load + project both the catalog and the persisted entries
+        // into wire DTOs.
+        let registry = another_one_core::mcp::registry::McpRegistry::load();
+        let catalog_entries = another_one_core::mcp::catalog::entries()
+            .iter()
+            .map(|entry| McpCatalogEntryDto {
+                id: entry.id.to_string(),
+                label: entry.label.to_string(),
+                description: entry.description.to_string(),
+                docs_url: entry.docs_url.to_string(),
+            })
+            .collect();
+        let registry_entries = registry
+            .entries
+            .iter()
+            .map(mcp_server_to_wire)
+            .collect();
+        McpSettingsView {
+            catalog_entries,
+            registry_entries,
+            sync_error_provider_ids: Vec::new(),
+        }
+    }
+
+    fn mcp_add_from_catalog(&self, catalog_id: &str) -> Result<(), String> {
+        let entry = match another_one_core::mcp::catalog::find(catalog_id) {
+            Some(e) => e,
+            None => return Ok(()),
+        };
+        let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        registry.upsert(another_one_core::mcp::catalog::instantiate(entry));
+        registry
+            .save()
+            .map_err(|e| format!("save mcp registry: {e}"))?;
+        Ok(())
+    }
+
+    fn mcp_toggle(
+        &self,
+        entry_id: &str,
+        provider_id: &str,
+        enabled: bool,
+    ) -> Result<(), String> {
+        let provider = parse_provider_id(provider_id)
+            .ok_or_else(|| format!("unknown provider id `{provider_id}`"))?;
+        let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        if !registry.toggle(entry_id, provider, enabled) {
+            return Ok(());
+        }
+        let _report = registry.sync_all();
+        registry
+            .save()
+            .map_err(|e| format!("save mcp registry: {e}"))?;
+        Ok(())
+    }
+
+    fn mcp_remove(&self, entry_id: &str) -> Result<(), String> {
+        let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        if !registry.remove(entry_id) {
+            return Ok(());
+        }
+        let _report = registry.sync_all();
+        registry
+            .save()
+            .map_err(|e| format!("save mcp registry: {e}"))?;
+        Ok(())
+    }
+}
+
+// ── Settings helpers (mirror of `api/local_session.rs`) ────────────
+//
+// LocalSession owns the source-of-truth versions of these helpers. We
+// can't reach into that module directly without importing it (and the
+// task scope says don't touch LocalSession), so the bridge keeps a
+// small parallel copy here. Wire / on-disk ids must round-trip
+// identically — when LocalSession's mapping changes, this one moves
+// with it. Once `another-one-bridge::api::local_session` is deleted
+// per ADR `another-one-67l`, these become the canonical mappings.
+
+fn shortcut_action_id(
+    action: another_one_core::shortcuts::ShortcutAction,
+) -> &'static str {
+    use another_one_core::shortcuts::ShortcutAction;
+    match action {
+        ShortcutAction::CycleProjects => "cycle-projects",
+        ShortcutAction::NewTabInCurrentTask => "new-tab-in-current-task",
+        ShortcutAction::NewTask => "new-task",
+        ShortcutAction::CloseCurrentTab => "close-current-tab",
+        ShortcutAction::NextTab => "next-tab",
+        ShortcutAction::PreviousTab => "previous-tab",
+        ShortcutAction::NextTask => "next-task",
+        ShortcutAction::PreviousTask => "previous-task",
+    }
+}
+
+fn parse_shortcut_action_id(
+    id: &str,
+) -> Option<another_one_core::shortcuts::ShortcutAction> {
+    use another_one_core::shortcuts::ShortcutAction;
+    match id {
+        "cycle-projects" => Some(ShortcutAction::CycleProjects),
+        "new-tab-in-current-task" => Some(ShortcutAction::NewTabInCurrentTask),
+        "new-task" => Some(ShortcutAction::NewTask),
+        "close-current-tab" => Some(ShortcutAction::CloseCurrentTab),
+        "next-tab" => Some(ShortcutAction::NextTab),
+        "previous-tab" => Some(ShortcutAction::PreviousTab),
+        "next-task" => Some(ShortcutAction::NextTask),
+        "previous-task" => Some(ShortcutAction::PreviousTask),
+        _ => None,
+    }
+}
+
+fn provider_id(p: AgentProviderKind) -> &'static str {
+    match p {
+        AgentProviderKind::ClaudeCode => "claude-code",
+        AgentProviderKind::CursorAgent => "cursor-agent",
+        AgentProviderKind::Codex => "codex",
+        AgentProviderKind::Pi => "pi",
+        AgentProviderKind::Gemini => "gemini",
+        AgentProviderKind::OpenCode => "opencode",
+        AgentProviderKind::Amp => "amp",
+        AgentProviderKind::RovoDev => "rovo-dev",
+        AgentProviderKind::Forge => "forge",
+    }
+}
+
+fn parse_provider_id(id: &str) -> Option<AgentProviderKind> {
+    match id {
+        "claude-code" => Some(AgentProviderKind::ClaudeCode),
+        "cursor-agent" => Some(AgentProviderKind::CursorAgent),
+        "codex" => Some(AgentProviderKind::Codex),
+        "pi" => Some(AgentProviderKind::Pi),
+        "gemini" => Some(AgentProviderKind::Gemini),
+        "opencode" => Some(AgentProviderKind::OpenCode),
+        "amp" => Some(AgentProviderKind::Amp),
+        "rovo-dev" => Some(AgentProviderKind::RovoDev),
+        "forge" => Some(AgentProviderKind::Forge),
+        _ => None,
+    }
+}
+
+fn mcp_server_to_wire(server: &another_one_core::mcp::McpServer) -> McpServerDto {
+    let enabled_for = [
+        AgentProviderKind::ClaudeCode,
+        AgentProviderKind::CursorAgent,
+        AgentProviderKind::Codex,
+        AgentProviderKind::Gemini,
+        AgentProviderKind::OpenCode,
+        AgentProviderKind::Amp,
+    ]
+    .into_iter()
+    .filter(|p| server.enabled_for.contains(p))
+    .map(provider_id)
+    .map(str::to_string)
+    .collect();
+    McpServerDto {
+        id: server.id.clone(),
+        label: server.label.clone(),
+        source: match server.source {
+            another_one_core::mcp::McpSource::Catalog => McpSourceDto::Catalog,
+            another_one_core::mcp::McpSource::Custom => McpSourceDto::Custom,
+            another_one_core::mcp::McpSource::BuiltInDaemon => {
+                McpSourceDto::BuiltInDaemon
+            }
+        },
+        transport_kind: match server.transport {
+            another_one_core::mcp::McpTransport::Stdio { .. } => {
+                McpTransportKindDto::Stdio
+            }
+            another_one_core::mcp::McpTransport::Http { .. } => {
+                McpTransportKindDto::Http
+            }
+        },
+        enabled_for,
     }
 }
 

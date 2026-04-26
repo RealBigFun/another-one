@@ -157,6 +157,68 @@ pub enum Control {
         #[serde(default)]
         protocol_version: u32,
     },
+    /// Settings → Git Actions: snapshot the commit + PR LLM scripts
+    /// (resolved-current text plus a `using_default` flag per script).
+    /// Reply: [`WorkerReply::GitActionScriptsAck`]. Mirrors
+    /// `LocalSession::read_git_action_scripts`.
+    ReadGitActionScripts,
+    /// Settings → Git Actions: replace the commit-message generation
+    /// script. Empty / matching the default reverts to the built-in
+    /// template. Reply: [`WorkerReply::SetGitCommitScriptAck`] with
+    /// the post-mutation `changed` flag (per the inline-snapshot
+    /// contract).
+    SetGitCommitScript { script: String },
+    /// Settings → Git Actions: drop the commit-script override, revert
+    /// to the built-in default. Reply:
+    /// [`WorkerReply::ResetGitCommitScriptAck`].
+    ResetGitCommitScript,
+    /// Settings → Git Actions: replace the PR title/body generation
+    /// script. Reply: [`WorkerReply::SetGitPrScriptAck`].
+    SetGitPrScript { script: String },
+    /// Settings → Git Actions: drop the PR-script override. Reply:
+    /// [`WorkerReply::ResetGitPrScriptAck`].
+    ResetGitPrScript,
+    /// Settings → Keybindings: snapshot every shortcut action paired
+    /// with its current + default binding. Reply:
+    /// [`WorkerReply::ShortcutSettingsAck`].
+    ReadShortcutSettings,
+    /// Settings → Keybindings: set / clear one shortcut binding.
+    /// Empty `binding` clears the action (it becomes inert).
+    /// `action_id` is the kebab-case id (`new-task`, `cycle-projects`,
+    /// etc.); the daemon returns
+    /// [`WorkerReply::Err`] with [`ErrKind::UnknownId`] when it
+    /// doesn't recognise the id. Reply on success:
+    /// [`WorkerReply::SetShortcutBindingAck`].
+    SetShortcutBinding {
+        action_id: String,
+        binding: String,
+    },
+    /// Settings → Keybindings: reset one shortcut to its built-in
+    /// default. Reply: [`WorkerReply::ResetShortcutBindingAck`].
+    ResetShortcutBinding { action_id: String },
+    /// Settings → MCP: snapshot the catalog + on-disk registry. Reply:
+    /// [`WorkerReply::McpSettingsAck`].
+    ReadMcpSettings,
+    /// Settings → MCP: add one catalog entry to the registry. No-op
+    /// when `catalog_id` isn't a known catalog id or the entry's
+    /// already in the registry. Reply:
+    /// [`WorkerReply::McpAddFromCatalogAck`].
+    McpAddFromCatalog { catalog_id: String },
+    /// Settings → MCP: toggle one entry's enabled flag for one
+    /// provider. `provider_id` is kebab-case (`claude-code`,
+    /// `cursor-agent`, etc.) — unknown ids surface as
+    /// [`WorkerReply::Err`] with [`ErrKind::UnknownId`]. Runs
+    /// `sync_all` on success so the harness's native config picks
+    /// up the change. Reply on success:
+    /// [`WorkerReply::McpToggleAck`].
+    McpToggle {
+        entry_id: String,
+        provider_id: String,
+        enabled: bool,
+    },
+    /// Settings → MCP: remove one entry from the registry. Runs
+    /// `sync_all` on success. Reply: [`WorkerReply::McpRemoveAck`].
+    McpRemove { entry_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -265,6 +327,37 @@ pub enum WorkerReply {
         #[serde(rename = "err_kind")]
         kind: ErrKind,
     },
+    /// Reply to [`Control::ReadGitActionScripts`].
+    GitActionScriptsAck { view: GitActionScriptsView },
+    /// Reply to [`Control::SetGitCommitScript`]. Inline-snapshot per
+    /// the mutator contract: the `changed` flag is the post-mutation
+    /// state so the issuing client doesn't need a follow-up read to
+    /// know whether anything moved.
+    SetGitCommitScriptAck { changed: bool },
+    /// Reply to [`Control::ResetGitCommitScript`].
+    ResetGitCommitScriptAck { changed: bool },
+    /// Reply to [`Control::SetGitPrScript`].
+    SetGitPrScriptAck { changed: bool },
+    /// Reply to [`Control::ResetGitPrScript`].
+    ResetGitPrScriptAck { changed: bool },
+    /// Reply to [`Control::ReadShortcutSettings`].
+    ShortcutSettingsAck { view: ShortcutSettingsView },
+    /// Reply to [`Control::SetShortcutBinding`]. Mutator contract:
+    /// the bindings page reads the full snapshot via
+    /// [`Control::ReadShortcutSettings`] after the ack, so this ack
+    /// is intentionally payload-free — the LocalSession surface
+    /// returns `()` for the same reason.
+    SetShortcutBindingAck,
+    /// Reply to [`Control::ResetShortcutBinding`].
+    ResetShortcutBindingAck,
+    /// Reply to [`Control::ReadMcpSettings`].
+    McpSettingsAck { view: McpSettingsView },
+    /// Reply to [`Control::McpAddFromCatalog`].
+    McpAddFromCatalogAck,
+    /// Reply to [`Control::McpToggle`].
+    McpToggleAck,
+    /// Reply to [`Control::McpRemove`].
+    McpRemoveAck,
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —
@@ -413,6 +506,98 @@ pub enum AgentProvider {
     RovoDev,
     Forge,
     Shell,
+}
+
+// ── Settings → Git Actions wire types ────────────────────────────
+
+/// Wire mirror of `another_one_bridge::api::local_session::GitActionScriptsView`.
+/// Snapshot of both LLM scripts the Settings → Git Actions page edits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitActionScriptsView {
+    pub commit_script: String,
+    pub commit_using_default: bool,
+    pub pr_script: String,
+    pub pr_using_default: bool,
+}
+
+// ── Settings → Keybindings wire types ────────────────────────────
+
+/// Wire mirror of
+/// `another_one_bridge::api::local_session::ShortcutSettingsRow`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShortcutSettingsRow {
+    /// Stable kebab-case action id (`new-task`, `cycle-projects`,
+    /// etc.). Round-trips through [`Control::SetShortcutBinding`] and
+    /// [`Control::ResetShortcutBinding`].
+    pub id: String,
+    pub label: String,
+    /// Current binding string, e.g. `"cmd-shift-]"`. Empty when the
+    /// action is intentionally cleared.
+    pub current_binding: String,
+    pub default_binding: String,
+}
+
+/// Wire mirror of
+/// `another_one_bridge::api::local_session::ShortcutSettingsView`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShortcutSettingsView {
+    pub actions: Vec<ShortcutSettingsRow>,
+}
+
+// ── Settings → MCP wire types ────────────────────────────────────
+
+/// Wire mirror of
+/// `another_one_bridge::api::local_session::McpSourceDto`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpSourceDto {
+    Catalog,
+    Custom,
+    BuiltInDaemon,
+}
+
+/// Wire mirror of
+/// `another_one_bridge::api::local_session::McpTransportKindDto`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTransportKindDto {
+    Stdio,
+    Http,
+}
+
+/// Wire mirror of
+/// `another_one_bridge::api::local_session::McpServerDto`. One row of
+/// the Settings → MCP page's registry section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerDto {
+    pub id: String,
+    pub label: String,
+    pub source: McpSourceDto,
+    pub transport_kind: McpTransportKindDto,
+    /// Provider ids (kebab-case: `claude-code`, `cursor-agent`, ...).
+    pub enabled_for: Vec<String>,
+}
+
+/// Wire mirror of
+/// `another_one_bridge::api::local_session::McpCatalogEntryDto`. One
+/// row of the Settings → MCP page's catalog section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpCatalogEntryDto {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub docs_url: String,
+}
+
+/// Wire mirror of
+/// `another_one_bridge::api::local_session::McpSettingsView`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSettingsView {
+    pub catalog_entries: Vec<McpCatalogEntryDto>,
+    pub registry_entries: Vec<McpServerDto>,
+    /// Providers whose last sync failed — UI tints their toggle red.
+    /// Empty when there's no recorded sync error (matches LocalSession).
+    pub sync_error_provider_ids: Vec<String>,
 }
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the

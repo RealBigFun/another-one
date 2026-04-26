@@ -135,6 +135,40 @@ enum Control {
         pair_token: Option<String>,
         protocol_version: u32,
     },
+    // ── Settings → Git Actions (`another-one-ojm.8`) ──────────────
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ReadGitActionScripts`.
+    ReadGitActionScripts,
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetGitCommitScript`.
+    SetGitCommitScript { script: String },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ResetGitCommitScript`.
+    ResetGitCommitScript,
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetGitPrScript`.
+    SetGitPrScript { script: String },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ResetGitPrScript`.
+    ResetGitPrScript,
+    // ── Settings → Keybindings (`another-one-ojm.8`) ──────────────
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ReadShortcutSettings`.
+    ReadShortcutSettings,
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetShortcutBinding`.
+    SetShortcutBinding {
+        action_id: String,
+        binding: String,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ResetShortcutBinding`.
+    ResetShortcutBinding { action_id: String },
+    // ── Settings → MCP (`another-one-ojm.8`) ──────────────────────
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::ReadMcpSettings`.
+    ReadMcpSettings,
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::McpAddFromCatalog`.
+    McpAddFromCatalog { catalog_id: String },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::McpToggle`.
+    McpToggle {
+        entry_id: String,
+        provider_id: String,
+        enabled: bool,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::McpRemove`.
+    McpRemove { entry_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -166,6 +200,38 @@ pub enum WorkerReply {
         #[serde(rename = "err_kind")]
         kind: ErrKind,
     },
+    // ── Settings → Git Actions (`another-one-ojm.8`) ──────────────
+    /// Reply to `Control::ReadGitActionScripts`. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::GitActionScriptsAck`.
+    GitActionScriptsAck { view: GitActionScriptsView },
+    /// Reply to `Control::SetGitCommitScript`. The `changed` flag
+    /// is the post-mutation snapshot per the inline-snapshot
+    /// contract.
+    SetGitCommitScriptAck { changed: bool },
+    /// Reply to `Control::ResetGitCommitScript`.
+    ResetGitCommitScriptAck { changed: bool },
+    /// Reply to `Control::SetGitPrScript`.
+    SetGitPrScriptAck { changed: bool },
+    /// Reply to `Control::ResetGitPrScript`.
+    ResetGitPrScriptAck { changed: bool },
+    // ── Settings → Keybindings (`another-one-ojm.8`) ──────────────
+    /// Reply to `Control::ReadShortcutSettings`.
+    ShortcutSettingsAck { view: ShortcutSettingsView },
+    /// Reply to `Control::SetShortcutBinding`. Payload-free —
+    /// callers re-read the full snapshot if they need post-mutation
+    /// state.
+    SetShortcutBindingAck,
+    /// Reply to `Control::ResetShortcutBinding`.
+    ResetShortcutBindingAck,
+    // ── Settings → MCP (`another-one-ojm.8`) ──────────────────────
+    /// Reply to `Control::ReadMcpSettings`.
+    McpSettingsAck { view: McpSettingsView },
+    /// Reply to `Control::McpAddFromCatalog`.
+    McpAddFromCatalogAck,
+    /// Reply to `Control::McpToggle`.
+    McpToggleAck,
+    /// Reply to `Control::McpRemove`.
+    McpRemoveAck,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -297,6 +363,26 @@ pub enum AgentProvider {
 
 // `PullRequestInfo` + `PullRequestState` removed with the dead
 // `WorkerReply::PullRequestStatus` variant on the daemon side.
+
+// ── Settings → Git Actions / Keybindings / MCP wire types ────────
+//
+// Wire payloads introduced by `another-one-ojm.8`. The structs are
+// declared on the LocalSession side already (with FRB bindings the
+// Dart UI consumes); we re-use them here so the WorkerReply variants
+// landing in this module deserialize straight into the FRB-bound
+// shape Dart speaks. Two same-named structs across modules would
+// silently strip the SseEncode impl off one of them, so the cross-
+// module re-use is intentional, not duplication.
+//
+// Once `another-one-bridge::api::local_session` is deleted per ADR
+// `another-one-67l`, these become first-class wire types declared
+// here. Until then the dependency direction is iroh_client →
+// local_session.
+
+pub use crate::api::local_session::{
+    GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView,
+    McpSourceDto, McpTransportKindDto, ShortcutSettingsRow, ShortcutSettingsView,
+};
 
 /// Writes one frame to the Iroh send stream.
 async fn write_frame(send: &mut SendStream, ty: u8, payload: &[u8]) -> anyhow::Result<()> {
@@ -851,6 +937,145 @@ impl IrohSession {
             Control::LaunchTab { section_id, tab_id },
         )
         .await
+    }
+
+    // ── Settings → Git Actions (`another-one-ojm.8`) ──────────────
+    //
+    // Each method takes an explicit `request_id` so the Dart
+    // `IrohTransport._sendControlAndAwait` helper — which allocates
+    // the id, registers a `Completer<WorkerReply>` keyed by it, and
+    // *then* calls these methods — round-trips replies through its
+    // dispatch map. Self-allocating here would mismatch ids and the
+    // Dart completer would never fire.
+
+    /// Send `Control::ReadGitActionScripts`. Reply arrives via the
+    /// `subscribe_worker_replies` stream as
+    /// `WorkerReply::GitActionScriptsAck` keyed by `request_id`.
+    pub async fn read_git_action_scripts(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadGitActionScripts)
+            .await
+    }
+
+    /// Send `Control::SetGitCommitScript`. Reply arrives as
+    /// `WorkerReply::SetGitCommitScriptAck { changed }`.
+    pub async fn set_git_commit_script(
+        &self,
+        request_id: u64,
+        script: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetGitCommitScript { script })
+            .await
+    }
+
+    /// Send `Control::ResetGitCommitScript`. Reply arrives as
+    /// `WorkerReply::ResetGitCommitScriptAck { changed }`.
+    pub async fn reset_git_commit_script(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ResetGitCommitScript)
+            .await
+    }
+
+    /// Send `Control::SetGitPrScript`. Reply arrives as
+    /// `WorkerReply::SetGitPrScriptAck { changed }`.
+    pub async fn set_git_pr_script(
+        &self,
+        request_id: u64,
+        script: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetGitPrScript { script })
+            .await
+    }
+
+    /// Send `Control::ResetGitPrScript`. Reply arrives as
+    /// `WorkerReply::ResetGitPrScriptAck { changed }`.
+    pub async fn reset_git_pr_script(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ResetGitPrScript)
+            .await
+    }
+
+    // ── Settings → Keybindings (`another-one-ojm.8`) ──────────────
+
+    /// Send `Control::ReadShortcutSettings`. Reply arrives as
+    /// `WorkerReply::ShortcutSettingsAck { view }`.
+    pub async fn read_shortcut_settings(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadShortcutSettings)
+            .await
+    }
+
+    /// Send `Control::SetShortcutBinding`. Reply arrives as
+    /// `WorkerReply::SetShortcutBindingAck`.
+    pub async fn set_shortcut_binding(
+        &self,
+        request_id: u64,
+        action_id: String,
+        binding: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::SetShortcutBinding { action_id, binding },
+        )
+        .await
+    }
+
+    /// Send `Control::ResetShortcutBinding`. Reply arrives as
+    /// `WorkerReply::ResetShortcutBindingAck`.
+    pub async fn reset_shortcut_binding(
+        &self,
+        request_id: u64,
+        action_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ResetShortcutBinding { action_id })
+            .await
+    }
+
+    // ── Settings → MCP (`another-one-ojm.8`) ──────────────────────
+
+    /// Send `Control::ReadMcpSettings`. Reply arrives as
+    /// `WorkerReply::McpSettingsAck { view }`.
+    pub async fn read_mcp_settings(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadMcpSettings)
+            .await
+    }
+
+    /// Send `Control::McpAddFromCatalog`. Reply arrives as
+    /// `WorkerReply::McpAddFromCatalogAck`.
+    pub async fn mcp_add_from_catalog(
+        &self,
+        request_id: u64,
+        catalog_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::McpAddFromCatalog { catalog_id })
+            .await
+    }
+
+    /// Send `Control::McpToggle`. Reply arrives as
+    /// `WorkerReply::McpToggleAck`.
+    pub async fn mcp_toggle(
+        &self,
+        request_id: u64,
+        entry_id: String,
+        provider_id: String,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::McpToggle {
+                entry_id,
+                provider_id,
+                enabled,
+            },
+        )
+        .await
+    }
+
+    /// Send `Control::McpRemove`. Reply arrives as
+    /// `WorkerReply::McpRemoveAck`.
+    pub async fn mcp_remove(
+        &self,
+        request_id: u64,
+        entry_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::McpRemove { entry_id })
+            .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

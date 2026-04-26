@@ -116,7 +116,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BranchCompareView dco_decode_box_autoadd_branch_compare_view(dynamic raw);
 
   @protected
+  GitActionScriptsView dco_decode_box_autoadd_git_action_scripts_view(
+    dynamic raw,
+  );
+
+  @protected
   InputEventDto dco_decode_box_autoadd_input_event_dto(dynamic raw);
+
+  @protected
+  McpSettingsView dco_decode_box_autoadd_mcp_settings_view(dynamic raw);
 
   @protected
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
@@ -138,6 +146,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ResourceUsageSnapshotDto dco_decode_box_autoadd_resource_usage_snapshot_dto(
+    dynamic raw,
+  );
+
+  @protected
+  ShortcutSettingsView dco_decode_box_autoadd_shortcut_settings_view(
     dynamic raw,
   );
 
@@ -542,7 +555,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  GitActionScriptsView sse_decode_box_autoadd_git_action_scripts_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   InputEventDto sse_decode_box_autoadd_input_event_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  McpSettingsView sse_decode_box_autoadd_mcp_settings_view(
     SseDeserializer deserializer,
   );
 
@@ -572,6 +595,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ResourceUsageSnapshotDto sse_decode_box_autoadd_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ShortcutSettingsView sse_decode_box_autoadd_shortcut_settings_view(
     SseDeserializer deserializer,
   );
 
@@ -1076,8 +1104,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_git_action_scripts_view(
+    GitActionScriptsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_input_event_dto(
     InputEventDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_mcp_settings_view(
+    McpSettingsView self,
     SseSerializer serializer,
   );
 
@@ -1114,6 +1154,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_resource_usage_snapshot_dto(
     ResourceUsageSnapshotDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_shortcut_settings_view(
+    ShortcutSettingsView self,
     SseSerializer serializer,
   );
 
