@@ -150,13 +150,17 @@ impl DaemonRegistry for SandboxRegistry {
 
     // Project mutation isn't meaningful on the sandbox — there's a
     // single hard-coded project (see `list_projects` above). The
-    // smoke-test binary can't add anything because there's no
-    // backing store. Surface that as a typed error rather than a
+    // smoke-test binary can't add or remove anything because there's
+    // no backing store. Surface that as a typed error rather than a
     // fake-success Ack so a misbehaving client gets a clear signal.
     fn add_project<'a>(
         &'a self,
         _path: String,
     ) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
         Box::pin(async { Err(anyhow::anyhow!("add_project: not supported on sandbox")) })
+    }
+
+    fn remove_project(&self, _project_id: &str) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("remove_project: not supported on sandbox"))
     }
 }

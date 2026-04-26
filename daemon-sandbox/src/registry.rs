@@ -191,6 +191,20 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     fn add_project<'a>(&'a self, _path: String) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
         Box::pin(async { Err(anyhow::anyhow!("add_project: not supported on this registry")) })
     }
+
+    /// Remove a project from the daemon's store by id. Cascades to
+    /// the project's tasks + terminal sections (see
+    /// [`another_one_core::project_store::ProjectStore::remove_project`]).
+    /// Idempotent — passing an unknown id is silently a no-op, just
+    /// like [`LocalSession::remove_project`]. Sync because the
+    /// underlying store mutation doesn't touch the network or run
+    /// any subprocess; the iroh handler can call this directly off
+    /// its dispatch loop.
+    fn remove_project(&self, _project_id: &str) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!(
+            "remove_project: not supported on this registry"
+        ))
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

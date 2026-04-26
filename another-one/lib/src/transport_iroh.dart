@@ -395,6 +395,9 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         'addProject: unexpected projectList reply from daemon',
       ),
       projectAdded: (_) => true,
+      projectRemoved: (_) => throw StateError(
+        'addProject: unexpected projectRemoved reply from daemon',
+      ),
       err: (message, kind) {
         // Soft-error: the user added the same directory twice. The
         // daemon's bridge impl bails with this message; we pattern-
@@ -405,6 +408,35 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         }
         throw StateError('addProject failed (${kind.name}): $message');
       },
+    );
+  }
+
+  /// Remove a project from the daemon's store by id over the iroh
+  /// wire. Routes through `Control::RemoveProject` and awaits the
+  /// matching `WorkerReply::ProjectRemoved` (or `WorkerReply::Err`)
+  /// via the per-session request-id dispatch table.
+  ///
+  /// Returns `Future<void>` matching `LocalSession::removeProject`.
+  /// Idempotent on unknown ids — the daemon replies with
+  /// `ProjectRemoved` even for ids that weren't in its store.
+  @override
+  Future<void> removeProject(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.removeProject(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      ),
+    );
+    reply.when(
+      projectList: (_) => throw StateError(
+        'removeProject: unexpected projectList reply from daemon',
+      ),
+      projectAdded: (_) => throw StateError(
+        'removeProject: unexpected projectAdded reply from daemon',
+      ),
+      projectRemoved: (_) {},
+      err: (message, kind) =>
+          throw StateError('removeProject failed (${kind.name}): $message'),
     );
   }
 }

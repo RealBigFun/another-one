@@ -129,6 +129,11 @@ enum Control {
     /// `prepare_project`. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::AddProject`.
     AddProject { path: String },
+    /// Remove a project from the daemon's store by id. Daemon
+    /// replies with [`WorkerReply::ProjectRemoved`]; idempotent on
+    /// unknown ids. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::RemoveProject`.
+    RemoveProject { project_id: String },
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
@@ -165,6 +170,9 @@ pub enum WorkerReply {
     /// Inline-snapshot reply to [`Control::AddProject`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectAdded`.
     ProjectAdded { project: ProjectSummary },
+    /// Inline echo of [`Control::RemoveProject`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectRemoved`.
+    ProjectRemoved { project_id: String },
     /// Uniform per-request failure frame. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
     /// callers in `ojm.2..8` map this to a Dart-level exception
@@ -877,6 +885,14 @@ impl IrohSession {
     /// insertion.
     pub async fn add_project(&self, request_id: u64, path: String) -> anyhow::Result<()> {
         self.send_control(request_id, Control::AddProject { path })
+            .await
+    }
+
+    /// Issue a [`Control::RemoveProject`] under a Dart-allocated
+    /// `request_id`. Same allocation contract as [`add_project`].
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveProject`.
+    pub async fn remove_project(&self, request_id: u64, project_id: String) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::RemoveProject { project_id })
             .await
     }
 

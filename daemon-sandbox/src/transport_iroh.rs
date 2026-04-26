@@ -504,6 +504,21 @@ async fn handle_control(
                 }
             }
         }
+        Control::RemoveProject { project_id } => {
+            match registry.remove_project(&project_id) {
+                Ok(()) => {
+                    let wire = WorkerReply::ProjectRemoved { project_id };
+                    send_worker_reply(outbound_tx, request_id, &wire).await?;
+                }
+                Err(e) => {
+                    let wire = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &wire).await?;
+                }
+            }
+        }
         Control::Hello { .. } => {
             // Hello is only meaningful as the *first* control frame
             // from an unpaired peer — see `consume_hello`. A paired

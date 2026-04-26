@@ -368,6 +368,22 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             Ok(project_to_frame(&guard, &project))
         })
     }
+
+    /// Mirror of `LocalSession::remove_project`. Takes the registry
+    /// lock and delegates to `project_store.remove_project`, which
+    /// cascades to tasks + terminal sections. Idempotent on unknown
+    /// ids — same semantics LocalSession exposes today.
+    fn remove_project(&self, project_id: &str) -> anyhow::Result<()> {
+        let arc = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("remove_project: registry state dropped"))?;
+        let mut guard = arc
+            .lock()
+            .map_err(|_| anyhow::anyhow!("remove_project: RegistryState mutex poisoned"))?;
+        guard.project_store.remove_project(project_id);
+        Ok(())
+    }
 }
 
 /// Flatten the bridge's `RegistryState` into the iroh wire's

@@ -134,6 +134,15 @@ pub enum Control {
     /// same dir twice" case; not worth a dedicated `err_kind`).
     /// Mirror of `another-one-bridge/src/api/local_session.rs::add_project`.
     AddProject { path: String },
+    /// Remove a project from the daemon's store by id. Cascades to
+    /// the project's tasks + terminal sections via
+    /// [`another_one_core::project_store::ProjectStore::remove_project`].
+    /// Idempotent — passing an unknown id is a silent no-op on the
+    /// store side, but the daemon still replies with
+    /// [`WorkerReply::ProjectRemoved`] echoing the id so the issuer
+    /// can drop any stale UI rows. Mirror of
+    /// `another-one-bridge/src/api/local_session.rs::remove_project`.
+    RemoveProject { project_id: String },
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -260,6 +269,13 @@ pub enum WorkerReply {
     /// for the contract). On a duplicate path or a `prepare_project`
     /// failure the daemon emits [`WorkerReply::Err`] instead.
     ProjectAdded { project: ProjectSummary },
+    /// Response to [`Control::RemoveProject`]. Echoes the id so the
+    /// issuer can drop the matching tree row even if its local
+    /// cache had already been pruned. Idempotent on the daemon
+    /// side: an unknown id still produces this reply rather than an
+    /// `Err` (mirrors `LocalSession::remove_project`'s anyhow-Ok-
+    /// even-on-unknown-id semantics).
+    ProjectRemoved { project_id: String },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same

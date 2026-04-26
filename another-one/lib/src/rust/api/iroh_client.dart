@@ -94,6 +94,14 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
+  /// Issue a [`Control::RemoveProject`] under a Dart-allocated
+  /// `request_id`. Same allocation contract as [`add_project`].
+  /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveProject`.
+  Future<void> removeProject({
+    required BigInt requestId,
+    required String projectId,
+  });
+
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
@@ -339,6 +347,11 @@ sealed class WorkerReply with _$WorkerReply {
   /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectAdded`.
   const factory WorkerReply.projectAdded({required ProjectSummary project}) =
       WorkerReply_ProjectAdded;
+
+  /// Inline echo of [`Control::RemoveProject`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectRemoved`.
+  const factory WorkerReply.projectRemoved({required String projectId}) =
+      WorkerReply_ProjectRemoved;
 
   /// Uniform per-request failure frame. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
