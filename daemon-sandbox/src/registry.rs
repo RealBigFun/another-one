@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::ProjectSummary;
+use crate::frame::{ChangedFile, ProjectSummary};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -155,6 +155,33 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// attach briefly). Default impl is a no-op for registries that
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
+
+    /// `another-one-ojm.5` — stage one changed file via `git add -A`.
+    /// `original_path` is `Some(_)` only on rename/copy entries.
+    /// Returns the post-mutation `changed_files` snapshot so the
+    /// caller's ack can carry it inline (per the inline-snapshot
+    /// contract in `frame.rs`).
+    ///
+    /// `Box<dyn Future>` rather than `async fn` so the trait stays
+    /// dyn-compatible — `Arc<dyn DaemonRegistry>` is what the
+    /// transport holds, and `async fn` in traits requires
+    /// `Box<dyn>` indirection until 1.83. Keeps the seam simple
+    /// for sibling tasks (`ojm.2..8`) extending the trait the same
+    /// way.
+    fn stage_changed_file<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _path: &'a str,
+        _original_path: Option<&'a str>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
+    > {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "stage_changed_file: not implemented on this DaemonRegistry"
+            ))
+        })
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

@@ -159,6 +159,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CellDto dco_decode_cell_dto(dynamic raw);
 
   @protected
+  ChangedFile dco_decode_changed_file(dynamic raw);
+
+  @protected
   ChangedFileDto dco_decode_changed_file_dto(dynamic raw);
 
   @protected
@@ -204,6 +207,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CellDto> dco_decode_list_cell_dto(dynamic raw);
+
+  @protected
+  List<ChangedFile> dco_decode_list_changed_file(dynamic raw);
 
   @protected
   List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
@@ -597,6 +603,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CellDto sse_decode_cell_dto(SseDeserializer deserializer);
 
   @protected
+  ChangedFile sse_decode_changed_file(SseDeserializer deserializer);
+
+  @protected
   ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer);
 
   @protected
@@ -650,6 +659,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CellDto> sse_decode_list_cell_dto(SseDeserializer deserializer);
+
+  @protected
+  List<ChangedFile> sse_decode_list_changed_file(SseDeserializer deserializer);
 
   @protected
   List<ChangedFileDto> sse_decode_list_changed_file_dto(
@@ -1141,6 +1153,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_cell_dto(CellDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_changed_file(ChangedFile self, SseSerializer serializer);
+
+  @protected
   void sse_encode_changed_file_dto(
     ChangedFileDto self,
     SseSerializer serializer,
@@ -1202,6 +1217,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_cell_dto(List<CellDto> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_changed_file(
+    List<ChangedFile> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_changed_file_dto(

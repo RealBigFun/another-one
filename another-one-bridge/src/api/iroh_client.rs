@@ -135,6 +135,15 @@ enum Control {
         pair_token: Option<String>,
         protocol_version: u32,
     },
+    /// `another-one-ojm.5` — stage one changed file. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::StageChangedFile`.
+    /// Reply is `WorkerReply::StageChangedFileAck` carrying the
+    /// post-mutation `changed_files` snapshot.
+    StageChangedFile {
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -166,6 +175,12 @@ pub enum WorkerReply {
         #[serde(rename = "err_kind")]
         kind: ErrKind,
     },
+    /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::StageChangedFileAck`.
+    /// Carries the post-mutation `changed_files` snapshot inline so
+    /// the issuing client refreshes the right-sidebar Changes pane
+    /// without a follow-up `ReadChangedFiles` round-trip.
+    StageChangedFileAck { changed_files: Vec<ChangedFile> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -297,6 +312,25 @@ pub enum AgentProvider {
 
 // `PullRequestInfo` + `PullRequestState` removed with the dead
 // `WorkerReply::PullRequestStatus` variant on the daemon side.
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFile`. Carries the
+/// post-mutation snapshot returned by `StageChangedFileAck` (and
+/// future stage/unstage/discard acks landing in `another-one-ojm.5`).
+/// Same field shape as `ChangedFileDto` on the FRB local-session
+/// surface so the Dart layer can render the right-sidebar Changes
+/// pane without re-projecting per transport.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub staged_additions: i32,
+    pub staged_deletions: i32,
+    pub unstaged_additions: i32,
+    pub unstaged_deletions: i32,
+    pub index_status: String,
+    pub worktree_status: String,
+    pub untracked: bool,
+}
 
 /// Writes one frame to the Iroh send stream.
 async fn write_frame(send: &mut SendStream, ty: u8, payload: &[u8]) -> anyhow::Result<()> {
@@ -849,6 +883,31 @@ impl IrohSession {
         self.send_control(
             self.next_request_id(),
             Control::LaunchTab { section_id, tab_id },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::StageChangedFile`
+    /// frame against the daemon. Fire-and-forget at the FRB level:
+    /// the matching `WorkerReply::StageChangedFileAck` arrives on
+    /// `subscribe_worker_replies` keyed to a fresh `request_id` the
+    /// Dart layer allocates via [`Self::next_request_id`]. The Dart
+    /// `IrohTransport` registers a `Completer` against that id
+    /// before calling, so the await-side awaits the ack from there.
+    pub async fn stage_changed_file(
+        &self,
+        request_id: u64,
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::StageChangedFile {
+                project_id,
+                path,
+                original_path,
+            },
         )
         .await
     }

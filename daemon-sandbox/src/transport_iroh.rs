@@ -26,7 +26,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
+use crate::frame::{self, Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope};
 use crate::registry::{EndpointHandle, PairState, DaemonRegistry};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
@@ -490,6 +490,32 @@ async fn handle_control(
             // peer that sends it mid-session is harmless but pointless;
             // drop it rather than error.
             debug!("stray Control::Hello from already-paired peer; ignored");
+        }
+        Control::StageChangedFile {
+            project_id,
+            path,
+            original_path,
+        } => {
+            // Inline-snapshot ack: the registry's stage helper runs
+            // the git mutation *and* re-reads the post-mutation
+            // changed-files list, so the caller's ack carries the
+            // refreshed Changes pane state in the same round-trip.
+            let outcome = registry
+                .stage_changed_file(&project_id, &path, original_path.as_deref())
+                .await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::StageChangedFileAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
         }
     }
     Ok(())

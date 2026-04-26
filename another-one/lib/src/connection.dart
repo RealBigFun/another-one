@@ -442,16 +442,16 @@ abstract class DaemonConnection {
   /// only on rename/copy entries — git needs both source and
   /// destination to resolve the pair correctly. Throws on git
   /// failure with the stderr appended.
+  ///
+  /// Implemented by both transports as of `another-one-ojm.5`:
+  /// `LocalTransport` calls the FRB-bound `LocalSession`;
+  /// `IrohTransport` issues `Control::StageChangedFile` and awaits
+  /// the matching `WorkerReply::StageChangedFileAck`.
   Future<void> stageChangedFile({
     required String projectId,
     required String path,
     String? originalPath,
-  }) {
-    throw UnimplementedError(
-      'stageChangedFile: requires Control::StageChangedFile wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Unstage one changed file via `git restore --staged` (or
   /// `git reset HEAD` on older git). See [`stageChangedFile`] for

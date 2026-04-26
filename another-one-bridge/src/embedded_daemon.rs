@@ -40,7 +40,7 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    AgentProvider, ChangedFile, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -308,6 +308,90 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             }
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
+    }
+
+    fn stage_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        original_path: Option<&'a str>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
+    > {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let path_arg = path.to_string();
+        let original_path = original_path.map(str::to_string);
+        Box::pin(async move {
+            let project_path = resolve_project_path(&inner, &project_id)
+                .ok_or_else(|| anyhow::anyhow!("stage_changed_file: unknown project_id `{project_id}`"))?;
+            let project_path_for_blocking = project_path.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut changed = another_one_core::project_store::ChangedFile::default();
+                changed.path = path_arg;
+                changed.original_path = original_path;
+                another_one_core::project_store::stage_changed_file(
+                    &project_path_for_blocking,
+                    &changed,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("stage_changed_file join: {e}"))?
+            .map_err(|e| anyhow::anyhow!(e))?;
+            // Re-read the post-mutation changed files so the ack
+            // carries the inline snapshot. Same `read_project_git_state`
+            // path the FRB-side `read_changed_files` uses.
+            let project_path_for_read = project_path.clone();
+            let git_state = tokio::task::spawn_blocking(move || {
+                another_one_core::project_store::read_project_git_state(
+                    &project_path_for_read,
+                    false,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("stage_changed_file post-read join: {e}"))?;
+            Ok(git_state
+                .changed_files
+                .into_iter()
+                .map(core_changed_file_to_wire)
+                .collect())
+        })
+    }
+}
+
+/// Resolve a `project_id` to its absolute path on disk by reading
+/// from the bridge's `RegistryState`. Returns `None` for unknown
+/// ids; the caller turns that into an `Err` with a verb-specific
+/// message so logs name the offending verb.
+fn resolve_project_path(
+    inner: &Weak<Mutex<another_one_core::daemon_embed::RegistryState>>,
+    project_id: &str,
+) -> Option<std::path::PathBuf> {
+    let arc = inner.upgrade()?;
+    let state = arc.lock().ok()?;
+    state
+        .project_store
+        .projects
+        .iter()
+        .find(|project| project.id == project_id)
+        .map(|project| project.path.clone())
+}
+
+/// Project the core's `ChangedFile` into the wire's smaller
+/// projection. Mirrors the FRB-side `changed_file_to_dto`.
+fn core_changed_file_to_wire(
+    f: another_one_core::project_store::ChangedFile,
+) -> ChangedFile {
+    ChangedFile {
+        path: f.path,
+        original_path: f.original_path,
+        staged_additions: f.staged_additions,
+        staged_deletions: f.staged_deletions,
+        unstaged_additions: f.unstaged_additions,
+        unstaged_deletions: f.unstaged_deletions,
+        index_status: f.index_status.to_string(),
+        worktree_status: f.worktree_status.to_string(),
+        untracked: f.untracked,
     }
 }
 

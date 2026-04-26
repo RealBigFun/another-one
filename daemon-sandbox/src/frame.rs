@@ -157,6 +157,18 @@ pub enum Control {
         #[serde(default)]
         protocol_version: u32,
     },
+    /// `another-one-ojm.5` — stage one changed file via `git add -A`.
+    /// `original_path` is set only on rename/copy entries — git needs
+    /// both source and destination to resolve the rename pair. Reply
+    /// is [`WorkerReply::StageChangedFileAck`] carrying the post-
+    /// mutation `changed_files` snapshot so the issuing client can
+    /// refresh the right-sidebar Changes pane in the same round-trip
+    /// (per the inline-snapshot contract above).
+    StageChangedFile {
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -264,6 +276,18 @@ pub enum WorkerReply {
         message: String,
         #[serde(rename = "err_kind")]
         kind: ErrKind,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
+    /// Carries the post-mutation `changed_files` snapshot inline so
+    /// the issuing client refreshes the right-sidebar Changes pane
+    /// without a follow-up `ReadChangedFiles` round-trip — see the
+    /// "Push vs pull" contract block above. Empty list means the
+    /// working tree is clean after the stage (e.g. the staged file
+    /// was the only change and now lives in the index alone — but
+    /// staged entries are still reported by `git status` so this is
+    /// rare in practice).
+    StageChangedFileAck {
+        changed_files: Vec<ChangedFile>,
     },
 }
 
@@ -413,6 +437,26 @@ pub enum AgentProvider {
     RovoDev,
     Forge,
     Shell,
+}
+
+/// Lossy wire projection of `core::project_store::ChangedFile`.
+/// Mirrors the shape `ChangedFileDto` exposes on the FRB side so the
+/// Dart layer can render the right-sidebar Changes pane without
+/// re-projecting per transport. `index_status` / `worktree_status`
+/// are single chars on the core side; the wire encodes them as
+/// one-char strings to keep JSON encoding straightforward (chars in
+/// JSON would have to be quoted strings anyway).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub staged_additions: i32,
+    pub staged_deletions: i32,
+    pub unstaged_additions: i32,
+    pub unstaged_deletions: i32,
+    pub index_status: String,
+    pub worktree_status: String,
+    pub untracked: bool,
 }
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the

@@ -334,24 +334,16 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
 
   /// Issue a control frame keyed by a freshly-allocated request_id
   /// and return a future that completes with the matching daemon
-  /// reply. Domain verbs landing in `another-one-ojm.2..8` will use
-  /// this in place of the existing fire-and-forget `session.foo()`
-  /// pattern.
+  /// reply. Domain verbs landing in `another-one-ojm.2..8` use this
+  /// in place of fire-and-forget `session.foo()` so per-call replies
+  /// (acks, error frames) land at the awaiting caller via the
+  /// completer table — see `_dispatchWorkerReplyMessage`.
   ///
   /// `send` is the caller-supplied closure that performs the actual
   /// FRB call once the request_id has been registered in the
   /// dispatch map — taking it as a closure means each verb decides
   /// which `Control::*` variant + arguments to encode without this
-  /// helper having to know about every variant. Callers receive the
-  /// `request_id` so they can pass it to a Rust-side `send_control`
-  /// equivalent (added per-verb in domain tasks).
-  ///
-  /// Currently unused: the existing `listProjects` / `attachTab`
-  /// helpers keep the fire-and-forget shape because the contemporary
-  /// daemon doesn't yet emit replies the UI awaits per-call. Once
-  /// the wire grows verbs that DO reply (e.g. `addProject`), each
-  /// such verb routes through here.
-  // ignore: unused_element
+  /// helper having to know about every variant.
   Future<WorkerReply> _sendControlAndAwait(
     Future<void> Function(int requestId) send,
   ) async {
@@ -370,4 +362,64 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     }
     return completer.future;
   }
+
+  /// Map a `WorkerReply.err` payload to a thrown exception. Domain
+  /// verbs (`another-one-ojm.5+`) call this from their per-verb
+  /// reply-shape match: when the daemon returns `Err` instead of the
+  /// expected `*Ack`, surface a Dart-level exception so callers can
+  /// `try/catch` the same way they do against `LocalTransport` (which
+  /// throws on the FRB-bound `anyhow::Result` failure path). The
+  /// kind enum is preserved on the exception for future UI branches
+  /// that want to render `ErrKind.unauthorised` differently from
+  /// `ErrKind.internal`.
+  Never _throwForErr(WorkerReply_Err err) {
+    throw IrohWireException(message: err.message, kind: err.kind);
+  }
+
+  /// `another-one-ojm.5` — stage one changed file via the iroh wire.
+  /// Sends `Control::StageChangedFile`, awaits the matching
+  /// `WorkerReply::StageChangedFileAck`. The ack carries an inline
+  /// post-mutation `changed_files` snapshot which, today, the
+  /// transport discards; consuming it in-band (e.g. invalidating the
+  /// changes provider directly from here) is a follow-up hook.
+  @override
+  Future<void> stageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.stageChangedFile(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        path: path,
+        originalPath: originalPath,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_StageChangedFileAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'stageChangedFile: unexpected reply variant $reply',
+        );
+    }
+  }
+}
+
+/// Exception thrown by `IrohTransport` mutator overrides when the
+/// daemon answers with a `WorkerReply::Err` frame instead of the
+/// expected per-verb ack. The `kind` is preserved verbatim so UI
+/// code can branch on `ErrKind.unauthorised` etc. without parsing
+/// the human-readable message.
+class IrohWireException implements Exception {
+  final String message;
+  final ErrKind kind;
+
+  IrohWireException({required this.message, required this.kind});
+
+  @override
+  String toString() => 'IrohWireException($kind): $message';
 }
