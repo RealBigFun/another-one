@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{ActiveGitStateWire, ChangedFileWire, ProjectSummary};
+use crate::frame::{ActiveGitStateWire, ChangedFileWire, ProjectSummary, RecentCommitsWire};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -220,6 +220,18 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// `LocalSession::read_project_github_url`.
     fn read_project_github_url(&self, _project_id: &str) -> Option<String> {
         None
+    }
+
+    /// Recent commits on `project_id`'s current branch, capped at
+    /// `limit`. Returns `None` for unknown project ids; `Err` for
+    /// git failures (commit pruned, etc.). Sister to
+    /// `LocalSession::read_recent_commits`. May shell out to git.
+    fn read_recent_commits(
+        &self,
+        _project_id: &str,
+        _limit: usize,
+    ) -> Result<Option<RecentCommitsWire>, String> {
+        Ok(None)
     }
 }
 

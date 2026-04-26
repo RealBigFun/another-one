@@ -26,8 +26,8 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
-use crate::registry::{EndpointHandle, PairState, DaemonRegistry};
+use crate::frame::{self, Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope};
+use crate::registry::{DaemonRegistry, EndpointHandle, PairState};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
 /// breaks can be versioned cleanly (`/1`, `/2`, …).
@@ -526,6 +526,17 @@ async fn handle_control(
             let reply = WorkerReply::ProjectGithubUrlAck { url };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ReadRecentCommits { project_id, limit } => {
+            match registry.read_recent_commits(&project_id, limit as usize) {
+                Ok(view) => {
+                    let reply = WorkerReply::RecentCommitsAck { view };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(message) => {
+                    send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -550,6 +561,21 @@ async fn send_worker_reply(
         .send((frame::TY_WORKER_REPLY, payload))
         .await
         .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))
+}
+
+/// Convenience wrapper around [`send_worker_reply`] for the
+/// `Err`-frame failure mode used by the git-state read verbs in
+/// `another-one-ojm.4`. Verbs that return `Result<_, String>` from
+/// the registry route the `Err` arm through here so the connection
+/// stays open for other in-flight requests on the same session.
+async fn send_err(
+    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    request_id: u64,
+    kind: ErrKind,
+    message: String,
+) -> anyhow::Result<()> {
+    let reply = WorkerReply::Err { message, kind };
+    send_worker_reply(outbound_tx, request_id, &reply).await
 }
 
 // ---- pairing / identity plumbing -------------------------------

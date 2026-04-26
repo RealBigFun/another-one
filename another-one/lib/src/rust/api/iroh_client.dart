@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -95,6 +95,13 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Issue [`Control::ReadProjectGithubUrl`] for `project_id`.
   Future<BigInt> readProjectGithubUrl({required String projectId});
+
+  /// Issue [`Control::ReadRecentCommits`] for `project_id` capped
+  /// at `limit` entries.
+  Future<BigInt> readRecentCommits({
+    required String projectId,
+    required int limit,
+  });
 
   /// Issue [`Control::RepoDefaultCommitAction`] for `project_id`.
   Future<BigInt> repoDefaultCommitAction({required String projectId});
@@ -228,6 +235,42 @@ class ChangedFileWire {
           untracked == other.untracked;
 }
 
+/// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
+class CommitWire {
+  final String id;
+  final String shortId;
+  final String subject;
+  final String authorName;
+  final String authoredRelative;
+
+  const CommitWire({
+    required this.id,
+    required this.shortId,
+    required this.subject,
+    required this.authorName,
+    required this.authoredRelative,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      shortId.hashCode ^
+      subject.hashCode ^
+      authorName.hashCode ^
+      authoredRelative.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CommitWire &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          shortId == other.shortId &&
+          subject == other.subject &&
+          authorName == other.authorName &&
+          authoredRelative == other.authoredRelative;
+}
+
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
 /// snake_case; the Dart side gets a freezed enum via FRB.
 enum ErrKind { unknownId, unsupported, unauthorised, internal }
@@ -276,6 +319,32 @@ class ProjectSummary {
           kind == other.kind &&
           currentBranch == other.currentBranch &&
           tasks == other.tasks;
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::RecentCommitsWire`.
+class RecentCommitsWire {
+  final String? currentBranch;
+  final bool hasMore;
+  final List<CommitWire> commits;
+
+  const RecentCommitsWire({
+    this.currentBranch,
+    required this.hasMore,
+    required this.commits,
+  });
+
+  @override
+  int get hashCode =>
+      currentBranch.hashCode ^ hasMore.hashCode ^ commits.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RecentCommitsWire &&
+          runtimeType == other.runtimeType &&
+          currentBranch == other.currentBranch &&
+          hasMore == other.hasMore &&
+          commits == other.commits;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
@@ -469,6 +538,11 @@ sealed class WorkerReply with _$WorkerReply {
   /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectGithubUrlAck`.
   const factory WorkerReply.projectGithubUrlAck({String? url}) =
       WorkerReply_ProjectGithubUrlAck;
+
+  /// Reply to [`Control::ReadRecentCommits`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::RecentCommitsAck`.
+  const factory WorkerReply.recentCommitsAck({RecentCommitsWire? view}) =
+      WorkerReply_RecentCommitsAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

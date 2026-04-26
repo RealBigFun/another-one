@@ -506,6 +506,37 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     );
   }
 
+  @override
+  Future<ls.RecentCommitsView?> readRecentCommits({
+    required String projectId,
+    required int limit,
+  }) async {
+    final reply = await _sendControlAndAwait(
+      () => _session!.readRecentCommits(projectId: projectId, limit: limit),
+    );
+    return reply.maybeWhen(
+      recentCommitsAck: (view) => view == null
+          ? null
+          : ls.RecentCommitsView(
+              currentBranch: view.currentBranch,
+              hasMore: view.hasMore,
+              commits: view.commits.map(_commitWireToDto).toList(growable: false),
+            ),
+      err: _throwErr,
+      orElse: () => throw StateError(
+        'readRecentCommits: unexpected reply variant ${reply.runtimeType}',
+      ),
+    );
+  }
+
+  ls.CommitDto _commitWireToDto(CommitWire c) => ls.CommitDto(
+        id: c.id,
+        shortId: c.shortId,
+        subject: c.subject,
+        authorName: c.authorName,
+        authoredRelative: c.authoredRelative,
+      );
+
   ls.ChangedFileDto _changedFileWireToDto(ChangedFileWire f) =>
       ls.ChangedFileDto(
         path: f.path,

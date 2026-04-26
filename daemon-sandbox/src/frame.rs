@@ -201,6 +201,11 @@ pub enum Control {
     /// project id is unknown, has no `origin`, or `origin` isn't
     /// github.com.
     ReadProjectGithubUrl { project_id: String },
+    /// Recent commits on `project_id`'s current branch, capped at
+    /// `limit` entries. Powers the right sidebar's Commits pane.
+    /// Reply is [`WorkerReply::RecentCommitsAck`] with `None` when
+    /// the project id is unknown.
+    ReadRecentCommits { project_id: String, limit: u32 },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -336,6 +341,10 @@ pub enum WorkerReply {
     /// when the project is untracked, has no `origin`, or `origin`
     /// isn't a github.com URL.
     ProjectGithubUrlAck { url: Option<String> },
+    /// Reply to [`Control::ReadRecentCommits`]. `view == None` when
+    /// the project id is unknown. Errors propagate as
+    /// [`WorkerReply::Err`].
+    RecentCommitsAck { view: Option<RecentCommitsWire> },
 }
 
 /// Wire mirror of the bridge's `ActiveGitStateDto` (FRB-bound) and
@@ -352,6 +361,27 @@ pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
     pub ahead_count: u32,
     pub behind_count: u32,
+}
+
+/// Wire mirror of the bridge's `CommitDto` (FRB-bound). Carries
+/// pre-computed display strings — the daemon does the rendering work
+/// (chrono is already a dep there) so the UI doesn't need a
+/// humanise-duration package on the client side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitWire {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+    pub author_name: String,
+    pub authored_relative: String,
+}
+
+/// Wire mirror of the bridge's `RecentCommitsView` (FRB-bound).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentCommitsWire {
+    pub current_branch: Option<String>,
+    pub has_more: bool,
+    pub commits: Vec<CommitWire>,
 }
 
 /// Wire mirror of the bridge's `ChangedFileDto` (FRB-bound). Carries

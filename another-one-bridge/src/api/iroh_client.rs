@@ -159,6 +159,9 @@ enum Control {
     /// Resolve a project's GitHub remote URL. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadProjectGithubUrl`.
     ReadProjectGithubUrl { project_id: String },
+    /// Recent commits on a project's current branch. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadRecentCommits`.
+    ReadRecentCommits { project_id: String, limit: u32 },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -216,6 +219,9 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadProjectGithubUrl`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectGithubUrlAck`.
     ProjectGithubUrlAck { url: Option<String> },
+    /// Reply to [`Control::ReadRecentCommits`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::RecentCommitsAck`.
+    RecentCommitsAck { view: Option<RecentCommitsWire> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
@@ -225,6 +231,24 @@ pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
     pub ahead_count: u32,
     pub behind_count: u32,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CommitWire {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+    pub author_name: String,
+    pub authored_relative: String,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::RecentCommitsWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RecentCommitsWire {
+    pub current_branch: Option<String>,
+    pub has_more: bool,
+    pub commits: Vec<CommitWire>,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ChangedFileWire`.
@@ -990,6 +1014,19 @@ impl IrohSession {
     pub async fn read_project_github_url(&self, project_id: String) -> anyhow::Result<u64> {
         let id = self.next_request_id();
         self.send_control(id, Control::ReadProjectGithubUrl { project_id })
+            .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::ReadRecentCommits`] for `project_id` capped
+    /// at `limit` entries.
+    pub async fn read_recent_commits(
+        &self,
+        project_id: String,
+        limit: u32,
+    ) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(id, Control::ReadRecentCommits { project_id, limit })
             .await?;
         Ok(id)
     }

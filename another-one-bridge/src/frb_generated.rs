@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -905780598;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 901275048;
 
 // Section: executor
 
@@ -690,6 +690,68 @@ fn wire__crate__api__iroh_client__IrohSession_read_project_github_url_impl(
                                 api_project_id,
                             )
                             .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_read_recent_commits_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_read_recent_commits",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_limit = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::read_recent_commits(
+                            &*api_that_guard,
+                            api_project_id,
+                            api_limit,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -6353,6 +6415,24 @@ impl SseDecode for crate::api::local_session::CommitDto {
     }
 }
 
+impl SseDecode for crate::api::iroh_client::CommitWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_shortId = <String>::sse_decode(deserializer);
+        let mut var_subject = <String>::sse_decode(deserializer);
+        let mut var_authorName = <String>::sse_decode(deserializer);
+        let mut var_authoredRelative = <String>::sse_decode(deserializer);
+        return crate::api::iroh_client::CommitWire {
+            id: var_id,
+            short_id: var_shortId,
+            subject: var_subject,
+            author_name: var_authorName,
+            authored_relative: var_authoredRelative,
+        };
+    }
+}
+
 impl SseDecode for crate::api::local_session::EnabledAgentsView {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -6537,6 +6617,20 @@ impl SseDecode for Vec<crate::api::local_session::CommitDto> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::local_session::CommitDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::iroh_client::CommitWire> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::iroh_client::CommitWire>::sse_decode(
                 deserializer,
             ));
         }
@@ -6964,6 +7058,19 @@ impl SseDecode for Option<crate::api::local_session::RecentCommitsView> {
     }
 }
 
+impl SseDecode for Option<crate::api::iroh_client::RecentCommitsWire> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::iroh_client::RecentCommitsWire>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::local_session::ResolvedProjectBranchSettingsDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7284,6 +7391,20 @@ impl SseDecode for crate::api::local_session::RecentCommitsView {
         let mut var_hasMore = <bool>::sse_decode(deserializer);
         let mut var_commits = <Vec<crate::api::local_session::CommitDto>>::sse_decode(deserializer);
         return crate::api::local_session::RecentCommitsView {
+            current_branch: var_currentBranch,
+            has_more: var_hasMore,
+            commits: var_commits,
+        };
+    }
+}
+
+impl SseDecode for crate::api::iroh_client::RecentCommitsWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_currentBranch = <Option<String>>::sse_decode(deserializer);
+        let mut var_hasMore = <bool>::sse_decode(deserializer);
+        let mut var_commits = <Vec<crate::api::iroh_client::CommitWire>>::sse_decode(deserializer);
+        return crate::api::iroh_client::RecentCommitsWire {
             current_branch: var_currentBranch,
             has_more: var_hasMore,
             commits: var_commits,
@@ -7626,6 +7747,11 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                 let mut var_url = <Option<String>>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::ProjectGithubUrlAck { url: var_url };
             }
+            9 => {
+                let mut var_view =
+                    <Option<crate::api::iroh_client::RecentCommitsWire>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::RecentCommitsAck { view: var_view };
+            }
             _ => {
                 unimplemented!("");
             }
@@ -7717,517 +7843,523 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__iroh_client__IrohSession_repo_default_commit_action_impl(
+        12 => wire__crate__api__iroh_client__IrohSession_read_recent_commits_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        13 => wire__crate__api__iroh_client__IrohSession_resize_impl(
+        13 => wire__crate__api__iroh_client__IrohSession_repo_default_commit_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        14 => {
+        14 => wire__crate__api__iroh_client__IrohSession_resize_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        15 => {
             wire__crate__api__iroh_client__IrohSession_send_impl(port, ptr, rust_vec_len, data_len)
         }
-        15 => wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
+        16 => wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__iroh_client__IrohSession_subscribe_impl(
+        17 => wire__crate__api__iroh_client__IrohSession_subscribe_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => wire__crate__api__iroh_client__IrohSession_subscribe_worker_replies_impl(
+        18 => wire__crate__api__iroh_client__IrohSession_subscribe_worker_replies_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
+        19 => wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__local_session__LocalSession_activate_section_tab_impl(
+        20 => wire__crate__api__local_session__LocalSession_activate_section_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__local_session__LocalSession_add_agent_to_section_impl(
+        21 => wire__crate__api__local_session__LocalSession_add_agent_to_section_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        21 => wire__crate__api__local_session__LocalSession_add_project_impl(
+        22 => wire__crate__api__local_session__LocalSession_add_project_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        22 => wire__crate__api__local_session__LocalSession_attach_tab_impl(
+        23 => wire__crate__api__local_session__LocalSession_attach_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__local_session__LocalSession_close_impl(
+        24 => wire__crate__api__local_session__LocalSession_close_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__local_session__LocalSession_close_section_tab_impl(
+        25 => wire__crate__api__local_session__LocalSession_close_section_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => wire__crate__api__local_session__LocalSession_create_branch_impl(
+        26 => wire__crate__api__local_session__LocalSession_create_branch_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__local_session__LocalSession_create_review_task_impl(
+        27 => wire__crate__api__local_session__LocalSession_create_review_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        27 => wire__crate__api__local_session__LocalSession_create_worktree_task_impl(
+        28 => wire__crate__api__local_session__LocalSession_create_worktree_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        28 => wire__crate__api__local_session__LocalSession_delete_project_action_impl(
+        29 => wire__crate__api__local_session__LocalSession_delete_project_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        29 => wire__crate__api__local_session__LocalSession_detach_tab_impl(
+        30 => wire__crate__api__local_session__LocalSession_detach_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        30 => wire__crate__api__local_session__LocalSession_discard_changed_file_impl(
+        31 => wire__crate__api__local_session__LocalSession_discard_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        31 => wire__crate__api__local_session__LocalSession_find_project_pull_requests_impl(
+        32 => wire__crate__api__local_session__LocalSession_find_project_pull_requests_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        32 => wire__crate__api__local_session__LocalSession_find_pull_request_status_impl(
+        33 => wire__crate__api__local_session__LocalSession_find_pull_request_status_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        33 => wire__crate__api__local_session__LocalSession_launch_tab_impl(
+        34 => wire__crate__api__local_session__LocalSession_launch_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        34 => wire__crate__api__local_session__LocalSession_list_project_actions_impl(
+        35 => wire__crate__api__local_session__LocalSession_list_project_actions_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        35 => wire__crate__api__local_session__LocalSession_list_projects_impl(
+        36 => wire__crate__api__local_session__LocalSession_list_projects_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        36 => wire__crate__api__local_session__LocalSession_mcp_add_from_catalog_impl(
+        37 => wire__crate__api__local_session__LocalSession_mcp_add_from_catalog_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        37 => wire__crate__api__local_session__LocalSession_mcp_remove_impl(
+        38 => wire__crate__api__local_session__LocalSession_mcp_remove_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__local_session__LocalSession_mcp_toggle_impl(
+        39 => wire__crate__api__local_session__LocalSession_mcp_toggle_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__local_session__LocalSession_open_in_state_impl(
+        40 => wire__crate__api__local_session__LocalSession_open_in_state_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        40 => wire__crate__api__local_session__LocalSession_open_project_in_app_impl(
+        41 => wire__crate__api__local_session__LocalSession_open_project_in_app_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        41 => wire__crate__api__local_session__LocalSession_primary_branch_for_project_impl(
+        42 => wire__crate__api__local_session__LocalSession_primary_branch_for_project_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        42 => wire__crate__api__local_session__LocalSession_read_active_git_state_impl(
+        43 => wire__crate__api__local_session__LocalSession_read_active_git_state_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        43 => wire__crate__api__local_session__LocalSession_read_agent_settings_impl(
+        44 => wire__crate__api__local_session__LocalSession_read_agent_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        44 => wire__crate__api__local_session__LocalSession_read_branch_compare_state_impl(
+        45 => wire__crate__api__local_session__LocalSession_read_branch_compare_state_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        45 => wire__crate__api__local_session__LocalSession_read_changed_files_impl(
+        46 => wire__crate__api__local_session__LocalSession_read_changed_files_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        46 => wire__crate__api__local_session__LocalSession_read_commit_file_changes_impl(
+        47 => wire__crate__api__local_session__LocalSession_read_commit_file_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        47 => wire__crate__api__local_session__LocalSession_read_enabled_agents_impl(
+        48 => wire__crate__api__local_session__LocalSession_read_enabled_agents_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        48 => wire__crate__api__local_session__LocalSession_read_git_action_scripts_impl(
+        49 => wire__crate__api__local_session__LocalSession_read_git_action_scripts_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        49 => wire__crate__api__local_session__LocalSession_read_mcp_settings_impl(
+        50 => wire__crate__api__local_session__LocalSession_read_mcp_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        50 => wire__crate__api__local_session__LocalSession_read_open_in_settings_impl(
+        51 => wire__crate__api__local_session__LocalSession_read_open_in_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__local_session__LocalSession_read_project_branches_impl(
+        52 => wire__crate__api__local_session__LocalSession_read_project_branches_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => wire__crate__api__local_session__LocalSession_read_project_github_url_impl(
+        53 => wire__crate__api__local_session__LocalSession_read_project_github_url_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        53 => wire__crate__api__local_session__LocalSession_read_pull_request_checks_impl(
+        54 => wire__crate__api__local_session__LocalSession_read_pull_request_checks_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        54 => wire__crate__api__local_session__LocalSession_read_recent_commits_impl(
+        55 => wire__crate__api__local_session__LocalSession_read_recent_commits_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => wire__crate__api__local_session__LocalSession_read_shortcut_settings_impl(
+        56 => wire__crate__api__local_session__LocalSession_read_shortcut_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        56 => wire__crate__api__local_session__LocalSession_remove_project_impl(
+        57 => wire__crate__api__local_session__LocalSession_remove_project_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        57 => wire__crate__api__local_session__LocalSession_remove_task_impl(
+        58 => wire__crate__api__local_session__LocalSession_remove_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        58 => wire__crate__api__local_session__LocalSession_rename_task_impl(
+        59 => wire__crate__api__local_session__LocalSession_rename_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        59 => wire__crate__api__local_session__LocalSession_repo_default_commit_action_impl(
+        60 => wire__crate__api__local_session__LocalSession_repo_default_commit_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        60 => wire__crate__api__local_session__LocalSession_reset_git_commit_script_impl(
+        61 => wire__crate__api__local_session__LocalSession_reset_git_commit_script_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => wire__crate__api__local_session__LocalSession_reset_git_pr_script_impl(
+        62 => wire__crate__api__local_session__LocalSession_reset_git_pr_script_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        62 => wire__crate__api__local_session__LocalSession_reset_shortcut_binding_impl(
+        63 => wire__crate__api__local_session__LocalSession_reset_shortcut_binding_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => wire__crate__api__local_session__LocalSession_resolved_branch_settings_impl(
+        64 => wire__crate__api__local_session__LocalSession_resolved_branch_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        64 => wire__crate__api__local_session__LocalSession_run_project_action_impl(
+        65 => wire__crate__api__local_session__LocalSession_run_project_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        65 => wire__crate__api__local_session__LocalSession_run_toolbar_git_action_impl(
+        66 => wire__crate__api__local_session__LocalSession_run_toolbar_git_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        66 => wire__crate__api__local_session__LocalSession_save_project_action_impl(
+        67 => wire__crate__api__local_session__LocalSession_save_project_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__local_session__LocalSession_send_impl(
+        68 => wire__crate__api__local_session__LocalSession_send_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__local_session__LocalSession_set_agent_enabled_impl(
+        69 => wire__crate__api__local_session__LocalSession_set_agent_enabled_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        69 => wire__crate__api__local_session__LocalSession_set_agent_launch_args_impl(
+        70 => wire__crate__api__local_session__LocalSession_set_agent_launch_args_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        70 => wire__crate__api__local_session__LocalSession_set_default_agent_impl(
+        71 => wire__crate__api__local_session__LocalSession_set_default_agent_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        71 => wire__crate__api__local_session__LocalSession_set_git_commit_script_impl(
+        72 => wire__crate__api__local_session__LocalSession_set_git_commit_script_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        72 => wire__crate__api__local_session__LocalSession_set_git_pr_script_impl(
+        73 => wire__crate__api__local_session__LocalSession_set_git_pr_script_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => wire__crate__api__local_session__LocalSession_set_open_in_app_enabled_impl(
+        74 => wire__crate__api__local_session__LocalSession_set_open_in_app_enabled_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        74 => wire__crate__api__local_session__LocalSession_set_project_branch_setting_impl(
+        75 => wire__crate__api__local_session__LocalSession_set_project_branch_setting_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => wire__crate__api__local_session__LocalSession_set_shortcut_binding_impl(
+        76 => wire__crate__api__local_session__LocalSession_set_shortcut_binding_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__local_session__LocalSession_set_task_pinned_impl(
+        77 => wire__crate__api__local_session__LocalSession_set_task_pinned_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => wire__crate__api__local_session__LocalSession_slugify_branch_name_impl(
+        78 => wire__crate__api__local_session__LocalSession_slugify_branch_name_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        78 => wire__crate__api__local_session__LocalSession_stage_all_changes_impl(
+        79 => wire__crate__api__local_session__LocalSession_stage_all_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        79 => wire__crate__api__local_session__LocalSession_stage_changed_file_impl(
+        80 => wire__crate__api__local_session__LocalSession_stage_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => wire__crate__api__local_session__LocalSession_submit_new_task_impl(
+        81 => wire__crate__api__local_session__LocalSession_submit_new_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => wire__crate__api__local_session__LocalSession_subscribe_impl(
+        82 => wire__crate__api__local_session__LocalSession_subscribe_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        82 => wire__crate__api__local_session__LocalSession_subscribe_worker_replies_impl(
+        83 => wire__crate__api__local_session__LocalSession_subscribe_worker_replies_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        83 => wire__crate__api__local_session__LocalSession_tab_resize_impl(
+        84 => wire__crate__api__local_session__LocalSession_tab_resize_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        84 => wire__crate__api__local_session__LocalSession_toggle_section_tab_pinned_impl(
+        85 => wire__crate__api__local_session__LocalSession_toggle_section_tab_pinned_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        85 => wire__crate__api__local_session__LocalSession_unstage_all_changes_impl(
+        86 => wire__crate__api__local_session__LocalSession_unstage_all_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        86 => wire__crate__api__local_session__LocalSession_unstage_changed_file_impl(
+        87 => wire__crate__api__local_session__LocalSession_unstage_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        87 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+        88 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        88 => {
+        89 => {
             wire__crate__api__terminal_engine__engine_close_impl(port, ptr, rust_vec_len, data_len)
         }
-        89 => wire__crate__api__terminal_engine__engine_encode_input_impl(
+        90 => wire__crate__api__terminal_engine__engine_encode_input_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        90 => {
+        91 => {
             wire__crate__api__terminal_engine__engine_open_impl(port, ptr, rust_vec_len, data_len)
         }
-        91 => {
+        92 => {
             wire__crate__api__terminal_engine__engine_resize_impl(port, ptr, rust_vec_len, data_len)
         }
-        92 => wire__crate__api__terminal_engine__engine_revision_impl(
+        93 => wire__crate__api__terminal_engine__engine_revision_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        93 => wire__crate__api__terminal_engine__engine_snapshot_impl(
+        94 => wire__crate__api__terminal_engine__engine_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        94 => wire__crate__api__terminal_engine__engine_write_pty_impl(
+        95 => wire__crate__api__terminal_engine__engine_write_pty_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        95 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
-        96 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
-        97 => {
+        96 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
+        97 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
+        98 => {
             wire__crate__api__local_session__local_connect_impl(port, ptr, rust_vec_len, data_len)
         }
-        98 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
-        99 => wire__crate__api__resources__read_app_resource_sample_impl(
+        99 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
+        100 => wire__crate__api__resources__read_app_resource_sample_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        100 => {
+        101 => {
             wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len)
         }
-        101 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
+        102 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        102 => {
+        103 => {
             wire__crate__api__pair__regenerate_local_pairing_impl(port, ptr, rust_vec_len, data_len)
         }
-        103 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        104 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -8639,6 +8771,30 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::CommitDto>
     for crate::api::local_session::CommitDto
 {
     fn into_into_dart(self) -> crate::api::local_session::CommitDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::CommitWire {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.short_id.into_into_dart().into_dart(),
+            self.subject.into_into_dart().into_dart(),
+            self.author_name.into_into_dart().into_dart(),
+            self.authored_relative.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::iroh_client::CommitWire
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::CommitWire>
+    for crate::api::iroh_client::CommitWire
+{
+    fn into_into_dart(self) -> crate::api::iroh_client::CommitWire {
         self
     }
 }
@@ -9225,6 +9381,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::RecentCommitsV
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::RecentCommitsWire {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.current_branch.into_into_dart().into_dart(),
+            self.has_more.into_into_dart().into_dart(),
+            self.commits.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::iroh_client::RecentCommitsWire
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::RecentCommitsWire>
+    for crate::api::iroh_client::RecentCommitsWire
+{
+    fn into_into_dart(self) -> crate::api::iroh_client::RecentCommitsWire {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::local_session::ResolvedProjectBranchSettingsDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -9553,6 +9731,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::WorkerReply {
             crate::api::iroh_client::WorkerReply::ProjectGithubUrlAck { url } => {
                 [8.into_dart(), url.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::iroh_client::WorkerReply::RecentCommitsAck { view } => {
+                [9.into_dart(), view.into_into_dart().into_dart()].into_dart()
+            }
             _ => {
                 unimplemented!("");
             }
@@ -9867,6 +10048,17 @@ impl SseEncode for crate::api::local_session::CommitDto {
     }
 }
 
+impl SseEncode for crate::api::iroh_client::CommitWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.short_id, serializer);
+        <String>::sse_encode(self.subject, serializer);
+        <String>::sse_encode(self.author_name, serializer);
+        <String>::sse_encode(self.authored_relative, serializer);
+    }
+}
+
 impl SseEncode for crate::api::local_session::EnabledAgentsView {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -10011,6 +10203,16 @@ impl SseEncode for Vec<crate::api::local_session::CommitDto> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::local_session::CommitDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::iroh_client::CommitWire> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::iroh_client::CommitWire>::sse_encode(item, serializer);
         }
     }
 }
@@ -10346,6 +10548,16 @@ impl SseEncode for Option<crate::api::local_session::RecentCommitsView> {
     }
 }
 
+impl SseEncode for Option<crate::api::iroh_client::RecentCommitsWire> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::iroh_client::RecentCommitsWire>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::local_session::ResolvedProjectBranchSettingsDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -10617,6 +10829,15 @@ impl SseEncode for crate::api::local_session::RecentCommitsView {
     }
 }
 
+impl SseEncode for crate::api::iroh_client::RecentCommitsWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<String>>::sse_encode(self.current_branch, serializer);
+        <bool>::sse_encode(self.has_more, serializer);
+        <Vec<crate::api::iroh_client::CommitWire>>::sse_encode(self.commits, serializer);
+    }
+}
+
 impl SseEncode for crate::api::local_session::ResolvedProjectBranchSettingsDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -10848,6 +11069,10 @@ impl SseEncode for crate::api::iroh_client::WorkerReply {
             crate::api::iroh_client::WorkerReply::ProjectGithubUrlAck { url } => {
                 <i32>::sse_encode(8, serializer);
                 <Option<String>>::sse_encode(url, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::RecentCommitsAck { view } => {
+                <i32>::sse_encode(9, serializer);
+                <Option<crate::api::iroh_client::RecentCommitsWire>>::sse_encode(view, serializer);
             }
             _ => {
                 unimplemented!("");

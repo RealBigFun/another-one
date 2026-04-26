@@ -40,8 +40,8 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    ActiveGitStateWire, AgentProvider, ChangedFileWire, ProjectKind, ProjectSummary, TabSummary,
-    TaskSummary,
+    ActiveGitStateWire, AgentProvider, ChangedFileWire, CommitWire, ProjectKind, ProjectSummary,
+    RecentCommitsWire, TabSummary, TaskSummary,
 };
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
@@ -385,6 +385,27 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             another_one_core::git_actions::find_github_repo_url(&project_path)
         })
     }
+
+    fn read_recent_commits(
+        &self,
+        project_id: &str,
+        limit: usize,
+    ) -> Result<Option<RecentCommitsWire>, String> {
+        let Some(project_path) = self.project_path(project_id) else {
+            return Ok(None);
+        };
+        let result = tokio::task::block_in_place(|| {
+            another_one_core::project_store::read_project_branch_commit_state(
+                &project_path,
+                limit,
+            )
+        })?;
+        Ok(Some(RecentCommitsWire {
+            current_branch: result.current_branch,
+            has_more: result.has_more,
+            commits: result.commits.into_iter().map(commit_to_wire).collect(),
+        }))
+    }
 }
 
 impl BridgeDaemonRegistry {
@@ -525,5 +546,15 @@ fn changed_file_to_wire(f: another_one_core::project_store::ChangedFile) -> Chan
         index_status: f.index_status.to_string(),
         worktree_status: f.worktree_status.to_string(),
         untracked: f.untracked,
+    }
+}
+
+fn commit_to_wire(c: another_one_core::project_store::BranchCommit) -> CommitWire {
+    CommitWire {
+        id: c.id,
+        short_id: c.short_id,
+        subject: c.subject,
+        author_name: c.author_name,
+        authored_relative: c.authored_relative,
     }
 }
