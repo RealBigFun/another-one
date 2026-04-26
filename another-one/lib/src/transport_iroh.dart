@@ -11,6 +11,7 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
+import 'rust/api/local_session.dart' show OpenInState;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -249,6 +250,21 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     final session = _session;
     if (session == null) return;
     await session.launchTab(sectionId: sectionId, tabId: tabId);
+  }
+
+  /// Snapshot the host's "Open In" config. Per ADR another-one-67l,
+  /// the *display* of installed apps is fine to surface remotely —
+  /// only the actual app launch (`openProjectInApp`) stays
+  /// host-local. The mobile titlebar uses this to render its
+  /// chevron dropdown against whichever daemon the user is paired
+  /// with, so it shows the host's editor list rather than a stub.
+  @override
+  Future<OpenInState> openInState() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('IrohTransport: not connected — cannot read open_in_state');
+    }
+    return session.openInState();
   }
 
   @override

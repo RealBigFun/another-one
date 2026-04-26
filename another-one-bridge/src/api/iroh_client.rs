@@ -14,15 +14,17 @@
 //! UDP sockets and internal actor tasks require tokio specifically, and
 //! without this indirection `Endpoint::bind()` hangs forever on Android.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
 use anyhow::Context;
 use flutter_rust_bridge::frb;
 use tokio::runtime::Runtime;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
+use super::local_session::OpenInState;
 use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
@@ -123,6 +125,13 @@ enum Control {
     /// running. No-op if already live. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::LaunchTab`.
     LaunchTab { section_id: String, tab_id: String },
+    /// Snapshot the host's "Open In" config — installed-and-enabled
+    /// apps + preferred default. Reply: `WorkerReply::OpenInStateAck`
+    /// (decoded directly into [`OpenInState`] by the per-call
+    /// pending-table; not surfaced as a `WorkerReply` variant on the
+    /// FRB-bound enum since no Dart-side broadcast consumer needs
+    /// it). Mirror of `daemon-sandbox/src/frame.rs::Control::OpenInState`.
+    OpenInState,
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
@@ -484,6 +493,32 @@ pub struct IrohSession {
     /// a `(request_id, reply)` pair so the Dart layer can dispatch via
     /// its `Map<int, Completer<WorkerReply>>` rather than stream order.
     worker_replies_rx: Mutex<Option<mpsc::Receiver<WorkerReplyMessage>>>,
+    /// Per-verb pending-reply table for calls that the bridge fully
+    /// resolves (decoded JSON → typed DTO → return-to-Dart) without
+    /// going through the FRB-bound `WorkerReply` enum.
+    ///
+    /// The recv loop checks `pending` before attempting to decode the
+    /// payload as a `WorkerReply` variant: if a oneshot is registered
+    /// for the frame's `request_id`, the raw JSON `Value` is delivered
+    /// there and the payload skips the broadcast stream. Per-verb
+    /// methods (e.g. [`Self::open_in_state`]) register a oneshot
+    /// before sending the control and await the resolved JSON.
+    ///
+    /// Why split this from `worker_replies_rx`:
+    ///   - Keeps the FRB-bound `WorkerReply` enum small (no
+    ///     OpenInStateAck / EnabledAgentsAck etc. variants leaking
+    ///     into Dart's freezed surface), since most ojm.7 verbs need
+    ///     no Dart-side broadcast subscriber — the calling provider
+    ///     awaits a single typed reply and discards.
+    ///   - Lets per-verb methods return typed DTOs (e.g.
+    ///     `Result<OpenInState>`) directly, instead of forcing the
+    ///     Dart side to pattern-match on a sealed `WorkerReply`
+    ///     subclass per verb.
+    ///
+    /// `ListProjects` keeps the broadcast path because the Dart UI
+    /// fans the result out to multiple listeners (project drawer,
+    /// titlebar, status header).
+    pending: Arc<StdMutex<PendingTable>>,
     /// Monotonic per-session request id allocator. Starts at 1 because
     /// `0` is reserved for daemon-pushed (unsolicited) frames — see
     /// [`PUSH_REQUEST_ID`]. Wraps at u64::MAX which is effectively
@@ -491,6 +526,15 @@ pub struct IrohSession {
     next_request_id: AtomicU64,
     /// Closes the underlying connection when invoked.
     closer: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+/// Map of `request_id` → oneshot waiter for the recv loop to deliver
+/// the raw JSON payload of a worker-reply frame. Populated by
+/// per-verb FRB methods before sending; drained by the recv loop on
+/// matching reply or by `IrohSession::close` when the session ends.
+#[derive(Default)]
+struct PendingTable {
+    waiters: HashMap<u64, oneshot::Sender<serde_json::Value>>,
 }
 
 /// Dial a daemon's Iroh endpoint by its public `EndpointId`.
@@ -669,6 +713,8 @@ async fn iroh_connect_inner(
     let (incoming_tx, incoming_rx) = mpsc::channel::<Vec<u8>>(128);
     let (worker_replies_tx, worker_replies_rx) = mpsc::channel::<WorkerReplyMessage>(64);
     let (close_tx, mut close_rx) = tokio::sync::oneshot::channel::<()>();
+    let pending = Arc::new(StdMutex::new(PendingTable::default()));
+    let pending_for_recv = pending.clone();
     let conn_for_close = conn.clone();
     tokio_rt().spawn(async move {
         loop {
@@ -701,6 +747,32 @@ async fn iroh_connect_inner(
                                     .get("request_id")
                                     .and_then(|v| v.as_u64())
                                     .unwrap_or(PUSH_REQUEST_ID);
+                                // First check the per-verb pending
+                                // table. Per-verb FRB methods (e.g.
+                                // `open_in_state`) register a oneshot
+                                // keyed on the request_id they sent.
+                                // If matched, the raw JSON goes
+                                // straight to the awaiter — skip the
+                                // broadcast path entirely so the
+                                // Dart-bound `WorkerReply` enum
+                                // doesn't have to grow per-verb
+                                // variants nobody else listens to.
+                                if request_id != PUSH_REQUEST_ID {
+                                    let waiter = pending_for_recv
+                                        .lock()
+                                        .unwrap_or_else(|p| p.into_inner())
+                                        .waiters
+                                        .remove(&request_id);
+                                    if let Some(tx) = waiter {
+                                        // oneshot send fails only if the
+                                        // receiver was dropped (caller
+                                        // cancelled / session closed). Drop
+                                        // silently — the caller already
+                                        // unblocked with an error of its own.
+                                        let _ = tx.send(value);
+                                        continue;
+                                    }
+                                }
                                 // Clone the discriminator before the
                                 // strict decode moves `value` —
                                 // otherwise we'd have no way to log
@@ -768,6 +840,7 @@ async fn iroh_connect_inner(
         send_tx: Mutex::new(Some(send_tx)),
         incoming_rx: Mutex::new(Some(incoming_rx)),
         worker_replies_rx: Mutex::new(Some(worker_replies_rx)),
+        pending,
         // Start at 1: id 0 is reserved for daemon-pushed frames so
         // the Dart layer can distinguish "reply to my call" from
         // "unsolicited update" without inspecting variant kinds.
@@ -853,6 +926,46 @@ impl IrohSession {
         .await
     }
 
+    /// Snapshot of the host's "Open In" config — installed-and-enabled
+    /// apps + preferred default. Daemon-side mirror is
+    /// `LocalSession::open_in_state`; the wire shape (`OpenInStateAck`)
+    /// is field-name-compatible with the FRB-bound [`OpenInState`] DTO,
+    /// so this method decodes the daemon's reply directly into it.
+    ///
+    /// The actual app launch (e.g. `xdg-open` / `cursor <path>`) stays
+    /// host-local on the daemon — see `connection.dart::openProjectInApp`.
+    pub async fn open_in_state(&self) -> anyhow::Result<OpenInState> {
+        let value = self
+            .request_and_await(Control::OpenInState)
+            .await
+            .context("open_in_state: request failed")?;
+        decode_ack_state(value, "open_in_state_ack", "open_in_state")
+    }
+
+    /// Allocate a request id, register a oneshot in [`Self::pending`],
+    /// fire the control envelope, and await the daemon's reply as a
+    /// raw JSON value. Per-verb callers wrap this with their own
+    /// shape-specific decoder.
+    async fn request_and_await(&self, control: Control) -> anyhow::Result<serde_json::Value> {
+        let request_id = self.next_request_id();
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut guard = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+            guard.waiters.insert(request_id, tx);
+        }
+        // If sending fails, drop the waiter so the table doesn't leak.
+        if let Err(e) = self.send_control(request_id, control).await {
+            self.pending
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .waiters
+                .remove(&request_id);
+            return Err(e);
+        }
+        rx.await
+            .map_err(|_| anyhow::anyhow!("session closed before reply arrived"))
+    }
+
     /// Wrap a `Control` in the `request_id`-tagged envelope and push
     /// it to the writer task. Internal to the existing per-verb
     /// helpers above; future per-verb additions in `ojm.2..8` can
@@ -930,5 +1043,63 @@ impl IrohSession {
         if let Some(close_tx) = self.closer.lock().await.take() {
             let _ = close_tx.send(());
         }
+        // Wake any per-verb callers blocked on a pending oneshot —
+        // dropping the senders surfaces as `RecvError` on the awaiter
+        // side, which `request_and_await` translates into a
+        // session-closed error.
+        let mut guard = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+        guard.waiters.clear();
     }
+}
+
+/// Decode a worker-reply JSON value as an Ack of the named `kind`.
+/// Returns the strongly-typed payload nested at the named `field` key.
+///
+/// Two failure modes:
+///   - The daemon emitted `WorkerReply::Err` instead of the expected
+///     ack: surface the message + classification as the Result error
+///     so the caller's UI can branch on retry vs. degrade.
+///   - The daemon emitted some unrelated variant or the payload
+///     shape doesn't match: surface a "verb_name: …" anyhow error
+///     for the call site's tracing layer to log.
+///
+/// `verb_name` is included in the error so a log line points at the
+/// originating call without the call site having to wrap on its own.
+fn decode_ack_state<T: for<'de> serde::Deserialize<'de>>(
+    value: serde_json::Value,
+    expected_kind: &str,
+    verb_name: &str,
+) -> anyhow::Result<T> {
+    let kind = value
+        .get("kind")
+        .and_then(|k| k.as_str())
+        .unwrap_or("<missing>");
+    if kind == "err" {
+        let message = value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("daemon returned err with no message")
+            .to_string();
+        let err_kind = value
+            .get("err_kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or("internal")
+            .to_string();
+        anyhow::bail!("{verb_name}: daemon err ({err_kind}): {message}");
+    }
+    if kind != expected_kind {
+        anyhow::bail!(
+            "{verb_name}: unexpected reply kind `{kind}` (expected `{expected_kind}`)"
+        );
+    }
+    let state = value
+        .get("state")
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{verb_name}: missing `state` field on `{expected_kind}` reply"
+            )
+        })?
+        .clone();
+    serde_json::from_value::<T>(state)
+        .with_context(|| format!("{verb_name}: decode `{expected_kind}.state`"))
 }

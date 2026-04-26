@@ -121,6 +121,14 @@ pub enum Control {
     /// are equal citizens in launching — neither is a "master" that
     /// gates the other.
     LaunchTab { section_id: String, tab_id: String },
+    /// Snapshot of the host's "Open In" config — installed-and-enabled
+    /// apps + the user's preferred default. Drives the mobile titlebar
+    /// split-button's primary icon + the chevron dropdown. Reading it
+    /// remotely is fine (display-only); the actual app launch
+    /// (`open_project_in_app`) stays host-local — see the comment on
+    /// `connection.dart::openProjectInApp` for why. Reply:
+    /// [`WorkerReply::OpenInStateAck`].
+    OpenInState,
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -240,6 +248,10 @@ pub enum WorkerReply {
     /// (the mobile UI can still group them by `repo_id` if it
     /// wants a tree rendering later).
     ProjectList { projects: Vec<ProjectSummary> },
+    /// Reply to [`Control::OpenInState`]. `state.enabled_apps` is in
+    /// canonical `OpenInAppKind::all()` order; `preferred_app_id`
+    /// is `None` when no Open-In app is detected on the host.
+    OpenInStateAck { state: OpenInStateWire },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same
@@ -413,6 +425,41 @@ pub enum AgentProvider {
     RovoDev,
     Forge,
     Shell,
+}
+
+/// Wire projection of `another_one_core::open_in::OpenInAppKind`
+/// pre-hydrated with the display strings the mobile UI renders. The
+/// daemon resolves them once at projection time so the wire payload
+/// is one round-trip — mobile never needs to re-derive label/icon
+/// from the id.
+///
+/// Field-for-field compatible with
+/// `another_one_bridge::api::local_session::OpenInAppDto` so the
+/// bridge can pass these straight through to its FRB-exposed DTO
+/// without a mapping layer per field.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenInAppWire {
+    /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
+    /// `"zed"`, `"vscode"`, `"file-manager"`.
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub icon_path: String,
+}
+
+/// Wire projection of [`another_one_bridge::api::local_session::OpenInState`].
+/// Mobile's titlebar uses `preferred_app_id` for its primary-action
+/// icon and `enabled_apps` for the chevron dropdown. Actual app
+/// launch stays host-local on the daemon (see `openProjectInApp`'s
+/// docstring in `connection.dart`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenInStateWire {
+    /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
+    /// declares them.
+    pub enabled_apps: Vec<OpenInAppWire>,
+    /// Id of the app the titlebar's primary action launches, or
+    /// `None` when no app is enabled at all.
+    pub preferred_app_id: Option<String>,
 }
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the

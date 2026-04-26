@@ -204,14 +204,15 @@ abstract class DaemonConnection {
   /// apps + the preferred default. Used by the titlebar split-button
   /// to render its primary icon and the chevron dropdown.
   ///
-  /// Open-In is currently a desktop-host-local concern and not
-  /// remoted: the iroh transport throws by design until a remote
-  /// client gets a "launch app on the host you're connected to"
-  /// surface (out of scope for the migration).
+  /// Per ADR another-one-67l this is a remote-able read: the *display*
+  /// of installed apps is fine to surface against any daemon, only
+  /// the actual launch ([openProjectInApp]) stays host-local. Both
+  /// `IrohTransport` and `LocalTransport` implement this; the default
+  /// here only fires for connection types that haven't overridden it.
   Future<OpenInState> openInState() {
     throw UnimplementedError(
-      'openInState: Open-In is host-local; remote daemons do not '
-      'expose installed-app detection (out of migration scope).',
+      'openInState: this DaemonConnection variant has not implemented '
+      'open_in_state.',
     );
   }
 

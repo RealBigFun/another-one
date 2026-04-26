@@ -14,6 +14,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'frb_generated.dart';
+import 'lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
@@ -32,6 +33,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   get rust_arc_decrement_strong_count_LocalSessionPtr => wire
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSessionPtr;
 
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_SenderValuePtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValuePtr;
+
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
@@ -48,6 +53,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SenderValue
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
+    dynamic raw,
+  );
+
+  @protected
   IrohSession
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     dynamic raw,
@@ -60,6 +71,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  Map<BigInt, SenderValue>
+  dco_decode_Map_u_64_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue_None(
+    dynamic raw,
+  );
+
+  @protected
   IrohSession
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     dynamic raw,
@@ -68,6 +85,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   LocalSession
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    dynamic raw,
+  );
+
+  @protected
+  SenderValue
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
     dynamic raw,
   );
 
@@ -244,6 +267,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ProjectSummary> dco_decode_list_project_summary(dynamic raw);
 
   @protected
+  List<(BigInt, SenderValue)>
+  dco_decode_list_record_u_64_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_sender_value(
+    dynamic raw,
+  );
+
+  @protected
   List<ResourceUsageProjectDto> dco_decode_list_resource_usage_project_dto(
     dynamic raw,
   );
@@ -353,6 +382,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PairingInfo dco_decode_pairing_info(dynamic raw);
 
   @protected
+  PendingTable dco_decode_pending_table(dynamic raw);
+
+  @protected
   ProjectActionAccessDto dco_decode_project_action_access_dto(dynamic raw);
 
   @protected
@@ -386,6 +418,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RecentCommitsView dco_decode_recent_commits_view(dynamic raw);
+
+  @protected
+  (BigInt, SenderValue)
+  dco_decode_record_u_64_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_sender_value(
+    dynamic raw,
+  );
 
   @protected
   ResolvedProjectBranchSettingsDto
@@ -464,6 +502,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SenderValue
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   IrohSession
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     SseDeserializer deserializer,
@@ -476,6 +520,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  Map<BigInt, SenderValue>
+  sse_decode_Map_u_64_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue_None(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   IrohSession
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     SseDeserializer deserializer,
@@ -484,6 +534,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   LocalSession
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SenderValue
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
     SseDeserializer deserializer,
   );
 
@@ -702,6 +758,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<(BigInt, SenderValue)>
+  sse_decode_list_record_u_64_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_sender_value(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<ResourceUsageProjectDto> sse_decode_list_resource_usage_project_dto(
     SseDeserializer deserializer,
   );
@@ -833,6 +895,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PairingInfo sse_decode_pairing_info(SseDeserializer deserializer);
 
   @protected
+  PendingTable sse_decode_pending_table(SseDeserializer deserializer);
+
+  @protected
   ProjectActionAccessDto sse_decode_project_action_access_dto(
     SseDeserializer deserializer,
   );
@@ -878,6 +943,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RecentCommitsView sse_decode_recent_commits_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  (BigInt, SenderValue)
+  sse_decode_record_u_64_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_sender_value(
     SseDeserializer deserializer,
   );
 
@@ -980,6 +1051,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
+    SenderValue self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     IrohSession self,
     SseSerializer serializer,
@@ -994,6 +1072,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Map_u_64_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue_None(
+    Map<BigInt, SenderValue> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     IrohSession self,
     SseSerializer serializer,
@@ -1003,6 +1088,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
     LocalSession self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
+    SenderValue self,
     SseSerializer serializer,
   );
 
@@ -1268,6 +1360,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void
+  sse_encode_list_record_u_64_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_sender_value(
+    List<(BigInt, SenderValue)> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_resource_usage_project_dto(
     List<ResourceUsageProjectDto> self,
     SseSerializer serializer,
@@ -1427,6 +1526,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_pairing_info(PairingInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_pending_table(PendingTable self, SseSerializer serializer);
+
+  @protected
   void sse_encode_project_action_access_dto(
     ProjectActionAccessDto self,
     SseSerializer serializer,
@@ -1486,6 +1588,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_recent_commits_view(
     RecentCommitsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_record_u_64_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_sender_value(
+    (BigInt, SenderValue) self,
     SseSerializer serializer,
   );
 
@@ -1660,5 +1769,39 @@ class RustLibWire implements BaseWire {
       );
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession =
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSessionPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValuePtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_another_one_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValuePtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValuePtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_another_one_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValue =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderValuePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 }

@@ -34,13 +34,16 @@ use another_one_core::agents::AgentProviderKind;
 use another_one_core::daemon_embed::{
     daemon_paths, key_from_wire, RegistryState, TabLaunchRequest,
 };
+use another_one_core::open_in::OpenInAppKind;
+use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
 use another_one_core::project_store::ProjectStore;
 use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    AgentProvider, OpenInAppWire, OpenInStateWire, ProjectKind, ProjectSummary, TabSummary,
+    TaskSummary,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -308,6 +311,53 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             }
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
+    }
+
+    fn open_in_state(&self) -> Option<OpenInStateWire> {
+        // Mirrors `LocalSession::open_in_state` (api/local_session.rs).
+        // Cheap: install detection runs through HeadlessPlatform's
+        // single PATH walk + the project-store read is one mutex lock.
+        // No need to run on a blocking pool.
+        let available = available_open_in_apps();
+        self.with_state(|state| {
+            let enabled_apps = state
+                .project_store
+                .enabled_open_in_apps(&available)
+                .into_iter()
+                .map(open_in_app_to_wire)
+                .collect();
+            let preferred_app_id = state
+                .project_store
+                .preferred_open_in_app(&available)
+                .map(|app| app.id().to_string());
+            OpenInStateWire {
+                enabled_apps,
+                preferred_app_id,
+            }
+        })
+    }
+}
+
+/// Filter [`OpenInAppKind::all`] down to what the host says is
+/// installed, preserving the canonical order. Mirrors
+/// `api/local_session.rs::available_open_in_apps`.
+fn available_open_in_apps() -> Vec<OpenInAppKind> {
+    OpenInAppKind::all()
+        .into_iter()
+        .filter(|app| {
+            <CurrentPlatform as HeadlessPlatform>::is_open_in_app_available(*app)
+        })
+        .collect()
+}
+
+/// Hydrate an [`OpenInAppKind`] into the wire DTO with display
+/// strings the mobile UI renders directly.
+fn open_in_app_to_wire(app: OpenInAppKind) -> OpenInAppWire {
+    OpenInAppWire {
+        id: app.id().to_string(),
+        label: app.label().to_string(),
+        description: app.description().to_string(),
+        icon_path: app.icon_path().to_string(),
     }
 }
 

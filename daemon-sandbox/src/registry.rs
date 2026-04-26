@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::ProjectSummary;
+use crate::frame::{OpenInStateWire, ProjectSummary};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -155,6 +155,16 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// attach briefly). Default impl is a no-op for registries that
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
+
+    /// Snapshot of the host's "Open In" config — installed-and-enabled
+    /// apps + preferred default. Read-only (the actual `xdg-open`
+    /// spawn stays host-local on the daemon, by design — see
+    /// `connection.dart::openProjectInApp` for why). Default impl
+    /// returns `None` for registries that don't surface Open-In
+    /// (the sandbox binary has no host editor detection).
+    fn open_in_state(&self) -> Option<OpenInStateWire> {
+        None
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

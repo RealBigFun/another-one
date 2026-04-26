@@ -3418,7 +3418,11 @@ fn changed_file_to_dto(
 /// pre-computed display strings. Lives here (not in core) because
 /// FRB's binding generator only walks bridge crate types — we'd
 /// need a re-export shim either way and the mapping is one-to-one.
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` exists so the iroh transport can decode the wire
+/// payload (`OpenInAppWire` from `daemon-sandbox`) straight into this
+/// type — the field names match by design. FRB ignores extra derives.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenInAppDto {
     /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
     /// `"zed"`, `"vscode"`, `"file-manager"`. Round-trips through
@@ -3437,7 +3441,11 @@ pub struct OpenInAppDto {
 }
 
 /// Snapshot returned by [`LocalSession::open_in_state`].
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` exists for the iroh transport; field names match
+/// `daemon-sandbox::frame::OpenInStateWire` so the wire JSON decodes
+/// directly into this DTO without a per-field map step.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenInState {
     /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
     /// declares them — Cursor, Zed, VS Code, File Manager.

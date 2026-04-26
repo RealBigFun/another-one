@@ -26,7 +26,9 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
+use crate::frame::{
+    self, Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope,
+};
 use crate::registry::{EndpointHandle, PairState, DaemonRegistry};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
@@ -404,6 +406,18 @@ async fn handle_control(
             let projects = registry.list_projects();
             let wire = WorkerReply::ProjectList { projects };
             send_worker_reply(outbound_tx, request_id, &wire).await?;
+        }
+        Control::OpenInState => {
+            let reply = match registry.open_in_state() {
+                Some(state) => WorkerReply::OpenInStateAck { state },
+                None => WorkerReply::Err {
+                    message: "open_in_state: registry does not surface \
+                              Open-In on this host"
+                        .to_string(),
+                    kind: ErrKind::Unsupported,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
         Control::AttachTab { section_id, tab_id } => {
             // Drop any prior attachment on this connection.

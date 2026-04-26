@@ -1240,6 +1240,10 @@ enum McpTransportKindDto { stdio, http }
 /// pre-computed display strings. Lives here (not in core) because
 /// FRB's binding generator only walks bridge crate types — we'd
 /// need a re-export shim either way and the mapping is one-to-one.
+///
+/// `Deserialize` exists so the iroh transport can decode the wire
+/// payload (`OpenInAppWire` from `daemon-sandbox`) straight into this
+/// type — the field names match by design. FRB ignores extra derives.
 class OpenInAppDto {
   /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
   /// `"zed"`, `"vscode"`, `"file-manager"`. Round-trips through
@@ -1343,6 +1347,10 @@ class OpenInSettingsView {
 }
 
 /// Snapshot returned by [`LocalSession::open_in_state`].
+///
+/// `Deserialize` exists for the iroh transport; field names match
+/// `daemon-sandbox::frame::OpenInStateWire` so the wire JSON decodes
+/// directly into this DTO without a per-field map step.
 class OpenInState {
   /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
   /// declares them — Cursor, Zed, VS Code, File Manager.
