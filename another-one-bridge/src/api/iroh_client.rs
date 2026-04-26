@@ -24,7 +24,7 @@ use flutter_rust_bridge::frb;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-use super::local_session::OpenInState;
+use super::local_session::{EnabledAgentsView, OpenInState};
 use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
@@ -136,6 +136,11 @@ enum Control {
     /// Reply: `WorkerReply::ProjectActionsAck`. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ListProjectActions`.
     ListProjectActions { project_id: String },
+    /// Snapshot of agents the user has enabled on this host plus
+    /// the preferred default. Reply:
+    /// `WorkerReply::EnabledAgentsAck`. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadEnabledAgents`.
+    ReadEnabledAgents,
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
@@ -973,6 +978,18 @@ impl IrohSession {
             "actions",
             "list_project_actions",
         )
+    }
+
+    /// Snapshot of agents the user has enabled on this host plus
+    /// the preferred default. Drives the new-task modal's agent
+    /// multi-select. Daemon-side mirror is
+    /// `LocalSession::read_enabled_agents`.
+    pub async fn read_enabled_agents(&self) -> anyhow::Result<EnabledAgentsView> {
+        let value = self
+            .request_and_await(Control::ReadEnabledAgents)
+            .await
+            .context("read_enabled_agents: request failed")?;
+        decode_ack_field(value, "enabled_agents_ack", "view", "read_enabled_agents")
     }
 
     /// Allocate a request id, register a oneshot in [`Self::pending`],

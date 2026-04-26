@@ -424,6 +424,11 @@ async fn handle_control(
             let reply = WorkerReply::ProjectActionsAck { actions };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ReadEnabledAgents => {
+            let view = registry.read_enabled_agents();
+            let reply = WorkerReply::EnabledAgentsAck { view };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
         Control::AttachTab { section_id, tab_id } => {
             // Drop any prior attachment on this connection.
             if let Some(prev) = attached.take() {

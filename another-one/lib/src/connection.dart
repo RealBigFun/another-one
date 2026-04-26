@@ -579,8 +579,8 @@ abstract class DaemonConnection {
   /// preferred default. Drives the new-task modal's multi-select.
   Future<EnabledAgentsView> readEnabledAgents() {
     throw UnimplementedError(
-      'readEnabledAgents: requires Control::ReadEnabledAgents wire '
-      'variant on the iroh transport (not yet implemented).',
+      'readEnabledAgents: this DaemonConnection variant has not '
+      'implemented read_enabled_agents.',
     );
   }
 

@@ -135,6 +135,11 @@ pub enum Control {
     /// `ProjectStore::project_actions` behaviour. Reply:
     /// [`WorkerReply::ProjectActionsAck`].
     ListProjectActions { project_id: String },
+    /// Snapshot of agents the user has enabled on this host plus
+    /// the id of the one they've picked as default. Drives the
+    /// new-task modal's agent multi-select. Reply:
+    /// [`WorkerReply::EnabledAgentsAck`].
+    ReadEnabledAgents,
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -263,6 +268,10 @@ pub enum WorkerReply {
     /// actions configured) — clients render the empty state rather
     /// than treating it as an error.
     ProjectActionsAck { actions: Vec<ProjectActionWire> },
+    /// Reply to [`Control::ReadEnabledAgents`]. `view.agents` is in
+    /// the canonical `core::agents::AGENTS` order — clients render
+    /// without re-sorting.
+    EnabledAgentsAck { view: EnabledAgentsViewWire },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same
@@ -554,6 +563,30 @@ pub enum ProjectActionKindWire {
         mode: Option<String>,
         access: ProjectActionAccessWire,
     },
+}
+
+/// Wire projection of one entry in `another_one_core::agents::AGENTS`.
+/// Field-for-field compatible with
+/// `another_one_bridge::api::local_session::AgentSummaryDto` so the
+/// bridge decodes wire JSON straight into the FRB-exposed DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSummaryWire {
+    /// Stable id used by `submit_new_task` and the agent settings
+    /// verbs (`set_agent_enabled`, etc.).
+    pub id: String,
+    pub label: String,
+    pub icon_path: String,
+    pub provider: Option<AgentProvider>,
+}
+
+/// Wire projection of
+/// [`another_one_bridge::api::local_session::EnabledAgentsView`].
+/// Pairs the enabled-agents list with the user's preferred default
+/// (the chip the new-task modal pre-checks on open).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnabledAgentsViewWire {
+    pub agents: Vec<AgentSummaryWire>,
+    pub default_agent_id: Option<String>,
 }
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the

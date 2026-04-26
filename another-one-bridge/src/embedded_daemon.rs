@@ -45,9 +45,10 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, OpenInAppWire, OpenInStateWire, ProjectActionAccessWire,
-    ProjectActionIconWire, ProjectActionKindWire, ProjectActionScopeWire, ProjectActionWire,
-    ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    AgentProvider, AgentSummaryWire, EnabledAgentsViewWire, OpenInAppWire, OpenInStateWire,
+    ProjectActionAccessWire, ProjectActionIconWire, ProjectActionKindWire,
+    ProjectActionScopeWire, ProjectActionWire, ProjectKind, ProjectSummary, TabSummary,
+    TaskSummary,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -355,6 +356,43 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 .collect()
         })
         .unwrap_or_default()
+    }
+
+    fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
+        // Mirrors `LocalSession::read_enabled_agents`. The list is
+        // already in canonical AGENTS order via
+        // `effective_enabled_agents`, which preserves the static
+        // declaration order while filtering against the per-host
+        // `enabled_agents` HashSet.
+        self.with_state(|state| {
+            let enabled = another_one_core::agents::effective_enabled_agents(
+                state.project_store.ui.enabled_agents.as_ref(),
+            );
+            let agents = enabled.iter().map(|agent| agent_def_to_wire(agent)).collect();
+            let default_agent_id = state
+                .project_store
+                .default_agent_id()
+                .map(str::to_string);
+            EnabledAgentsViewWire {
+                agents,
+                default_agent_id,
+            }
+        })
+        .unwrap_or_else(|| EnabledAgentsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        })
+    }
+}
+
+/// Project a `core::agents::AgentDef` into the wire DTO. Mirrors
+/// `api/local_session.rs::agent_def_to_dto`.
+fn agent_def_to_wire(agent: &&'static another_one_core::agents::AgentDef) -> AgentSummaryWire {
+    AgentSummaryWire {
+        id: agent.id.to_string(),
+        label: agent.label.to_string(),
+        icon_path: agent.icon.to_string(),
+        provider: agent.provider.map(map_agent_provider),
     }
 }
 

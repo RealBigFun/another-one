@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{OpenInStateWire, ProjectActionWire, ProjectSummary};
+use crate::frame::{
+    EnabledAgentsViewWire, OpenInStateWire, ProjectActionWire, ProjectSummary,
+};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -172,6 +174,19 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// (the sandbox binary has no project store).
     fn list_project_actions(&self, _project_id: &str) -> Vec<ProjectActionWire> {
         Vec::new()
+    }
+
+    /// Snapshot of agents the user has enabled on this host plus
+    /// the id of the one they've picked as default. Drives the
+    /// new-task modal's agent multi-select; the order is the
+    /// canonical `core::agents::AGENTS` order so the UI can render
+    /// without re-sorting. Default impl returns an empty view —
+    /// the sandbox binary has no agents config to surface.
+    fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
+        EnabledAgentsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        }
     }
 }
 

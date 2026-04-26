@@ -3513,7 +3513,10 @@ fn map_agent_provider_back(kind: AgentProvider) -> AgentProviderKind {
 /// [`another_one_core::agents::AGENTS`]. Carries everything the
 /// new-task modal's agent multi-select needs to render a chip
 /// (label + icon path) without the UI side hard-coding a copy.
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` lets the iroh transport decode the daemon's
+/// `AgentSummaryWire` directly into this DTO.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct AgentSummaryDto {
     /// Stable id used by the bridge's `submit_new_task` verb.
     pub id: String,
@@ -3525,7 +3528,9 @@ pub struct AgentSummaryDto {
 /// Snapshot returned by [`LocalSession::read_enabled_agents`].
 /// Pairs the enabled-agents list with the user's preferred default
 /// (the chip the modal pre-checks on open).
-#[derive(Debug, Clone)]
+///
+/// `Deserialize` shape matches `daemon-sandbox::frame::EnabledAgentsViewWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct EnabledAgentsView {
     pub agents: Vec<AgentSummaryDto>,
     pub default_agent_id: Option<String>,

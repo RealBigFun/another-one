@@ -11,7 +11,8 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
-import 'rust/api/local_session.dart' show OpenInState, ProjectActionDto;
+import 'rust/api/local_session.dart'
+    show EnabledAgentsView, OpenInState, ProjectActionDto;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -280,6 +281,20 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       );
     }
     return session.listProjectActions(projectId: projectId);
+  }
+
+  /// Snapshot of agents the user has enabled on this host plus the
+  /// preferred default. Drives the new-task modal's agent
+  /// multi-select.
+  @override
+  Future<EnabledAgentsView> readEnabledAgents() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError(
+        'IrohTransport: not connected — cannot read enabled agents',
+      );
+    }
+    return session.readEnabledAgents();
   }
 
   @override

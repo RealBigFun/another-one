@@ -100,6 +100,12 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// host-local on the daemon — see `connection.dart::openProjectInApp`.
   Future<OpenInState> openInState();
 
+  /// Snapshot of agents the user has enabled on this host plus
+  /// the preferred default. Drives the new-task modal's agent
+  /// multi-select. Daemon-side mirror is
+  /// `LocalSession::read_enabled_agents`.
+  Future<EnabledAgentsView> readEnabledAgents();
+
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
