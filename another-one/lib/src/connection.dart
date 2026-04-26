@@ -607,6 +607,41 @@ abstract class DaemonConnection {
       'variant on the iroh transport (not yet implemented).',
     );
   }
+
+  /// Set the active tab for a section. Persists the choice; does
+  /// not relaunch (Dart-side `selectedTabProvider` triggers attach).
+  Future<void> activateSectionTab({
+    required String sectionId,
+    required String tabId,
+  }) {
+    throw UnimplementedError(
+      'activateSectionTab: requires Control::ActivateSectionTab wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Remove a tab from a section. Returns the new active tab id
+  /// (empty when the section is now empty).
+  Future<String> closeSectionTab({
+    required String sectionId,
+    required String tabId,
+  }) {
+    throw UnimplementedError(
+      'closeSectionTab: requires Control::CloseSectionTab wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Flip the `pinned` flag on a tab. Returns the new pinned state.
+  Future<bool> toggleSectionTabPinned({
+    required String sectionId,
+    required String tabId,
+  }) {
+    throw UnimplementedError(
+      'toggleSectionTabPinned: requires Control::ToggleSectionTabPinned '
+      'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
 }
 
 /// In-memory list of active [DaemonConnection]s. Holds N regardless

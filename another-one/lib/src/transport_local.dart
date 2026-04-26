@@ -657,6 +657,46 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<void> activateSectionTab({
+    required String sectionId,
+    required String tabId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('activateSectionTab: LocalTransport not connected');
+    }
+    await session.activateSectionTab(sectionId: sectionId, tabId: tabId);
+  }
+
+  @override
+  Future<String> closeSectionTab({
+    required String sectionId,
+    required String tabId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('closeSectionTab: LocalTransport not connected');
+    }
+    return session.closeSectionTab(sectionId: sectionId, tabId: tabId);
+  }
+
+  @override
+  Future<bool> toggleSectionTabPinned({
+    required String sectionId,
+    required String tabId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError(
+          'toggleSectionTabPinned: LocalTransport not connected');
+    }
+    return session.toggleSectionTabPinned(
+      sectionId: sectionId,
+      tabId: tabId,
+    );
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,

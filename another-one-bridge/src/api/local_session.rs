@@ -1249,6 +1249,140 @@ impl LocalSession {
             .map(|branch| branch.name))
     }
 
+    /// Activate `tab_id` inside `section_id` — only updates the
+    /// section's persisted `active_tab_id`. Does not relaunch
+    /// (the Dart-side `selectedTabProvider` triggers attach via
+    /// `attach_tab`).
+    pub async fn activate_section_tab(
+        &self,
+        section_id: String,
+        tab_id: String,
+    ) -> anyhow::Result<()> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("activate_section_tab: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("activate_section_tab: RegistryState mutex poisoned")
+        })?;
+        let Some(section) = state
+            .project_store
+            .terminal_sections
+            .get(&section_id)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        if !section.tabs.iter().any(|t| t.id == tab_id) {
+            return Ok(());
+        }
+        let mut next = section;
+        next.active_tab_id = tab_id;
+        state.project_store.set_section_state(section_id, next);
+        Ok(())
+    }
+
+    /// Remove a tab from `section_id`. If the closed tab was
+    /// active, the new active tab is the previous neighbour
+    /// (or the new last tab when closing the head). Returns the
+    /// new active tab id (empty when the section is now empty).
+    pub async fn close_section_tab(
+        &self,
+        section_id: String,
+        tab_id: String,
+    ) -> anyhow::Result<String> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("close_section_tab: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("close_section_tab: RegistryState mutex poisoned")
+        })?;
+        let Some(section) = state
+            .project_store
+            .terminal_sections
+            .get(&section_id)
+            .cloned()
+        else {
+            return Ok(String::new());
+        };
+        let Some(idx) = section.tabs.iter().position(|t| t.id == tab_id) else {
+            return Ok(section.active_tab_id);
+        };
+        let mut next = section;
+        next.tabs.remove(idx);
+        if next.active_tab_id == tab_id {
+            next.active_tab_id = if next.tabs.is_empty() {
+                String::new()
+            } else {
+                let new_idx = idx.min(next.tabs.len().saturating_sub(1));
+                next.tabs[new_idx].id.clone()
+            };
+        }
+        // Free the live broadcast/writer entries (best-effort —
+        // the daemon-side drain owns the actual PTY teardown).
+        let key = TerminalRuntimeKey {
+            section_id: another_one_core::section::SectionId::from_store_key(&section_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "close_section_tab: malformed section_id `{section_id}`"
+                    )
+                })?,
+            tab_id: tab_id.clone(),
+        };
+        state.broadcasts.remove(&key);
+        state.writers.remove(&key);
+        state.in_flight_launches.remove(&key);
+        state.pending_post_launch_input.remove(&key);
+        state
+            .pending_tab_launches
+            .retain(|req| req.key != key);
+        let active = next.active_tab_id.clone();
+        state.project_store.set_section_state(section_id, next);
+        Ok(active)
+    }
+
+    /// Flip the `pinned` flag on one tab. Mirrors GPUI's
+    /// `toggle_tab_pinned` — pinned tabs sort to the head of the
+    /// strip but the bridge stores them in insertion order; UI
+    /// re-orders pinned-first at render time.
+    pub async fn toggle_section_tab_pinned(
+        &self,
+        section_id: String,
+        tab_id: String,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("toggle_section_tab_pinned: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "toggle_section_tab_pinned: RegistryState mutex poisoned"
+            )
+        })?;
+        let Some(section) = state
+            .project_store
+            .terminal_sections
+            .get(&section_id)
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        let mut next = section;
+        let mut new_pinned = false;
+        let mut found = false;
+        for tab in next.tabs.iter_mut() {
+            if tab.id == tab_id {
+                tab.pinned = !tab.pinned;
+                new_pinned = tab.pinned;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Ok(false);
+        }
+        state.project_store.set_section_state(section_id, next);
+        Ok(new_pinned)
+    }
+
     /// Append an agent tab (or plain shell, when `agent_id` is
     /// empty / the Terminal sentinel) to `section_id`'s task and
     /// queue its PTY launch. Mirrors

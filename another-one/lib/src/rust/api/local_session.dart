@@ -19,6 +19,15 @@ Future<LocalSession> localConnect() =>
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LocalSession>>
 abstract class LocalSession implements RustOpaqueInterface {
+  /// Activate `tab_id` inside `section_id` — only updates the
+  /// section's persisted `active_tab_id`. Does not relaunch
+  /// (the Dart-side `selectedTabProvider` triggers attach via
+  /// `attach_tab`).
+  Future<void> activateSectionTab({
+    required String sectionId,
+    required String tabId,
+  });
+
   /// Append an agent tab (or plain shell, when `agent_id` is
   /// empty / the Terminal sentinel) to `section_id`'s task and
   /// queue its PTY launch. Mirrors
@@ -63,6 +72,15 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// channel senders so active subscriptions exit, and clears
   /// per-viewer state on the registry. Idempotent.
   Future<void> close();
+
+  /// Remove a tab from `section_id`. If the closed tab was
+  /// active, the new active tab is the previous neighbour
+  /// (or the new last tab when closing the head). Returns the
+  /// new active tab id (empty when the section is now empty).
+  Future<String> closeSectionTab({
+    required String sectionId,
+    required String tabId,
+  });
 
   /// Create a new branch from HEAD on `project_id`. When
   /// `use_current_task` is true, switches the current checkout
@@ -537,6 +555,15 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// (min-across-viewers) size. The desktop UI render tick drains
   /// the resulting `pending_resizes` queue.
   Future<void> tabResize({required int cols, required int rows});
+
+  /// Flip the `pinned` flag on one tab. Mirrors GPUI's
+  /// `toggle_tab_pinned` — pinned tabs sort to the head of the
+  /// strip but the bridge stores them in insertion order; UI
+  /// re-orders pinned-first at render time.
+  Future<bool> toggleSectionTabPinned({
+    required String sectionId,
+    required String tabId,
+  });
 
   /// Unstage every currently-staged change.
   Future<void> unstageAllChanges({required String projectId});
