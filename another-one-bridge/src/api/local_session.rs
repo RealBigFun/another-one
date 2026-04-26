@@ -463,6 +463,55 @@ impl LocalSession {
         Ok(inserted)
     }
 
+    /// Read the list of files with working-tree changes for
+    /// `project_id`, mirroring GPUI's right-sidebar Changes pane
+    /// data source. Calls into
+    /// [`another_one_core::project_store::read_project_git_state`]
+    /// with `include_metadata=false` (the right sidebar doesn't
+    /// need branch ahead/behind for this view) inside a
+    /// `spawn_blocking` so the FRB caller's tokio runtime stays
+    /// free.
+    ///
+    /// Returns `Ok(None)` when the project id is unknown — UI
+    /// renders an empty list rather than surfacing the lookup
+    /// failure as an error toast (matches GPUI's "no panel" gate).
+    pub async fn read_changed_files(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Option<Vec<ChangedFileDto>>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("read_changed_files: set_local_registry not called")
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!("read_changed_files: RegistryState mutex poisoned")
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        };
+        let Some(project_path) = project_path else {
+            return Ok(None);
+        };
+        let git_state = tokio::task::spawn_blocking(move || {
+            another_one_core::project_store::read_project_git_state(
+                &project_path,
+                false,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("read_changed_files join: {e}"))?;
+        let files = git_state
+            .changed_files
+            .into_iter()
+            .map(changed_file_to_dto)
+            .collect();
+        Ok(Some(files))
+    }
+
     /// Resolve the GitHub remote URL for a project by shelling out to
     /// `git remote get-url origin` and normalising the result through
     /// [`another_one_core::git_actions::find_github_repo_url`].
@@ -942,6 +991,49 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         AgentProviderKind::Amp => AgentProvider::Amp,
         AgentProviderKind::RovoDev => AgentProvider::RovoDev,
         AgentProviderKind::Forge => AgentProvider::Forge,
+    }
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ChangedFile`]. Carries the
+/// raw status chars + diff counts; UI maps them to glyphs/colours
+/// per `desktop/src/right_sidebar.rs::changed_file_status_char`
+/// and `changed_file_status_color`. We don't pre-format on the
+/// Rust side so the bridge stays display-agnostic and we don't
+/// pay the cross-FFI cost of re-encoding every redraw.
+#[derive(Debug, Clone)]
+pub struct ChangedFileDto {
+    /// Path relative to the project root, the way `git status` reports it.
+    pub path: String,
+    /// Set on rename (`R`) / copy (`C`) entries — the from-path. UI
+    /// renders this as `original → path` when present.
+    pub original_path: Option<String>,
+    pub staged_additions: i32,
+    pub staged_deletions: i32,
+    pub unstaged_additions: i32,
+    pub unstaged_deletions: i32,
+    /// Index status char from `git status --porcelain` — `M`/`A`/`D`/
+    /// `R`/`C`/`?`/' '. UI maps via the GPUI char-to-glyph table.
+    pub index_status: String,
+    /// Worktree status char — same alphabet as `index_status`.
+    pub worktree_status: String,
+    /// True when the file is `??` (untracked) in `git status`.
+    pub untracked: bool,
+}
+
+fn changed_file_to_dto(
+    f: another_one_core::project_store::ChangedFile,
+) -> ChangedFileDto {
+    ChangedFileDto {
+        path: f.path,
+        original_path: f.original_path,
+        staged_additions: f.staged_additions,
+        staged_deletions: f.staged_deletions,
+        unstaged_additions: f.unstaged_additions,
+        unstaged_deletions: f.unstaged_deletions,
+        index_status: f.index_status.to_string(),
+        worktree_status: f.worktree_status.to_string(),
+        untracked: f.untracked,
     }
 }
 

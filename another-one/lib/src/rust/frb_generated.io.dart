@@ -102,10 +102,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BuildInfo dco_decode_build_info(dynamic raw);
 
   @protected
+  ChangedFileDto dco_decode_changed_file_dto(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
 
   @protected
   List<OpenInAppDto> dco_decode_list_open_in_app_dto(dynamic raw);
@@ -142,6 +148,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
+
+  @protected
+  List<ChangedFileDto>? dco_decode_opt_list_changed_file_dto(dynamic raw);
 
   @protected
   PairingInfo dco_decode_pairing_info(dynamic raw);
@@ -252,10 +261,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BuildInfo sse_decode_build_info(SseDeserializer deserializer);
 
   @protected
+  ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<ChangedFileDto> sse_decode_list_changed_file_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<OpenInAppDto> sse_decode_list_open_in_app_dto(
@@ -300,6 +317,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
+  List<ChangedFileDto>? sse_decode_opt_list_changed_file_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   PairingInfo sse_decode_pairing_info(SseDeserializer deserializer);
@@ -425,10 +447,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_build_info(BuildInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_changed_file_dto(
+    ChangedFileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_changed_file_dto(
+    List<ChangedFileDto> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_open_in_app_dto(
@@ -486,6 +520,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_list_changed_file_dto(
+    List<ChangedFileDto>? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_pairing_info(PairingInfo self, SseSerializer serializer);

@@ -31,7 +31,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'rust/api/iroh_client.dart';
-import 'rust/api/local_session.dart' show OpenInState;
+import 'rust/api/local_session.dart' show ChangedFileDto, OpenInState;
 import 'transport.dart';
 
 /// Unified interface for any daemon — local FFI or remote iroh —
@@ -208,6 +208,22 @@ abstract class DaemonConnection {
     throw UnimplementedError(
       'openProjectInApp: Open-In is host-local; remote daemons do '
       'not launch apps on a remote host (out of migration scope).',
+    );
+  }
+
+  /// One-shot read of working-tree changes for `projectId`. Powers
+  /// the right sidebar's Changes pane. Returns `null` when the
+  /// project id is unknown — UI renders the "working tree clean"
+  /// empty state in that case rather than surfacing an error.
+  ///
+  /// Per-keystroke refresh is not the model here; callers
+  /// `ref.invalidate` after a known-mutation (commit, switch
+  /// branch, stage) or on a coarse interval. A streaming variant
+  /// can land later if the polling loop becomes a bottleneck.
+  Future<List<ChangedFileDto>?> readChangedFiles(String projectId) {
+    throw UnimplementedError(
+      'readChangedFiles: requires Control::ReadChangedFiles wire '
+      'variant on the iroh transport (not yet implemented).',
     );
   }
 }

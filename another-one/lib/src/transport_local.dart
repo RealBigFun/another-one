@@ -252,6 +252,19 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     await session.openProjectInApp(projectId: projectId, appId: appId);
   }
 
+  /// Snapshot the working-tree changes for `projectId`. Reads
+  /// through `read_project_git_state` synchronously (inside a
+  /// `spawn_blocking`) on the daemon side. `null` is returned for
+  /// an unknown project id — same gate the right sidebar applies.
+  @override
+  Future<List<ChangedFileDto>?> readChangedFiles(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readChangedFiles: LocalTransport not connected');
+    }
+    return session.readChangedFiles(projectId: projectId);
+  }
+
   @override
   Future<void> attachTab({
     required String sectionId,

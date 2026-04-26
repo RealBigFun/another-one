@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `changed_file_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -118,6 +118,20 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String appId,
   });
 
+  /// Read the list of files with working-tree changes for
+  /// `project_id`, mirroring GPUI's right-sidebar Changes pane
+  /// data source. Calls into
+  /// [`another_one_core::project_store::read_project_git_state`]
+  /// with `include_metadata=false` (the right sidebar doesn't
+  /// need branch ahead/behind for this view) inside a
+  /// `spawn_blocking` so the FRB caller's tokio runtime stays
+  /// free.
+  ///
+  /// Returns `Ok(None)` when the project id is unknown — UI
+  /// renders an empty list rather than surfacing the lookup
+  /// failure as an error toast (matches GPUI's "no panel" gate).
+  Future<List<ChangedFileDto>?> readChangedFiles({required String projectId});
+
   /// Resolve the GitHub remote URL for a project by shelling out to
   /// `git remote get-url origin` and normalising the result through
   /// [`another_one_core::git_actions::find_github_repo_url`].
@@ -184,6 +198,75 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// (min-across-viewers) size. The desktop UI render tick drains
   /// the resulting `pending_resizes` queue.
   Future<void> tabResize({required int cols, required int rows});
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ChangedFile`]. Carries the
+/// raw status chars + diff counts; UI maps them to glyphs/colours
+/// per `desktop/src/right_sidebar.rs::changed_file_status_char`
+/// and `changed_file_status_color`. We don't pre-format on the
+/// Rust side so the bridge stays display-agnostic and we don't
+/// pay the cross-FFI cost of re-encoding every redraw.
+class ChangedFileDto {
+  /// Path relative to the project root, the way `git status` reports it.
+  final String path;
+
+  /// Set on rename (`R`) / copy (`C`) entries — the from-path. UI
+  /// renders this as `original → path` when present.
+  final String? originalPath;
+  final int stagedAdditions;
+  final int stagedDeletions;
+  final int unstagedAdditions;
+  final int unstagedDeletions;
+
+  /// Index status char from `git status --porcelain` — `M`/`A`/`D`/
+  /// `R`/`C`/`?`/' '. UI maps via the GPUI char-to-glyph table.
+  final String indexStatus;
+
+  /// Worktree status char — same alphabet as `index_status`.
+  final String worktreeStatus;
+
+  /// True when the file is `??` (untracked) in `git status`.
+  final bool untracked;
+
+  const ChangedFileDto({
+    required this.path,
+    this.originalPath,
+    required this.stagedAdditions,
+    required this.stagedDeletions,
+    required this.unstagedAdditions,
+    required this.unstagedDeletions,
+    required this.indexStatus,
+    required this.worktreeStatus,
+    required this.untracked,
+  });
+
+  @override
+  int get hashCode =>
+      path.hashCode ^
+      originalPath.hashCode ^
+      stagedAdditions.hashCode ^
+      stagedDeletions.hashCode ^
+      unstagedAdditions.hashCode ^
+      unstagedDeletions.hashCode ^
+      indexStatus.hashCode ^
+      worktreeStatus.hashCode ^
+      untracked.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChangedFileDto &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          originalPath == other.originalPath &&
+          stagedAdditions == other.stagedAdditions &&
+          stagedDeletions == other.stagedDeletions &&
+          unstagedAdditions == other.unstagedAdditions &&
+          unstagedDeletions == other.unstagedDeletions &&
+          indexStatus == other.indexStatus &&
+          worktreeStatus == other.worktreeStatus &&
+          untracked == other.untracked;
 }
 
 /// FRB-friendly mirror of [`OpenInAppKind`] with the
