@@ -534,6 +534,64 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<List<ProjectActionDto>> listProjectActions(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('listProjectActions: LocalTransport not connected');
+    }
+    return session.listProjectActions(projectId: projectId);
+  }
+
+  @override
+  Future<void> saveProjectAction({
+    required String projectId,
+    required ProjectActionDto action,
+    required bool saveGlobalCopy,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('saveProjectAction: LocalTransport not connected');
+    }
+    await session.saveProjectAction(
+      projectId: projectId,
+      action: action,
+      saveGlobalCopy: saveGlobalCopy,
+    );
+  }
+
+  @override
+  Future<bool> deleteProjectAction({
+    required String projectId,
+    required String actionId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('deleteProjectAction: LocalTransport not connected');
+    }
+    return session.deleteProjectAction(
+      projectId: projectId,
+      actionId: actionId,
+    );
+  }
+
+  @override
+  Future<String> runProjectAction({
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('runProjectAction: LocalTransport not connected');
+    }
+    return session.runProjectAction(
+      projectId: projectId,
+      sectionId: sectionId,
+      actionId: actionId,
+    );
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,

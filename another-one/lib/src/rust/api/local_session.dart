@@ -6,10 +6,12 @@
 import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
+part 'local_session.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `run_changed_file_action`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -105,6 +107,14 @@ abstract class LocalSession implements RustOpaqueInterface {
     AgentProvider? agentProvider,
   });
 
+  /// Remove one custom action by id from both the project's own
+  /// list and `UiState::global_actions` (whichever currently holds
+  /// it). Returns `true` if anything was removed.
+  Future<bool> deleteProjectAction({
+    required String projectId,
+    required String actionId,
+  });
+
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent.
   Future<void> detachTab();
@@ -151,6 +161,19 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// Ask the daemon to spawn the given tab's PTY if it isn't
   /// already running. See [`Self`] doc for the launch flow.
   Future<void> launchTab({required String sectionId, required String tabId});
+
+  /// Project actions configured for `project_id` — the merged
+  /// list of per-project + global custom actions, in the same
+  /// order GPUI's titlebar split-button dropdown renders. Per-
+  /// project entries override global ones with the same id (so
+  /// "save global copy" can later be undone by deleting the
+  /// project entry).
+  ///
+  /// Returns an empty list when `project_id` is unknown — matches
+  /// `ProjectStore::project_actions` behaviour for that case.
+  Future<List<ProjectActionDto>> listProjectActions({
+    required String projectId,
+  });
 
   /// Push a project list through [`Self::subscribe_worker_replies`].
   ///
@@ -328,6 +351,30 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String projectId,
   });
 
+  /// Run one custom action inside `section_id`'s task.
+  ///
+  /// Mirrors `desktop/src/app.rs::run_project_action_in_section`:
+  /// builds the launch config (shell or agent kind), appends a
+  /// fresh `PersistedTerminalTab` to the section, sets it as the
+  /// active tab, queues a `TabLaunchRequest` for the daemon's
+  /// drain to spawn, and (for shell actions) records `command\n`
+  /// in `pending_post_launch_input` so the drain writes it once
+  /// the PTY is up.
+  ///
+  /// Note (2026-04-25): the bridge's `embedded_daemon` does not
+  /// drain `pending_tab_launches` yet (tracked as `another-one-v0k`).
+  /// Every other call site already queues there; once the drain
+  /// lands, custom-action shell runs come up end-to-end. Until
+  /// then this verb commits the tab to the persistent store and
+  /// queues — visually correct, but no PTY spawns.
+  ///
+  /// Returns the new tab id so the caller can switch to it.
+  Future<String> runProjectAction({
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  });
+
   /// Run a toolbar git action (Commit, Push, Pull, etc.) against
   /// `project_id`. Routes
   /// [`another_one_core::git_actions::execute_toolbar_git_action`]
@@ -344,6 +391,23 @@ abstract class LocalSession implements RustOpaqueInterface {
   Future<ToolbarActionOutcomeDto> runToolbarGitAction({
     required String projectId,
     required String actionId,
+  });
+
+  /// Insert or update one custom action.
+  ///
+  /// `save_global_copy=true` saves to `UiState::global_actions`
+  /// (visible across every project on this host) and removes any
+  /// per-project copy with the same id. `false` saves to the
+  /// project's own `actions` list and removes any global copy with
+  /// the same id. Mirrors `ProjectStore::upsert_project_action`.
+  ///
+  /// `dto.id` may be empty when editing a brand-new action — the
+  /// bridge generates a uuid in that case so callers don't have to
+  /// reach for `uuid` from Dart.
+  Future<void> saveProjectAction({
+    required String projectId,
+    required ProjectActionDto action,
+    required bool saveGlobalCopy,
   });
 
   /// Send raw PTY stdin bytes to the currently-attached tab.
@@ -780,6 +844,95 @@ class OpenInState {
           enabledApps == other.enabledApps &&
           preferredAppId == other.preferredAppId;
 }
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectActionAccess`]. Drives
+/// the agent-mode CLI's permission flag — `default` passes nothing
+/// extra, the other three map to `--read-only`, `--workspace-write`,
+/// `--full-access` (Claude Code today; other providers ignore).
+enum ProjectActionAccessDto { default_, readOnly, workspaceWrite, fullAccess }
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectAction`]. Carries the
+/// lot — id (empty for a never-saved action), display name, icon,
+/// run-on-worktree-create flag, scope, and the kind-specific
+/// payload. UI maps `icon` to its asset path via
+/// `ProjectActionIconDto.icon_path` (Dart-side helper).
+class ProjectActionDto {
+  final String id;
+  final String name;
+  final ProjectActionIconDto icon;
+  final bool runOnWorktreeCreate;
+  final ProjectActionScopeDto scope;
+  final ProjectActionKindDto kind;
+
+  const ProjectActionDto({
+    required this.id,
+    required this.name,
+    required this.icon,
+    required this.runOnWorktreeCreate,
+    required this.scope,
+    required this.kind,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      icon.hashCode ^
+      runOnWorktreeCreate.hashCode ^
+      scope.hashCode ^
+      kind.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ProjectActionDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          icon == other.icon &&
+          runOnWorktreeCreate == other.runOnWorktreeCreate &&
+          scope == other.scope &&
+          kind == other.kind;
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectActionIcon`]. Stable
+/// kebab-case ids round-trip the GPUI on-disk format
+/// (`projects.json`) so a user can switch desktop binaries without
+/// the icon picker resetting.
+enum ProjectActionIconDto { play, test, lint, configure, build, debug, agent }
+
+@freezed
+sealed class ProjectActionKindDto with _$ProjectActionKindDto {
+  const ProjectActionKindDto._();
+
+  /// A shell command typed verbatim into a freshly-spawned PTY.
+  /// `command` is run as `<command>\n` so multi-line input works
+  /// the same way it would in an interactive shell.
+  const factory ProjectActionKindDto.shell({required String command}) =
+      ProjectActionKindDto_Shell;
+
+  /// An agent CLI launch. `prompt` is the seed message;
+  /// `model`/`traits`/`mode`/`access` are agent-specific knobs
+  /// fed to `project_action_agent_launch_args`.
+  const factory ProjectActionKindDto.agent({
+    required String prompt,
+    required AgentProvider provider,
+    String? model,
+    String? traits,
+    String? mode,
+    required ProjectActionAccessDto access,
+  }) = ProjectActionKindDto_Agent;
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectActionScope`]. Ordered
+/// "project first, global last" because that's how the dropdown row
+/// order treats them — global rows render with a globe glyph beside
+/// the action label.
+enum ProjectActionScopeDto { project, global }
 
 /// FRB-friendly mirror of
 /// [`another_one_core::git_actions::ProjectPagePullRequest`]. One

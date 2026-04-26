@@ -23,7 +23,11 @@ use another_one_core::agents::AgentProviderKind;
 use another_one_core::daemon_embed::{key_from_wire, RegistryState, TabLaunchRequest};
 use another_one_core::open_in::OpenInAppKind;
 use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
-use another_one_core::project_store::ProjectKind as CoreProjectKind;
+use another_one_core::project_store::{
+    PersistedSectionState, PersistedTerminalTab, ProjectAction, ProjectActionAccess,
+    ProjectActionIcon, ProjectActionKind, ProjectActionScope,
+    ProjectKind as CoreProjectKind,
+};
 use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 use flutter_rust_bridge::frb;
@@ -993,6 +997,211 @@ impl LocalSession {
                     "commit-and-push".to_string()
                 }
             }))
+    }
+
+    /// Project actions configured for `project_id` — the merged
+    /// list of per-project + global custom actions, in the same
+    /// order GPUI's titlebar split-button dropdown renders. Per-
+    /// project entries override global ones with the same id (so
+    /// "save global copy" can later be undone by deleting the
+    /// project entry).
+    ///
+    /// Returns an empty list when `project_id` is unknown — matches
+    /// `ProjectStore::project_actions` behaviour for that case.
+    pub async fn list_project_actions(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Vec<ProjectActionDto>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("list_project_actions: set_local_registry not called")
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("list_project_actions: RegistryState mutex poisoned")
+        })?;
+        Ok(state
+            .project_store
+            .project_actions(&project_id)
+            .into_iter()
+            .map(project_action_to_dto)
+            .collect())
+    }
+
+    /// Insert or update one custom action.
+    ///
+    /// `save_global_copy=true` saves to `UiState::global_actions`
+    /// (visible across every project on this host) and removes any
+    /// per-project copy with the same id. `false` saves to the
+    /// project's own `actions` list and removes any global copy with
+    /// the same id. Mirrors `ProjectStore::upsert_project_action`.
+    ///
+    /// `dto.id` may be empty when editing a brand-new action — the
+    /// bridge generates a uuid in that case so callers don't have to
+    /// reach for `uuid` from Dart.
+    pub async fn save_project_action(
+        &self,
+        project_id: String,
+        action: ProjectActionDto,
+        save_global_copy: bool,
+    ) -> anyhow::Result<()> {
+        let core_action = project_action_from_dto(action)?;
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("save_project_action: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("save_project_action: RegistryState mutex poisoned")
+        })?;
+        state
+            .project_store
+            .upsert_project_action(&project_id, core_action, save_global_copy)
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Remove one custom action by id from both the project's own
+    /// list and `UiState::global_actions` (whichever currently holds
+    /// it). Returns `true` if anything was removed.
+    pub async fn delete_project_action(
+        &self,
+        project_id: String,
+        action_id: String,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("delete_project_action: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("delete_project_action: RegistryState mutex poisoned")
+        })?;
+        Ok(state
+            .project_store
+            .delete_project_action(&project_id, &action_id))
+    }
+
+    /// Run one custom action inside `section_id`'s task.
+    ///
+    /// Mirrors `desktop/src/app.rs::run_project_action_in_section`:
+    /// builds the launch config (shell or agent kind), appends a
+    /// fresh `PersistedTerminalTab` to the section, sets it as the
+    /// active tab, queues a `TabLaunchRequest` for the daemon's
+    /// drain to spawn, and (for shell actions) records `command\n`
+    /// in `pending_post_launch_input` so the drain writes it once
+    /// the PTY is up.
+    ///
+    /// Note (2026-04-25): the bridge's `embedded_daemon` does not
+    /// drain `pending_tab_launches` yet (tracked as `another-one-v0k`).
+    /// Every other call site already queues there; once the drain
+    /// lands, custom-action shell runs come up end-to-end. Until
+    /// then this verb commits the tab to the persistent store and
+    /// queues — visually correct, but no PTY spawns.
+    ///
+    /// Returns the new tab id so the caller can switch to it.
+    pub async fn run_project_action(
+        &self,
+        project_id: String,
+        section_id: String,
+        action_id: String,
+    ) -> anyhow::Result<String> {
+        let key_section = another_one_core::section::SectionId::from_store_key(&section_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "run_project_action: malformed section_id `{section_id}` — expected SectionId::store_key()"
+                )
+            })?;
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("run_project_action: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("run_project_action: RegistryState mutex poisoned")
+        })?;
+
+        let action = state
+            .project_store
+            .project_actions(&project_id)
+            .into_iter()
+            .find(|a| a.id == action_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "run_project_action: unknown action_id `{action_id}` for project `{project_id}`"
+                )
+            })?;
+
+        let (launch_config, post_launch_input, fixed_title) = match &action.kind {
+            ProjectActionKind::Shell { command } => {
+                let trimmed = command.trim();
+                if trimmed.is_empty() {
+                    anyhow::bail!(
+                        "Shell actions need a command before they can run."
+                    );
+                }
+                let title = {
+                    let name = action.name.trim();
+                    (!name.is_empty()).then(|| name.to_string())
+                };
+                (
+                    another_one_core::agents::TerminalLaunchConfig::default(),
+                    Some(format!("{trimmed}\n").into_bytes()),
+                    title,
+                )
+            }
+            ProjectActionKind::Agent { provider, .. } => {
+                let args =
+                    another_one_core::project_store::project_action_agent_launch_args(&action)
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                (
+                    another_one_core::agents::TerminalLaunchConfig::for_provider(*provider)
+                        .with_extra_args(args)
+                        .with_agent_launch_args(false),
+                    None,
+                    None,
+                )
+            }
+        };
+
+        let tab_id = uuid::Uuid::new_v4().to_string();
+        let title = fixed_title
+            .clone()
+            .unwrap_or_else(|| launch_config.default_title());
+        let tab = PersistedTerminalTab {
+            id: tab_id.clone(),
+            title,
+            pinned: false,
+            fixed_title,
+            provider: launch_config.provider,
+            launch_config: Some(launch_config.clone()),
+            restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
+        };
+
+        let key = TerminalRuntimeKey {
+            section_id: key_section,
+            tab_id: tab_id.clone(),
+        };
+
+        let mut existing_section = state
+            .project_store
+            .terminal_sections
+            .get(&section_id)
+            .cloned()
+            .unwrap_or_else(|| PersistedSectionState {
+                active_tab_id: String::new(),
+                next_tab_id: 1,
+                cwd: None,
+                tabs: Vec::new(),
+            });
+        existing_section.tabs.push(tab);
+        existing_section.active_tab_id = tab_id.clone();
+        existing_section.next_tab_id = existing_section.next_tab_id.saturating_add(1);
+        state
+            .project_store
+            .set_section_state(section_id.clone(), existing_section);
+
+        if let Some(input) = post_launch_input {
+            state
+                .pending_post_launch_input
+                .insert(key.clone(), input);
+        }
+        state
+            .pending_tab_launches
+            .push(TabLaunchRequest { key });
+
+        Ok(tab_id)
     }
 
     /// Snapshot the active project's branch metadata: current
@@ -2335,4 +2544,212 @@ fn map_agent_provider_back(kind: AgentProvider) -> AgentProviderKind {
         // exhaustive.
         AgentProvider::Shell => AgentProviderKind::ClaudeCode,
     }
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectActionIcon`]. Stable
+/// kebab-case ids round-trip the GPUI on-disk format
+/// (`projects.json`) so a user can switch desktop binaries without
+/// the icon picker resetting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectActionIconDto {
+    Play,
+    Test,
+    Lint,
+    Configure,
+    Build,
+    Debug,
+    Agent,
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectActionScope`]. Ordered
+/// "project first, global last" because that's how the dropdown row
+/// order treats them — global rows render with a globe glyph beside
+/// the action label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectActionScopeDto {
+    Project,
+    Global,
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectActionAccess`]. Drives
+/// the agent-mode CLI's permission flag — `default` passes nothing
+/// extra, the other three map to `--read-only`, `--workspace-write`,
+/// `--full-access` (Claude Code today; other providers ignore).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectActionAccessDto {
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    FullAccess,
+}
+
+/// Tagged-union mirror of
+/// [`another_one_core::project_store::ProjectActionKind`]. The Dart
+/// side discriminates on the variant; FRB emits a sealed-class
+/// hierarchy with `Shell` and `Agent` subclasses.
+#[derive(Debug, Clone)]
+pub enum ProjectActionKindDto {
+    /// A shell command typed verbatim into a freshly-spawned PTY.
+    /// `command` is run as `<command>\n` so multi-line input works
+    /// the same way it would in an interactive shell.
+    Shell { command: String },
+    /// An agent CLI launch. `prompt` is the seed message;
+    /// `model`/`traits`/`mode`/`access` are agent-specific knobs
+    /// fed to `project_action_agent_launch_args`.
+    Agent {
+        prompt: String,
+        provider: AgentProvider,
+        model: Option<String>,
+        traits: Option<String>,
+        mode: Option<String>,
+        access: ProjectActionAccessDto,
+    },
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectAction`]. Carries the
+/// lot — id (empty for a never-saved action), display name, icon,
+/// run-on-worktree-create flag, scope, and the kind-specific
+/// payload. UI maps `icon` to its asset path via
+/// `ProjectActionIconDto.icon_path` (Dart-side helper).
+#[derive(Debug, Clone)]
+pub struct ProjectActionDto {
+    pub id: String,
+    pub name: String,
+    pub icon: ProjectActionIconDto,
+    pub run_on_worktree_create: bool,
+    pub scope: ProjectActionScopeDto,
+    pub kind: ProjectActionKindDto,
+}
+
+fn map_action_icon(icon: ProjectActionIcon) -> ProjectActionIconDto {
+    match icon {
+        ProjectActionIcon::Play => ProjectActionIconDto::Play,
+        ProjectActionIcon::Test => ProjectActionIconDto::Test,
+        ProjectActionIcon::Lint => ProjectActionIconDto::Lint,
+        ProjectActionIcon::Configure => ProjectActionIconDto::Configure,
+        ProjectActionIcon::Build => ProjectActionIconDto::Build,
+        ProjectActionIcon::Debug => ProjectActionIconDto::Debug,
+        ProjectActionIcon::Agent => ProjectActionIconDto::Agent,
+    }
+}
+
+fn map_action_icon_back(icon: ProjectActionIconDto) -> ProjectActionIcon {
+    match icon {
+        ProjectActionIconDto::Play => ProjectActionIcon::Play,
+        ProjectActionIconDto::Test => ProjectActionIcon::Test,
+        ProjectActionIconDto::Lint => ProjectActionIcon::Lint,
+        ProjectActionIconDto::Configure => ProjectActionIcon::Configure,
+        ProjectActionIconDto::Build => ProjectActionIcon::Build,
+        ProjectActionIconDto::Debug => ProjectActionIcon::Debug,
+        ProjectActionIconDto::Agent => ProjectActionIcon::Agent,
+    }
+}
+
+fn map_action_scope(scope: ProjectActionScope) -> ProjectActionScopeDto {
+    match scope {
+        ProjectActionScope::Project => ProjectActionScopeDto::Project,
+        ProjectActionScope::Global => ProjectActionScopeDto::Global,
+    }
+}
+
+fn map_action_scope_back(scope: ProjectActionScopeDto) -> ProjectActionScope {
+    match scope {
+        ProjectActionScopeDto::Project => ProjectActionScope::Project,
+        ProjectActionScopeDto::Global => ProjectActionScope::Global,
+    }
+}
+
+fn map_action_access(access: ProjectActionAccess) -> ProjectActionAccessDto {
+    match access {
+        ProjectActionAccess::Default => ProjectActionAccessDto::Default,
+        ProjectActionAccess::ReadOnly => ProjectActionAccessDto::ReadOnly,
+        ProjectActionAccess::WorkspaceWrite => ProjectActionAccessDto::WorkspaceWrite,
+        ProjectActionAccess::FullAccess => ProjectActionAccessDto::FullAccess,
+    }
+}
+
+fn map_action_access_back(access: ProjectActionAccessDto) -> ProjectActionAccess {
+    match access {
+        ProjectActionAccessDto::Default => ProjectActionAccess::Default,
+        ProjectActionAccessDto::ReadOnly => ProjectActionAccess::ReadOnly,
+        ProjectActionAccessDto::WorkspaceWrite => ProjectActionAccess::WorkspaceWrite,
+        ProjectActionAccessDto::FullAccess => ProjectActionAccess::FullAccess,
+    }
+}
+
+fn project_action_to_dto(action: ProjectAction) -> ProjectActionDto {
+    let kind = match action.kind {
+        ProjectActionKind::Shell { command } => {
+            ProjectActionKindDto::Shell { command }
+        }
+        ProjectActionKind::Agent {
+            prompt,
+            provider,
+            model,
+            traits,
+            mode,
+            access,
+        } => ProjectActionKindDto::Agent {
+            prompt,
+            provider: map_agent_provider(provider),
+            model,
+            traits,
+            mode,
+            access: map_action_access(access),
+        },
+    };
+    ProjectActionDto {
+        id: action.id,
+        name: action.name,
+        icon: map_action_icon(action.icon),
+        run_on_worktree_create: action.run_on_worktree_create,
+        scope: map_action_scope(action.scope),
+        kind,
+    }
+}
+
+/// Round-trip `ProjectActionDto` → `ProjectAction`. Empty `dto.id`
+/// means "brand new action, never saved" — we mint a uuid so
+/// `upsert_project_action` always has a stable key. `dto.scope` is
+/// captured but `upsert_project_action` overwrites it based on the
+/// `save_global_copy` flag the caller passes; the round-trip is
+/// kept to keep the DTO symmetric.
+fn project_action_from_dto(dto: ProjectActionDto) -> anyhow::Result<ProjectAction> {
+    let kind = match dto.kind {
+        ProjectActionKindDto::Shell { command } => {
+            ProjectActionKind::Shell { command }
+        }
+        ProjectActionKindDto::Agent {
+            prompt,
+            provider,
+            model,
+            traits,
+            mode,
+            access,
+        } => ProjectActionKind::Agent {
+            prompt,
+            provider: map_agent_provider_back(provider),
+            model,
+            traits,
+            mode,
+            access: map_action_access_back(access),
+        },
+    };
+    let id = if dto.id.trim().is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        dto.id
+    };
+    Ok(ProjectAction {
+        id,
+        name: dto.name,
+        icon: map_action_icon_back(dto.icon),
+        run_on_worktree_create: dto.run_on_worktree_create,
+        scope: map_action_scope_back(dto.scope),
+        kind,
+    })
 }

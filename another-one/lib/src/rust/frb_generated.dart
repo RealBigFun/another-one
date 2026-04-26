@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -44497753;
+  int get rustContentHash => -742392344;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -169,6 +169,12 @@ abstract class RustLibApi extends BaseApi {
     AgentProvider? agentProvider,
   });
 
+  Future<bool> crateApiLocalSessionLocalSessionDeleteProjectAction({
+    required LocalSession that,
+    required String projectId,
+    required String actionId,
+  });
+
   Future<void> crateApiLocalSessionLocalSessionDetachTab({
     required LocalSession that,
   });
@@ -199,6 +205,12 @@ abstract class RustLibApi extends BaseApi {
     required LocalSession that,
     required String sectionId,
     required String tabId,
+  });
+
+  Future<List<ProjectActionDto>>
+  crateApiLocalSessionLocalSessionListProjectActions({
+    required LocalSession that,
+    required String projectId,
   });
 
   Future<void> crateApiLocalSessionLocalSessionListProjects({
@@ -286,11 +298,25 @@ abstract class RustLibApi extends BaseApi {
     required String projectId,
   });
 
+  Future<String> crateApiLocalSessionLocalSessionRunProjectAction({
+    required LocalSession that,
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  });
+
   Future<ToolbarActionOutcomeDto>
   crateApiLocalSessionLocalSessionRunToolbarGitAction({
     required LocalSession that,
     required String projectId,
     required String actionId,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionSaveProjectAction({
+    required LocalSession that,
+    required String projectId,
+    required ProjectActionDto action,
+    required bool saveGlobalCopy,
   });
 
   Future<void> crateApiLocalSessionLocalSessionSend({
@@ -1063,6 +1089,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<bool> crateApiLocalSessionLocalSessionDeleteProjectAction({
+    required LocalSession that,
+    required String projectId,
+    required String actionId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(actionId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 17,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta:
+            kCrateApiLocalSessionLocalSessionDeleteProjectActionConstMeta,
+        argValues: [that, projectId, actionId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionDeleteProjectActionConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_delete_project_action",
+        argNames: ["that", "projectId", "actionId"],
+      );
+
+  @override
   Future<void> crateApiLocalSessionLocalSessionDetachTab({
     required LocalSession that,
   }) {
@@ -1077,7 +1145,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 18,
             port: port_,
           );
         },
@@ -1121,7 +1189,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 19,
             port: port_,
           );
         },
@@ -1165,7 +1233,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 20,
             port: port_,
           );
         },
@@ -1206,7 +1274,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 21,
             port: port_,
           );
         },
@@ -1248,7 +1316,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 22,
             port: port_,
           );
         },
@@ -1270,6 +1338,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<List<ProjectActionDto>>
+  crateApiLocalSessionLocalSessionListProjectActions({
+    required LocalSession that,
+    required String projectId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 23,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_project_action_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionListProjectActionsConstMeta,
+        argValues: [that, projectId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionListProjectActionsConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_list_project_actions",
+        argNames: ["that", "projectId"],
+      );
+
+  @override
   Future<void> crateApiLocalSessionLocalSessionListProjects({
     required LocalSession that,
   }) {
@@ -1284,7 +1392,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1320,7 +1428,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 25,
             port: port_,
           );
         },
@@ -1360,7 +1468,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1400,7 +1508,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 27,
             port: port_,
           );
         },
@@ -1442,7 +1550,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1483,7 +1591,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 29,
             port: port_,
           );
         },
@@ -1525,7 +1633,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1565,7 +1673,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 31,
             port: port_,
           );
         },
@@ -1606,7 +1714,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 30,
+            funcId: 32,
             port: port_,
           );
         },
@@ -1648,7 +1756,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 33,
             port: port_,
           );
         },
@@ -1687,7 +1795,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 32,
+            funcId: 34,
             port: port_,
           );
         },
@@ -1727,7 +1835,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 33,
+            funcId: 35,
             port: port_,
           );
         },
@@ -1767,7 +1875,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 34,
+            funcId: 36,
             port: port_,
           );
         },
@@ -1805,7 +1913,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 35,
+            funcId: 37,
             port: port_,
           );
         },
@@ -1846,7 +1954,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 36,
+            funcId: 38,
             port: port_,
           );
         },
@@ -1871,6 +1979,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<String> crateApiLocalSessionLocalSessionRunProjectAction({
+    required LocalSession that,
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(sectionId, serializer);
+          sse_encode_String(actionId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 39,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionRunProjectActionConstMeta,
+        argValues: [that, projectId, sectionId, actionId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionRunProjectActionConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_run_project_action",
+        argNames: ["that", "projectId", "sectionId", "actionId"],
+      );
+
+  @override
   Future<ToolbarActionOutcomeDto>
   crateApiLocalSessionLocalSessionRunToolbarGitAction({
     required LocalSession that,
@@ -1890,7 +2041,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 40,
             port: port_,
           );
         },
@@ -1914,6 +2065,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiLocalSessionLocalSessionSaveProjectAction({
+    required LocalSession that,
+    required String projectId,
+    required ProjectActionDto action,
+    required bool saveGlobalCopy,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          sse_encode_box_autoadd_project_action_dto(action, serializer);
+          sse_encode_bool(saveGlobalCopy, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 41,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionSaveProjectActionConstMeta,
+        argValues: [that, projectId, action, saveGlobalCopy],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionSaveProjectActionConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_save_project_action",
+        argNames: ["that", "projectId", "action", "saveGlobalCopy"],
+      );
+
+  @override
   Future<void> crateApiLocalSessionLocalSessionSend({
     required LocalSession that,
     required List<int> bytes,
@@ -1930,7 +2124,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 42,
             port: port_,
           );
         },
@@ -1972,7 +2166,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 43,
             port: port_,
           );
         },
@@ -2014,7 +2208,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 44,
             port: port_,
           );
         },
@@ -2052,7 +2246,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 41,
+            funcId: 45,
             port: port_,
           );
         },
@@ -2091,7 +2285,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 42,
+            funcId: 46,
             port: port_,
           );
         },
@@ -2133,7 +2327,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 43,
+            funcId: 47,
             port: port_,
           );
         },
@@ -2173,7 +2367,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 44,
+              funcId: 48,
               port: port_,
             );
           },
@@ -2214,7 +2408,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 45,
+              funcId: 49,
               port: port_,
             );
           },
@@ -2258,7 +2452,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 46,
+            funcId: 50,
             port: port_,
           );
         },
@@ -2296,7 +2490,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 47,
+            funcId: 51,
             port: port_,
           );
         },
@@ -2339,7 +2533,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 48,
+            funcId: 52,
             port: port_,
           );
         },
@@ -2370,7 +2564,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 49,
+            funcId: 53,
             port: port_,
           );
         },
@@ -2397,7 +2591,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 50,
+            funcId: 54,
             port: port_,
           );
         },
@@ -2433,7 +2627,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 51,
+            funcId: 55,
             port: port_,
           );
         },
@@ -2464,7 +2658,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 52,
+            funcId: 56,
             port: port_,
           );
         },
@@ -2492,7 +2686,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 53,
+            funcId: 57,
             port: port_,
           );
         },
@@ -2519,7 +2713,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 54,
+            funcId: 58,
             port: port_,
           );
         },
@@ -2546,7 +2740,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 55,
+            funcId: 59,
             port: port_,
           );
         },
@@ -2573,7 +2767,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 56,
+            funcId: 60,
             port: port_,
           );
         },
@@ -2601,7 +2795,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 57,
+            funcId: 61,
             port: port_,
           );
         },
@@ -2764,6 +2958,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_pairing_info(raw);
+  }
+
+  @protected
+  ProjectActionDto dco_decode_box_autoadd_project_action_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_project_action_dto(raw);
   }
 
   @protected
@@ -2952,6 +3152,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProjectActionDto> dco_decode_list_project_action_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_project_action_dto).toList();
+  }
+
+  @protected
   List<ProjectPagePullRequestDto> dco_decode_list_project_page_pull_request_dto(
     dynamic raw,
   ) {
@@ -3113,6 +3319,60 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       url: dco_decode_String(arr[0]),
       qrPngBytes: dco_decode_list_prim_u_8_strict(arr[1]),
     );
+  }
+
+  @protected
+  ProjectActionAccessDto dco_decode_project_action_access_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ProjectActionAccessDto.values[raw as int];
+  }
+
+  @protected
+  ProjectActionDto dco_decode_project_action_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return ProjectActionDto(
+      id: dco_decode_String(arr[0]),
+      name: dco_decode_String(arr[1]),
+      icon: dco_decode_project_action_icon_dto(arr[2]),
+      runOnWorktreeCreate: dco_decode_bool(arr[3]),
+      scope: dco_decode_project_action_scope_dto(arr[4]),
+      kind: dco_decode_project_action_kind_dto(arr[5]),
+    );
+  }
+
+  @protected
+  ProjectActionIconDto dco_decode_project_action_icon_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ProjectActionIconDto.values[raw as int];
+  }
+
+  @protected
+  ProjectActionKindDto dco_decode_project_action_kind_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return ProjectActionKindDto_Shell(command: dco_decode_String(raw[1]));
+      case 1:
+        return ProjectActionKindDto_Agent(
+          prompt: dco_decode_String(raw[1]),
+          provider: dco_decode_agent_provider(raw[2]),
+          model: dco_decode_opt_String(raw[3]),
+          traits: dco_decode_opt_String(raw[4]),
+          mode: dco_decode_opt_String(raw[5]),
+          access: dco_decode_project_action_access_dto(raw[6]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  ProjectActionScopeDto dco_decode_project_action_scope_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ProjectActionScopeDto.values[raw as int];
   }
 
   @protected
@@ -3485,6 +3745,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ProjectActionDto sse_decode_box_autoadd_project_action_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_project_action_dto(deserializer));
+  }
+
+  @protected
   PullRequestStatusDto sse_decode_box_autoadd_pull_request_status_dto(
     SseDeserializer deserializer,
   ) {
@@ -3732,6 +4000,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<ProjectActionDto> sse_decode_list_project_action_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ProjectActionDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_project_action_dto(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -3985,6 +4267,83 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_url = sse_decode_String(deserializer);
     var var_qrPngBytes = sse_decode_list_prim_u_8_strict(deserializer);
     return PairingInfo(url: var_url, qrPngBytes: var_qrPngBytes);
+  }
+
+  @protected
+  ProjectActionAccessDto sse_decode_project_action_access_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ProjectActionAccessDto.values[inner];
+  }
+
+  @protected
+  ProjectActionDto sse_decode_project_action_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_name = sse_decode_String(deserializer);
+    var var_icon = sse_decode_project_action_icon_dto(deserializer);
+    var var_runOnWorktreeCreate = sse_decode_bool(deserializer);
+    var var_scope = sse_decode_project_action_scope_dto(deserializer);
+    var var_kind = sse_decode_project_action_kind_dto(deserializer);
+    return ProjectActionDto(
+      id: var_id,
+      name: var_name,
+      icon: var_icon,
+      runOnWorktreeCreate: var_runOnWorktreeCreate,
+      scope: var_scope,
+      kind: var_kind,
+    );
+  }
+
+  @protected
+  ProjectActionIconDto sse_decode_project_action_icon_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ProjectActionIconDto.values[inner];
+  }
+
+  @protected
+  ProjectActionKindDto sse_decode_project_action_kind_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_command = sse_decode_String(deserializer);
+        return ProjectActionKindDto_Shell(command: var_command);
+      case 1:
+        var var_prompt = sse_decode_String(deserializer);
+        var var_provider = sse_decode_agent_provider(deserializer);
+        var var_model = sse_decode_opt_String(deserializer);
+        var var_traits = sse_decode_opt_String(deserializer);
+        var var_mode = sse_decode_opt_String(deserializer);
+        var var_access = sse_decode_project_action_access_dto(deserializer);
+        return ProjectActionKindDto_Agent(
+          prompt: var_prompt,
+          provider: var_provider,
+          model: var_model,
+          traits: var_traits,
+          mode: var_mode,
+          access: var_access,
+        );
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  ProjectActionScopeDto sse_decode_project_action_scope_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ProjectActionScopeDto.values[inner];
   }
 
   @protected
@@ -4419,6 +4778,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_project_action_dto(
+    ProjectActionDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_project_action_dto(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_pull_request_status_dto(
     PullRequestStatusDto self,
     SseSerializer serializer,
@@ -4625,6 +4993,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_list_project_action_dto(
+    List<ProjectActionDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_project_action_dto(item, serializer);
+    }
   }
 
   @protected
@@ -4862,6 +5242,75 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.url, serializer);
     sse_encode_list_prim_u_8_strict(self.qrPngBytes, serializer);
+  }
+
+  @protected
+  void sse_encode_project_action_access_dto(
+    ProjectActionAccessDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_project_action_dto(
+    ProjectActionDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.name, serializer);
+    sse_encode_project_action_icon_dto(self.icon, serializer);
+    sse_encode_bool(self.runOnWorktreeCreate, serializer);
+    sse_encode_project_action_scope_dto(self.scope, serializer);
+    sse_encode_project_action_kind_dto(self.kind, serializer);
+  }
+
+  @protected
+  void sse_encode_project_action_icon_dto(
+    ProjectActionIconDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_project_action_kind_dto(
+    ProjectActionKindDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case ProjectActionKindDto_Shell(command: final command):
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(command, serializer);
+      case ProjectActionKindDto_Agent(
+        prompt: final prompt,
+        provider: final provider,
+        model: final model,
+        traits: final traits,
+        mode: final mode,
+        access: final access,
+      ):
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(prompt, serializer);
+        sse_encode_agent_provider(provider, serializer);
+        sse_encode_opt_String(model, serializer);
+        sse_encode_opt_String(traits, serializer);
+        sse_encode_opt_String(mode, serializer);
+        sse_encode_project_action_access_dto(access, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_project_action_scope_dto(
+    ProjectActionScopeDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -5266,6 +5715,19 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
     agentProvider: agentProvider,
   );
 
+  /// Remove one custom action by id from both the project's own
+  /// list and `UiState::global_actions` (whichever currently holds
+  /// it). Returns `true` if anything was removed.
+  Future<bool> deleteProjectAction({
+    required String projectId,
+    required String actionId,
+  }) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionDeleteProjectAction(
+        that: this,
+        projectId: projectId,
+        actionId: actionId,
+      );
+
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent.
   Future<void> detachTab() => RustLib.instance.api
@@ -5334,6 +5796,22 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
         sectionId: sectionId,
         tabId: tabId,
       );
+
+  /// Project actions configured for `project_id` — the merged
+  /// list of per-project + global custom actions, in the same
+  /// order GPUI's titlebar split-button dropdown renders. Per-
+  /// project entries override global ones with the same id (so
+  /// "save global copy" can later be undone by deleting the
+  /// project entry).
+  ///
+  /// Returns an empty list when `project_id` is unknown — matches
+  /// `ProjectStore::project_actions` behaviour for that case.
+  Future<List<ProjectActionDto>> listProjectActions({
+    required String projectId,
+  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionListProjectActions(
+    that: this,
+    projectId: projectId,
+  );
 
   /// Push a project list through [`Self::subscribe_worker_replies`].
   ///
@@ -5573,6 +6051,35 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
         projectId: projectId,
       );
 
+  /// Run one custom action inside `section_id`'s task.
+  ///
+  /// Mirrors `desktop/src/app.rs::run_project_action_in_section`:
+  /// builds the launch config (shell or agent kind), appends a
+  /// fresh `PersistedTerminalTab` to the section, sets it as the
+  /// active tab, queues a `TabLaunchRequest` for the daemon's
+  /// drain to spawn, and (for shell actions) records `command\n`
+  /// in `pending_post_launch_input` so the drain writes it once
+  /// the PTY is up.
+  ///
+  /// Note (2026-04-25): the bridge's `embedded_daemon` does not
+  /// drain `pending_tab_launches` yet (tracked as `another-one-v0k`).
+  /// Every other call site already queues there; once the drain
+  /// lands, custom-action shell runs come up end-to-end. Until
+  /// then this verb commits the tab to the persistent store and
+  /// queues — visually correct, but no PTY spawns.
+  ///
+  /// Returns the new tab id so the caller can switch to it.
+  Future<String> runProjectAction({
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionRunProjectAction(
+    that: this,
+    projectId: projectId,
+    sectionId: sectionId,
+    actionId: actionId,
+  );
+
   /// Run a toolbar git action (Commit, Push, Pull, etc.) against
   /// `project_id`. Routes
   /// [`another_one_core::git_actions::execute_toolbar_git_action`]
@@ -5595,6 +6102,28 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
         projectId: projectId,
         actionId: actionId,
       );
+
+  /// Insert or update one custom action.
+  ///
+  /// `save_global_copy=true` saves to `UiState::global_actions`
+  /// (visible across every project on this host) and removes any
+  /// per-project copy with the same id. `false` saves to the
+  /// project's own `actions` list and removes any global copy with
+  /// the same id. Mirrors `ProjectStore::upsert_project_action`.
+  ///
+  /// `dto.id` may be empty when editing a brand-new action — the
+  /// bridge generates a uuid in that case so callers don't have to
+  /// reach for `uuid` from Dart.
+  Future<void> saveProjectAction({
+    required String projectId,
+    required ProjectActionDto action,
+    required bool saveGlobalCopy,
+  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionSaveProjectAction(
+    that: this,
+    projectId: projectId,
+    action: action,
+    saveGlobalCopy: saveGlobalCopy,
+  );
 
   /// Send raw PTY stdin bytes to the currently-attached tab.
   ///

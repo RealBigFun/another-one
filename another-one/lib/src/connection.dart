@@ -39,6 +39,7 @@ import 'rust/api/local_session.dart'
         ChangedFileDto,
         CheckDto,
         OpenInState,
+        ProjectActionDto,
         ProjectPagePullRequestDto,
         PullRequestStatusDto,
         RecentCommitsView,
@@ -489,6 +490,60 @@ abstract class DaemonConnection {
   }) {
     throw UnimplementedError(
       'discardChangedFile: requires Control::DiscardChangedFile wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  // ── Custom actions (titlebar split-button + modal editor) ───────
+
+  /// List the merged project + global custom actions for `project_id`,
+  /// in dropdown order. Empty list when no actions exist or the
+  /// project is unknown — matches `ProjectStore::project_actions`.
+  Future<List<ProjectActionDto>> listProjectActions(String projectId) {
+    throw UnimplementedError(
+      'listProjectActions: requires Control::ListProjectActions wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Insert or update a custom action. `saveGlobalCopy=true` saves
+  /// to global UI state (visible across every project on the host)
+  /// and removes any project-scoped copy with the same id; `false`
+  /// saves to the project's own list and removes the global copy.
+  Future<void> saveProjectAction({
+    required String projectId,
+    required ProjectActionDto action,
+    required bool saveGlobalCopy,
+  }) {
+    throw UnimplementedError(
+      'saveProjectAction: requires Control::SaveProjectAction wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Delete a custom action by id from both project and global
+  /// lists. Returns whether anything was removed.
+  Future<bool> deleteProjectAction({
+    required String projectId,
+    required String actionId,
+  }) {
+    throw UnimplementedError(
+      'deleteProjectAction: requires Control::DeleteProjectAction wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Run a custom action inside `sectionId`'s task: appends a fresh
+  /// terminal tab, queues its PTY launch, and (for shell actions)
+  /// records the command bytes to write once the PTY is up. Returns
+  /// the new tab id.
+  Future<String> runProjectAction({
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  }) {
+    throw UnimplementedError(
+      'runProjectAction: requires Control::RunProjectAction wire '
       'variant on the iroh transport (not yet implemented).',
     );
   }

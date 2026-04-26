@@ -108,6 +108,12 @@ pub struct RegistryState {
     /// between "spawn kicked off" and "Launched reply observed"
     /// where a second LaunchTab would spawn a duplicate PTY.
     pub in_flight_launches: HashSet<TerminalRuntimeKey>,
+    /// Bytes to write to a tab's PTY immediately after its first
+    /// `Launched` reply. Used by custom-action shell runs: the Flutter
+    /// (or future bridge) caller queues a launch + records the
+    /// command line here; GPUI's drain on `Launched` writes the bytes
+    /// once and removes the entry so a re-launch doesn't replay them.
+    pub pending_post_launch_input: HashMap<TerminalRuntimeKey, Vec<u8>>,
 }
 
 impl RegistryState {
@@ -122,6 +128,7 @@ impl RegistryState {
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
             effective_sizes: HashMap::new(),
+            pending_post_launch_input: HashMap::new(),
         }
     }
 

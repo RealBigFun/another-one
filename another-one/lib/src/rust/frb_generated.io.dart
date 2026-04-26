@@ -105,6 +105,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
 
   @protected
+  ProjectActionDto dco_decode_box_autoadd_project_action_dto(dynamic raw);
+
+  @protected
   PullRequestStatusDto dco_decode_box_autoadd_pull_request_status_dto(
     dynamic raw,
   );
@@ -168,6 +171,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<ProjectActionDto> dco_decode_list_project_action_dto(dynamic raw);
 
   @protected
   List<ProjectPagePullRequestDto> dco_decode_list_project_page_pull_request_dto(
@@ -242,6 +248,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PairingInfo dco_decode_pairing_info(dynamic raw);
+
+  @protected
+  ProjectActionAccessDto dco_decode_project_action_access_dto(dynamic raw);
+
+  @protected
+  ProjectActionDto dco_decode_project_action_dto(dynamic raw);
+
+  @protected
+  ProjectActionIconDto dco_decode_project_action_icon_dto(dynamic raw);
+
+  @protected
+  ProjectActionKindDto dco_decode_project_action_kind_dto(dynamic raw);
+
+  @protected
+  ProjectActionScopeDto dco_decode_project_action_scope_dto(dynamic raw);
 
   @protected
   ProjectKind dco_decode_project_kind(dynamic raw);
@@ -382,6 +403,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PairingInfo sse_decode_box_autoadd_pairing_info(SseDeserializer deserializer);
 
   @protected
+  ProjectActionDto sse_decode_box_autoadd_project_action_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   PullRequestStatusDto sse_decode_box_autoadd_pull_request_status_dto(
     SseDeserializer deserializer,
   );
@@ -457,6 +483,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<ProjectActionDto> sse_decode_list_project_action_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<ProjectPagePullRequestDto> sse_decode_list_project_page_pull_request_dto(
@@ -543,6 +574,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PairingInfo sse_decode_pairing_info(SseDeserializer deserializer);
+
+  @protected
+  ProjectActionAccessDto sse_decode_project_action_access_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ProjectActionDto sse_decode_project_action_dto(SseDeserializer deserializer);
+
+  @protected
+  ProjectActionIconDto sse_decode_project_action_icon_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ProjectActionKindDto sse_decode_project_action_kind_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ProjectActionScopeDto sse_decode_project_action_scope_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ProjectKind sse_decode_project_kind(SseDeserializer deserializer);
@@ -709,6 +763,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_project_action_dto(
+    ProjectActionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_pull_request_status_dto(
     PullRequestStatusDto self,
     SseSerializer serializer,
@@ -798,6 +858,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_project_action_dto(
+    List<ProjectActionDto> self,
     SseSerializer serializer,
   );
 
@@ -905,6 +971,36 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_pairing_info(PairingInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_project_action_access_dto(
+    ProjectActionAccessDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_project_action_dto(
+    ProjectActionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_project_action_icon_dto(
+    ProjectActionIconDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_project_action_kind_dto(
+    ProjectActionKindDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_project_action_scope_dto(
+    ProjectActionScopeDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_project_kind(ProjectKind self, SseSerializer serializer);
