@@ -42,10 +42,14 @@ dependencies:
   # would regenerate on every app restart, breaking TOFU pairing.
   path_provider: ^2.1.3
   # Native folder picker for the desktop "Add project" affordance.
-  # GPUI uses `cx.prompt_for_paths` for the same flow; file_picker
-  # is the cross-platform equivalent (GTK on Linux, NSOpenPanel on
-  # macOS, IFileDialog on Windows).
-  file_picker: ^8.0.0
+  # GPUI uses `cx.prompt_for_paths`; file_selector is the
+  # Flutter-team-maintained equivalent and routes through the
+  # system's default chooser on every platform — xdg-desktop-portal
+  # on Linux (works under Wayland + KDE + GNOME without requiring
+  # `zenity` or `kdialog` installed), NSOpenPanel on macOS,
+  # IFileDialog on Windows. file_picker shells out to zenity
+  # directly and dies on hosts without it.
+  file_selector: ^1.0.3
   # SVG renderer — bundles the same `assets/icons/icons__*.svg`
   # set the GPUI desktop ships so glyphs (pin, chevron, github,
   # qr-code, etc.) render bit-identically across both UIs.

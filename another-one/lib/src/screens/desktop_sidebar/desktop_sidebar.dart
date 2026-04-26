@@ -14,7 +14,7 @@
 // prefixed; `part of` keeps them library-private without forcing
 // them public for cross-file imports.
 
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart' show getDirectoryPath;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -141,14 +141,16 @@ class _SidebarFooter extends ConsumerWidget {
   Future<void> _addProject(BuildContext context, WidgetRef ref) async {
     String? selectedPath;
     try {
-      selectedPath = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Add Project Folder',
+      selectedPath = await getDirectoryPath(
+        confirmButtonText: 'Add Project',
       );
     } catch (e) {
-      // file_picker shells out to zenity / kdialog on Linux. Hosts
-      // without either installed throw an opaque "Couldn't find the
-      // executable zenity" — surface that as a toast instead of
-      // letting it bubble up as an uncaught exception.
+      // file_selector routes through xdg-desktop-portal on Linux,
+      // NSOpenPanel on macOS, and IFileDialog on Windows — all
+      // OS-supplied. The portal still has to be running on Linux
+      // (it's part of the standard desktop session); if it's
+      // missing, surface that as a toast rather than letting the
+      // exception bubble up as an uncaught async error.
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
