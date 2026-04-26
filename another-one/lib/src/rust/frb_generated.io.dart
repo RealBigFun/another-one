@@ -185,6 +185,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CommitDto> dco_decode_list_commit_dto(dynamic raw);
 
   @protected
+  List<McpCatalogEntryDto> dco_decode_list_mcp_catalog_entry_dto(dynamic raw);
+
+  @protected
+  List<McpServerDto> dco_decode_list_mcp_server_dto(dynamic raw);
+
+  @protected
   List<OpenInAppDto> dco_decode_list_open_in_app_dto(dynamic raw);
 
   @protected
@@ -217,6 +223,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<TaskSummary> dco_decode_list_task_summary(dynamic raw);
+
+  @protected
+  McpCatalogEntryDto dco_decode_mcp_catalog_entry_dto(dynamic raw);
+
+  @protected
+  McpServerDto dco_decode_mcp_server_dto(dynamic raw);
+
+  @protected
+  McpSettingsView dco_decode_mcp_settings_view(dynamic raw);
+
+  @protected
+  McpSourceDto dco_decode_mcp_source_dto(dynamic raw);
+
+  @protected
+  McpTransportKindDto dco_decode_mcp_transport_kind_dto(dynamic raw);
 
   @protected
   OpenInAppDto dco_decode_open_in_app_dto(dynamic raw);
@@ -546,6 +567,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CommitDto> sse_decode_list_commit_dto(SseDeserializer deserializer);
 
   @protected
+  List<McpCatalogEntryDto> sse_decode_list_mcp_catalog_entry_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<McpServerDto> sse_decode_list_mcp_server_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<OpenInAppDto> sse_decode_list_open_in_app_dto(
     SseDeserializer deserializer,
   );
@@ -586,6 +617,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<TaskSummary> sse_decode_list_task_summary(SseDeserializer deserializer);
+
+  @protected
+  McpCatalogEntryDto sse_decode_mcp_catalog_entry_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  McpServerDto sse_decode_mcp_server_dto(SseDeserializer deserializer);
+
+  @protected
+  McpSettingsView sse_decode_mcp_settings_view(SseDeserializer deserializer);
+
+  @protected
+  McpSourceDto sse_decode_mcp_source_dto(SseDeserializer deserializer);
+
+  @protected
+  McpTransportKindDto sse_decode_mcp_transport_kind_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   OpenInAppDto sse_decode_open_in_app_dto(SseDeserializer deserializer);
@@ -991,6 +1041,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_mcp_catalog_entry_dto(
+    List<McpCatalogEntryDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_mcp_server_dto(
+    List<McpServerDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_open_in_app_dto(
     List<OpenInAppDto> self,
     SseSerializer serializer,
@@ -1044,6 +1106,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_task_summary(
     List<TaskSummary> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_mcp_catalog_entry_dto(
+    McpCatalogEntryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_mcp_server_dto(McpServerDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_mcp_settings_view(
+    McpSettingsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_mcp_source_dto(McpSourceDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_mcp_transport_kind_dto(
+    McpTransportKindDto self,
     SseSerializer serializer,
   );
 

@@ -41,6 +41,7 @@ import 'rust/api/local_session.dart'
         CheckDto,
         EnabledAgentsView,
         GitActionScriptsView,
+        McpSettingsView,
         OpenInSettingsView,
         OpenInState,
         ProjectActionDto,
@@ -787,6 +788,45 @@ abstract class DaemonConnection {
     throw UnimplementedError(
       'resetShortcutBinding: requires Control::ResetShortcutBinding '
       'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  // ── Settings → MCP ───────────────────────────────────────────────
+
+  /// Snapshot of the MCP catalog + on-disk registry.
+  Future<McpSettingsView> readMcpSettings() {
+    throw UnimplementedError(
+      'readMcpSettings: requires Control::ReadMcpSettings wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Add a catalog entry to the registry.
+  Future<void> mcpAddFromCatalog(String catalogId) {
+    throw UnimplementedError(
+      'mcpAddFromCatalog: requires Control::McpAddFromCatalog wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Toggle a registry entry's enabled flag for one provider.
+  /// Runs `sync_all` on success.
+  Future<void> mcpToggle({
+    required String entryId,
+    required String providerId,
+    required bool enabled,
+  }) {
+    throw UnimplementedError(
+      'mcpToggle: requires Control::McpToggle wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Remove a registry entry. Runs `sync_all` on success.
+  Future<void> mcpRemove(String entryId) {
+    throw UnimplementedError(
+      'mcpRemove: requires Control::McpRemove wire '
+      'variant on the iroh transport (not yet implemented).',
     );
   }
 }

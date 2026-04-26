@@ -9,9 +9,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'local_session.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `agent_def_to_dto`, `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_shortcut_action_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`, `shortcut_action_id`, `submit_direct_task`, `submit_worktree_task`
+// These functions are ignored because they are not marked as `pub`: `agent_def_to_dto`, `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `mcp_server_to_dto`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_provider_id`, `parse_shortcut_action_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `provider_id`, `run_changed_file_action`, `shortcut_action_id`, `submit_direct_task`, `submit_worktree_task`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -215,6 +215,25 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// hasn't been registered yet, sends an empty list.
   Future<void> listProjects();
 
+  /// Add one catalog entry to the registry. No-op when the id
+  /// isn't a known catalog id or the entry's already in the
+  /// registry (mirrors `mcp_add_from_catalog`).
+  Future<void> mcpAddFromCatalog({required String catalogId});
+
+  /// Remove one entry from the registry. Runs `sync_all` on
+  /// success so the harness's native config drops the row.
+  Future<void> mcpRemove({required String entryId});
+
+  /// Toggle one entry's enabled flag for a provider. Runs
+  /// `sync_all` on success so the harness's native config picks
+  /// up the change. Provider id is the kebab-case name —
+  /// `claude-code`, `cursor-agent`, etc.
+  Future<void> mcpToggle({
+    required String entryId,
+    required String providerId,
+    required bool enabled,
+  });
+
   /// Snapshot of the host's "Open In" configuration: which apps
   /// are enabled (intersection of installed-on-host with the user's
   /// configured set) and which one was last picked as the
@@ -326,6 +345,17 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// built-in template — drives the "Currently using the default
   /// built-in template." vs "...custom template..." subtitle.
   Future<GitActionScriptsView> readGitActionScripts();
+
+  /// Snapshot of the Settings → MCP page. Pairs the static
+  /// catalog entries with the on-disk registry so the UI can
+  /// flip catalog rows between "Add" prompts and live registry
+  /// rows in one render pass.
+  ///
+  /// `sync_errors` is empty in this first cut — sync state today
+  /// lives only in the desktop binary's GPUI app object. Once
+  /// `sync_all` runs through the bridge, the errors set will be
+  /// repopulated here for the per-provider danger tint.
+  Future<McpSettingsView> readMcpSettings();
 
   /// Snapshot of every detected Open-In app on this host paired
   /// with its current enabled flag. Drives the Settings → Open
@@ -1096,6 +1126,115 @@ class GitActionScriptsView {
           prScript == other.prScript &&
           prUsingDefault == other.prUsingDefault;
 }
+
+/// One row of the Settings → MCP page's catalog section. Carries
+/// the static metadata; the UI flips this into an `McpServerDto`
+/// row after `mcp_add_from_catalog`.
+class McpCatalogEntryDto {
+  final String id;
+  final String label;
+  final String description;
+  final String docsUrl;
+
+  const McpCatalogEntryDto({
+    required this.id,
+    required this.label,
+    required this.description,
+    required this.docsUrl,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ label.hashCode ^ description.hashCode ^ docsUrl.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is McpCatalogEntryDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          description == other.description &&
+          docsUrl == other.docsUrl;
+}
+
+/// One row of the Settings → MCP page's registry section.
+class McpServerDto {
+  final String id;
+  final String label;
+  final McpSourceDto source;
+  final McpTransportKindDto transportKind;
+
+  /// Provider ids (kebab-case: `claude-code`, `cursor-agent`,
+  /// `codex`, `gemini`, `opencode`, `amp`) the entry is enabled
+  /// for. UI maps these to short labels.
+  final List<String> enabledFor;
+
+  const McpServerDto({
+    required this.id,
+    required this.label,
+    required this.source,
+    required this.transportKind,
+    required this.enabledFor,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      label.hashCode ^
+      source.hashCode ^
+      transportKind.hashCode ^
+      enabledFor.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is McpServerDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          source == other.source &&
+          transportKind == other.transportKind &&
+          enabledFor == other.enabledFor;
+}
+
+/// Snapshot returned by [`LocalSession::read_mcp_settings`].
+class McpSettingsView {
+  final List<McpCatalogEntryDto> catalogEntries;
+  final List<McpServerDto> registryEntries;
+
+  /// Providers whose last sync failed — UI tints their toggle
+  /// red. Empty in this first cut (sync errors live only in
+  /// GPUI's `mcp_last_sync_errors` today).
+  final List<String> syncErrorProviderIds;
+
+  const McpSettingsView({
+    required this.catalogEntries,
+    required this.registryEntries,
+    required this.syncErrorProviderIds,
+  });
+
+  @override
+  int get hashCode =>
+      catalogEntries.hashCode ^
+      registryEntries.hashCode ^
+      syncErrorProviderIds.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is McpSettingsView &&
+          runtimeType == other.runtimeType &&
+          catalogEntries == other.catalogEntries &&
+          registryEntries == other.registryEntries &&
+          syncErrorProviderIds == other.syncErrorProviderIds;
+}
+
+/// FRB-friendly mirror of [`another_one_core::mcp::McpSource`].
+enum McpSourceDto { catalog, custom, builtInDaemon }
+
+/// FRB-friendly mirror of [`another_one_core::mcp::McpTransport`].
+enum McpTransportKindDto { stdio, http }
 
 /// FRB-friendly mirror of [`OpenInAppKind`] with the
 /// pre-computed display strings. Lives here (not in core) because

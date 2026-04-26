@@ -1526,6 +1526,125 @@ impl LocalSession {
         Ok(state.project_store.set_default_agent(&agent_id))
     }
 
+    /// Snapshot of the Settings → MCP page. Pairs the static
+    /// catalog entries with the on-disk registry so the UI can
+    /// flip catalog rows between "Add" prompts and live registry
+    /// rows in one render pass.
+    ///
+    /// `sync_errors` is empty in this first cut — sync state today
+    /// lives only in the desktop binary's GPUI app object. Once
+    /// `sync_all` runs through the bridge, the errors set will be
+    /// repopulated here for the per-provider danger tint.
+    pub async fn read_mcp_settings(
+        &self,
+    ) -> anyhow::Result<McpSettingsView> {
+        let _ = self;
+        let registry = tokio::task::spawn_blocking(
+            another_one_core::mcp::registry::McpRegistry::load,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("read_mcp_settings join: {e}"))?;
+        let catalog = another_one_core::mcp::catalog::entries()
+            .iter()
+            .map(|entry| McpCatalogEntryDto {
+                id: entry.id.to_string(),
+                label: entry.label.to_string(),
+                description: entry.description.to_string(),
+                docs_url: entry.docs_url.to_string(),
+            })
+            .collect();
+        let entries = registry
+            .entries
+            .iter()
+            .map(mcp_server_to_dto)
+            .collect();
+        Ok(McpSettingsView {
+            catalog_entries: catalog,
+            registry_entries: entries,
+            sync_error_provider_ids: Vec::new(),
+        })
+    }
+
+    /// Add one catalog entry to the registry. No-op when the id
+    /// isn't a known catalog id or the entry's already in the
+    /// registry (mirrors `mcp_add_from_catalog`).
+    pub async fn mcp_add_from_catalog(
+        &self,
+        catalog_id: String,
+    ) -> anyhow::Result<()> {
+        let _ = self;
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let entry = match another_one_core::mcp::catalog::find(&catalog_id) {
+                Some(e) => e,
+                None => return Ok(()),
+            };
+            let mut registry =
+                another_one_core::mcp::registry::McpRegistry::load();
+            registry.upsert(another_one_core::mcp::catalog::instantiate(entry));
+            registry
+                .save()
+                .map_err(|e| anyhow::anyhow!("save mcp registry: {e}"))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("mcp_add_from_catalog join: {e}"))?
+    }
+
+    /// Toggle one entry's enabled flag for a provider. Runs
+    /// `sync_all` on success so the harness's native config picks
+    /// up the change. Provider id is the kebab-case name —
+    /// `claude-code`, `cursor-agent`, etc.
+    pub async fn mcp_toggle(
+        &self,
+        entry_id: String,
+        provider_id: String,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        let provider = parse_provider_id(&provider_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "mcp_toggle: unknown provider id `{provider_id}`"
+            )
+        })?;
+        let _ = self;
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let mut registry =
+                another_one_core::mcp::registry::McpRegistry::load();
+            if !registry.toggle(&entry_id, provider, enabled) {
+                return Ok(());
+            }
+            let _report = registry.sync_all();
+            registry
+                .save()
+                .map_err(|e| anyhow::anyhow!("save mcp registry: {e}"))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("mcp_toggle join: {e}"))?
+    }
+
+    /// Remove one entry from the registry. Runs `sync_all` on
+    /// success so the harness's native config drops the row.
+    pub async fn mcp_remove(
+        &self,
+        entry_id: String,
+    ) -> anyhow::Result<()> {
+        let _ = self;
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let mut registry =
+                another_one_core::mcp::registry::McpRegistry::load();
+            if !registry.remove(&entry_id) {
+                return Ok(());
+            }
+            let _report = registry.sync_all();
+            registry
+                .save()
+                .map_err(|e| anyhow::anyhow!("save mcp registry: {e}"))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("mcp_remove join: {e}"))?
+    }
+
     /// Snapshot of the Settings → Keybindings page. Every shortcut
     /// action paired with its current + default binding strings
     /// (kebab-case modifier names, e.g. `cmd-shift-]`).
@@ -3483,6 +3602,130 @@ pub struct ShortcutSettingsRow {
 #[derive(Debug, Clone)]
 pub struct ShortcutSettingsView {
     pub actions: Vec<ShortcutSettingsRow>,
+}
+
+/// FRB-friendly mirror of [`another_one_core::mcp::McpSource`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpSourceDto {
+    Catalog,
+    Custom,
+    BuiltInDaemon,
+}
+
+/// FRB-friendly mirror of [`another_one_core::mcp::McpTransport`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpTransportKindDto {
+    Stdio,
+    Http,
+}
+
+/// One row of the Settings → MCP page's registry section.
+#[derive(Debug, Clone)]
+pub struct McpServerDto {
+    pub id: String,
+    pub label: String,
+    pub source: McpSourceDto,
+    pub transport_kind: McpTransportKindDto,
+    /// Provider ids (kebab-case: `claude-code`, `cursor-agent`,
+    /// `codex`, `gemini`, `opencode`, `amp`) the entry is enabled
+    /// for. UI maps these to short labels.
+    pub enabled_for: Vec<String>,
+}
+
+/// One row of the Settings → MCP page's catalog section. Carries
+/// the static metadata; the UI flips this into an `McpServerDto`
+/// row after `mcp_add_from_catalog`.
+#[derive(Debug, Clone)]
+pub struct McpCatalogEntryDto {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub docs_url: String,
+}
+
+/// Snapshot returned by [`LocalSession::read_mcp_settings`].
+#[derive(Debug, Clone)]
+pub struct McpSettingsView {
+    pub catalog_entries: Vec<McpCatalogEntryDto>,
+    pub registry_entries: Vec<McpServerDto>,
+    /// Providers whose last sync failed — UI tints their toggle
+    /// red. Empty in this first cut (sync errors live only in
+    /// GPUI's `mcp_last_sync_errors` today).
+    pub sync_error_provider_ids: Vec<String>,
+}
+
+fn mcp_server_to_dto(
+    server: &another_one_core::mcp::McpServer,
+) -> McpServerDto {
+    use another_one_core::agents::AgentProviderKind;
+    let enabled_for = [
+        AgentProviderKind::ClaudeCode,
+        AgentProviderKind::CursorAgent,
+        AgentProviderKind::Codex,
+        AgentProviderKind::Gemini,
+        AgentProviderKind::OpenCode,
+        AgentProviderKind::Amp,
+    ]
+    .into_iter()
+    .filter(|p| server.enabled_for.contains(p))
+    .map(provider_id)
+    .map(str::to_string)
+    .collect();
+    McpServerDto {
+        id: server.id.clone(),
+        label: server.label.clone(),
+        source: match server.source {
+            another_one_core::mcp::McpSource::Catalog => McpSourceDto::Catalog,
+            another_one_core::mcp::McpSource::Custom => McpSourceDto::Custom,
+            another_one_core::mcp::McpSource::BuiltInDaemon => {
+                McpSourceDto::BuiltInDaemon
+            }
+        },
+        transport_kind: match server.transport {
+            another_one_core::mcp::McpTransport::Stdio { .. } => {
+                McpTransportKindDto::Stdio
+            }
+            another_one_core::mcp::McpTransport::Http { .. } => {
+                McpTransportKindDto::Http
+            }
+        },
+        enabled_for,
+    }
+}
+
+fn provider_id(
+    p: another_one_core::agents::AgentProviderKind,
+) -> &'static str {
+    use another_one_core::agents::AgentProviderKind;
+    match p {
+        AgentProviderKind::ClaudeCode => "claude-code",
+        AgentProviderKind::CursorAgent => "cursor-agent",
+        AgentProviderKind::Codex => "codex",
+        AgentProviderKind::Pi => "pi",
+        AgentProviderKind::Gemini => "gemini",
+        AgentProviderKind::OpenCode => "opencode",
+        AgentProviderKind::Amp => "amp",
+        AgentProviderKind::RovoDev => "rovo-dev",
+        AgentProviderKind::Forge => "forge",
+    }
+}
+
+fn parse_provider_id(
+    id: &str,
+) -> Option<another_one_core::agents::AgentProviderKind> {
+    use another_one_core::agents::AgentProviderKind;
+    match id {
+        "claude-code" => Some(AgentProviderKind::ClaudeCode),
+        "cursor-agent" => Some(AgentProviderKind::CursorAgent),
+        "codex" => Some(AgentProviderKind::Codex),
+        "pi" => Some(AgentProviderKind::Pi),
+        "gemini" => Some(AgentProviderKind::Gemini),
+        "opencode" => Some(AgentProviderKind::OpenCode),
+        "amp" => Some(AgentProviderKind::Amp),
+        "rovo-dev" => Some(AgentProviderKind::RovoDev),
+        "forge" => Some(AgentProviderKind::Forge),
+        _ => None,
+    }
 }
 
 fn shortcut_action_id(

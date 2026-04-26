@@ -839,6 +839,50 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<McpSettingsView> readMcpSettings() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readMcpSettings: LocalTransport not connected');
+    }
+    return session.readMcpSettings();
+  }
+
+  @override
+  Future<void> mcpAddFromCatalog(String catalogId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('mcpAddFromCatalog: LocalTransport not connected');
+    }
+    await session.mcpAddFromCatalog(catalogId: catalogId);
+  }
+
+  @override
+  Future<void> mcpToggle({
+    required String entryId,
+    required String providerId,
+    required bool enabled,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('mcpToggle: LocalTransport not connected');
+    }
+    await session.mcpToggle(
+      entryId: entryId,
+      providerId: providerId,
+      enabled: enabled,
+    );
+  }
+
+  @override
+  Future<void> mcpRemove(String entryId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('mcpRemove: LocalTransport not connected');
+    }
+    await session.mcpRemove(entryId: entryId);
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,
