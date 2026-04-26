@@ -34,6 +34,7 @@ import 'rust/api/iroh_client.dart';
 import 'rust/api/local_session.dart'
     show
         BranchCompareFileDto,
+        BranchCompareView,
         ChangedFileDto,
         CheckDto,
         OpenInState,
@@ -257,6 +258,20 @@ abstract class DaemonConnection {
   }) {
     throw UnimplementedError(
       'readCommitFileChanges: requires Control::ReadCommitFileChanges '
+      'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Diff the project's current branch against `targetBranch`
+  /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
+  /// Returns `null` for unknown projects; throws when the diff
+  /// invocation fails (target branch doesn't exist, etc.).
+  Future<BranchCompareView?> readBranchCompareState({
+    required String projectId,
+    required String targetBranch,
+  }) {
+    throw UnimplementedError(
+      'readBranchCompareState: requires Control::ReadBranchCompareState '
       'wire variant on the iroh transport (not yet implemented).',
     );
   }

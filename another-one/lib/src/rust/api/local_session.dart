@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `pr_to_dto`, `run_changed_file_action`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -160,6 +160,20 @@ abstract class LocalSession implements RustOpaqueInterface {
   Future<void> openProjectInApp({
     required String projectId,
     required String appId,
+  });
+
+  /// Diff the project's current branch against `target_branch`
+  /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
+  /// Routes
+  /// [`another_one_core::project_store::read_project_branch_compare_state`]
+  /// inside `spawn_blocking`.
+  ///
+  /// Returns `Ok(None)` for unknown projects. Errors propagate
+  /// from git when the target branch doesn't exist or the diff
+  /// invocation fails.
+  Future<BranchCompareView?> readBranchCompareState({
+    required String projectId,
+    required String targetBranch,
   });
 
   /// Read the list of files with working-tree changes for
@@ -385,6 +399,35 @@ class BranchCompareFileDto {
           status == other.status &&
           additions == other.additions &&
           deletions == other.deletions;
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectBranchCompareState`].
+/// Drives the right sidebar's Compare pane: the current branch +
+/// configured target + the file list of the diff.
+class BranchCompareView {
+  final String? currentBranch;
+  final String targetBranch;
+  final List<BranchCompareFileDto> files;
+
+  const BranchCompareView({
+    this.currentBranch,
+    required this.targetBranch,
+    required this.files,
+  });
+
+  @override
+  int get hashCode =>
+      currentBranch.hashCode ^ targetBranch.hashCode ^ files.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BranchCompareView &&
+          runtimeType == other.runtimeType &&
+          currentBranch == other.currentBranch &&
+          targetBranch == other.targetBranch &&
+          files == other.files;
 }
 
 /// FRB-friendly mirror of

@@ -95,6 +95,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw);
 
   @protected
+  BranchCompareView dco_decode_box_autoadd_branch_compare_view(dynamic raw);
+
+  @protected
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
 
   @protected
@@ -109,6 +112,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BranchCompareFileDto dco_decode_branch_compare_file_dto(dynamic raw);
+
+  @protected
+  BranchCompareView dco_decode_branch_compare_view(dynamic raw);
 
   @protected
   BuildInfo dco_decode_build_info(dynamic raw);
@@ -179,6 +185,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AgentProvider? dco_decode_opt_box_autoadd_agent_provider(dynamic raw);
+
+  @protected
+  BranchCompareView? dco_decode_opt_box_autoadd_branch_compare_view(
+    dynamic raw,
+  );
 
   @protected
   PairingInfo? dco_decode_opt_box_autoadd_pairing_info(dynamic raw);
@@ -328,6 +339,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  BranchCompareView sse_decode_box_autoadd_branch_compare_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   PairingInfo sse_decode_box_autoadd_pairing_info(SseDeserializer deserializer);
 
   @protected
@@ -346,6 +362,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BranchCompareFileDto sse_decode_branch_compare_file_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  BranchCompareView sse_decode_branch_compare_view(
     SseDeserializer deserializer,
   );
 
@@ -424,6 +445,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AgentProvider? sse_decode_opt_box_autoadd_agent_provider(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  BranchCompareView? sse_decode_opt_box_autoadd_branch_compare_view(
     SseDeserializer deserializer,
   );
 
@@ -599,6 +625,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_branch_compare_view(
+    BranchCompareView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_pairing_info(
     PairingInfo self,
     SseSerializer serializer,
@@ -622,6 +654,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_branch_compare_file_dto(
     BranchCompareFileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_branch_compare_view(
+    BranchCompareView self,
     SseSerializer serializer,
   );
 
@@ -721,6 +759,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_agent_provider(
     AgentProvider? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_branch_compare_view(
+    BranchCompareView? self,
     SseSerializer serializer,
   );
 

@@ -334,6 +334,21 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<BranchCompareView?> readBranchCompareState({
+    required String projectId,
+    required String targetBranch,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readBranchCompareState: LocalTransport not connected');
+    }
+    return session.readBranchCompareState(
+      projectId: projectId,
+      targetBranch: targetBranch,
+    );
+  }
+
+  @override
   Future<ResolvedProjectBranchSettingsDto?> readBranchSettings(
     String projectId,
   ) async {

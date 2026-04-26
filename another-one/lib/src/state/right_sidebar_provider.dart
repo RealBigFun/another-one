@@ -8,7 +8,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum RightSidebarTab { changes, commits, checks }
+enum RightSidebarTab { changes, commits, checks, compare }
 
 const String _prefsOpenKey = 'desktop.right_sidebar.open';
 const String _prefsTabKey = 'desktop.right_sidebar.tab';

@@ -832,6 +832,57 @@ impl LocalSession {
         Ok(section_id)
     }
 
+    /// Diff the project's current branch against `target_branch`
+    /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
+    /// Routes
+    /// [`another_one_core::project_store::read_project_branch_compare_state`]
+    /// inside `spawn_blocking`.
+    ///
+    /// Returns `Ok(None)` for unknown projects. Errors propagate
+    /// from git when the target branch doesn't exist or the diff
+    /// invocation fails.
+    pub async fn read_branch_compare_state(
+        &self,
+        project_id: String,
+        target_branch: String,
+    ) -> anyhow::Result<Option<BranchCompareView>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "read_branch_compare_state: set_local_registry not called"
+            )
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "read_branch_compare_state: RegistryState mutex poisoned"
+                )
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        };
+        let Some(project_path) = project_path else {
+            return Ok(None);
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            another_one_core::project_store::read_project_branch_compare_state(
+                &project_path,
+                &target_branch,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("read_branch_compare_state join: {e}"))?
+        .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(Some(BranchCompareView {
+            current_branch: result.current_branch,
+            target_branch: result.target_branch,
+            files: result.files.into_iter().map(branch_compare_file_to_dto).collect(),
+        }))
+    }
+
     /// Snapshot the resolved branch settings for `project_id` —
     /// configured + effective values for default and target branch
     /// plus the available branch list for the dropdown.
@@ -1522,6 +1573,17 @@ where
         .await
         .map_err(|e| anyhow::anyhow!("changed-file action join: {e}"))?
         .map_err(|e| anyhow::anyhow!(e))
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ProjectBranchCompareState`].
+/// Drives the right sidebar's Compare pane: the current branch +
+/// configured target + the file list of the diff.
+#[derive(Debug, Clone)]
+pub struct BranchCompareView {
+    pub current_branch: Option<String>,
+    pub target_branch: String,
+    pub files: Vec<BranchCompareFileDto>,
 }
 
 /// FRB-friendly mirror of

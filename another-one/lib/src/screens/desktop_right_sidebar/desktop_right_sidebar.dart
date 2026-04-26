@@ -36,6 +36,8 @@ import '../../rust/api/local_session.dart'
         CheckDto,
         CommitDto;
 import '../../state/active_project_provider.dart';
+import '../../state/branch_compare_provider.dart';
+import '../../state/branch_settings_provider.dart';
 import '../../state/changed_files_pending_provider.dart';
 import '../../state/changed_files_provider.dart';
 import '../../state/changes_section_collapse_provider.dart';
@@ -59,7 +61,19 @@ class DesktopRightSidebar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final tab = ref.watch(rightSidebarTabProvider);
+    final projectId = ref.watch(activeProjectIdProvider);
+    final settings = projectId == null
+        ? null
+        : ref.watch(branchSettingsProvider(projectId)).valueOrNull;
+    final compareTarget = settings?.effectiveDefaultTargetBranch;
+    var tab = ref.watch(rightSidebarTabProvider);
+    // GPUI hides the Compare tab when no target is configured —
+    // if the user lands on Compare with target=null, fall back
+    // to Changes for the body render so we don't paint an empty
+    // pane that has no toggle to leave from.
+    if (tab == RightSidebarTab.compare && compareTarget == null) {
+      tab = RightSidebarTab.changes;
+    }
     return Container(
       width: _rightSidebarWidth,
       decoration: const BoxDecoration(
@@ -70,12 +84,16 @@ class DesktopRightSidebar extends ConsumerWidget {
       ),
       child: Column(
         children: [
-          const _RightTabStrip(),
+          _RightTabStrip(showCompareTab: compareTarget != null),
           Expanded(
             child: switch (tab) {
               RightSidebarTab.changes => const _ChangesPane(),
               RightSidebarTab.commits => const _CommitsPane(),
               RightSidebarTab.checks => const _ChecksPane(),
+              RightSidebarTab.compare => _ComparePane(
+                  projectId: projectId!,
+                  targetBranch: compareTarget!,
+                ),
             },
           ),
         ],
@@ -85,7 +103,13 @@ class DesktopRightSidebar extends ConsumerWidget {
 }
 
 class _RightTabStrip extends ConsumerWidget {
-  const _RightTabStrip();
+  const _RightTabStrip({required this.showCompareTab});
+
+  /// `true` when the active project has an effective target branch
+  /// configured. Mirrors GPUI's `compare_target_branch.is_some()`
+  /// gate; without a target there's nothing to compare against, so
+  /// hide the tab.
+  final bool showCompareTab;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -130,6 +154,19 @@ class _RightTabStrip extends ConsumerWidget {
                     .read(rightSidebarTabProvider.notifier)
                     .set(RightSidebarTab.checks),
               ),
+              if (showCompareTab) ...[
+                const SizedBox(width: 6),
+                GitToolbarButton(
+                  label: 'Compare',
+                  leadingIcon: 'git-split',
+                  tooltip:
+                      'Compare the current branch against the configured target branch',
+                  active: active == RightSidebarTab.compare,
+                  onPressed: () => ref
+                      .read(rightSidebarTabProvider.notifier)
+                      .set(RightSidebarTab.compare),
+                ),
+              ],
             ],
           ),
           const SizedBox.shrink(),
@@ -1531,6 +1568,236 @@ class _CommitFileList extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Compare pane — diffs the current branch against the configured
+/// target branch (`target..HEAD`). Read-only: stage/unstage/discard
+/// don't apply here, just file-by-file diff inspection.
+class _ComparePane extends ConsumerWidget {
+  const _ComparePane({required this.projectId, required this.targetBranch});
+
+  final String projectId;
+  final String targetBranch;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final fallbackBranch = ref.watch(activeBranchNameProvider);
+    final state = ref.watch(branchCompareProvider(BranchCompareKey(
+      projectId: projectId,
+      targetBranch: targetBranch,
+    )));
+    return state.when(
+      data: (view) {
+        final currentBranch = view?.currentBranch ?? fallbackBranch ?? '';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _CompareHeader(
+              currentBranch: currentBranch,
+              targetBranch: targetBranch,
+            ),
+            if (view == null)
+              const Expanded(
+                child: EmptyState(text: 'Loading compare view...'),
+              )
+            else if (view.files.isEmpty)
+              Expanded(
+                child: EmptyState(
+                  text: 'No differences from $targetBranch.',
+                ),
+              )
+            else
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 8,
+                  ),
+                  itemCount: view.files.length,
+                  itemBuilder: (_, i) =>
+                      _BranchCompareRow(file: view.files[i]),
+                ),
+              ),
+          ],
+        );
+      },
+      loading: () => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CompareHeader(
+            currentBranch: fallbackBranch ?? '',
+            targetBranch: targetBranch,
+          ),
+          const Expanded(
+            child: EmptyState(text: 'Loading compare view...'),
+          ),
+        ],
+      ),
+      error: (e, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CompareHeader(
+            currentBranch: fallbackBranch ?? '',
+            targetBranch: targetBranch,
+          ),
+          Expanded(child: EmptyState(text: e.toString())),
+        ],
+      ),
+    );
+  }
+}
+
+class _CompareHeader extends StatelessWidget {
+  const _CompareHeader({
+    required this.currentBranch,
+    required this.targetBranch,
+  });
+
+  final String currentBranch;
+  final String targetBranch;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: AppTokens.divider, width: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Comparing $currentBranch against $targetBranch',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Color(0xE0FFFFFF),
+            ),
+          ),
+          const Text(
+            'Read-only branch diff. Stage, unstage, and discard '
+            'actions are unavailable in compare mode.',
+            style: TextStyle(
+              fontSize: 11,
+              color: Color(0x94FFFFFF),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Per-file row in the Compare pane. Shape matches GPUI's
+/// `branch_compare_row` exactly — slightly different from
+/// `branch_commit_file_row` (vertical stack of name+parent+rename
+/// instead of inline suffix) and with min_h(34) pl(18).
+class _BranchCompareRow extends StatefulWidget {
+  const _BranchCompareRow({required this.file});
+
+  final BranchCompareFileDto file;
+
+  @override
+  State<_BranchCompareRow> createState() => _BranchCompareRowState();
+}
+
+class _BranchCompareRowState extends State<_BranchCompareRow> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final file = widget.file;
+    final fileName = _basename(file.path);
+    final parentDir = _parentDir(file.path);
+    final status = file.status.isEmpty ? 'M' : file.status;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        constraints: const BoxConstraints(minHeight: 34),
+        padding: const EdgeInsets.fromLTRB(18, 8, 14, 8),
+        decoration: BoxDecoration(
+          color: _hover ? const Color(0x0AFFFFFF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    child: Text(
+                      status,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _statusColor(status),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          fileName,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xF0FFFFFF),
+                          ),
+                        ),
+                        if (parentDir != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            parentDir,
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0x94FFFFFF),
+                            ),
+                          ),
+                        ],
+                        if (file.originalPath != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Renamed from ${file.originalPath}',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0x94FFFFFF),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            if (file.additions > 0)
+              _DiffBadge(value: file.additions, positive: true),
+            if (file.deletions > 0) ...[
+              const SizedBox(width: 8),
+              _DiffBadge(value: file.deletions, positive: false),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
