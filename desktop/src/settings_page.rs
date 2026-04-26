@@ -24,6 +24,7 @@ const SETTINGS_SIDEBAR_W: f32 = 180.;
 /// Which settings section is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
+    General,
     Agents,
     OpenIn,
     GitActions,
@@ -34,6 +35,7 @@ pub enum SettingsSection {
 impl SettingsSection {
     fn label(self) -> &'static str {
         match self {
+            Self::General => "General",
             Self::Agents => "Agents",
             Self::OpenIn => "Open In",
             Self::GitActions => "Git Actions",
@@ -917,6 +919,7 @@ impl AnotherOneApp {
                             .child("Back to app"),
                     ),
             )
+            .child(self.settings_nav_item(SettingsSection::General, active, section_active_bg, cx))
             .child(self.settings_nav_item(SettingsSection::Agents, active, section_active_bg, cx))
             .child(self.settings_nav_item(SettingsSection::OpenIn, active, section_active_bg, cx))
             .child(self.settings_nav_item(
@@ -996,12 +999,205 @@ impl AnotherOneApp {
 
     fn settings_content(&self, cx: &mut Context<Self>) -> gpui::Div {
         match self.settings_section {
+            SettingsSection::General => self.settings_general_content(cx),
             SettingsSection::Agents => self.settings_agents_content(cx),
             SettingsSection::OpenIn => self.settings_open_in_content(cx),
             SettingsSection::GitActions => self.settings_git_actions_content(cx),
             SettingsSection::Keybindings => self.settings_keybindings_content(cx),
             SettingsSection::Mcp => self.settings_mcp_content(cx),
         }
+    }
+
+    fn settings_general_content(&self, cx: &mut Context<Self>) -> gpui::Div {
+        use crate::updater::{UpdateState, UpdaterCommand};
+
+        let panel_bg = rgb(0x23252a);
+        let row_bg = rgb(0x1f2125);
+        let button_bg = gpui::white().opacity(0.04);
+        let button_hover = gpui::white().opacity(0.08);
+        let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
+
+        let identity = self.updater.identity();
+        let short_sha = identity.short_sha;
+        let full_sha = identity.full_sha;
+        let cargo_version = identity.cargo_version;
+        let profile_label = if identity.is_dev_build { "debug" } else { "release" };
+
+        let (status_label, status_detail) = updater_status_strings(&self.updater_state);
+        let check_disabled =
+            self.updater_state.is_checking() || self.updater_state.is_downloading();
+        let install_enabled = matches!(self.updater_state, UpdateState::ReadyToInstall { .. });
+
+        let copy_full_sha = full_sha.to_string();
+
+        let build_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(20.))
+            .px(px(18.))
+            .py(px(14.))
+            .bg(row_bg)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(rems(13. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(TEXT_PRIMARY())
+                            .child("Build"),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(11. / 16.))
+                            .text_color(TEXT_SECONDARY())
+                            .child(format!(
+                                "{short_sha} · {profile_label} · v{cargo_version}",
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("settings-general-full-sha")
+                            .mt(px(2.))
+                            .text_size(rems(11. / 16.))
+                            .font_family("Lilex Nerd Font Mono")
+                            .text_color(TEXT_SECONDARY())
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(TEXT_PRIMARY()))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        copy_full_sha.clone(),
+                                    ));
+                                    this.show_success_toast("Copied commit SHA.", cx);
+                                    cx.stop_propagation();
+                                }),
+                            )
+                            .child(format!("{full_sha} · click to copy")),
+                    ),
+            );
+
+        let manifest_url = crate::updater::manifest_url().to_string();
+        let updates_row = div()
+            .flex()
+            .flex_row()
+            .items_start()
+            .justify_between()
+            .gap(px(20.))
+            .px(px(18.))
+            .py(px(14.))
+            .bg(row_bg)
+            .border_t_1()
+            .border_color(BORDER_SUBTLE())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .min_w(px(0.))
+                    .flex_1()
+                    .child(
+                        div()
+                            .text_size(rems(13. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(TEXT_PRIMARY())
+                            .child("Updates"),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(11. / 16.))
+                            .text_color(TEXT_PRIMARY())
+                            .child(status_label),
+                    )
+                    .when_some(status_detail, |container, detail| {
+                        container.child(
+                            div()
+                                .text_size(rems(11. / 16.))
+                                .text_color(TEXT_SECONDARY())
+                                .child(detail),
+                        )
+                    })
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .text_size(rems(10. / 16.))
+                            .text_color(TEXT_SECONDARY())
+                            .child(format!("Source: {manifest_url}")),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(settings_general_button(
+                        "settings-general-check",
+                        "Check for updates",
+                        !check_disabled,
+                        button_bg,
+                        button_hover,
+                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                            this.updater.send(UpdaterCommand::CheckNow);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ))
+                    .child(settings_general_button(
+                        "settings-general-install",
+                        "Install update",
+                        install_enabled,
+                        active_button_bg,
+                        active_button_bg,
+                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                            this.updater.send(UpdaterCommand::Install);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )),
+            );
+
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .min_w(px(0.))
+            .p(px(32.))
+            .child(
+                div()
+                    .text_size(rems(18. / 16.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(TEXT_PRIMARY())
+                    .child("General"),
+            )
+            .child(
+                div()
+                    .mt(px(4.))
+                    .max_w(px(760.))
+                    .text_size(rems(12. / 16.))
+                    .line_height(rems(18. / 16.))
+                    .text_color(TEXT_SECONDARY())
+                    .child(
+                        "Identity for this installed build, plus controls for in-app updates.",
+                    ),
+            )
+            .child(
+                div()
+                    .mt(px(24.))
+                    .max_w(px(860.))
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(BORDER_SUBTLE())
+                    .bg(panel_bg)
+                    .overflow_hidden()
+                    .child(build_row)
+                    .child(updates_row),
+            )
     }
 
     fn settings_agents_content(&self, cx: &mut Context<Self>) -> gpui::Div {
@@ -2777,6 +2973,115 @@ fn shape_settings_input_line(
     window
         .text_system()
         .shape_line(text.to_string().into(), font_size, &[run], None)
+}
+
+fn settings_general_button<F>(
+    id: &'static str,
+    label: &'static str,
+    enabled: bool,
+    bg: gpui::Hsla,
+    hover_bg: gpui::Hsla,
+    on_click: F,
+) -> impl IntoElement
+where
+    F: Fn(&MouseDownEvent, &mut gpui::Window, &mut App) + 'static,
+{
+    let base = div()
+        .id(id)
+        .px(px(12.))
+        .py(px(7.))
+        .rounded(px(8.))
+        .border_1()
+        .border_color(BORDER_SUBTLE())
+        .bg(bg)
+        .text_size(rems(12. / 16.))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(if enabled {
+            TEXT_PRIMARY()
+        } else {
+            TEXT_SECONDARY()
+        })
+        .child(label);
+
+    if enabled {
+        base.cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_mouse_down(MouseButton::Left, on_click)
+            .into_any_element()
+    } else {
+        base.into_any_element()
+    }
+}
+
+fn updater_status_strings(state: &crate::updater::UpdateState) -> (String, Option<String>) {
+    use crate::updater::UpdateState;
+    match state {
+        UpdateState::Idle => ("Not yet checked".into(), None),
+        UpdateState::Checking => ("Checking for updates…".into(), None),
+        UpdateState::UpToDate { .. } => ("Up to date".into(), None),
+        UpdateState::UpdateAvailable {
+            manifest, asset, ..
+        } => (
+            format!("Update available: {}", &manifest.short_sha),
+            Some(format!(
+                "{}/{} · {}",
+                asset.os, asset.arch, asset.kind
+            )),
+        ),
+        UpdateState::Downloading {
+            manifest,
+            downloaded,
+            total,
+            ..
+        } => {
+            let detail = match total {
+                Some(total) if *total > 0 => Some(format!(
+                    "{} of {} downloaded",
+                    format_bytes(*downloaded),
+                    format_bytes(*total)
+                )),
+                _ => Some(format!("{} downloaded", format_bytes(*downloaded))),
+            };
+            (
+                format!("Downloading {}…", &manifest.short_sha),
+                detail,
+            )
+        }
+        UpdateState::ReadyToInstall {
+            manifest, path, ..
+        } => (
+            format!("Update {} ready to install", &manifest.short_sha),
+            Some(path.display().to_string()),
+        ),
+        UpdateState::Installing => (
+            "Installing update — the app will relaunch shortly.".into(),
+            None,
+        ),
+        UpdateState::UnsupportedPlatform { manifest, .. } => (
+            format!(
+                "Update {} published, but no asset for this OS/arch.",
+                &manifest.short_sha
+            ),
+            Some("Manual download from the release page is required.".into()),
+        ),
+        UpdateState::Error { message, .. } => ("Last check failed".into(), Some(message.clone())),
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [(&str, f64); 4] = [
+        ("GiB", 1024.0 * 1024.0 * 1024.0),
+        ("MiB", 1024.0 * 1024.0),
+        ("KiB", 1024.0),
+        ("B", 1.0),
+    ];
+    let bytes_f = bytes as f64;
+    for (suffix, factor) in UNITS {
+        if bytes_f >= factor {
+            return format!("{:.1} {suffix}", bytes_f / factor);
+        }
+    }
+    format!("{bytes} B")
 }
 
 fn distance_to_vertical_bounds(y: Pixels, bounds: Bounds<Pixels>) -> f32 {

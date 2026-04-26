@@ -28,6 +28,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     let sha = git(&["rev-parse", "--short=7", "HEAD"]).unwrap_or_else(|| "unknown".into());
+    // The full SHA is the canonical release identity — the updater
+    // uses it to compare local vs remote builds. CI overrides via
+    // ANOTHER_ONE_BUILD_FULL_SHA when the workspace is shallow or
+    // the .git tree is otherwise unavailable.
+    let full_sha = std::env::var("ANOTHER_ONE_BUILD_FULL_SHA")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| git(&["rev-parse", "HEAD"]))
+        .unwrap_or_else(|| "unknown".into());
     let branch = git(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|| "unknown".into());
     let dirty = match git(&["status", "--porcelain"]) {
         Some(s) => !s.is_empty(),
@@ -39,9 +48,11 @@ fn main() {
         .unwrap_or(0);
 
     println!("cargo:rustc-env=ANOTHER_ONE_BUILD_SHA={sha}");
+    println!("cargo:rustc-env=ANOTHER_ONE_BUILD_FULL_SHA={full_sha}");
     println!("cargo:rustc-env=ANOTHER_ONE_BUILD_BRANCH={branch}");
     println!("cargo:rustc-env=ANOTHER_ONE_BUILD_DIRTY={dirty}");
     println!("cargo:rustc-env=ANOTHER_ONE_BUILD_TIME_UNIX={build_time}");
+    println!("cargo:rerun-if-env-changed=ANOTHER_ONE_BUILD_FULL_SHA");
 
     // Re-run when commit, branch, or working-tree changes. Without
     // these, cargo would cache build.rs output and the SHA would

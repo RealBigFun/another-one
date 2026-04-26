@@ -13,6 +13,16 @@
 /// tarball with no `.git` dir).
 pub const GIT_SHA: &str = env!("ANOTHER_ONE_BUILD_SHA");
 
+/// Full git SHA at build time, e.g. `225a501a6...`. The updater
+/// uses this as the canonical release identity for equality checks
+/// against `latest.json`. CI overrides via `ANOTHER_ONE_BUILD_FULL_SHA`
+/// when the build tree lacks `.git`.
+pub const GIT_FULL_SHA: &str = env!("ANOTHER_ONE_BUILD_FULL_SHA");
+
+/// Cargo package version baked in at compile time. Display-only
+/// metadata for the updater UI; not used for update detection.
+pub const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Branch checked out at build time, e.g. `main` or
 /// `feat-build-marker-and-release-action`. `"unknown"` if not in a
 /// git checkout.

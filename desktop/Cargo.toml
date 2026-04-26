@@ -46,6 +46,14 @@ log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-log = "0.2"
+# Updater HTTP/crypto stack. Rustls (no OpenSSL) keeps macOS+Linux
+# portability; ed25519-dalek verifies the publisher's signature on
+# `latest.json` before the app trusts asset URLs/checksums; sha2 +
+# hex are used for per-asset SHA256 verification.
+ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }
+sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+hex = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
