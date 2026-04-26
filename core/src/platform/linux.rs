@@ -217,6 +217,20 @@ pub(super) fn parse_linux_process_sample(
     let stime_ticks = fields.get(12)?.parse::<u64>().ok()?;
     let rss_pages = fields.get(21)?.parse::<i64>().ok()?.max(0) as u64;
 
+    // Prefer PSS from /proc/<pid>/smaps_rollup. Tree-summed RSS
+    // double-counts shared library pages — every Node helper
+    // subprocess reports the full ~250 MB libnode/libv8 footprint
+    // even though the pages are physically shared, so an idle
+    // Claude Code tree (main + N workers) lands at 1.5-2 GB
+    // nominal vs. ~400-500 MB actual. PSS divides each shared page
+    // by its sharing count, so summing it across a tree gives the
+    // real working set. smaps_rollup is Linux 4.14+, RUID-readable
+    // for own processes, fast enough at the 1.5s sampling cadence.
+    // Fall back to RSS×page_size if the kernel is older or the
+    // pseudofile is unreadable for any reason.
+    let memory_bytes = read_smaps_pss_bytes(pid)
+        .unwrap_or_else(|| rss_pages.saturating_mul(page_size));
+
     Some(RawProcessSample {
         pid,
         ppid,
@@ -224,8 +238,25 @@ pub(super) fn parse_linux_process_sample(
             utime_ticks.saturating_add(stime_ticks),
             clock_ticks_per_second,
         ),
-        memory_bytes: rss_pages.saturating_mul(page_size),
+        memory_bytes,
     })
+}
+
+fn read_smaps_pss_bytes(pid: u32) -> Option<u64> {
+    let rollup = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")).ok()?;
+    for line in rollup.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("Pss:") {
+            // "Pss:    1234 kB" → 1234. Always reported in kB.
+            let kb: u64 = rest
+                .split_whitespace()
+                .next()?
+                .parse()
+                .ok()?;
+            return Some(kb.saturating_mul(1024));
+        }
+    }
+    None
 }
 
 pub(super) fn ticks_to_nanos(ticks: u64, clock_ticks_per_second: u64) -> u64 {
