@@ -145,6 +145,27 @@ pub enum Control {
     /// launch-args list. Drives the Settings → Agents page. Reply:
     /// [`WorkerReply::AgentSettingsAck`].
     ReadAgentSettings,
+    /// Run one custom action inside `section_id`'s task: appends a
+    /// fresh `PersistedTerminalTab`, queues a launch, and (for
+    /// shell actions) records the command bytes the daemon writes
+    /// once the PTY is up.
+    ///
+    /// **Single-shot Ack** (resolved per ojm.7's bd body): the
+    /// reply carries only the new `tab_id` so the caller can
+    /// `AttachTab` and watch the action's PTY output flow over the
+    /// existing data-frame pipeline. There's no streaming
+    /// per-step progress channel here; if a future iteration ever
+    /// needs one, it lands as a separate `Control::Subscribe` verb
+    /// per the foundation task's push-channel hatch (`request_id == 0`).
+    /// Today this matches `LocalSession::run_project_action`'s shape
+    /// 1:1 — the GPUI desktop has lived with single-shot for the
+    /// life of the feature without a streaming requirement
+    /// surfacing. Reply: [`WorkerReply::RunProjectActionAck`].
+    RunProjectAction {
+        project_id: String,
+        section_id: String,
+        action_id: String,
+    },
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
     /// first control frame by an unknown peer whose `NodeId` is NOT
     /// in the daemon's `paired_peers` allowlist. If the daemon's
@@ -282,6 +303,12 @@ pub enum WorkerReply {
     /// order) regardless of enabled state, so the Settings →
     /// Agents page can render rows for every agent at once.
     AgentSettingsAck { view: AgentSettingsViewWire },
+    /// Reply to [`Control::RunProjectAction`]. `tab_id` is the
+    /// freshly-minted uuid for the spawned tab; the caller
+    /// follows up with `Control::AttachTab` (or relies on the
+    /// active-tab-changed event the desktop UI emits) to start
+    /// receiving the action's PTY output.
+    RunProjectActionAck { tab_id: String },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same

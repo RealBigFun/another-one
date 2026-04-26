@@ -201,6 +201,26 @@ pub trait DaemonRegistry: Send + Sync + 'static {
             default_agent_id: None,
         }
     }
+
+    /// Run one custom action inside `section_id`'s task. Returns
+    /// the freshly-minted tab id on success, or a human-readable
+    /// error on failure (unknown project / action id, malformed
+    /// section id, empty shell command, etc. — matches
+    /// `LocalSession::run_project_action`).
+    ///
+    /// Single-shot Ack semantics: the action's PTY output flows
+    /// over the existing `Control::AttachTab` pipeline; this verb
+    /// only kicks off the spawn. Default impl returns
+    /// `Err("unsupported")` for registries with no project store
+    /// to mutate (the sandbox binary).
+    fn run_project_action(
+        &self,
+        _project_id: &str,
+        _section_id: &str,
+        _action_id: &str,
+    ) -> Result<String, String> {
+        Err("unsupported on this daemon".to_string())
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

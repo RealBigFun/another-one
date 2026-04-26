@@ -146,6 +146,16 @@ enum Control {
     /// `WorkerReply::AgentSettingsAck`. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadAgentSettings`.
     ReadAgentSettings,
+    /// Run one custom action inside `section_id`'s task — appends a
+    /// fresh tab + queues its PTY launch. **Single-shot Ack**: the
+    /// reply carries only the new tab id; PTY output flows over
+    /// the existing `Control::AttachTab` pipeline. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::RunProjectAction`.
+    RunProjectAction {
+        project_id: String,
+        section_id: String,
+        action_id: String,
+    },
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
@@ -1007,6 +1017,33 @@ impl IrohSession {
             .await
             .context("read_agent_settings: request failed")?;
         decode_ack_field(value, "agent_settings_ack", "view", "read_agent_settings")
+    }
+
+    /// Run a custom action inside `section_id`'s task. The daemon
+    /// commits a new tab to the persistent project store + queues
+    /// its PTY launch; the returned `tab_id` lets the caller
+    /// `attach_tab` and watch the action's PTY output flow.
+    ///
+    /// **Single-shot Ack** by design (resolved in ojm.7's bd body):
+    /// no per-step streaming events, matching the GPUI desktop's
+    /// `LocalSession::run_project_action` contract. The action's
+    /// stdout/stderr arrives over the existing data-frame pipeline
+    /// once the daemon's drain spawns the queued tab.
+    pub async fn run_project_action(
+        &self,
+        project_id: String,
+        section_id: String,
+        action_id: String,
+    ) -> anyhow::Result<String> {
+        let value = self
+            .request_and_await(Control::RunProjectAction {
+                project_id,
+                section_id,
+                action_id,
+            })
+            .await
+            .context("run_project_action: request failed")?;
+        decode_ack_field(value, "run_project_action_ack", "tab_id", "run_project_action")
     }
 
     /// Allocate a request id, register a oneshot in [`Self::pending`],

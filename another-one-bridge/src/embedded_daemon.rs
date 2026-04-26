@@ -38,7 +38,8 @@ use another_one_core::open_in::OpenInAppKind;
 use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
 use another_one_core::project_store::{
-    ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind, ProjectActionScope,
+    PersistedSectionState, PersistedTerminalTab, ProjectAction, ProjectActionAccess,
+    ProjectActionIcon, ProjectActionKind, ProjectActionScope,
 };
 use another_one_core::project_store::ProjectStore;
 use another_one_core::section::SectionId;
@@ -382,6 +383,118 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             agents: Vec::new(),
             default_agent_id: None,
         })
+    }
+
+    fn run_project_action(
+        &self,
+        project_id: &str,
+        section_id: &str,
+        action_id: &str,
+    ) -> Result<String, String> {
+        // Mirrors `LocalSession::run_project_action` (api/local_session.rs).
+        // Single-shot Ack: the action's PTY output flows over the
+        // existing AttachTab pipeline once the daemon's drain spawns
+        // the queued tab. We only commit the persistent tab state +
+        // queue the launch here.
+        let key_section = SectionId::from_store_key(section_id).ok_or_else(|| {
+            format!(
+                "run_project_action: malformed section_id `{section_id}` — \
+                 expected SectionId::store_key()"
+            )
+        })?;
+        let arc = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| "run_project_action: registry state dropped".to_string())?;
+        let mut state = arc
+            .lock()
+            .map_err(|_| "run_project_action: RegistryState mutex poisoned".to_string())?;
+
+        let action = state
+            .project_store
+            .project_actions(project_id)
+            .into_iter()
+            .find(|a| a.id == action_id)
+            .ok_or_else(|| {
+                format!(
+                    "run_project_action: unknown action_id `{action_id}` for project `{project_id}`"
+                )
+            })?;
+
+        let (launch_config, post_launch_input, fixed_title) = match &action.kind {
+            ProjectActionKind::Shell { command } => {
+                let trimmed = command.trim();
+                if trimmed.is_empty() {
+                    return Err(
+                        "Shell actions need a command before they can run.".to_string()
+                    );
+                }
+                let title = {
+                    let name = action.name.trim();
+                    (!name.is_empty()).then(|| name.to_string())
+                };
+                (
+                    another_one_core::agents::TerminalLaunchConfig::default(),
+                    Some(format!("{trimmed}\n").into_bytes()),
+                    title,
+                )
+            }
+            ProjectActionKind::Agent { provider, .. } => {
+                let args =
+                    another_one_core::project_store::project_action_agent_launch_args(&action)?;
+                (
+                    another_one_core::agents::TerminalLaunchConfig::for_provider(*provider)
+                        .with_extra_args(args)
+                        .with_agent_launch_args(false),
+                    None,
+                    None,
+                )
+            }
+        };
+
+        let tab_id = uuid::Uuid::new_v4().to_string();
+        let title = fixed_title
+            .clone()
+            .unwrap_or_else(|| launch_config.default_title());
+        let tab = PersistedTerminalTab {
+            id: tab_id.clone(),
+            title,
+            pinned: false,
+            fixed_title,
+            provider: launch_config.provider,
+            launch_config: Some(launch_config.clone()),
+            restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
+        };
+
+        let key = TerminalRuntimeKey {
+            section_id: key_section,
+            tab_id: tab_id.clone(),
+        };
+
+        let mut existing_section = state
+            .project_store
+            .terminal_sections
+            .get(section_id)
+            .cloned()
+            .unwrap_or_else(|| PersistedSectionState {
+                active_tab_id: String::new(),
+                next_tab_id: 1,
+                cwd: None,
+                tabs: Vec::new(),
+            });
+        existing_section.tabs.push(tab);
+        existing_section.active_tab_id = tab_id.clone();
+        existing_section.next_tab_id = existing_section.next_tab_id.saturating_add(1);
+        state
+            .project_store
+            .set_section_state(section_id.to_string(), existing_section);
+
+        if let Some(input) = post_launch_input {
+            state.pending_post_launch_input.insert(key.clone(), input);
+        }
+        state.pending_tab_launches.push(TabLaunchRequest { key });
+
+        Ok(tab_id)
     }
 
     fn read_agent_settings(&self) -> AgentSettingsViewWire {

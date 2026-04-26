@@ -311,6 +311,32 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     return session.readAgentSettings();
   }
 
+  /// Run one custom action inside `sectionId`'s task. Single-shot
+  /// Ack: returns the new tab id; the action's PTY output flows
+  /// over the existing AttachTab pipeline once the daemon's drain
+  /// spawns the queued tab. Throws on bad project/action ids,
+  /// empty shell commands, or daemon-side mutation failures —
+  /// surfaces the daemon's message so the UI can render it in a
+  /// toast.
+  @override
+  Future<String> runProjectAction({
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError(
+        'IrohTransport: not connected — cannot run project action',
+      );
+    }
+    return session.runProjectAction(
+      projectId: projectId,
+      sectionId: sectionId,
+      actionId: actionId,
+    );
+  }
+
   @override
   void sendBytes(List<int> bytes) {
     final session = _session;

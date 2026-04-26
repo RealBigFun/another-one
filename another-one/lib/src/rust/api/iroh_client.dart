@@ -118,6 +118,22 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// uses a fresh request_id but no caller correlates against it.
   Future<void> resize({required int cols, required int rows});
 
+  /// Run a custom action inside `section_id`'s task. The daemon
+  /// commits a new tab to the persistent project store + queues
+  /// its PTY launch; the returned `tab_id` lets the caller
+  /// `attach_tab` and watch the action's PTY output flow.
+  ///
+  /// **Single-shot Ack** by design (resolved in ojm.7's bd body):
+  /// no per-step streaming events, matching the GPUI desktop's
+  /// `LocalSession::run_project_action` contract. The action's
+  /// stdout/stderr arrives over the existing data-frame pipeline
+  /// once the daemon's drain spawns the queued tab.
+  Future<String> runProjectAction({
+    required String projectId,
+    required String sectionId,
+    required String actionId,
+  });
+
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
 

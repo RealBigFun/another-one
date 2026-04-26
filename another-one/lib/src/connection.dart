@@ -544,14 +544,21 @@ abstract class DaemonConnection {
   /// terminal tab, queues its PTY launch, and (for shell actions)
   /// records the command bytes to write once the PTY is up. Returns
   /// the new tab id.
+  ///
+  /// Single-shot Ack: callers should `attachTab` to the returned
+  /// tab id (or rely on the active-tab-changed event the desktop UI
+  /// emits) to receive the action's PTY output. There is no
+  /// per-step streaming progress; the wire match for that lives
+  /// only as a future `Control::Subscribe` hatch behind ADR
+  /// another-one-67l's push channel (`request_id == 0`).
   Future<String> runProjectAction({
     required String projectId,
     required String sectionId,
     required String actionId,
   }) {
     throw UnimplementedError(
-      'runProjectAction: requires Control::RunProjectAction wire '
-      'variant on the iroh transport (not yet implemented).',
+      'runProjectAction: this DaemonConnection variant has not '
+      'implemented run_project_action.',
     );
   }
 
