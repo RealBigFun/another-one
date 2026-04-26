@@ -41,9 +41,19 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
             onExit: (_) => setState(() => _rowHovered = false),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: () => ref
-                  .read(activeProjectPageProvider.notifier)
-                  .state = project.id,
+              onTap: () {
+                // Project page + tab selection are mutually exclusive
+                // (`active_project_page_provider`'s doc spells this
+                // out). The tab notifier already clears the project
+                // page on `set(value)`; the inverse needs to happen
+                // explicitly at this call site, otherwise a stale
+                // `selectedTabProvider` keeps the terminal pane
+                // showing AND keeps the previously-active task row
+                // highlighted while the project row also lights up.
+                ref.read(selectedTabProvider.notifier).clear();
+                ref.read(activeProjectPageProvider.notifier).state =
+                    project.id;
+              },
               onSecondaryTapDown: (details) =>
                   _showProjectMenu(details.globalPosition),
               child: Container(
