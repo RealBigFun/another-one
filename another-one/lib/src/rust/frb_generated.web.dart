@@ -94,6 +94,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ActiveGitStateDto dco_decode_active_git_state_dto(dynamic raw);
 
   @protected
+  ActiveGitStateWire dco_decode_active_git_state_wire(dynamic raw);
+
+  @protected
   AgentProvider dco_decode_agent_provider(dynamic raw);
 
   @protected
@@ -112,10 +115,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ActiveGitStateDto dco_decode_box_autoadd_active_git_state_dto(dynamic raw);
 
   @protected
+  ActiveGitStateWire dco_decode_box_autoadd_active_git_state_wire(dynamic raw);
+
+  @protected
   AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw);
 
   @protected
+  AgentSettingsView dco_decode_box_autoadd_agent_settings_view(dynamic raw);
+
+  @protected
   BranchCompareView dco_decode_box_autoadd_branch_compare_view(dynamic raw);
+
+  @protected
+  EnabledAgentsView dco_decode_box_autoadd_enabled_agents_view(dynamic raw);
 
   @protected
   GitActionScriptsView dco_decode_box_autoadd_git_action_scripts_view(
@@ -129,10 +141,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   McpSettingsView dco_decode_box_autoadd_mcp_settings_view(dynamic raw);
 
   @protected
+  OpenInState dco_decode_box_autoadd_open_in_state(dynamic raw);
+
+  @protected
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
 
   @protected
   ProjectActionDto dco_decode_box_autoadd_project_action_dto(dynamic raw);
+
+  @protected
+  ProjectSummary dco_decode_box_autoadd_project_summary(dynamic raw);
 
   @protected
   PullRequestStatusDto dco_decode_box_autoadd_pull_request_status_dto(
@@ -141,6 +159,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RecentCommitsView dco_decode_box_autoadd_recent_commits_view(dynamic raw);
+
+  @protected
+  RecentCommitsWire dco_decode_box_autoadd_recent_commits_wire(dynamic raw);
 
   @protected
   ResolvedProjectBranchSettingsDto
@@ -153,6 +174,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ShortcutSettingsView dco_decode_box_autoadd_shortcut_settings_view(
+    dynamic raw,
+  );
+
+  @protected
+  TaskSummary dco_decode_box_autoadd_task_summary(dynamic raw);
+
+  @protected
+  ToolbarActionOutcome dco_decode_box_autoadd_toolbar_action_outcome(
     dynamic raw,
   );
 
@@ -175,6 +204,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChangedFileDto dco_decode_changed_file_dto(dynamic raw);
 
   @protected
+  ChangedFileWire dco_decode_changed_file_wire(dynamic raw);
+
+  @protected
   CheckBucket dco_decode_check_bucket(dynamic raw);
 
   @protected
@@ -182,6 +214,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CommitDto dco_decode_commit_dto(dynamic raw);
+
+  @protected
+  CommitWire dco_decode_commit_wire(dynamic raw);
 
   @protected
   EnabledAgentsView dco_decode_enabled_agents_view(dynamic raw);
@@ -222,10 +257,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
 
   @protected
+  List<ChangedFileWire> dco_decode_list_changed_file_wire(dynamic raw);
+
+  @protected
   List<CheckDto> dco_decode_list_check_dto(dynamic raw);
 
   @protected
   List<CommitDto> dco_decode_list_commit_dto(dynamic raw);
+
+  @protected
+  List<CommitWire> dco_decode_list_commit_wire(dynamic raw);
 
   @protected
   List<McpCatalogEntryDto> dco_decode_list_mcp_catalog_entry_dto(dynamic raw);
@@ -318,6 +359,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ActiveGitStateWire? dco_decode_opt_box_autoadd_active_git_state_wire(
+    dynamic raw,
+  );
+
+  @protected
   AgentProvider? dco_decode_opt_box_autoadd_agent_provider(dynamic raw);
 
   @protected
@@ -339,12 +385,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RecentCommitsWire? dco_decode_opt_box_autoadd_recent_commits_wire(
+    dynamic raw,
+  );
+
+  @protected
   ResolvedProjectBranchSettingsDto?
   dco_decode_opt_box_autoadd_resolved_project_branch_settings_dto(dynamic raw);
 
   @protected
   ResourceUsageSnapshotDto?
   dco_decode_opt_box_autoadd_resource_usage_snapshot_dto(dynamic raw);
+
+  @protected
+  TaskSummary? dco_decode_opt_box_autoadd_task_summary(dynamic raw);
 
   @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
@@ -356,6 +410,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto>? dco_decode_opt_list_changed_file_dto(dynamic raw);
+
+  @protected
+  List<ChangedFileWire>? dco_decode_opt_list_changed_file_wire(dynamic raw);
 
   @protected
   List<CheckDto>? dco_decode_opt_list_check_dto(dynamic raw);
@@ -403,6 +460,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RecentCommitsView dco_decode_recent_commits_view(dynamic raw);
 
   @protected
+  RecentCommitsWire dco_decode_recent_commits_wire(dynamic raw);
+
+  @protected
   ResolvedProjectBranchSettingsDto
   dco_decode_resolved_project_branch_settings_dto(dynamic raw);
 
@@ -435,6 +495,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TaskSummary dco_decode_task_summary(dynamic raw);
+
+  @protected
+  ToolbarActionOutcome dco_decode_toolbar_action_outcome(dynamic raw);
 
   @protected
   ToolbarActionOutcomeDto dco_decode_toolbar_action_outcome_dto(dynamic raw);
@@ -525,6 +588,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ActiveGitStateWire sse_decode_active_git_state_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   AgentProvider sse_decode_agent_provider(SseDeserializer deserializer);
 
   @protected
@@ -547,12 +615,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ActiveGitStateWire sse_decode_box_autoadd_active_git_state_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   AgentProvider sse_decode_box_autoadd_agent_provider(
     SseDeserializer deserializer,
   );
 
   @protected
+  AgentSettingsView sse_decode_box_autoadd_agent_settings_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BranchCompareView sse_decode_box_autoadd_branch_compare_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  EnabledAgentsView sse_decode_box_autoadd_enabled_agents_view(
     SseDeserializer deserializer,
   );
 
@@ -572,10 +655,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  OpenInState sse_decode_box_autoadd_open_in_state(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   PairingInfo sse_decode_box_autoadd_pairing_info(SseDeserializer deserializer);
 
   @protected
   ProjectActionDto sse_decode_box_autoadd_project_action_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ProjectSummary sse_decode_box_autoadd_project_summary(
     SseDeserializer deserializer,
   );
 
@@ -586,6 +679,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RecentCommitsView sse_decode_box_autoadd_recent_commits_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RecentCommitsWire sse_decode_box_autoadd_recent_commits_wire(
     SseDeserializer deserializer,
   );
 
@@ -602,6 +700,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ShortcutSettingsView sse_decode_box_autoadd_shortcut_settings_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TaskSummary sse_decode_box_autoadd_task_summary(SseDeserializer deserializer);
+
+  @protected
+  ToolbarActionOutcome sse_decode_box_autoadd_toolbar_action_outcome(
     SseDeserializer deserializer,
   );
 
@@ -628,6 +734,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer);
 
   @protected
+  ChangedFileWire sse_decode_changed_file_wire(SseDeserializer deserializer);
+
+  @protected
   CheckBucket sse_decode_check_bucket(SseDeserializer deserializer);
 
   @protected
@@ -635,6 +744,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CommitDto sse_decode_commit_dto(SseDeserializer deserializer);
+
+  @protected
+  CommitWire sse_decode_commit_wire(SseDeserializer deserializer);
 
   @protected
   EnabledAgentsView sse_decode_enabled_agents_view(
@@ -685,10 +797,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<ChangedFileWire> sse_decode_list_changed_file_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<CheckDto> sse_decode_list_check_dto(SseDeserializer deserializer);
 
   @protected
   List<CommitDto> sse_decode_list_commit_dto(SseDeserializer deserializer);
+
+  @protected
+  List<CommitWire> sse_decode_list_commit_wire(SseDeserializer deserializer);
 
   @protected
   List<McpCatalogEntryDto> sse_decode_list_mcp_catalog_entry_dto(
@@ -801,6 +921,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ActiveGitStateWire? sse_decode_opt_box_autoadd_active_git_state_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   AgentProvider? sse_decode_opt_box_autoadd_agent_provider(
     SseDeserializer deserializer,
   );
@@ -826,6 +951,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RecentCommitsWire? sse_decode_opt_box_autoadd_recent_commits_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ResolvedProjectBranchSettingsDto?
   sse_decode_opt_box_autoadd_resolved_project_branch_settings_dto(
     SseDeserializer deserializer,
@@ -834,6 +964,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   ResourceUsageSnapshotDto?
   sse_decode_opt_box_autoadd_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TaskSummary? sse_decode_opt_box_autoadd_task_summary(
     SseDeserializer deserializer,
   );
 
@@ -847,6 +982,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto>? sse_decode_opt_list_changed_file_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ChangedFileWire>? sse_decode_opt_list_changed_file_wire(
     SseDeserializer deserializer,
   );
 
@@ -912,6 +1052,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RecentCommitsWire sse_decode_recent_commits_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ResolvedProjectBranchSettingsDto
   sse_decode_resolved_project_branch_settings_dto(SseDeserializer deserializer);
 
@@ -956,6 +1101,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TaskSummary sse_decode_task_summary(SseDeserializer deserializer);
+
+  @protected
+  ToolbarActionOutcome sse_decode_toolbar_action_outcome(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ToolbarActionOutcomeDto sse_decode_toolbar_action_outcome_dto(
@@ -1064,6 +1214,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_active_git_state_wire(
+    ActiveGitStateWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_agent_provider(AgentProvider self, SseSerializer serializer);
 
   @protected
@@ -1094,14 +1250,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_active_git_state_wire(
+    ActiveGitStateWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_agent_provider(
     AgentProvider self,
     SseSerializer serializer,
   );
 
   @protected
+  void sse_encode_box_autoadd_agent_settings_view(
+    AgentSettingsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_branch_compare_view(
     BranchCompareView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_enabled_agents_view(
+    EnabledAgentsView self,
     SseSerializer serializer,
   );
 
@@ -1124,6 +1298,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_open_in_state(
+    OpenInState self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_pairing_info(
     PairingInfo self,
     SseSerializer serializer,
@@ -1136,6 +1316,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_project_summary(
+    ProjectSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_pull_request_status_dto(
     PullRequestStatusDto self,
     SseSerializer serializer,
@@ -1144,6 +1330,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_recent_commits_view(
     RecentCommitsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_recent_commits_wire(
+    RecentCommitsWire self,
     SseSerializer serializer,
   );
 
@@ -1162,6 +1354,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_shortcut_settings_view(
     ShortcutSettingsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_task_summary(
+    TaskSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_toolbar_action_outcome(
+    ToolbarActionOutcome self,
     SseSerializer serializer,
   );
 
@@ -1193,6 +1397,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_changed_file_wire(
+    ChangedFileWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_check_bucket(CheckBucket self, SseSerializer serializer);
 
   @protected
@@ -1200,6 +1410,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_commit_dto(CommitDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_commit_wire(CommitWire self, SseSerializer serializer);
 
   @protected
   void sse_encode_enabled_agents_view(
@@ -1256,11 +1469,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_changed_file_wire(
+    List<ChangedFileWire> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_check_dto(List<CheckDto> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_commit_dto(
     List<CommitDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_commit_wire(
+    List<CommitWire> self,
     SseSerializer serializer,
   );
 
@@ -1403,6 +1628,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_active_git_state_wire(
+    ActiveGitStateWire? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_agent_provider(
     AgentProvider? self,
     SseSerializer serializer,
@@ -1433,6 +1664,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_recent_commits_wire(
+    RecentCommitsWire? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_resolved_project_branch_settings_dto(
     ResolvedProjectBranchSettingsDto? self,
     SseSerializer serializer,
@@ -1441,6 +1678,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_resource_usage_snapshot_dto(
     ResourceUsageSnapshotDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_task_summary(
+    TaskSummary? self,
     SseSerializer serializer,
   );
 
@@ -1456,6 +1699,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_list_changed_file_dto(
     List<ChangedFileDto>? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_list_changed_file_wire(
+    List<ChangedFileWire>? self,
     SseSerializer serializer,
   );
 
@@ -1538,6 +1787,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_recent_commits_wire(
+    RecentCommitsWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_resolved_project_branch_settings_dto(
     ResolvedProjectBranchSettingsDto self,
     SseSerializer serializer,
@@ -1593,6 +1848,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_task_summary(TaskSummary self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_toolbar_action_outcome(
+    ToolbarActionOutcome self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_toolbar_action_outcome_dto(
