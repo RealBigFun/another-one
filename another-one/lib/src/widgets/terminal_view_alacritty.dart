@@ -135,13 +135,22 @@ class _TerminalViewAlacrittyState extends State<TerminalViewAlacritty>
   Future<void> _onTick(Duration _) async {
     if (!mounted) return;
     try {
+      // Cheap revision poll first — only round-trip the full cell
+      // grid across FRB when the engine actually advanced. Without
+      // this gate the per-frame Vec<CellDto> serialise burns ~2
+      // cores at 60 Hz on an idle terminal (top -p ${pid} confirms;
+      // alacritty's grid is fast, FRB's encode is the cost).
+      final revision = await engine.engineRevision(
+        sectionId: widget.sectionId,
+        tabId: widget.tabId,
+      );
+      if (revision == _lastRevision && _snapshot != null) return;
       final snap = await engine.engineSnapshot(
         sectionId: widget.sectionId,
         tabId: widget.tabId,
         scrollbackOffset: 0,
         maxRows: _rows,
       );
-      if (snap.revision == _lastRevision && _snapshot != null) return;
       _lastRevision = snap.revision;
       if (!mounted) return;
       setState(() => _snapshot = snap);

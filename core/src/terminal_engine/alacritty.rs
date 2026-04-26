@@ -71,6 +71,13 @@ impl TerminalEngine for AlacrittyEngine {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    fn revision(&self) -> u64 {
+        // Cheap field read — overrides the trait's snapshot-fallback
+        // so the renderer's per-frame poll doesn't pay the full
+        // cell-walk cost on an unchanged terminal.
+        self.revision
+    }
+
     fn snapshot(&self, _scrollback_offset: u32, max_rows: u16) -> Snapshot {
         let cols = self.cols;
         let rows = self.rows.min(max_rows.max(1));

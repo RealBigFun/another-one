@@ -36,6 +36,19 @@ pub trait TerminalEngine: Send + Sync {
     /// row count.
     fn snapshot(&self, scrollback_offset: u32, max_rows: u16) -> Snapshot;
 
+    /// Cheap revision counter — bumped any time the cell grid would
+    /// produce a different `snapshot`. Renderers poll this every
+    /// frame and only call `snapshot` when the value changes;
+    /// without this fast path the per-frame Vec<CellDto> serialise
+    /// across FRB burns ~2 cores on a 60 Hz Ticker even on an idle
+    /// terminal. The default impl falls back through `snapshot` for
+    /// engines that haven't bothered specialising — slow but
+    /// correct. AlacrittyEngine overrides it as a single field
+    /// read.
+    fn revision(&self) -> u64 {
+        self.snapshot(0, 0).revision
+    }
+
     /// Convert a UI-side input event to the bytes the PTY expects.
     /// Pure: caller writes the result themselves.
     fn encode_input(&self, event: InputEvent) -> Vec<u8>;
