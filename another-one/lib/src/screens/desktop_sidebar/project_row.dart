@@ -78,9 +78,12 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                         project.name,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: AppTokens.fontBodyLg,
+                          // GPUI's `project_row` text_col =
+                          // hsla(0,0,0.90,1) → opaque gray
+                          // 0xFFE5E5E5; 14px / w500.
+                          fontSize: AppTokens.fontHeadingSm,
                           fontWeight: FontWeight.w500,
-                          color: AppTokens.textPrimary,
+                          color: Color(0xFFE5E5E5),
                         ),
                       ),
                     ),
@@ -342,9 +345,13 @@ class _ProjectAvatar extends StatelessWidget {
       child: Text(
         letter,
         style: const TextStyle(
-          fontSize: AppTokens.fontBodyLg,
+          // GPUI avatar letter: rems(12./16.) = 12px,
+          // FontWeight::BOLD = w700, color = pure
+          // opaque white (gpui::white(), not a translucent
+          // text token).
+          fontSize: AppTokens.fontBody,
           fontWeight: FontWeight.w700,
-          color: AppTokens.textPrimary,
+          color: Colors.white,
         ),
       ),
     );

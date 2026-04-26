@@ -91,9 +91,12 @@ class _SidebarHeader extends StatelessWidget {
         'PROJECTS',
         textAlign: TextAlign.left,
         style: TextStyle(
-          fontSize: AppTokens.fontCaption,
+          // GPUI sidebar header: text_xs (12px), SEMIBOLD (w600),
+          // hsla(0,0,0.50,1) → opaque gray 0xFF808080. Was 10px
+          // and white@0.38, both too muted.
+          fontSize: AppTokens.fontBody,
           fontWeight: FontWeight.w600,
-          color: AppTokens.textPlaceholder,
+          color: Color(0xFF808080),
           letterSpacing: 0.6,
         ),
       ),

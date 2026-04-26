@@ -307,10 +307,13 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                               taskName,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: AppTokens.fontBodyLg,
+                                // GPUI's `branch_row` uses
+                                // `text_sm()` = rems(0.875) = 14px,
+                                // and `FontWeight::MEDIUM` = w500.
+                                // text_col = hsla(0,0,0.80,1) →
+                                // opaque gray.
+                                fontSize: AppTokens.fontHeadingSm,
                                 fontWeight: FontWeight.w500,
-                                // GPUI's `branch_row` text_col —
-                                // hsla(0,0,0.80,1) → opaque gray.
                                 color: Color(0xFFCCCCCC),
                               ),
                             ),
@@ -350,17 +353,18 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                   child: Row(
                     children: [
                       // GPUI's `muted_col` (hsla(0,0,0.50,1) → opaque
-                      // gray) for the subtitle and the bullet
-                      // separator. The previous translucent-white
-                      // `textPlaceholder` token rendered at white@0.38
-                      // — way more muted than GPUI's 0.50.
+                      // gray) for subtitle + bullet + diff stats.
+                      // GPUI uses `text_xs()` = rems(0.75) = 12px
+                      // for ALL three with no font_weight override
+                      // (defaults to NORMAL = w400) — we previously
+                      // had 10px and bumped diff to w600.
                       if (subtitle != null)
                         Flexible(
                           child: Text(
                             subtitle,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: AppTokens.fontCaption,
+                              fontSize: AppTokens.fontBody,
                               color: Color(0xFF808080),
                             ),
                           ),
@@ -371,7 +375,7 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                           child: Text(
                             '•',
                             style: TextStyle(
-                              fontSize: AppTokens.fontCaption,
+                              fontSize: AppTokens.fontBody,
                               color: Color(0xFF808080),
                             ),
                           ),
@@ -380,8 +384,8 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                         Text(
                           '+${task.linesAdded}',
                           style: const TextStyle(
-                            fontSize: AppTokens.fontCaption,
-                            fontWeight: FontWeight.w600,
+                            // 12px / w400 (no override in GPUI).
+                            fontSize: AppTokens.fontBody,
                             color: AppTokens.diffAdded,
                           ),
                         ),
@@ -389,8 +393,7 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                         Text(
                           '-${task.linesRemoved}',
                           style: const TextStyle(
-                            fontSize: AppTokens.fontCaption,
-                            fontWeight: FontWeight.w600,
+                            fontSize: AppTokens.fontBody,
                             color: AppTokens.diffRemoved,
                           ),
                         ),
