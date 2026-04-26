@@ -48,7 +48,7 @@ import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/empty_state.dart';
-import '../../widgets/pill.dart';
+import '../../widgets/git_toolbar_button.dart';
 import '../../widgets/run_mutation.dart';
 import '../../widgets/toolbar_spinner.dart';
 
@@ -90,48 +90,49 @@ class _RightTabStrip extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final active = ref.watch(rightSidebarTabProvider);
-    return Container(
-      height: AppTokens.tabStripHeight,
-      decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: AppTokens.divider, width: 0.5),
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppTokens.space2,
-        vertical: AppTokens.space1,
-      ),
+    // GPUI's outer row: justify_between, px(8) py(6). Left cluster
+    // holds the tab buttons with gap(6); the right cluster is empty
+    // today but reserved for future actions, so keep the structure.
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Pill(
-            label: 'Changes',
-            icon: 'file_icons__changes',
-            tooltip: 'View working tree changes',
-            active: active == RightSidebarTab.changes,
-            onTap: () => ref
-                .read(rightSidebarTabProvider.notifier)
-                .set(RightSidebarTab.changes),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GitToolbarButton(
+                label: 'Changes',
+                leadingIcon: 'file_icons__changes',
+                tooltip: 'View working tree changes',
+                active: active == RightSidebarTab.changes,
+                onPressed: () => ref
+                    .read(rightSidebarTabProvider.notifier)
+                    .set(RightSidebarTab.changes),
+              ),
+              const SizedBox(width: 6),
+              GitToolbarButton(
+                label: 'Commits',
+                leadingIcon: 'git-commit',
+                tooltip: 'View recent commits on the current branch',
+                active: active == RightSidebarTab.commits,
+                onPressed: () => ref
+                    .read(rightSidebarTabProvider.notifier)
+                    .set(RightSidebarTab.commits),
+              ),
+              const SizedBox(width: 6),
+              GitToolbarButton(
+                label: 'Checks',
+                leadingIcon: 'tool-check',
+                tooltip: 'View CI checks for the current pull request',
+                active: active == RightSidebarTab.checks,
+                onPressed: () => ref
+                    .read(rightSidebarTabProvider.notifier)
+                    .set(RightSidebarTab.checks),
+              ),
+            ],
           ),
-          const SizedBox(width: AppTokens.space1),
-          Pill(
-            label: 'Commits',
-            icon: 'git-commit',
-            tooltip: 'View recent commits on the current branch',
-            active: active == RightSidebarTab.commits,
-            onTap: () => ref
-                .read(rightSidebarTabProvider.notifier)
-                .set(RightSidebarTab.commits),
-          ),
-          const SizedBox(width: AppTokens.space1),
-          Pill(
-            label: 'Checks',
-            icon: 'tool-check',
-            tooltip: 'View CI checks for the current pull request',
-            active: active == RightSidebarTab.checks,
-            onTap: () => ref
-                .read(rightSidebarTabProvider.notifier)
-                .set(RightSidebarTab.checks),
-          ),
+          const SizedBox.shrink(),
         ],
       ),
     );
@@ -1234,59 +1235,15 @@ class _LoadMoreCommitsRow extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 10, bottom: 6),
       child: Center(
-        child: _LoadMorePill(
+        child: GitToolbarButton(
+          label: 'Load more',
+          tooltip: 'Show 20 more recent commits',
           onPressed: () {
             ref.read(commitPageSizeProvider(projectId).notifier).update(
                   (state) => state + kRecentCommitsPageSize,
                 );
             ref.invalidate(recentCommitsProvider(projectId));
           },
-        ),
-      ),
-    );
-  }
-}
-
-class _LoadMorePill extends StatefulWidget {
-  const _LoadMorePill({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  State<_LoadMorePill> createState() => _LoadMorePillState();
-}
-
-class _LoadMorePillState extends State<_LoadMorePill> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Show 20 more recent commits',
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onPressed,
-          child: Container(
-            height: 30,
-            padding: const EdgeInsets.symmetric(horizontal: 7),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: _hover ? AppTokens.overlayHover : Colors.transparent,
-              borderRadius: BorderRadius.circular(7),
-            ),
-            child: const Text(
-              'Load more',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Color(0xF0FFFFFF), // white @ 0.94
-              ),
-            ),
-          ),
         ),
       ),
     );
