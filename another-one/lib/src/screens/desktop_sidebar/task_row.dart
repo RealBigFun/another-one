@@ -16,7 +16,7 @@ class _TaskRow extends ConsumerWidget {
     final isActive = selection != null &&
         selection.sectionId == task.sectionId;
     return Padding(
-      padding: const EdgeInsets.only(left: AppTokens.space3),
+      padding: const EdgeInsets.symmetric(horizontal: 2),
       child: _TaskRowBody(
         task: task,
         projectId: projectId,
@@ -208,7 +208,7 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
           Text(
             label,
             style: TextStyle(
-              fontSize: AppTokens.fontBodyLg,
+              fontSize: AppTokens.fontHeadingSm,
               fontWeight: FontWeight.w500,
               color: color,
             ),
@@ -258,9 +258,11 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
           margin: const EdgeInsets.symmetric(
             vertical: AppTokens.sidebarListGap / 2,
           ),
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppTokens.space4,
-            vertical: 6,
+          padding: const EdgeInsets.fromLTRB(
+            18,
+            4,
+            AppTokens.space4,
+            4,
           ),
           decoration: BoxDecoration(
             color: isActive
@@ -281,6 +283,14 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
             children: [
               Row(
                 children: [
+                  // GPUI reserves a 14×14 slot for the pull-request
+                  // pill before the title (line 1520-1555 in
+                  // `left_sidebar.rs`). Until the bridge ships PR
+                  // state we render an empty placeholder so the
+                  // title aligns with the subtitle's `pl(20)`
+                  // indent (= 14 + gap(6)).
+                  const SizedBox(width: 14, height: 14),
+                  const SizedBox(width: 6),
                   // Title shrinks to fit; the worktree + pinned
                   // glyphs render INLINE right after the title
                   // (matches GPUI's `branch_row` layout, where
@@ -349,7 +359,7 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
               ),
               if (subtitle != null || _hasDiff(task))
                 Padding(
-                  padding: const EdgeInsets.only(top: 2),
+                  padding: const EdgeInsets.only(top: 2, left: 20),
                   child: Row(
                     children: [
                       // GPUI's `muted_col` (hsla(0,0,0.50,1) → opaque

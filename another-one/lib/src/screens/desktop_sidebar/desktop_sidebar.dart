@@ -80,20 +80,13 @@ class _SidebarHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(
-        AppTokens.space4,
-        AppTokens.space3,
-        AppTokens.space4,
-        AppTokens.space2,
-      ),
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: AppTokens.space4),
       alignment: Alignment.centerLeft,
       child: const Text(
         'PROJECTS',
         textAlign: TextAlign.left,
         style: TextStyle(
-          // GPUI sidebar header: text_xs (12px), SEMIBOLD (w600),
-          // hsla(0,0,0.50,1) → opaque gray 0xFF808080. Was 10px
-          // and white@0.38, both too muted.
           fontSize: AppTokens.fontBody,
           fontWeight: FontWeight.w600,
           color: Color(0xFF808080),
@@ -110,30 +103,33 @@ class _SidebarFooter extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Container(
-      height: 44,
       decoration: const BoxDecoration(
         border: Border(
           top: BorderSide(color: AppTokens.divider, width: 0.5),
         ),
       ),
       padding: const EdgeInsets.symmetric(
-        horizontal: AppTokens.space2,
-        vertical: AppTokens.space1,
+        horizontal: AppTokens.space4,
+        vertical: AppTokens.space2,
       ),
       child: Row(
         children: [
           HoverIconButton(
-            size: 28,
-            tooltip: 'Settings',
+            size: 26,
+            iconSize: 16,
+            iconColor: AppTokens.toggleIconColor,
+            tooltip: 'Open settings',
             icon: 'settings',
             onPressed: () {
               ref.read(settingsOpenProvider.notifier).state = true;
             },
           ),
-          const SizedBox(width: AppTokens.space1),
+          const SizedBox(width: AppTokens.space3),
           HoverIconButton(
-            size: 28,
-            tooltip: 'Add project',
+            size: 26,
+            iconSize: 16,
+            iconColor: AppTokens.toggleIconColor,
+            tooltip: 'Add a project folder',
             icon: 'folder-plus',
             onPressed: () => _addProject(context, ref),
           ),
@@ -174,17 +170,15 @@ class _ProjectList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (projects.isEmpty) {
       return const EmptyState(
-        text: 'No projects yet.\nUse the + at the bottom to add one.',
-        padding: EdgeInsets.all(AppTokens.space7),
+        text: 'Click + to add a project',
+        color: Color(0xFF666666),
         fontSize: AppTokens.fontBody,
       );
     }
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(
-        AppTokens.space1,
-        AppTokens.sidebarListTopPad,
-        AppTokens.space1,
-        AppTokens.space5,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTokens.space1,
+        vertical: AppTokens.sidebarListTopPad,
       ),
       itemCount: projects.length,
       itemBuilder: (_, i) => _ProjectRow(projects[i]),

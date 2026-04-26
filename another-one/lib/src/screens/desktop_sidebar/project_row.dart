@@ -30,7 +30,6 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
     final isActive = activeProjectPage == project.id;
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppTokens.space1,
         vertical: AppTokens.sidebarListGap / 2,
       ),
       child: Column(
@@ -115,10 +114,12 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                     ),
                     HoverIconButton(
                       icon: 'ellipsis',
+                      iconSize: 14,
                       tooltip: 'More',
                       onPressed: () =>
                           _showProjectMenu(_globalCenterOf(context)),
                     ),
+                    const SizedBox(width: 2),
                     // GitHub link slot — GPUI keeps the slot in the
                     // row layout always (so widths stay stable) and
                     // toggles visibility/clickability based on
@@ -127,8 +128,10 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                     // by reading the cached `projectGithubUrlProvider`
                     // for this project id.
                     _ProjectGithubButton(projectId: project.id),
+                    const SizedBox(width: 2),
                     HoverIconButton(
                       icon: 'plus',
+                      iconSize: 14,
                       tooltip: 'New task',
                       onPressed: () =>
                           showNewTaskModal(context, project: project),
@@ -191,13 +194,13 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
         const PopupMenuItem<String>(
           enabled: false,
           height: 28,
-          padding: EdgeInsets.symmetric(horizontal: AppTokens.space5),
+          padding: EdgeInsets.symmetric(horizontal: AppTokens.space6),
           child: Text(
             'Sort tasks by',
             style: TextStyle(
-              fontSize: AppTokens.fontCaption,
+              fontSize: AppTokens.fontBody,
               fontWeight: FontWeight.w600,
-              color: AppTokens.textPlaceholder,
+              color: Color(0xFF949494),
               letterSpacing: 0.6,
             ),
           ),
@@ -237,7 +240,7 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
     return PopupMenuItem<String>(
       value: value,
       height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: AppTokens.space5),
+      padding: const EdgeInsets.symmetric(horizontal: AppTokens.space6),
       child: Row(
         children: [
           Icon(
@@ -250,7 +253,8 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
           Text(
             label,
             style: const TextStyle(
-              fontSize: AppTokens.fontBodyLg,
+              fontSize: AppTokens.fontHeadingSm,
+              fontWeight: FontWeight.w500,
               color: AppTokens.textPrimary,
             ),
           ),
@@ -271,7 +275,7 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
     return PopupMenuItem<String>(
       value: value,
       height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: AppTokens.space5),
+      padding: const EdgeInsets.symmetric(horizontal: AppTokens.space6),
       child: Row(
         children: [
           AppIcon(icon, size: 15, color: color),
@@ -279,7 +283,8 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
           Text(
             label,
             style: TextStyle(
-              fontSize: AppTokens.fontBodyLg,
+              fontSize: AppTokens.fontHeadingSm,
+              fontWeight: FontWeight.w500,
               color: color,
             ),
           ),
@@ -382,6 +387,7 @@ class _ProjectGithubButton extends ConsumerWidget {
     final hasUrl = url != null && url.isNotEmpty;
     return HoverIconButton(
       icon: 'github',
+      iconSize: 14,
       tooltip: "Open this project's GitHub link",
       iconOpacity: hasUrl ? 1.0 : 0.0,
       onPressed: hasUrl

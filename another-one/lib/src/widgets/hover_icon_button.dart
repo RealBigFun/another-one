@@ -92,7 +92,7 @@ class _HoverIconButtonState extends State<HoverIconButton> {
       height: widget.size,
       decoration: BoxDecoration(
         color: enabled && _hovered ? widget.hoverBg : widget.restBg,
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        borderRadius: BorderRadius.circular(AppTokens.radiusSm),
         border: widget.showBorder
             ? Border.all(color: widget.borderColor)
             : null,
