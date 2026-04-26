@@ -41,7 +41,7 @@ use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
     ActiveGitStateWire, AgentProvider, ChangedFileWire, CommitWire, ProjectKind, ProjectSummary,
-    RecentCommitsWire, TabSummary, TaskSummary,
+    RecentCommitsWire, TabSummary, TaskSummary, ToolbarActionOutcome,
 };
 use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
@@ -648,6 +648,445 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             commits: result.commits.into_iter().map(commit_to_wire).collect(),
         }))
     }
+    fn stage_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        original_path: Option<&'a str>,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let path_arg = path.to_string();
+        let original_path = original_path.map(str::to_string);
+        Box::pin(async move {
+            run_changed_file_mutation(
+                &inner,
+                "stage_changed_file",
+                &project_id,
+                move |project_path| {
+                    let mut changed = another_one_core::project_store::ChangedFile::default();
+                    changed.path = path_arg;
+                    changed.original_path = original_path;
+                    another_one_core::project_store::stage_changed_file(
+                        &project_path,
+                        &changed,
+                    )
+                },
+            )
+            .await
+        })
+    }
+
+    fn unstage_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        original_path: Option<&'a str>,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let path_arg = path.to_string();
+        let original_path = original_path.map(str::to_string);
+        Box::pin(async move {
+            run_changed_file_mutation(
+                &inner,
+                "unstage_changed_file",
+                &project_id,
+                move |project_path| {
+                    let mut changed = another_one_core::project_store::ChangedFile::default();
+                    changed.path = path_arg;
+                    changed.original_path = original_path;
+                    another_one_core::project_store::unstage_changed_file(
+                        &project_path,
+                        &changed,
+                    )
+                },
+            )
+            .await
+        })
+    }
+
+    fn stage_all_changes<'a>(
+        &'a self,
+        project_id: &'a str,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        Box::pin(async move {
+            run_changed_file_mutation(
+                &inner,
+                "stage_all_changes",
+                &project_id,
+                |project_path| {
+                    another_one_core::project_store::stage_all_changes(&project_path)
+                },
+            )
+            .await
+        })
+    }
+
+    fn unstage_all_changes<'a>(
+        &'a self,
+        project_id: &'a str,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        Box::pin(async move {
+            run_changed_file_mutation(
+                &inner,
+                "unstage_all_changes",
+                &project_id,
+                |project_path| {
+                    another_one_core::project_store::unstage_all_changes(&project_path)
+                },
+            )
+            .await
+        })
+    }
+
+    fn discard_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        untracked: bool,
+        original_path: Option<&'a str>,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let path_arg = path.to_string();
+        let original_path = original_path.map(str::to_string);
+        Box::pin(async move {
+            run_changed_file_mutation(
+                &inner,
+                "discard_changed_file",
+                &project_id,
+                move |project_path| {
+                    let mut changed = another_one_core::project_store::ChangedFile::default();
+                    let path_for_err = path_arg.clone();
+                    changed.path = path_arg;
+                    changed.original_path = original_path;
+                    changed.untracked = untracked;
+                    if another_one_core::project_store::revert_changed_file(
+                        &project_path,
+                        &changed,
+                    ) {
+                        Ok(())
+                    } else {
+                        Err(format!("Could not discard {path_for_err}"))
+                    }
+                },
+            )
+            .await
+        })
+    }
+
+    fn create_review_task<'a>(
+        &'a self,
+        project_id: &'a str,
+        pull_request_number: u64,
+        head_branch: &'a str,
+        agent_provider: Option<AgentProvider>,
+    ) -> RegistryFuture<'a, anyhow::Result<(String, Vec<ProjectSummary>)>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let head_branch = head_branch.to_string();
+        Box::pin(async move {
+            // Phase 1: snapshot the project — path + name + id —
+            // before kicking off the review-task worker. Mirrors
+            // LocalSession::create_review_task's lookup-then-spawn
+            // shape so the failure modes are identical.
+            let (project_path, project_name, target_project_id) = {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "create_review_task: registry vanished before lookup"
+                    )
+                })?;
+                let state = arc.lock().map_err(|_| {
+                    anyhow::anyhow!(
+                        "create_review_task: RegistryState mutex poisoned"
+                    )
+                })?;
+                let project = state
+                    .project_store
+                    .project(&project_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_review_task: unknown project_id `{project_id}`"
+                        )
+                    })?;
+                (
+                    project.path.clone(),
+                    project.name.clone(),
+                    project.id.clone(),
+                )
+            };
+
+            let task_name = format!("review-pr-{pull_request_number}");
+            let launch_config = match agent_provider.map(map_agent_provider_back) {
+                Some(provider) => {
+                    another_one_core::agents::TerminalLaunchConfig::for_provider(provider)
+                }
+                None => another_one_core::agents::TerminalLaunchConfig::default(),
+            };
+
+            let mut rx = another_one_core::project_service::spawn_review_task_creation(
+                target_project_id.clone(),
+                project_path,
+                task_name,
+                pull_request_number,
+                head_branch,
+                launch_config,
+                true,
+                true,
+            );
+            let reply = rx.recv().await.map_err(|_| {
+                anyhow::anyhow!("review task worker dropped before reply")
+            })?;
+            let success = reply
+                .result
+                .map_err(|f| anyhow::anyhow!("create review task: {}", f.message))?;
+
+            // Phase 2: insert the prepared project + the review task.
+            let section_id = {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("create_review_task: registry vanished mid-flight")
+                })?;
+                let mut state = arc.lock().map_err(|_| {
+                    anyhow::anyhow!("create_review_task: registry mutex poisoned")
+                })?;
+                let inserted_worktree = state
+                    .project_store
+                    .insert_prepared_project(success.project.clone());
+                let worktree_project_id = if inserted_worktree {
+                    success.project.project.id.clone()
+                } else {
+                    state
+                        .project_store
+                        .projects
+                        .iter()
+                        .find(|p| p.path == success.project.project.path)
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| success.project.project.id.clone())
+                };
+                let task_id = uuid::Uuid::new_v4().to_string();
+                let section = another_one_core::section::SectionId::for_task(
+                    &worktree_project_id,
+                    &success.branch_name,
+                    &task_id,
+                );
+                let section_key = section.store_key();
+                state
+                    .project_store
+                    .insert_task(another_one_core::project_store::Task {
+                        id: task_id,
+                        name: format!("Review #{pull_request_number} ({project_name})"),
+                        kind: another_one_core::project_store::TaskKind::Worktree,
+                        root_project_id: target_project_id,
+                        target_project_id: worktree_project_id.clone(),
+                        branch_name: success.branch_name,
+                        section_id: section_key.clone(),
+                        worktree_project_id: Some(worktree_project_id),
+                        tabs: Vec::new(),
+                        active_tab_id: String::new(),
+                        next_tab_id: 0,
+                        cwd: None,
+                    });
+                state.project_store.save();
+                section_key
+            };
+
+            // Phase 3: re-flatten for the inline-snapshot ack.
+            let projects = {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "create_review_task: registry vanished during snapshot read"
+                    )
+                })?;
+                let state = arc.lock().map_err(|_| {
+                    anyhow::anyhow!("create_review_task: registry mutex poisoned")
+                })?;
+                flatten_state_to_frame(&state)
+            };
+            Ok((section_id, projects))
+        })
+    }
+
+    fn create_branch<'a>(
+        &'a self,
+        project_id: &'a str,
+        branch_name: &'a str,
+        use_current_task: bool,
+        migrate_changes: bool,
+    ) -> RegistryFuture<'a, anyhow::Result<(String, Vec<ProjectSummary>)>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let branch_name = branch_name.to_string();
+        Box::pin(async move {
+            // Phase 1: snapshot the project lookup (path + names)
+            // outside the mutation worker. Mirrors LocalSession's
+            // create_branch which does the same lookup-then-spawn split.
+            let (project_path, target_project_id) = {
+                let arc = inner
+                    .upgrade()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_branch: registry vanished before lookup"
+                        )
+                    })?;
+                let state = arc
+                    .lock()
+                    .map_err(|_| {
+                        anyhow::anyhow!("create_branch: RegistryState mutex poisoned")
+                    })?;
+                let project = state
+                    .project_store
+                    .project(&project_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_branch: unknown project_id `{project_id}`"
+                        )
+                    })?;
+                (project.path.clone(), project.id.clone())
+            };
+
+            // Phase 2: kick off the worker thread that does the actual
+            // git work. Same `spawn_branch_creation` LocalSession uses.
+            let mut rx = another_one_core::project_service::spawn_branch_creation(
+                target_project_id.clone(),
+                project_path,
+                branch_name,
+                use_current_task,
+                migrate_changes,
+            );
+            let reply = rx
+                .recv()
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!("branch creation worker dropped before reply")
+                })?;
+            let success = reply
+                .result
+                .map_err(|f| anyhow::anyhow!("create branch: {}", f.message))?;
+
+            // Phase 3: insert the new project + task back into the
+            // registry, capture the section_id, then re-flatten for
+            // the inline-snapshot ack. Skipped for the current-task
+            // mode where there's no new project, only a branch swap
+            // on the existing checkout.
+            let section_id = if let Some(prepared) = success.project {
+                let arc = inner
+                    .upgrade()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("create_branch: registry vanished mid-flight")
+                    })?;
+                let mut state = arc
+                    .lock()
+                    .map_err(|_| {
+                        anyhow::anyhow!("create_branch: registry mutex poisoned")
+                    })?;
+                let inserted_worktree = state
+                    .project_store
+                    .insert_prepared_project(prepared.clone());
+                let worktree_project_id = if inserted_worktree {
+                    prepared.project.id.clone()
+                } else {
+                    state
+                        .project_store
+                        .projects
+                        .iter()
+                        .find(|p| p.path == prepared.project.path)
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| prepared.project.id.clone())
+                };
+                let task_id = uuid::Uuid::new_v4().to_string();
+                let section = another_one_core::section::SectionId::for_task(
+                    &worktree_project_id,
+                    &success.branch_name,
+                    &task_id,
+                );
+                let section_key = section.store_key();
+                state
+                    .project_store
+                    .insert_task(another_one_core::project_store::Task {
+                        id: task_id,
+                        name: success.task_name,
+                        kind: another_one_core::project_store::TaskKind::Worktree,
+                        root_project_id: target_project_id,
+                        target_project_id: worktree_project_id.clone(),
+                        branch_name: success.branch_name,
+                        section_id: section_key.clone(),
+                        worktree_project_id: Some(worktree_project_id),
+                        tabs: Vec::new(),
+                        active_tab_id: String::new(),
+                        next_tab_id: 0,
+                        cwd: None,
+                    });
+                state.project_store.save();
+                section_key
+            } else {
+                // Current-task mode: no new project. The daemon's
+                // checkout has already been swapped by
+                // create_branch_from_head; nothing to insert.
+                String::new()
+            };
+
+            // Phase 4: re-flatten the registry into the wire
+            // ProjectSummary list so the ack carries the post-
+            // mutation snapshot inline.
+            let projects = {
+                let arc = inner
+                    .upgrade()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_branch: registry vanished during snapshot read"
+                        )
+                    })?;
+                let state = arc
+                    .lock()
+                    .map_err(|_| {
+                        anyhow::anyhow!("create_branch: registry mutex poisoned")
+                    })?;
+                flatten_state_to_frame(&state)
+            };
+            Ok((section_id, projects))
+        })
+    }
+
+    fn run_toolbar_git_action<'a>(
+        &'a self,
+        project_id: &'a str,
+        action_id: &'a str,
+    ) -> RegistryFuture<'a, anyhow::Result<ToolbarActionOutcome>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let action_id = action_id.to_string();
+        Box::pin(async move {
+            let project_path = resolve_project_path(&inner, &project_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "run_toolbar_git_action: unknown project_id `{project_id}`"
+                )
+            })?;
+            let action = parse_toolbar_action_id(&action_id)?;
+            let outcome = tokio::task::spawn_blocking(move || {
+                let mut on_progress = |_msg: String| {};
+                another_one_core::git_actions::execute_toolbar_git_action(
+                    &project_path,
+                    action,
+                    another_one_core::git_actions::GitActionSettings::default(),
+                    &mut on_progress,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("run_toolbar_git_action join: {e}"))?;
+            outcome
+                .map(|o| ToolbarActionOutcome {
+                    toast_message: o.toast_message,
+                    warning: o.warning,
+                    refresh_git_state: o.refresh_git_state,
+                })
+                .map_err(|err| anyhow::anyhow!(err.message))
+        })
+    }
 }
 
 impl BridgeDaemonRegistry {
@@ -837,4 +1276,92 @@ fn commit_to_wire(c: another_one_core::project_store::BranchCommit) -> CommitWir
         author_name: c.author_name,
         authored_relative: c.authored_relative,
     }
+}
+
+fn parse_toolbar_action_id(
+    id: &str,
+) -> anyhow::Result<another_one_core::git_actions::ToolbarGitAction> {
+    use another_one_core::git_actions::ToolbarGitAction;
+    Ok(match id {
+        "commit" => ToolbarGitAction::Commit,
+        "commit-and-push" => ToolbarGitAction::CommitAndPush,
+        "undo-last-commit" => ToolbarGitAction::UndoLastCommit,
+        "fetch" => ToolbarGitAction::Fetch,
+        "pull" => ToolbarGitAction::Pull,
+        "push" => ToolbarGitAction::Push { force: false },
+        "force-push" => ToolbarGitAction::Push { force: true },
+        "create-pr" => ToolbarGitAction::CreatePr {
+            draft: false,
+            base_branch: None,
+        },
+        "create-draft-pr" => ToolbarGitAction::CreatePr {
+            draft: true,
+            base_branch: None,
+        },
+        other => {
+            return Err(anyhow::anyhow!(
+                "run_toolbar_git_action: unknown action_id `{other}`"
+            ));
+        }
+    })
+}
+
+/// Common scaffolding for the stage / unstage / discard / stage-all /
+/// unstage-all `DaemonRegistry` mutators: resolve `project_id` to a
+/// path, spawn-blocking the git invocation, then re-read
+/// `read_project_git_state` so the caller's ack carries the inline
+/// post-mutation `changed_files` snapshot per the foundation's
+/// inline-snapshot contract. Mirrors `LocalSession`'s
+/// `run_changed_file_action` helper but returns the snapshot rather
+/// than `()` (the iroh wire wants the snapshot to ride the ack
+/// frame, not a separate `read_changed_files` round-trip).
+async fn run_changed_file_mutation<F>(
+    inner: &Weak<Mutex<another_one_core::daemon_embed::RegistryState>>,
+    verb_label: &'static str,
+    project_id: &str,
+    mutate: F,
+) -> anyhow::Result<Vec<ChangedFileWire>>
+where
+    F: FnOnce(std::path::PathBuf) -> Result<(), String> + Send + 'static,
+{
+    let project_path = resolve_project_path(inner, project_id).ok_or_else(|| {
+        anyhow::anyhow!("{verb_label}: unknown project_id `{project_id}`")
+    })?;
+    let project_path_for_mutate = project_path.clone();
+    tokio::task::spawn_blocking(move || mutate(project_path_for_mutate))
+        .await
+        .map_err(|e| anyhow::anyhow!("{verb_label} join: {e}"))?
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let project_path_for_read = project_path.clone();
+    let git_state = tokio::task::spawn_blocking(move || {
+        another_one_core::project_store::read_project_git_state(
+            &project_path_for_read,
+            false,
+        )
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("{verb_label} post-read join: {e}"))?;
+    Ok(git_state
+        .changed_files
+        .into_iter()
+        .map(changed_file_to_wire)
+        .collect())
+}
+
+/// Resolve a `project_id` to its absolute path on disk by reading
+/// from the bridge's `RegistryState`. Returns `None` for unknown
+/// ids; the caller turns that into an `Err` with a verb-specific
+/// message so logs name the offending verb.
+fn resolve_project_path(
+    inner: &Weak<Mutex<another_one_core::daemon_embed::RegistryState>>,
+    project_id: &str,
+) -> Option<std::path::PathBuf> {
+    let arc = inner.upgrade()?;
+    let state = arc.lock().ok()?;
+    state
+        .project_store
+        .projects
+        .iter()
+        .find(|project| project.id == project_id)
+        .map(|project| project.path.clone())
 }

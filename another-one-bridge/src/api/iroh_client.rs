@@ -192,6 +192,58 @@ enum Control {
     /// Recent commits on a project's current branch. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadRecentCommits`.
     ReadRecentCommits { project_id: String, limit: u32 },
+    /// `another-one-ojm.5` — stage one changed file. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::StageChangedFile`.
+    /// Reply is `WorkerReply::StageChangedFileAck` carrying the
+    /// post-mutation `changed_files` snapshot.
+    StageChangedFile {
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    },
+    /// `another-one-ojm.5` — unstage one changed file. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::UnstageChangedFile`.
+    UnstageChangedFile {
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    },
+    /// `another-one-ojm.5` — `git add -A` on the project root.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::StageAllChanges`.
+    StageAllChanges { project_id: String },
+    /// `another-one-ojm.5` — unstage every staged change. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::UnstageAllChanges`.
+    UnstageAllChanges { project_id: String },
+    /// `another-one-ojm.5` — discard one file's working-tree changes.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::DiscardChangedFile`.
+    DiscardChangedFile {
+        project_id: String,
+        path: String,
+        untracked: bool,
+        original_path: Option<String>,
+    },
+    /// `another-one-ojm.5` — run one of the titlebar git actions.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::RunToolbarGitAction`.
+    RunToolbarGitAction {
+        project_id: String,
+        action_id: String,
+    },
+    /// `another-one-ojm.5` — create a branch from HEAD on `project_id`.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::CreateBranch`.
+    CreateBranch {
+        project_id: String,
+        branch_name: String,
+        use_current_task: bool,
+        migrate_changes: bool,
+    },
+    /// `another-one-ojm.5` — spawn a review task for a PR. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::CreateReviewTask`.
+    CreateReviewTask {
+        project_id: String,
+        pull_request_number: u64,
+        head_branch: String,
+        agent_provider: Option<AgentProvider>,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -283,6 +335,52 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadRecentCommits`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::RecentCommitsAck`.
     RecentCommitsAck { view: Option<RecentCommitsWire> },
+    /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::StageChangedFileAck`.
+    /// Carries the post-mutation `changed_files` snapshot inline so
+    /// the issuing client refreshes the right-sidebar Changes pane
+    /// without a follow-up `ReadChangedFiles` round-trip.
+    StageChangedFileAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
+    /// Same inline-snapshot semantics as
+    /// [`Self::StageChangedFileAck`].
+    UnstageChangedFileAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
+    StageAllChangesAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
+    UnstageAllChangesAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
+    DiscardChangedFileAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
+    /// Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
+    ToolbarActionOutcomeAck { outcome: ToolbarActionOutcome },
+    /// `another-one-ojm.5` — ack for [`Control::CreateBranch`]. Mirror
+    /// of `daemon-sandbox/src/frame.rs::WorkerReply::CreateBranchAck`.
+    /// Carries the post-mutation `projects` snapshot inline so the
+    /// issuing client repaints the projects drawer without a follow-
+    /// up `ListProjects` round-trip.
+    CreateBranchAck {
+        section_id: String,
+        projects: Vec<ProjectSummary>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::CreateReviewTask`].
+    /// Same inline-snapshot semantics as
+    /// [`Self::CreateBranchAck`].
+    CreateReviewTaskAck {
+        section_id: String,
+        projects: Vec<ProjectSummary>,
+    },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
@@ -324,6 +422,15 @@ pub struct ChangedFileWire {
     pub index_status: String,
     pub worktree_status: String,
     pub untracked: bool,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
+/// FRB-exposed via the `WorkerReply::ToolbarActionOutcomeAck` variant.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ToolbarActionOutcome {
+    pub toast_message: String,
+    pub warning: bool,
+    pub refresh_git_state: bool,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -460,6 +567,40 @@ pub enum AgentProvider {
 
 // `PullRequestInfo` + `PullRequestState` removed with the dead
 // `WorkerReply::PullRequestStatus` variant on the daemon side.
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
+/// The titlebar surfaces `toast_message` as a snackbar (warning
+/// palette when `warning` is true) and uses `refresh_git_state` to
+/// decide whether to invalidate the active changed-files / git-state
+/// providers after the call returns. Field-for-field compatible with
+/// the FRB-side `ToolbarActionOutcomeDto` so call sites that hand
+/// the outcome to UI code can use either type interchangeably as
+/// migration progresses.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ToolbarActionOutcome {
+    pub toast_message: String,
+    pub warning: bool,
+    pub refresh_git_state: bool,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFile`. Carries the
+/// post-mutation snapshot returned by `StageChangedFileAck` (and
+/// future stage/unstage/discard acks landing in `another-one-ojm.5`).
+/// Same field shape as `ChangedFileDto` on the FRB local-session
+/// surface so the Dart layer can render the right-sidebar Changes
+/// pane without re-projecting per transport.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub staged_additions: i32,
+    pub staged_deletions: i32,
+    pub unstaged_additions: i32,
+    pub unstaged_deletions: i32,
+    pub index_status: String,
+    pub worktree_status: String,
+    pub untracked: bool,
+}
 
 /// Writes one frame to the Iroh send stream.
 async fn write_frame(send: &mut SendStream, ty: u8, payload: &[u8]) -> anyhow::Result<()> {
@@ -1199,6 +1340,156 @@ impl IrohSession {
     ) -> anyhow::Result<()> {
         self.send_control(request_id, Control::ReadRecentCommits { project_id, limit })
             .await
+    }
+
+    // ── Git mutation verbs (`another-one-ojm.5`) ───────────────────
+
+    /// `another-one-ojm.5` — issue a `Control::StageChangedFile`
+    /// frame against the daemon. Fire-and-forget at the FRB level:
+    /// the matching `WorkerReply::StageChangedFileAck` arrives on
+    /// `subscribe_worker_replies` keyed to a fresh `request_id` the
+    /// Dart layer allocates via [`Self::next_request_id`]. The Dart
+    /// `IrohTransport` registers a `Completer` against that id
+    /// before calling, so the await-side awaits the ack from there.
+    pub async fn stage_changed_file(
+        &self,
+        request_id: u64,
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::StageChangedFile {
+                project_id,
+                path,
+                original_path,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::UnstageChangedFile`
+    /// frame. Same correlation contract as [`Self::stage_changed_file`].
+    pub async fn unstage_changed_file(
+        &self,
+        request_id: u64,
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::UnstageChangedFile {
+                project_id,
+                path,
+                original_path,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::StageAllChanges` frame.
+    pub async fn stage_all_changes(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::StageAllChanges { project_id })
+            .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::UnstageAllChanges`
+    /// frame.
+    pub async fn unstage_all_changes(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::UnstageAllChanges { project_id })
+            .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::DiscardChangedFile`
+    /// frame.
+    pub async fn discard_changed_file(
+        &self,
+        request_id: u64,
+        project_id: String,
+        path: String,
+        untracked: bool,
+        original_path: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::DiscardChangedFile {
+                project_id,
+                path,
+                untracked,
+                original_path,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::RunToolbarGitAction`
+    /// frame.
+    pub async fn run_toolbar_git_action(
+        &self,
+        request_id: u64,
+        project_id: String,
+        action_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::RunToolbarGitAction {
+                project_id,
+                action_id,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::CreateBranch` frame.
+    pub async fn create_branch(
+        &self,
+        request_id: u64,
+        project_id: String,
+        branch_name: String,
+        use_current_task: bool,
+        migrate_changes: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::CreateBranch {
+                project_id,
+                branch_name,
+                use_current_task,
+                migrate_changes,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::CreateReviewTask` frame.
+    pub async fn create_review_task(
+        &self,
+        request_id: u64,
+        project_id: String,
+        pull_request_number: u64,
+        head_branch: String,
+        agent_provider: Option<AgentProvider>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::CreateReviewTask {
+                project_id,
+                pull_request_number,
+                head_branch,
+                agent_provider,
+            },
+        )
+        .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

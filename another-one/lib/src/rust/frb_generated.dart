@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 901275048;
+  int get rustContentHash => 1489969649;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -92,8 +92,35 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiIrohClientIrohSessionClose({required IrohSession that});
 
+  Future<void> crateApiIrohClientIrohSessionCreateBranch({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionCreateReviewTask({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  });
+
   Future<void> crateApiIrohClientIrohSessionDetachTab({
     required IrohSession that,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionDiscardChangedFile({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
   });
 
   Future<void> crateApiIrohClientIrohSessionLaunchTab({
@@ -110,46 +137,17 @@ abstract class RustLibApi extends BaseApi {
     required IrohSession that,
   });
 
-  Future<BigInt> crateApiIrohClientIrohSessionPrimaryBranchForProject({
-    required IrohSession that,
-    required String projectId,
-  });
-
-  Future<BigInt> crateApiIrohClientIrohSessionReadActiveGitState({
-    required IrohSession that,
-    required String projectId,
-  });
-
-  Future<BigInt> crateApiIrohClientIrohSessionReadChangedFiles({
-    required IrohSession that,
-    required String projectId,
-  });
-
-  Future<BigInt> crateApiIrohClientIrohSessionReadProjectBranches({
-    required IrohSession that,
-    required String projectId,
-  });
-
-  Future<BigInt> crateApiIrohClientIrohSessionReadProjectGithubUrl({
-    required IrohSession that,
-    required String projectId,
-  });
-
-  Future<BigInt> crateApiIrohClientIrohSessionReadRecentCommits({
-    required IrohSession that,
-    required String projectId,
-    required int limit,
-  });
-
-  Future<BigInt> crateApiIrohClientIrohSessionRepoDefaultCommitAction({
-    required IrohSession that,
-    required String projectId,
-  });
-
   Future<void> crateApiIrohClientIrohSessionResize({
     required IrohSession that,
     required int cols,
     required int rows,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionRunToolbarGitAction({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String actionId,
   });
 
   Future<void> crateApiIrohClientIrohSessionSend({
@@ -157,9 +155,18 @@ abstract class RustLibApi extends BaseApi {
     required List<int> bytes,
   });
 
-  Future<BigInt> crateApiIrohClientIrohSessionSlugifyBranchName({
+  Future<void> crateApiIrohClientIrohSessionStageAllChanges({
     required IrohSession that,
-    required String name,
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionStageChangedFile({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
   });
 
   Stream<Uint8List> crateApiIrohClientIrohSessionSubscribe({
@@ -175,6 +182,20 @@ abstract class RustLibApi extends BaseApi {
     required IrohSession that,
     required int cols,
     required int rows,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionUnstageAllChanges({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionUnstageChangedFile({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
   });
 
   Future<void> crateApiLocalSessionLocalSessionActivateSectionTab({
@@ -733,6 +754,126 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "IrohSession_close", argNames: ["that"]);
 
   @override
+  Future<void> crateApiIrohClientIrohSessionCreateBranch({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(branchName, serializer);
+          sse_encode_bool(useCurrentTask, serializer);
+          sse_encode_bool(migrateChanges, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionCreateBranchConstMeta,
+        argValues: [
+          that,
+          requestId,
+          projectId,
+          branchName,
+          useCurrentTask,
+          migrateChanges,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionCreateBranchConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_create_branch",
+        argNames: [
+          "that",
+          "requestId",
+          "projectId",
+          "branchName",
+          "useCurrentTask",
+          "migrateChanges",
+        ],
+      );
+
+  @override
+  Future<void> crateApiIrohClientIrohSessionCreateReviewTask({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(projectId, serializer);
+          sse_encode_u_64(pullRequestNumber, serializer);
+          sse_encode_String(headBranch, serializer);
+          sse_encode_opt_box_autoadd_agent_provider(agentProvider, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionCreateReviewTaskConstMeta,
+        argValues: [
+          that,
+          requestId,
+          projectId,
+          pullRequestNumber,
+          headBranch,
+          agentProvider,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionCreateReviewTaskConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_create_review_task",
+        argNames: [
+          "that",
+          "requestId",
+          "projectId",
+          "pullRequestNumber",
+          "headBranch",
+          "agentProvider",
+        ],
+      );
+
+  @override
   Future<void> crateApiIrohClientIrohSessionDetachTab({
     required IrohSession that,
   }) {
@@ -747,7 +888,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 5,
             port: port_,
           );
         },
@@ -769,6 +910,59 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiIrohClientIrohSessionDiscardChangedFile({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(path, serializer);
+          sse_encode_bool(untracked, serializer);
+          sse_encode_opt_String(originalPath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionDiscardChangedFileConstMeta,
+        argValues: [that, requestId, projectId, path, untracked, originalPath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionDiscardChangedFileConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_discard_changed_file",
+        argNames: [
+          "that",
+          "requestId",
+          "projectId",
+          "path",
+          "untracked",
+          "originalPath",
+        ],
+      );
+
+  @override
   Future<void> crateApiIrohClientIrohSessionLaunchTab({
     required IrohSession that,
     required String sectionId,
@@ -787,7 +981,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 4,
+            funcId: 7,
             port: port_,
           );
         },
@@ -823,7 +1017,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 8,
             port: port_,
           );
         },
@@ -859,7 +1053,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 9,
             port: port_,
           );
         },
@@ -881,280 +1075,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<BigInt> crateApiIrohClientIrohSessionPrimaryBranchForProject({
-    required IrohSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 7,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiIrohClientIrohSessionPrimaryBranchForProjectConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiIrohClientIrohSessionPrimaryBranchForProjectConstMeta =>
-      const TaskConstMeta(
-        debugName: "IrohSession_primary_branch_for_project",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<BigInt> crateApiIrohClientIrohSessionReadActiveGitState({
-    required IrohSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 8,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiIrohClientIrohSessionReadActiveGitStateConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiIrohClientIrohSessionReadActiveGitStateConstMeta =>
-      const TaskConstMeta(
-        debugName: "IrohSession_read_active_git_state",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<BigInt> crateApiIrohClientIrohSessionReadChangedFiles({
-    required IrohSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 9,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiIrohClientIrohSessionReadChangedFilesConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiIrohClientIrohSessionReadChangedFilesConstMeta =>
-      const TaskConstMeta(
-        debugName: "IrohSession_read_changed_files",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<BigInt> crateApiIrohClientIrohSessionReadProjectBranches({
-    required IrohSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 10,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiIrohClientIrohSessionReadProjectBranchesConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiIrohClientIrohSessionReadProjectBranchesConstMeta =>
-      const TaskConstMeta(
-        debugName: "IrohSession_read_project_branches",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<BigInt> crateApiIrohClientIrohSessionReadProjectGithubUrl({
-    required IrohSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 11,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiIrohClientIrohSessionReadProjectGithubUrlConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiIrohClientIrohSessionReadProjectGithubUrlConstMeta =>
-      const TaskConstMeta(
-        debugName: "IrohSession_read_project_github_url",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<BigInt> crateApiIrohClientIrohSessionReadRecentCommits({
-    required IrohSession that,
-    required String projectId,
-    required int limit,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_u_32(limit, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 12,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiIrohClientIrohSessionReadRecentCommitsConstMeta,
-        argValues: [that, projectId, limit],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiIrohClientIrohSessionReadRecentCommitsConstMeta =>
-      const TaskConstMeta(
-        debugName: "IrohSession_read_recent_commits",
-        argNames: ["that", "projectId", "limit"],
-      );
-
-  @override
-  Future<BigInt> crateApiIrohClientIrohSessionRepoDefaultCommitAction({
-    required IrohSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 13,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiIrohClientIrohSessionRepoDefaultCommitActionConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiIrohClientIrohSessionRepoDefaultCommitActionConstMeta =>
-      const TaskConstMeta(
-        debugName: "IrohSession_repo_default_commit_action",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
   Future<void> crateApiIrohClientIrohSessionResize({
     required IrohSession that,
     required int cols,
@@ -1173,7 +1093,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 10,
             port: port_,
           );
         },
@@ -1195,6 +1115,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiIrohClientIrohSessionRunToolbarGitAction({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String actionId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(actionId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionRunToolbarGitActionConstMeta,
+        argValues: [that, requestId, projectId, actionId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiIrohClientIrohSessionRunToolbarGitActionConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_run_toolbar_git_action",
+        argNames: ["that", "requestId", "projectId", "actionId"],
+      );
+
+  @override
   Future<void> crateApiIrohClientIrohSessionSend({
     required IrohSession that,
     required List<int> bytes,
@@ -1211,7 +1174,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 12,
             port: port_,
           );
         },
@@ -1233,9 +1196,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<BigInt> crateApiIrohClientIrohSessionSlugifyBranchName({
+  Future<void> crateApiIrohClientIrohSessionStageAllChanges({
     required IrohSession that,
-    required String name,
+    required BigInt requestId,
+    required String projectId,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1245,29 +1209,74 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          sse_encode_String(name, serializer);
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(projectId, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 13,
             port: port_,
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
+          decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_AnyhowException,
         ),
-        constMeta: kCrateApiIrohClientIrohSessionSlugifyBranchNameConstMeta,
-        argValues: [that, name],
+        constMeta: kCrateApiIrohClientIrohSessionStageAllChangesConstMeta,
+        argValues: [that, requestId, projectId],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiIrohClientIrohSessionSlugifyBranchNameConstMeta =>
+  TaskConstMeta get kCrateApiIrohClientIrohSessionStageAllChangesConstMeta =>
       const TaskConstMeta(
-        debugName: "IrohSession_slugify_branch_name",
-        argNames: ["that", "name"],
+        debugName: "IrohSession_stage_all_changes",
+        argNames: ["that", "requestId", "projectId"],
+      );
+
+  @override
+  Future<void> crateApiIrohClientIrohSessionStageChangedFile({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(path, serializer);
+          sse_encode_opt_String(originalPath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionStageChangedFileConstMeta,
+        argValues: [that, requestId, projectId, path, originalPath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionStageChangedFileConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_stage_changed_file",
+        argNames: ["that", "requestId", "projectId", "path", "originalPath"],
       );
 
   @override
@@ -1288,7 +1297,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 17,
+              funcId: 15,
               port: port_,
             );
           },
@@ -1330,7 +1339,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 18,
+              funcId: 16,
               port: port_,
             );
           },
@@ -1374,7 +1383,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 17,
             port: port_,
           );
         },
@@ -1393,6 +1402,90 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "IrohSession_tab_resize",
         argNames: ["that", "cols", "rows"],
+      );
+
+  @override
+  Future<void> crateApiIrohClientIrohSessionUnstageAllChanges({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(projectId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 18,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionUnstageAllChangesConstMeta,
+        argValues: [that, requestId, projectId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionUnstageAllChangesConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_unstage_all_changes",
+        argNames: ["that", "requestId", "projectId"],
+      );
+
+  @override
+  Future<void> crateApiIrohClientIrohSessionUnstageChangedFile({
+    required IrohSession that,
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(path, serializer);
+          sse_encode_opt_String(originalPath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 19,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionUnstageChangedFileConstMeta,
+        argValues: [that, requestId, projectId, path, originalPath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionUnstageChangedFileConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_unstage_changed_file",
+        argNames: ["that", "requestId", "projectId", "path", "originalPath"],
       );
 
   @override
@@ -4854,19 +4947,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire dco_decode_active_git_state_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
-    return ActiveGitStateWire(
-      currentBranch: dco_decode_opt_String(arr[0]),
-      aheadCount: dco_decode_u_32(arr[1]),
-      behindCount: dco_decode_u_32(arr[2]),
-    );
-  }
-
-  @protected
   AgentProvider dco_decode_agent_provider(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return AgentProvider.values[raw as int];
@@ -4928,12 +5008,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire dco_decode_box_autoadd_active_git_state_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_active_git_state_wire(raw);
-  }
-
-  @protected
   AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_agent_provider(raw);
@@ -4978,12 +5052,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RecentCommitsWire dco_decode_box_autoadd_recent_commits_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_recent_commits_wire(raw);
-  }
-
-  @protected
   ResolvedProjectBranchSettingsDto
   dco_decode_box_autoadd_resolved_project_branch_settings_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -4996,6 +5064,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_resource_usage_snapshot_dto(raw);
+  }
+
+  @protected
+  ToolbarActionOutcome dco_decode_box_autoadd_toolbar_action_outcome(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_toolbar_action_outcome(raw);
   }
 
   @protected
@@ -5063,12 +5139,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ChangedFileDto dco_decode_changed_file_dto(dynamic raw) {
+  ChangedFile dco_decode_changed_file(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 9)
       throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
-    return ChangedFileDto(
+    return ChangedFile(
       path: dco_decode_String(arr[0]),
       originalPath: dco_decode_opt_String(arr[1]),
       stagedAdditions: dco_decode_i_32(arr[2]),
@@ -5082,12 +5158,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ChangedFileWire dco_decode_changed_file_wire(dynamic raw) {
+  ChangedFileDto dco_decode_changed_file_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 9)
       throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
-    return ChangedFileWire(
+    return ChangedFileDto(
       path: dco_decode_String(arr[0]),
       originalPath: dco_decode_opt_String(arr[1]),
       stagedAdditions: dco_decode_i_32(arr[2]),
@@ -5129,21 +5205,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 5)
       throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return CommitDto(
-      id: dco_decode_String(arr[0]),
-      shortId: dco_decode_String(arr[1]),
-      subject: dco_decode_String(arr[2]),
-      authorName: dco_decode_String(arr[3]),
-      authoredRelative: dco_decode_String(arr[4]),
-    );
-  }
-
-  @protected
-  CommitWire dco_decode_commit_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
-    return CommitWire(
       id: dco_decode_String(arr[0]),
       shortId: dco_decode_String(arr[1]),
       subject: dco_decode_String(arr[2]),
@@ -5243,15 +5304,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw) {
+  List<ChangedFile> dco_decode_list_changed_file(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return (raw as List<dynamic>).map(dco_decode_changed_file_dto).toList();
+    return (raw as List<dynamic>).map(dco_decode_changed_file).toList();
   }
 
   @protected
-  List<ChangedFileWire> dco_decode_list_changed_file_wire(dynamic raw) {
+  List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return (raw as List<dynamic>).map(dco_decode_changed_file_wire).toList();
+    return (raw as List<dynamic>).map(dco_decode_changed_file_dto).toList();
   }
 
   @protected
@@ -5264,12 +5325,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<CommitDto> dco_decode_list_commit_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_commit_dto).toList();
-  }
-
-  @protected
-  List<CommitWire> dco_decode_list_commit_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return (raw as List<dynamic>).map(dco_decode_commit_wire).toList();
   }
 
   @protected
@@ -5509,16 +5564,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire? dco_decode_opt_box_autoadd_active_git_state_wire(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null
-        ? null
-        : dco_decode_box_autoadd_active_git_state_wire(raw);
-  }
-
-  @protected
   AgentProvider? dco_decode_opt_box_autoadd_agent_provider(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_agent_provider(raw);
@@ -5557,14 +5602,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RecentCommitsWire? dco_decode_opt_box_autoadd_recent_commits_wire(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_recent_commits_wire(raw);
-  }
-
-  @protected
   ResolvedProjectBranchSettingsDto?
   dco_decode_opt_box_autoadd_resolved_project_branch_settings_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -5600,12 +5637,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<ChangedFileDto>? dco_decode_opt_list_changed_file_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_list_changed_file_dto(raw);
-  }
-
-  @protected
-  List<ChangedFileWire>? dco_decode_opt_list_changed_file_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_list_changed_file_wire(raw);
   }
 
   @protected
@@ -5764,19 +5795,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       currentBranch: dco_decode_opt_String(arr[0]),
       hasMore: dco_decode_bool(arr[1]),
       commits: dco_decode_list_commit_dto(arr[2]),
-    );
-  }
-
-  @protected
-  RecentCommitsWire dco_decode_recent_commits_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
-    return RecentCommitsWire(
-      currentBranch: dco_decode_opt_String(arr[0]),
-      hasMore: dco_decode_bool(arr[1]),
-      commits: dco_decode_list_commit_wire(arr[2]),
     );
   }
 
@@ -5955,6 +5973,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ToolbarActionOutcome dco_decode_toolbar_action_outcome(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return ToolbarActionOutcome(
+      toastMessage: dco_decode_String(arr[0]),
+      warning: dco_decode_bool(arr[1]),
+      refreshGitState: dco_decode_bool(arr[2]),
+    );
+  }
+
+  @protected
   ToolbarActionOutcomeDto dco_decode_toolbar_action_outcome_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -6017,36 +6048,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           kind: dco_decode_err_kind(raw[2]),
         );
       case 2:
-        return WorkerReply_SlugifyBranchNameAck(
-          slug: dco_decode_String(raw[1]),
+        return WorkerReply_StageChangedFileAck(
+          changedFiles: dco_decode_list_changed_file(raw[1]),
         );
       case 3:
-        return WorkerReply_ProjectBranchesAck(
-          branches: dco_decode_list_String(raw[1]),
+        return WorkerReply_UnstageChangedFileAck(
+          changedFiles: dco_decode_list_changed_file(raw[1]),
         );
       case 4:
-        return WorkerReply_PrimaryBranchAck(
-          branch: dco_decode_opt_String(raw[1]),
+        return WorkerReply_StageAllChangesAck(
+          changedFiles: dco_decode_list_changed_file(raw[1]),
         );
       case 5:
-        return WorkerReply_RepoDefaultCommitActionAck(
-          action: dco_decode_opt_String(raw[1]),
+        return WorkerReply_UnstageAllChangesAck(
+          changedFiles: dco_decode_list_changed_file(raw[1]),
         );
       case 6:
-        return WorkerReply_ActiveGitStateAck(
-          state: dco_decode_opt_box_autoadd_active_git_state_wire(raw[1]),
+        return WorkerReply_DiscardChangedFileAck(
+          changedFiles: dco_decode_list_changed_file(raw[1]),
         );
       case 7:
-        return WorkerReply_ChangedFilesAck(
-          files: dco_decode_opt_list_changed_file_wire(raw[1]),
+        return WorkerReply_ToolbarActionOutcomeAck(
+          outcome: dco_decode_box_autoadd_toolbar_action_outcome(raw[1]),
         );
       case 8:
-        return WorkerReply_ProjectGithubUrlAck(
-          url: dco_decode_opt_String(raw[1]),
+        return WorkerReply_CreateBranchAck(
+          sectionId: dco_decode_String(raw[1]),
+          projects: dco_decode_list_project_summary(raw[2]),
         );
       case 9:
-        return WorkerReply_RecentCommitsAck(
-          view: dco_decode_opt_box_autoadd_recent_commits_wire(raw[1]),
+        return WorkerReply_CreateReviewTaskAck(
+          sectionId: dco_decode_String(raw[1]),
+          projects: dco_decode_list_project_summary(raw[2]),
         );
       default:
         throw Exception("unreachable");
@@ -6190,21 +6223,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire sse_decode_active_git_state_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_currentBranch = sse_decode_opt_String(deserializer);
-    var var_aheadCount = sse_decode_u_32(deserializer);
-    var var_behindCount = sse_decode_u_32(deserializer);
-    return ActiveGitStateWire(
-      currentBranch: var_currentBranch,
-      aheadCount: var_aheadCount,
-      behindCount: var_behindCount,
-    );
-  }
-
-  @protected
   AgentProvider sse_decode_agent_provider(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
@@ -6275,14 +6293,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire sse_decode_box_autoadd_active_git_state_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_active_git_state_wire(deserializer));
-  }
-
-  @protected
   AgentProvider sse_decode_box_autoadd_agent_provider(
     SseDeserializer deserializer,
   ) {
@@ -6339,14 +6349,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RecentCommitsWire sse_decode_box_autoadd_recent_commits_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_recent_commits_wire(deserializer));
-  }
-
-  @protected
   ResolvedProjectBranchSettingsDto
   sse_decode_box_autoadd_resolved_project_branch_settings_dto(
     SseDeserializer deserializer,
@@ -6361,6 +6363,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_resource_usage_snapshot_dto(deserializer));
+  }
+
+  @protected
+  ToolbarActionOutcome sse_decode_box_autoadd_toolbar_action_outcome(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_toolbar_action_outcome(deserializer));
   }
 
   @protected
@@ -6433,7 +6443,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer) {
+  ChangedFile sse_decode_changed_file(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_path = sse_decode_String(deserializer);
     var var_originalPath = sse_decode_opt_String(deserializer);
@@ -6444,7 +6454,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_indexStatus = sse_decode_String(deserializer);
     var var_worktreeStatus = sse_decode_String(deserializer);
     var var_untracked = sse_decode_bool(deserializer);
-    return ChangedFileDto(
+    return ChangedFile(
       path: var_path,
       originalPath: var_originalPath,
       stagedAdditions: var_stagedAdditions,
@@ -6458,7 +6468,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ChangedFileWire sse_decode_changed_file_wire(SseDeserializer deserializer) {
+  ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_path = sse_decode_String(deserializer);
     var var_originalPath = sse_decode_opt_String(deserializer);
@@ -6469,7 +6479,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_indexStatus = sse_decode_String(deserializer);
     var var_worktreeStatus = sse_decode_String(deserializer);
     var var_untracked = sse_decode_bool(deserializer);
-    return ChangedFileWire(
+    return ChangedFileDto(
       path: var_path,
       originalPath: var_originalPath,
       stagedAdditions: var_stagedAdditions,
@@ -6517,23 +6527,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_authorName = sse_decode_String(deserializer);
     var var_authoredRelative = sse_decode_String(deserializer);
     return CommitDto(
-      id: var_id,
-      shortId: var_shortId,
-      subject: var_subject,
-      authorName: var_authorName,
-      authoredRelative: var_authoredRelative,
-    );
-  }
-
-  @protected
-  CommitWire sse_decode_commit_wire(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_id = sse_decode_String(deserializer);
-    var var_shortId = sse_decode_String(deserializer);
-    var var_subject = sse_decode_String(deserializer);
-    var var_authorName = sse_decode_String(deserializer);
-    var var_authoredRelative = sse_decode_String(deserializer);
-    return CommitWire(
       id: var_id,
       shortId: var_shortId,
       subject: var_subject,
@@ -6666,6 +6659,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ChangedFile> sse_decode_list_changed_file(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ChangedFile>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_changed_file(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<ChangedFileDto> sse_decode_list_changed_file_dto(
     SseDeserializer deserializer,
   ) {
@@ -6675,20 +6680,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <ChangedFileDto>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_changed_file_dto(deserializer));
-    }
-    return ans_;
-  }
-
-  @protected
-  List<ChangedFileWire> sse_decode_list_changed_file_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var len_ = sse_decode_i_32(deserializer);
-    var ans_ = <ChangedFileWire>[];
-    for (var idx_ = 0; idx_ < len_; ++idx_) {
-      ans_.add(sse_decode_changed_file_wire(deserializer));
     }
     return ans_;
   }
@@ -6713,18 +6704,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <CommitDto>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_commit_dto(deserializer));
-    }
-    return ans_;
-  }
-
-  @protected
-  List<CommitWire> sse_decode_list_commit_wire(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var len_ = sse_decode_i_32(deserializer);
-    var ans_ = <CommitWire>[];
-    for (var idx_ = 0; idx_ < len_; ++idx_) {
-      ans_.add(sse_decode_commit_wire(deserializer));
     }
     return ans_;
   }
@@ -7067,19 +7046,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire? sse_decode_opt_box_autoadd_active_git_state_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_active_git_state_wire(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
   AgentProvider? sse_decode_opt_box_autoadd_agent_provider(
     SseDeserializer deserializer,
   ) {
@@ -7139,19 +7105,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_recent_commits_view(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
-  RecentCommitsWire? sse_decode_opt_box_autoadd_recent_commits_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_recent_commits_wire(deserializer));
     } else {
       return null;
     }
@@ -7219,19 +7172,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_list_changed_file_dto(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
-  List<ChangedFileWire>? sse_decode_opt_list_changed_file_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_list_changed_file_wire(deserializer));
     } else {
       return null;
     }
@@ -7439,21 +7379,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_hasMore = sse_decode_bool(deserializer);
     var var_commits = sse_decode_list_commit_dto(deserializer);
     return RecentCommitsView(
-      currentBranch: var_currentBranch,
-      hasMore: var_hasMore,
-      commits: var_commits,
-    );
-  }
-
-  @protected
-  RecentCommitsWire sse_decode_recent_commits_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_currentBranch = sse_decode_opt_String(deserializer);
-    var var_hasMore = sse_decode_bool(deserializer);
-    var var_commits = sse_decode_list_commit_wire(deserializer);
-    return RecentCommitsWire(
       currentBranch: var_currentBranch,
       hasMore: var_hasMore,
       commits: var_commits,
@@ -7677,6 +7602,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ToolbarActionOutcome sse_decode_toolbar_action_outcome(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_toastMessage = sse_decode_String(deserializer);
+    var var_warning = sse_decode_bool(deserializer);
+    var var_refreshGitState = sse_decode_bool(deserializer);
+    return ToolbarActionOutcome(
+      toastMessage: var_toastMessage,
+      warning: var_warning,
+      refreshGitState: var_refreshGitState,
+    );
+  }
+
+  @protected
   ToolbarActionOutcomeDto sse_decode_toolbar_action_outcome_dto(
     SseDeserializer deserializer,
   ) {
@@ -7740,33 +7680,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_kind = sse_decode_err_kind(deserializer);
         return WorkerReply_Err(message: var_message, kind: var_kind);
       case 2:
-        var var_slug = sse_decode_String(deserializer);
-        return WorkerReply_SlugifyBranchNameAck(slug: var_slug);
+        var var_changedFiles = sse_decode_list_changed_file(deserializer);
+        return WorkerReply_StageChangedFileAck(changedFiles: var_changedFiles);
       case 3:
-        var var_branches = sse_decode_list_String(deserializer);
-        return WorkerReply_ProjectBranchesAck(branches: var_branches);
+        var var_changedFiles = sse_decode_list_changed_file(deserializer);
+        return WorkerReply_UnstageChangedFileAck(
+          changedFiles: var_changedFiles,
+        );
       case 4:
-        var var_branch = sse_decode_opt_String(deserializer);
-        return WorkerReply_PrimaryBranchAck(branch: var_branch);
+        var var_changedFiles = sse_decode_list_changed_file(deserializer);
+        return WorkerReply_StageAllChangesAck(changedFiles: var_changedFiles);
       case 5:
-        var var_action = sse_decode_opt_String(deserializer);
-        return WorkerReply_RepoDefaultCommitActionAck(action: var_action);
+        var var_changedFiles = sse_decode_list_changed_file(deserializer);
+        return WorkerReply_UnstageAllChangesAck(changedFiles: var_changedFiles);
       case 6:
-        var var_state = sse_decode_opt_box_autoadd_active_git_state_wire(
-          deserializer,
+        var var_changedFiles = sse_decode_list_changed_file(deserializer);
+        return WorkerReply_DiscardChangedFileAck(
+          changedFiles: var_changedFiles,
         );
-        return WorkerReply_ActiveGitStateAck(state: var_state);
       case 7:
-        var var_files = sse_decode_opt_list_changed_file_wire(deserializer);
-        return WorkerReply_ChangedFilesAck(files: var_files);
-      case 8:
-        var var_url = sse_decode_opt_String(deserializer);
-        return WorkerReply_ProjectGithubUrlAck(url: var_url);
-      case 9:
-        var var_view = sse_decode_opt_box_autoadd_recent_commits_wire(
+        var var_outcome = sse_decode_box_autoadd_toolbar_action_outcome(
           deserializer,
         );
-        return WorkerReply_RecentCommitsAck(view: var_view);
+        return WorkerReply_ToolbarActionOutcomeAck(outcome: var_outcome);
+      case 8:
+        var var_sectionId = sse_decode_String(deserializer);
+        var var_projects = sse_decode_list_project_summary(deserializer);
+        return WorkerReply_CreateBranchAck(
+          sectionId: var_sectionId,
+          projects: var_projects,
+        );
+      case 9:
+        var var_sectionId = sse_decode_String(deserializer);
+        var var_projects = sse_decode_list_project_summary(deserializer);
+        return WorkerReply_CreateReviewTaskAck(
+          sectionId: var_sectionId,
+          projects: var_projects,
+        );
       default:
         throw UnimplementedError('');
     }
@@ -7938,17 +7888,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_active_git_state_wire(
-    ActiveGitStateWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_opt_String(self.currentBranch, serializer);
-    sse_encode_u_32(self.aheadCount, serializer);
-    sse_encode_u_32(self.behindCount, serializer);
-  }
-
-  @protected
   void sse_encode_agent_provider(AgentProvider self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
@@ -8004,15 +7943,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_active_git_state_dto(self, serializer);
-  }
-
-  @protected
-  void sse_encode_box_autoadd_active_git_state_wire(
-    ActiveGitStateWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_active_git_state_wire(self, serializer);
   }
 
   @protected
@@ -8079,15 +8009,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_box_autoadd_recent_commits_wire(
-    RecentCommitsWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_recent_commits_wire(self, serializer);
-  }
-
-  @protected
   void sse_encode_box_autoadd_resolved_project_branch_settings_dto(
     ResolvedProjectBranchSettingsDto self,
     SseSerializer serializer,
@@ -8103,6 +8024,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_resource_usage_snapshot_dto(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_toolbar_action_outcome(
+    ToolbarActionOutcome self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_toolbar_action_outcome(self, serializer);
   }
 
   @protected
@@ -8156,10 +8086,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_changed_file_dto(
-    ChangedFileDto self,
-    SseSerializer serializer,
-  ) {
+  void sse_encode_changed_file(ChangedFile self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.path, serializer);
     sse_encode_opt_String(self.originalPath, serializer);
@@ -8173,8 +8100,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_changed_file_wire(
-    ChangedFileWire self,
+  void sse_encode_changed_file_dto(
+    ChangedFileDto self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -8208,16 +8135,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_commit_dto(CommitDto self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(self.id, serializer);
-    sse_encode_String(self.shortId, serializer);
-    sse_encode_String(self.subject, serializer);
-    sse_encode_String(self.authorName, serializer);
-    sse_encode_String(self.authoredRelative, serializer);
-  }
-
-  @protected
-  void sse_encode_commit_wire(CommitWire self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.id, serializer);
     sse_encode_String(self.shortId, serializer);
@@ -8331,6 +8248,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_changed_file(
+    List<ChangedFile> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_changed_file(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_changed_file_dto(
     List<ChangedFileDto> self,
     SseSerializer serializer,
@@ -8339,18 +8268,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_changed_file_dto(item, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_list_changed_file_wire(
-    List<ChangedFileWire> self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    for (final item in self) {
-      sse_encode_changed_file_wire(item, serializer);
     }
   }
 
@@ -8375,18 +8292,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_commit_dto(item, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_list_commit_wire(
-    List<CommitWire> self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    for (final item in self) {
-      sse_encode_commit_wire(item, serializer);
     }
   }
 
@@ -8678,19 +8583,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_opt_box_autoadd_active_git_state_wire(
-    ActiveGitStateWire? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_active_git_state_wire(self, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_opt_box_autoadd_agent_provider(
     AgentProvider? self,
     SseSerializer serializer,
@@ -8756,19 +8648,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_opt_box_autoadd_recent_commits_wire(
-    RecentCommitsWire? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_recent_commits_wire(self, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_opt_box_autoadd_resolved_project_branch_settings_dto(
     ResolvedProjectBranchSettingsDto? self,
     SseSerializer serializer,
@@ -8830,19 +8709,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_list_changed_file_dto(self, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_opt_list_changed_file_wire(
-    List<ChangedFileWire>? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_list_changed_file_wire(self, serializer);
     }
   }
 
@@ -9020,17 +8886,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_recent_commits_wire(
-    RecentCommitsWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_opt_String(self.currentBranch, serializer);
-    sse_encode_bool(self.hasMore, serializer);
-    sse_encode_list_commit_wire(self.commits, serializer);
-  }
-
-  @protected
   void sse_encode_resolved_project_branch_settings_dto(
     ResolvedProjectBranchSettingsDto self,
     SseSerializer serializer,
@@ -9173,6 +9028,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_toolbar_action_outcome(
+    ToolbarActionOutcome self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.toastMessage, serializer);
+    sse_encode_bool(self.warning, serializer);
+    sse_encode_bool(self.refreshGitState, serializer);
+  }
+
+  @protected
   void sse_encode_toolbar_action_outcome_dto(
     ToolbarActionOutcomeDto self,
     SseSerializer serializer,
@@ -9229,30 +9095,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(1, serializer);
         sse_encode_String(message, serializer);
         sse_encode_err_kind(kind, serializer);
-      case WorkerReply_SlugifyBranchNameAck(slug: final slug):
+      case WorkerReply_StageChangedFileAck(changedFiles: final changedFiles):
         sse_encode_i_32(2, serializer);
-        sse_encode_String(slug, serializer);
-      case WorkerReply_ProjectBranchesAck(branches: final branches):
+        sse_encode_list_changed_file(changedFiles, serializer);
+      case WorkerReply_UnstageChangedFileAck(changedFiles: final changedFiles):
         sse_encode_i_32(3, serializer);
-        sse_encode_list_String(branches, serializer);
-      case WorkerReply_PrimaryBranchAck(branch: final branch):
+        sse_encode_list_changed_file(changedFiles, serializer);
+      case WorkerReply_StageAllChangesAck(changedFiles: final changedFiles):
         sse_encode_i_32(4, serializer);
-        sse_encode_opt_String(branch, serializer);
-      case WorkerReply_RepoDefaultCommitActionAck(action: final action):
+        sse_encode_list_changed_file(changedFiles, serializer);
+      case WorkerReply_UnstageAllChangesAck(changedFiles: final changedFiles):
         sse_encode_i_32(5, serializer);
-        sse_encode_opt_String(action, serializer);
-      case WorkerReply_ActiveGitStateAck(state: final state):
+        sse_encode_list_changed_file(changedFiles, serializer);
+      case WorkerReply_DiscardChangedFileAck(changedFiles: final changedFiles):
         sse_encode_i_32(6, serializer);
-        sse_encode_opt_box_autoadd_active_git_state_wire(state, serializer);
-      case WorkerReply_ChangedFilesAck(files: final files):
+        sse_encode_list_changed_file(changedFiles, serializer);
+      case WorkerReply_ToolbarActionOutcomeAck(outcome: final outcome):
         sse_encode_i_32(7, serializer);
-        sse_encode_opt_list_changed_file_wire(files, serializer);
-      case WorkerReply_ProjectGithubUrlAck(url: final url):
+        sse_encode_box_autoadd_toolbar_action_outcome(outcome, serializer);
+      case WorkerReply_CreateBranchAck(
+        sectionId: final sectionId,
+        projects: final projects,
+      ):
         sse_encode_i_32(8, serializer);
-        sse_encode_opt_String(url, serializer);
-      case WorkerReply_RecentCommitsAck(view: final view):
+        sse_encode_String(sectionId, serializer);
+        sse_encode_list_project_summary(projects, serializer);
+      case WorkerReply_CreateReviewTaskAck(
+        sectionId: final sectionId,
+        projects: final projects,
+      ):
         sse_encode_i_32(9, serializer);
-        sse_encode_opt_box_autoadd_recent_commits_wire(view, serializer);
+        sse_encode_String(sectionId, serializer);
+        sse_encode_list_project_summary(projects, serializer);
     }
   }
 
@@ -9303,11 +9177,60 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   Future<void> close() =>
       RustLib.instance.api.crateApiIrohClientIrohSessionClose(that: this);
 
+  /// `another-one-ojm.5` — issue a `Control::CreateBranch` frame.
+  Future<void> createBranch({
+    required BigInt requestId,
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionCreateBranch(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+    branchName: branchName,
+    useCurrentTask: useCurrentTask,
+    migrateChanges: migrateChanges,
+  );
+
+  /// `another-one-ojm.5` — issue a `Control::CreateReviewTask` frame.
+  Future<void> createReviewTask({
+    required BigInt requestId,
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionCreateReviewTask(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+    pullRequestNumber: pullRequestNumber,
+    headBranch: headBranch,
+    agentProvider: agentProvider,
+  );
+
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab() =>
       RustLib.instance.api.crateApiIrohClientIrohSessionDetachTab(that: this);
+
+  /// `another-one-ojm.5` — issue a `Control::DiscardChangedFile`
+  /// frame.
+  Future<void> discardChangedFile({
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionDiscardChangedFile(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+    path: path,
+    untracked: untracked,
+    originalPath: originalPath,
+  );
 
   /// Ask the daemon to launch the tab's PTY if it isn't already
   /// live. No-op on the daemon side if the tab is already running.
@@ -9337,61 +9260,6 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   Future<BigInt> nextRequestId() => RustLib.instance.api
       .crateApiIrohClientIrohSessionNextRequestId(that: this);
 
-  /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
-  Future<BigInt> primaryBranchForProject({required String projectId}) =>
-      RustLib.instance.api.crateApiIrohClientIrohSessionPrimaryBranchForProject(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Issue [`Control::ReadActiveGitState`] for `project_id`. Returns
-  /// the allocated `request_id` so the Dart caller can correlate
-  /// the daemon's reply.
-  Future<BigInt> readActiveGitState({required String projectId}) =>
-      RustLib.instance.api.crateApiIrohClientIrohSessionReadActiveGitState(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Issue [`Control::ReadChangedFiles`] for `project_id`.
-  Future<BigInt> readChangedFiles({required String projectId}) =>
-      RustLib.instance.api.crateApiIrohClientIrohSessionReadChangedFiles(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Issue [`Control::ReadProjectBranches`] for `project_id`.
-  Future<BigInt> readProjectBranches({required String projectId}) =>
-      RustLib.instance.api.crateApiIrohClientIrohSessionReadProjectBranches(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Issue [`Control::ReadProjectGithubUrl`] for `project_id`.
-  Future<BigInt> readProjectGithubUrl({required String projectId}) =>
-      RustLib.instance.api.crateApiIrohClientIrohSessionReadProjectGithubUrl(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Issue [`Control::ReadRecentCommits`] for `project_id` capped
-  /// at `limit` entries.
-  Future<BigInt> readRecentCommits({
-    required String projectId,
-    required int limit,
-  }) => RustLib.instance.api.crateApiIrohClientIrohSessionReadRecentCommits(
-    that: this,
-    projectId: projectId,
-    limit: limit,
-  );
-
-  /// Issue [`Control::RepoDefaultCommitAction`] for `project_id`.
-  Future<BigInt> repoDefaultCommitAction({required String projectId}) =>
-      RustLib.instance.api.crateApiIrohClientIrohSessionRepoDefaultCommitAction(
-        that: this,
-        projectId: projectId,
-      );
-
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
@@ -9401,16 +9269,52 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
       .api
       .crateApiIrohClientIrohSessionResize(that: this, cols: cols, rows: rows);
 
+  /// `another-one-ojm.5` — issue a `Control::RunToolbarGitAction`
+  /// frame.
+  Future<void> runToolbarGitAction({
+    required BigInt requestId,
+    required String projectId,
+    required String actionId,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionRunToolbarGitAction(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+    actionId: actionId,
+  );
+
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes}) => RustLib.instance.api
       .crateApiIrohClientIrohSessionSend(that: this, bytes: bytes);
 
-  /// Issue [`Control::SlugifyBranchName`] for `name`. Pure verb —
-  /// no project state involved on the daemon side.
-  Future<BigInt> slugifyBranchName({required String name}) => RustLib
-      .instance
-      .api
-      .crateApiIrohClientIrohSessionSlugifyBranchName(that: this, name: name);
+  /// `another-one-ojm.5` — issue a `Control::StageAllChanges` frame.
+  Future<void> stageAllChanges({
+    required BigInt requestId,
+    required String projectId,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionStageAllChanges(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+  );
+
+  /// `another-one-ojm.5` — issue a `Control::StageChangedFile`
+  /// frame against the daemon. Fire-and-forget at the FRB level:
+  /// the matching `WorkerReply::StageChangedFileAck` arrives on
+  /// `subscribe_worker_replies` keyed to a fresh `request_id` the
+  /// Dart layer allocates via [`Self::next_request_id`]. The Dart
+  /// `IrohTransport` registers a `Completer` against that id
+  /// before calling, so the await-side awaits the ack from there.
+  Future<void> stageChangedFile({
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionStageChangedFile(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+    path: path,
+    originalPath: originalPath,
+  );
 
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
@@ -9437,6 +9341,32 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
         cols: cols,
         rows: rows,
       );
+
+  /// `another-one-ojm.5` — issue a `Control::UnstageAllChanges`
+  /// frame.
+  Future<void> unstageAllChanges({
+    required BigInt requestId,
+    required String projectId,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionUnstageAllChanges(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+  );
+
+  /// `another-one-ojm.5` — issue a `Control::UnstageChangedFile`
+  /// frame. Same correlation contract as [`Self::stage_changed_file`].
+  Future<void> unstageChangedFile({
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionUnstageChangedFile(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+    path: path,
+    originalPath: originalPath,
+  );
 }
 
 @sealed

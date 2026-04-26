@@ -268,6 +268,88 @@ pub enum Control {
     /// Reply is [`WorkerReply::RecentCommitsAck`] with `None` when
     /// the project id is unknown.
     ReadRecentCommits { project_id: String, limit: u32 },
+    /// `another-one-ojm.5` — stage one changed file via `git add -A`.
+    /// `original_path` is set only on rename/copy entries — git needs
+    /// both source and destination to resolve the rename pair. Reply
+    /// is [`WorkerReply::StageChangedFileAck`] carrying the post-
+    /// mutation `changed_files` snapshot so the issuing client can
+    /// refresh the right-sidebar Changes pane in the same round-trip
+    /// (per the inline-snapshot contract above).
+    StageChangedFile {
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    },
+    /// `another-one-ojm.5` — unstage one changed file via
+    /// `git restore --staged` (with `git reset HEAD` fallback for
+    /// pre-2.23 git, mirroring `core::unstage_changed_file`). Same
+    /// rename-pair contract as [`Self::StageChangedFile`]. Reply is
+    /// [`WorkerReply::UnstageChangedFileAck`].
+    UnstageChangedFile {
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    },
+    /// `another-one-ojm.5` — `git add -A` on the project root: stage
+    /// every change in one shot. Reply is
+    /// [`WorkerReply::StageAllChangesAck`].
+    StageAllChanges { project_id: String },
+    /// `another-one-ojm.5` — unstage every staged change in one shot
+    /// (`git restore --staged -- .` with `git reset HEAD -- .`
+    /// fallback). Reply is [`WorkerReply::UnstageAllChangesAck`].
+    UnstageAllChanges { project_id: String },
+    /// `another-one-ojm.5` — discard one file's working-tree changes.
+    /// Untracked files are deleted from disk; tracked files are
+    /// restored from HEAD via `git restore` (with checkout fallback
+    /// for older git, mirroring `core::revert_changed_file`). The
+    /// `untracked` flag is passed through verbatim so the daemon
+    /// picks the right code path. Destructive — UI gates this
+    /// behind a confirm. Reply is
+    /// [`WorkerReply::DiscardChangedFileAck`].
+    DiscardChangedFile {
+        project_id: String,
+        path: String,
+        untracked: bool,
+        original_path: Option<String>,
+    },
+    /// `another-one-ojm.5` — run a titlebar git action against
+    /// `project_id`. `action_id` is the verbatim string the
+    /// titlebar split-button emits: `"commit"`, `"commit-and-push"`,
+    /// `"undo-last-commit"`, `"fetch"`, `"pull"`, `"push"`,
+    /// `"force-push"`, `"create-pr"`, `"create-draft-pr"`. Reply is
+    /// [`WorkerReply::ToolbarActionOutcomeAck`] carrying the
+    /// `outcome` so the UI can surface the toast + decide whether to
+    /// invalidate the changed-files / git-state providers.
+    RunToolbarGitAction {
+        project_id: String,
+        action_id: String,
+    },
+    /// `another-one-ojm.5` — create a branch from HEAD on
+    /// `project_id`. `use_current_task = true` swaps the current
+    /// checkout in place; `false` cuts a fresh worktree (with
+    /// `migrate_changes` controlling whether uncommitted changes
+    /// move to it). Reply is [`WorkerReply::CreateBranchAck`]
+    /// carrying the new task's `section_id` for the worktree case
+    /// (empty string in current-task mode — the caller's UI just
+    /// dismisses the modal).
+    CreateBranch {
+        project_id: String,
+        branch_name: String,
+        use_current_task: bool,
+        migrate_changes: bool,
+    },
+    /// `another-one-ojm.5` — spawn a review task targeting a PR.
+    /// Clones the PR's `head_branch` into a worktree, prepares the
+    /// project, inserts the task, optionally launches the configured
+    /// agent CLI for the task. Reply is
+    /// [`WorkerReply::CreateReviewTaskAck`] carrying the new task's
+    /// `section_id` so the issuing client navigates to it.
+    CreateReviewTask {
+        project_id: String,
+        pull_request_number: u64,
+        head_branch: String,
+        agent_provider: Option<AgentProvider>,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -452,6 +534,57 @@ pub enum WorkerReply {
     /// the project id is unknown. Errors propagate as
     /// [`WorkerReply::Err`].
     RecentCommitsAck { view: Option<RecentCommitsWire> },
+    /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
+    /// Carries the post-mutation `changed_files` snapshot inline so
+    /// the issuing client refreshes the right-sidebar Changes pane
+    /// without a follow-up `ReadChangedFiles` round-trip — see the
+    /// "Push vs pull" contract block above. Empty list means the
+    /// working tree is clean after the stage.
+    StageChangedFileAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
+    /// Same inline-snapshot semantics as [`Self::StageChangedFileAck`].
+    UnstageChangedFileAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
+    /// Inline post-mutation snapshot.
+    StageAllChangesAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
+    UnstageAllChangesAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
+    DiscardChangedFileAck {
+        changed_files: Vec<ChangedFileWire>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
+    /// Carries the `ToolbarActionOutcome` (toast + warning/refresh
+    /// flags) the issuing client uses to render its snackbar and
+    /// invalidate the active git-state / changed-files providers.
+    ToolbarActionOutcomeAck {
+        outcome: ToolbarActionOutcome,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::CreateBranch`].
+    /// `section_id` is the new worktree task's section id (empty
+    /// string for the current-task branch-swap case) so the issuing
+    /// client navigates to it directly. The post-mutation project
+    /// tree refresh rides along as `projects` per the inline-snapshot
+    /// contract — the mobile UI repaints the projects drawer
+    /// without a follow-up `ListProjects` round-trip.
+    CreateBranchAck {
+        section_id: String,
+        projects: Vec<ProjectSummary>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::CreateReviewTask`].
+    /// Same inline-snapshot semantics as [`Self::CreateBranchAck`].
+    CreateReviewTaskAck {
+        section_id: String,
+        projects: Vec<ProjectSummary>,
+    },
 }
 
 /// Wire mirror of the bridge's `ActiveGitStateDto` (FRB-bound) and
@@ -510,6 +643,19 @@ pub struct ChangedFileWire {
     /// `index_status`.
     pub worktree_status: String,
     pub untracked: bool,
+}
+
+/// Lossy wire projection of
+/// `core::git_actions::ToolbarActionOutcome`. Same field shape as the
+/// FRB-side `ToolbarActionOutcomeDto`; `warning` distinguishes the
+/// snackbar palette and `refresh_git_state` tells the issuing client
+/// to invalidate the active changed-files / git-state providers
+/// after the call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolbarActionOutcome {
+    pub toast_message: String,
+    pub warning: bool,
+    pub refresh_git_state: bool,
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —

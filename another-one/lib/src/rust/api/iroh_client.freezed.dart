@@ -55,20 +55,20 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult Function( WorkerReply_CreateBranchAck value)?  createBranchAck,TResult Function( WorkerReply_CreateReviewTaskAck value)?  createReviewTaskAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
-return err(_that);case WorkerReply_SlugifyBranchNameAck() when slugifyBranchNameAck != null:
-return slugifyBranchNameAck(_that);case WorkerReply_ProjectBranchesAck() when projectBranchesAck != null:
-return projectBranchesAck(_that);case WorkerReply_PrimaryBranchAck() when primaryBranchAck != null:
-return primaryBranchAck(_that);case WorkerReply_RepoDefaultCommitActionAck() when repoDefaultCommitActionAck != null:
-return repoDefaultCommitActionAck(_that);case WorkerReply_ActiveGitStateAck() when activeGitStateAck != null:
-return activeGitStateAck(_that);case WorkerReply_ChangedFilesAck() when changedFilesAck != null:
-return changedFilesAck(_that);case WorkerReply_ProjectGithubUrlAck() when projectGithubUrlAck != null:
-return projectGithubUrlAck(_that);case WorkerReply_RecentCommitsAck() when recentCommitsAck != null:
-return recentCommitsAck(_that);case _:
+return err(_that);case WorkerReply_StageChangedFileAck() when stageChangedFileAck != null:
+return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck() when unstageChangedFileAck != null:
+return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
+return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
+return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
+return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck() when createBranchAck != null:
+return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
+return createReviewTaskAck(_that);case _:
   return orElse();
 
 }
@@ -86,20 +86,20 @@ return recentCommitsAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_SlugifyBranchNameAck value)  slugifyBranchNameAck,required TResult Function( WorkerReply_ProjectBranchesAck value)  projectBranchesAck,required TResult Function( WorkerReply_PrimaryBranchAck value)  primaryBranchAck,required TResult Function( WorkerReply_RepoDefaultCommitActionAck value)  repoDefaultCommitActionAck,required TResult Function( WorkerReply_ActiveGitStateAck value)  activeGitStateAck,required TResult Function( WorkerReply_ChangedFilesAck value)  changedFilesAck,required TResult Function( WorkerReply_ProjectGithubUrlAck value)  projectGithubUrlAck,required TResult Function( WorkerReply_RecentCommitsAck value)  recentCommitsAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,required TResult Function( WorkerReply_UnstageChangedFileAck value)  unstageChangedFileAck,required TResult Function( WorkerReply_StageAllChangesAck value)  stageAllChangesAck,required TResult Function( WorkerReply_UnstageAllChangesAck value)  unstageAllChangesAck,required TResult Function( WorkerReply_DiscardChangedFileAck value)  discardChangedFileAck,required TResult Function( WorkerReply_ToolbarActionOutcomeAck value)  toolbarActionOutcomeAck,required TResult Function( WorkerReply_CreateBranchAck value)  createBranchAck,required TResult Function( WorkerReply_CreateReviewTaskAck value)  createReviewTaskAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that);case WorkerReply_Err():
-return err(_that);case WorkerReply_SlugifyBranchNameAck():
-return slugifyBranchNameAck(_that);case WorkerReply_ProjectBranchesAck():
-return projectBranchesAck(_that);case WorkerReply_PrimaryBranchAck():
-return primaryBranchAck(_that);case WorkerReply_RepoDefaultCommitActionAck():
-return repoDefaultCommitActionAck(_that);case WorkerReply_ActiveGitStateAck():
-return activeGitStateAck(_that);case WorkerReply_ChangedFilesAck():
-return changedFilesAck(_that);case WorkerReply_ProjectGithubUrlAck():
-return projectGithubUrlAck(_that);case WorkerReply_RecentCommitsAck():
-return recentCommitsAck(_that);}
+return err(_that);case WorkerReply_StageChangedFileAck():
+return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck():
+return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck():
+return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck():
+return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck():
+return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck():
+return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck():
+return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck():
+return createReviewTaskAck(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -113,20 +113,20 @@ return recentCommitsAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult? Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult? Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult? Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult? Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult? Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult? Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult? Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult? Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult? Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult? Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult? Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult? Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult? Function( WorkerReply_CreateBranchAck value)?  createBranchAck,TResult? Function( WorkerReply_CreateReviewTaskAck value)?  createReviewTaskAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
-return err(_that);case WorkerReply_SlugifyBranchNameAck() when slugifyBranchNameAck != null:
-return slugifyBranchNameAck(_that);case WorkerReply_ProjectBranchesAck() when projectBranchesAck != null:
-return projectBranchesAck(_that);case WorkerReply_PrimaryBranchAck() when primaryBranchAck != null:
-return primaryBranchAck(_that);case WorkerReply_RepoDefaultCommitActionAck() when repoDefaultCommitActionAck != null:
-return repoDefaultCommitActionAck(_that);case WorkerReply_ActiveGitStateAck() when activeGitStateAck != null:
-return activeGitStateAck(_that);case WorkerReply_ChangedFilesAck() when changedFilesAck != null:
-return changedFilesAck(_that);case WorkerReply_ProjectGithubUrlAck() when projectGithubUrlAck != null:
-return projectGithubUrlAck(_that);case WorkerReply_RecentCommitsAck() when recentCommitsAck != null:
-return recentCommitsAck(_that);case _:
+return err(_that);case WorkerReply_StageChangedFileAck() when stageChangedFileAck != null:
+return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck() when unstageChangedFileAck != null:
+return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
+return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
+return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
+return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck() when createBranchAck != null:
+return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
+return createReviewTaskAck(_that);case _:
   return null;
 
 }
@@ -143,19 +143,19 @@ return recentCommitsAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String slug)?  slugifyBranchNameAck,TResult Function( List<String> branches)?  projectBranchesAck,TResult Function( String? branch)?  primaryBranchAck,TResult Function( String? action)?  repoDefaultCommitActionAck,TResult Function( ActiveGitStateWire? state)?  activeGitStateAck,TResult Function( List<ChangedFileWire>? files)?  changedFilesAck,TResult Function( String? url)?  projectGithubUrlAck,TResult Function( RecentCommitsWire? view)?  recentCommitsAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,TResult Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
-return err(_that.message,_that.kind);case WorkerReply_SlugifyBranchNameAck() when slugifyBranchNameAck != null:
-return slugifyBranchNameAck(_that.slug);case WorkerReply_ProjectBranchesAck() when projectBranchesAck != null:
-return projectBranchesAck(_that.branches);case WorkerReply_PrimaryBranchAck() when primaryBranchAck != null:
-return primaryBranchAck(_that.branch);case WorkerReply_RepoDefaultCommitActionAck() when repoDefaultCommitActionAck != null:
-return repoDefaultCommitActionAck(_that.action);case WorkerReply_ActiveGitStateAck() when activeGitStateAck != null:
-return activeGitStateAck(_that.state);case WorkerReply_ChangedFilesAck() when changedFilesAck != null:
-return changedFilesAck(_that.files);case WorkerReply_ProjectGithubUrlAck() when projectGithubUrlAck != null:
-return projectGithubUrlAck(_that.url);case WorkerReply_RecentCommitsAck() when recentCommitsAck != null:
-return recentCommitsAck(_that.view);case _:
+return err(_that.message,_that.kind);case WorkerReply_StageChangedFileAck() when stageChangedFileAck != null:
+return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFileAck() when unstageChangedFileAck != null:
+return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
+return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
+return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck() when createBranchAck != null:
+return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
+return createReviewTaskAck(_that.sectionId,_that.projects);case _:
   return orElse();
 
 }
@@ -173,19 +173,19 @@ return recentCommitsAck(_that.view);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String slug)  slugifyBranchNameAck,required TResult Function( List<String> branches)  projectBranchesAck,required TResult Function( String? branch)  primaryBranchAck,required TResult Function( String? action)  repoDefaultCommitActionAck,required TResult Function( ActiveGitStateWire? state)  activeGitStateAck,required TResult Function( List<ChangedFileWire>? files)  changedFilesAck,required TResult Function( String? url)  projectGithubUrlAck,required TResult Function( RecentCommitsWire? view)  recentCommitsAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( List<ChangedFile> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  discardChangedFileAck,required TResult Function( ToolbarActionOutcome outcome)  toolbarActionOutcomeAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createBranchAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createReviewTaskAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
-return err(_that.message,_that.kind);case WorkerReply_SlugifyBranchNameAck():
-return slugifyBranchNameAck(_that.slug);case WorkerReply_ProjectBranchesAck():
-return projectBranchesAck(_that.branches);case WorkerReply_PrimaryBranchAck():
-return primaryBranchAck(_that.branch);case WorkerReply_RepoDefaultCommitActionAck():
-return repoDefaultCommitActionAck(_that.action);case WorkerReply_ActiveGitStateAck():
-return activeGitStateAck(_that.state);case WorkerReply_ChangedFilesAck():
-return changedFilesAck(_that.files);case WorkerReply_ProjectGithubUrlAck():
-return projectGithubUrlAck(_that.url);case WorkerReply_RecentCommitsAck():
-return recentCommitsAck(_that.view);}
+return err(_that.message,_that.kind);case WorkerReply_StageChangedFileAck():
+return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFileAck():
+return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck():
+return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck():
+return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck():
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck():
+return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck():
+return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck():
+return createReviewTaskAck(_that.sectionId,_that.projects);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -199,19 +199,19 @@ return recentCommitsAck(_that.view);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String slug)?  slugifyBranchNameAck,TResult? Function( List<String> branches)?  projectBranchesAck,TResult? Function( String? branch)?  primaryBranchAck,TResult? Function( String? action)?  repoDefaultCommitActionAck,TResult? Function( ActiveGitStateWire? state)?  activeGitStateAck,TResult? Function( List<ChangedFileWire>? files)?  changedFilesAck,TResult? Function( String? url)?  projectGithubUrlAck,TResult? Function( RecentCommitsWire? view)?  recentCommitsAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,TResult? Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
-return err(_that.message,_that.kind);case WorkerReply_SlugifyBranchNameAck() when slugifyBranchNameAck != null:
-return slugifyBranchNameAck(_that.slug);case WorkerReply_ProjectBranchesAck() when projectBranchesAck != null:
-return projectBranchesAck(_that.branches);case WorkerReply_PrimaryBranchAck() when primaryBranchAck != null:
-return primaryBranchAck(_that.branch);case WorkerReply_RepoDefaultCommitActionAck() when repoDefaultCommitActionAck != null:
-return repoDefaultCommitActionAck(_that.action);case WorkerReply_ActiveGitStateAck() when activeGitStateAck != null:
-return activeGitStateAck(_that.state);case WorkerReply_ChangedFilesAck() when changedFilesAck != null:
-return changedFilesAck(_that.files);case WorkerReply_ProjectGithubUrlAck() when projectGithubUrlAck != null:
-return projectGithubUrlAck(_that.url);case WorkerReply_RecentCommitsAck() when recentCommitsAck != null:
-return recentCommitsAck(_that.view);case _:
+return err(_that.message,_that.kind);case WorkerReply_StageChangedFileAck() when stageChangedFileAck != null:
+return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFileAck() when unstageChangedFileAck != null:
+return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
+return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
+return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck() when createBranchAck != null:
+return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
+return createReviewTaskAck(_that.sectionId,_that.projects);case _:
   return null;
 
 }
@@ -362,81 +362,15 @@ as ErrKind,
 /// @nodoc
 
 
-class WorkerReply_SlugifyBranchNameAck extends WorkerReply {
-  const WorkerReply_SlugifyBranchNameAck({required this.slug}): super._();
+class WorkerReply_StageChangedFileAck extends WorkerReply {
+  const WorkerReply_StageChangedFileAck({required final  List<ChangedFile> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  String slug;
-
-/// Create a copy of WorkerReply
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$WorkerReply_SlugifyBranchNameAckCopyWith<WorkerReply_SlugifyBranchNameAck> get copyWith => _$WorkerReply_SlugifyBranchNameAckCopyWithImpl<WorkerReply_SlugifyBranchNameAck>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_SlugifyBranchNameAck&&(identical(other.slug, slug) || other.slug == slug));
-}
-
-
-@override
-int get hashCode => Object.hash(runtimeType,slug);
-
-@override
-String toString() {
-  return 'WorkerReply.slugifyBranchNameAck(slug: $slug)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $WorkerReply_SlugifyBranchNameAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_SlugifyBranchNameAckCopyWith(WorkerReply_SlugifyBranchNameAck value, $Res Function(WorkerReply_SlugifyBranchNameAck) _then) = _$WorkerReply_SlugifyBranchNameAckCopyWithImpl;
-@useResult
-$Res call({
- String slug
-});
-
-
-
-
-}
-/// @nodoc
-class _$WorkerReply_SlugifyBranchNameAckCopyWithImpl<$Res>
-    implements $WorkerReply_SlugifyBranchNameAckCopyWith<$Res> {
-  _$WorkerReply_SlugifyBranchNameAckCopyWithImpl(this._self, this._then);
-
-  final WorkerReply_SlugifyBranchNameAck _self;
-  final $Res Function(WorkerReply_SlugifyBranchNameAck) _then;
-
-/// Create a copy of WorkerReply
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? slug = null,}) {
-  return _then(WorkerReply_SlugifyBranchNameAck(
-slug: null == slug ? _self.slug : slug // ignore: cast_nullable_to_non_nullable
-as String,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class WorkerReply_ProjectBranchesAck extends WorkerReply {
-  const WorkerReply_ProjectBranchesAck({required final  List<String> branches}): _branches = branches,super._();
-  
-
- final  List<String> _branches;
- List<String> get branches {
-  if (_branches is EqualUnmodifiableListView) return _branches;
+ final  List<ChangedFile> _changedFiles;
+ List<ChangedFile> get changedFiles {
+  if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
   // ignore: implicit_dynamic_type
-  return EqualUnmodifiableListView(_branches);
+  return EqualUnmodifiableListView(_changedFiles);
 }
 
 
@@ -444,33 +378,33 @@ class WorkerReply_ProjectBranchesAck extends WorkerReply {
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
 @pragma('vm:prefer-inline')
-$WorkerReply_ProjectBranchesAckCopyWith<WorkerReply_ProjectBranchesAck> get copyWith => _$WorkerReply_ProjectBranchesAckCopyWithImpl<WorkerReply_ProjectBranchesAck>(this, _$identity);
+$WorkerReply_StageChangedFileAckCopyWith<WorkerReply_StageChangedFileAck> get copyWith => _$WorkerReply_StageChangedFileAckCopyWithImpl<WorkerReply_StageChangedFileAck>(this, _$identity);
 
 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ProjectBranchesAck&&const DeepCollectionEquality().equals(other._branches, _branches));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_StageChangedFileAck&&const DeepCollectionEquality().equals(other._changedFiles, _changedFiles));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_branches));
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_changedFiles));
 
 @override
 String toString() {
-  return 'WorkerReply.projectBranchesAck(branches: $branches)';
+  return 'WorkerReply.stageChangedFileAck(changedFiles: $changedFiles)';
 }
 
 
 }
 
 /// @nodoc
-abstract mixin class $WorkerReply_ProjectBranchesAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_ProjectBranchesAckCopyWith(WorkerReply_ProjectBranchesAck value, $Res Function(WorkerReply_ProjectBranchesAck) _then) = _$WorkerReply_ProjectBranchesAckCopyWithImpl;
+abstract mixin class $WorkerReply_StageChangedFileAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_StageChangedFileAckCopyWith(WorkerReply_StageChangedFileAck value, $Res Function(WorkerReply_StageChangedFileAck) _then) = _$WorkerReply_StageChangedFileAckCopyWithImpl;
 @useResult
 $Res call({
- List<String> branches
+ List<ChangedFile> changedFiles
 });
 
 
@@ -478,19 +412,19 @@ $Res call({
 
 }
 /// @nodoc
-class _$WorkerReply_ProjectBranchesAckCopyWithImpl<$Res>
-    implements $WorkerReply_ProjectBranchesAckCopyWith<$Res> {
-  _$WorkerReply_ProjectBranchesAckCopyWithImpl(this._self, this._then);
+class _$WorkerReply_StageChangedFileAckCopyWithImpl<$Res>
+    implements $WorkerReply_StageChangedFileAckCopyWith<$Res> {
+  _$WorkerReply_StageChangedFileAckCopyWithImpl(this._self, this._then);
 
-  final WorkerReply_ProjectBranchesAck _self;
-  final $Res Function(WorkerReply_ProjectBranchesAck) _then;
+  final WorkerReply_StageChangedFileAck _self;
+  final $Res Function(WorkerReply_StageChangedFileAck) _then;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? branches = null,}) {
-  return _then(WorkerReply_ProjectBranchesAck(
-branches: null == branches ? _self._branches : branches // ignore: cast_nullable_to_non_nullable
-as List<String>,
+@pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
+  return _then(WorkerReply_StageChangedFileAck(
+changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
+as List<ChangedFile>,
   ));
 }
 
@@ -500,215 +434,15 @@ as List<String>,
 /// @nodoc
 
 
-class WorkerReply_PrimaryBranchAck extends WorkerReply {
-  const WorkerReply_PrimaryBranchAck({this.branch}): super._();
+class WorkerReply_UnstageChangedFileAck extends WorkerReply {
+  const WorkerReply_UnstageChangedFileAck({required final  List<ChangedFile> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  String? branch;
-
-/// Create a copy of WorkerReply
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$WorkerReply_PrimaryBranchAckCopyWith<WorkerReply_PrimaryBranchAck> get copyWith => _$WorkerReply_PrimaryBranchAckCopyWithImpl<WorkerReply_PrimaryBranchAck>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_PrimaryBranchAck&&(identical(other.branch, branch) || other.branch == branch));
-}
-
-
-@override
-int get hashCode => Object.hash(runtimeType,branch);
-
-@override
-String toString() {
-  return 'WorkerReply.primaryBranchAck(branch: $branch)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $WorkerReply_PrimaryBranchAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_PrimaryBranchAckCopyWith(WorkerReply_PrimaryBranchAck value, $Res Function(WorkerReply_PrimaryBranchAck) _then) = _$WorkerReply_PrimaryBranchAckCopyWithImpl;
-@useResult
-$Res call({
- String? branch
-});
-
-
-
-
-}
-/// @nodoc
-class _$WorkerReply_PrimaryBranchAckCopyWithImpl<$Res>
-    implements $WorkerReply_PrimaryBranchAckCopyWith<$Res> {
-  _$WorkerReply_PrimaryBranchAckCopyWithImpl(this._self, this._then);
-
-  final WorkerReply_PrimaryBranchAck _self;
-  final $Res Function(WorkerReply_PrimaryBranchAck) _then;
-
-/// Create a copy of WorkerReply
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? branch = freezed,}) {
-  return _then(WorkerReply_PrimaryBranchAck(
-branch: freezed == branch ? _self.branch : branch // ignore: cast_nullable_to_non_nullable
-as String?,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class WorkerReply_RepoDefaultCommitActionAck extends WorkerReply {
-  const WorkerReply_RepoDefaultCommitActionAck({this.action}): super._();
-  
-
- final  String? action;
-
-/// Create a copy of WorkerReply
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$WorkerReply_RepoDefaultCommitActionAckCopyWith<WorkerReply_RepoDefaultCommitActionAck> get copyWith => _$WorkerReply_RepoDefaultCommitActionAckCopyWithImpl<WorkerReply_RepoDefaultCommitActionAck>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_RepoDefaultCommitActionAck&&(identical(other.action, action) || other.action == action));
-}
-
-
-@override
-int get hashCode => Object.hash(runtimeType,action);
-
-@override
-String toString() {
-  return 'WorkerReply.repoDefaultCommitActionAck(action: $action)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $WorkerReply_RepoDefaultCommitActionAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_RepoDefaultCommitActionAckCopyWith(WorkerReply_RepoDefaultCommitActionAck value, $Res Function(WorkerReply_RepoDefaultCommitActionAck) _then) = _$WorkerReply_RepoDefaultCommitActionAckCopyWithImpl;
-@useResult
-$Res call({
- String? action
-});
-
-
-
-
-}
-/// @nodoc
-class _$WorkerReply_RepoDefaultCommitActionAckCopyWithImpl<$Res>
-    implements $WorkerReply_RepoDefaultCommitActionAckCopyWith<$Res> {
-  _$WorkerReply_RepoDefaultCommitActionAckCopyWithImpl(this._self, this._then);
-
-  final WorkerReply_RepoDefaultCommitActionAck _self;
-  final $Res Function(WorkerReply_RepoDefaultCommitActionAck) _then;
-
-/// Create a copy of WorkerReply
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? action = freezed,}) {
-  return _then(WorkerReply_RepoDefaultCommitActionAck(
-action: freezed == action ? _self.action : action // ignore: cast_nullable_to_non_nullable
-as String?,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class WorkerReply_ActiveGitStateAck extends WorkerReply {
-  const WorkerReply_ActiveGitStateAck({this.state}): super._();
-  
-
- final  ActiveGitStateWire? state;
-
-/// Create a copy of WorkerReply
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$WorkerReply_ActiveGitStateAckCopyWith<WorkerReply_ActiveGitStateAck> get copyWith => _$WorkerReply_ActiveGitStateAckCopyWithImpl<WorkerReply_ActiveGitStateAck>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ActiveGitStateAck&&(identical(other.state, state) || other.state == state));
-}
-
-
-@override
-int get hashCode => Object.hash(runtimeType,state);
-
-@override
-String toString() {
-  return 'WorkerReply.activeGitStateAck(state: $state)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $WorkerReply_ActiveGitStateAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_ActiveGitStateAckCopyWith(WorkerReply_ActiveGitStateAck value, $Res Function(WorkerReply_ActiveGitStateAck) _then) = _$WorkerReply_ActiveGitStateAckCopyWithImpl;
-@useResult
-$Res call({
- ActiveGitStateWire? state
-});
-
-
-
-
-}
-/// @nodoc
-class _$WorkerReply_ActiveGitStateAckCopyWithImpl<$Res>
-    implements $WorkerReply_ActiveGitStateAckCopyWith<$Res> {
-  _$WorkerReply_ActiveGitStateAckCopyWithImpl(this._self, this._then);
-
-  final WorkerReply_ActiveGitStateAck _self;
-  final $Res Function(WorkerReply_ActiveGitStateAck) _then;
-
-/// Create a copy of WorkerReply
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? state = freezed,}) {
-  return _then(WorkerReply_ActiveGitStateAck(
-state: freezed == state ? _self.state : state // ignore: cast_nullable_to_non_nullable
-as ActiveGitStateWire?,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class WorkerReply_ChangedFilesAck extends WorkerReply {
-  const WorkerReply_ChangedFilesAck({final  List<ChangedFileWire>? files}): _files = files,super._();
-  
-
- final  List<ChangedFileWire>? _files;
- List<ChangedFileWire>? get files {
-  final value = _files;
-  if (value == null) return null;
-  if (_files is EqualUnmodifiableListView) return _files;
+ final  List<ChangedFile> _changedFiles;
+ List<ChangedFile> get changedFiles {
+  if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
   // ignore: implicit_dynamic_type
-  return EqualUnmodifiableListView(value);
+  return EqualUnmodifiableListView(_changedFiles);
 }
 
 
@@ -716,33 +450,33 @@ class WorkerReply_ChangedFilesAck extends WorkerReply {
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
 @pragma('vm:prefer-inline')
-$WorkerReply_ChangedFilesAckCopyWith<WorkerReply_ChangedFilesAck> get copyWith => _$WorkerReply_ChangedFilesAckCopyWithImpl<WorkerReply_ChangedFilesAck>(this, _$identity);
+$WorkerReply_UnstageChangedFileAckCopyWith<WorkerReply_UnstageChangedFileAck> get copyWith => _$WorkerReply_UnstageChangedFileAckCopyWithImpl<WorkerReply_UnstageChangedFileAck>(this, _$identity);
 
 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ChangedFilesAck&&const DeepCollectionEquality().equals(other._files, _files));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_UnstageChangedFileAck&&const DeepCollectionEquality().equals(other._changedFiles, _changedFiles));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_files));
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_changedFiles));
 
 @override
 String toString() {
-  return 'WorkerReply.changedFilesAck(files: $files)';
+  return 'WorkerReply.unstageChangedFileAck(changedFiles: $changedFiles)';
 }
 
 
 }
 
 /// @nodoc
-abstract mixin class $WorkerReply_ChangedFilesAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_ChangedFilesAckCopyWith(WorkerReply_ChangedFilesAck value, $Res Function(WorkerReply_ChangedFilesAck) _then) = _$WorkerReply_ChangedFilesAckCopyWithImpl;
+abstract mixin class $WorkerReply_UnstageChangedFileAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_UnstageChangedFileAckCopyWith(WorkerReply_UnstageChangedFileAck value, $Res Function(WorkerReply_UnstageChangedFileAck) _then) = _$WorkerReply_UnstageChangedFileAckCopyWithImpl;
 @useResult
 $Res call({
- List<ChangedFileWire>? files
+ List<ChangedFile> changedFiles
 });
 
 
@@ -750,19 +484,19 @@ $Res call({
 
 }
 /// @nodoc
-class _$WorkerReply_ChangedFilesAckCopyWithImpl<$Res>
-    implements $WorkerReply_ChangedFilesAckCopyWith<$Res> {
-  _$WorkerReply_ChangedFilesAckCopyWithImpl(this._self, this._then);
+class _$WorkerReply_UnstageChangedFileAckCopyWithImpl<$Res>
+    implements $WorkerReply_UnstageChangedFileAckCopyWith<$Res> {
+  _$WorkerReply_UnstageChangedFileAckCopyWithImpl(this._self, this._then);
 
-  final WorkerReply_ChangedFilesAck _self;
-  final $Res Function(WorkerReply_ChangedFilesAck) _then;
+  final WorkerReply_UnstageChangedFileAck _self;
+  final $Res Function(WorkerReply_UnstageChangedFileAck) _then;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? files = freezed,}) {
-  return _then(WorkerReply_ChangedFilesAck(
-files: freezed == files ? _self._files : files // ignore: cast_nullable_to_non_nullable
-as List<ChangedFileWire>?,
+@pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
+  return _then(WorkerReply_UnstageChangedFileAck(
+changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
+as List<ChangedFile>,
   ));
 }
 
@@ -772,43 +506,49 @@ as List<ChangedFileWire>?,
 /// @nodoc
 
 
-class WorkerReply_ProjectGithubUrlAck extends WorkerReply {
-  const WorkerReply_ProjectGithubUrlAck({this.url}): super._();
+class WorkerReply_StageAllChangesAck extends WorkerReply {
+  const WorkerReply_StageAllChangesAck({required final  List<ChangedFile> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  String? url;
+ final  List<ChangedFile> _changedFiles;
+ List<ChangedFile> get changedFiles {
+  if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_changedFiles);
+}
+
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
 @pragma('vm:prefer-inline')
-$WorkerReply_ProjectGithubUrlAckCopyWith<WorkerReply_ProjectGithubUrlAck> get copyWith => _$WorkerReply_ProjectGithubUrlAckCopyWithImpl<WorkerReply_ProjectGithubUrlAck>(this, _$identity);
+$WorkerReply_StageAllChangesAckCopyWith<WorkerReply_StageAllChangesAck> get copyWith => _$WorkerReply_StageAllChangesAckCopyWithImpl<WorkerReply_StageAllChangesAck>(this, _$identity);
 
 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ProjectGithubUrlAck&&(identical(other.url, url) || other.url == url));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_StageAllChangesAck&&const DeepCollectionEquality().equals(other._changedFiles, _changedFiles));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,url);
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_changedFiles));
 
 @override
 String toString() {
-  return 'WorkerReply.projectGithubUrlAck(url: $url)';
+  return 'WorkerReply.stageAllChangesAck(changedFiles: $changedFiles)';
 }
 
 
 }
 
 /// @nodoc
-abstract mixin class $WorkerReply_ProjectGithubUrlAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_ProjectGithubUrlAckCopyWith(WorkerReply_ProjectGithubUrlAck value, $Res Function(WorkerReply_ProjectGithubUrlAck) _then) = _$WorkerReply_ProjectGithubUrlAckCopyWithImpl;
+abstract mixin class $WorkerReply_StageAllChangesAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_StageAllChangesAckCopyWith(WorkerReply_StageAllChangesAck value, $Res Function(WorkerReply_StageAllChangesAck) _then) = _$WorkerReply_StageAllChangesAckCopyWithImpl;
 @useResult
 $Res call({
- String? url
+ List<ChangedFile> changedFiles
 });
 
 
@@ -816,19 +556,19 @@ $Res call({
 
 }
 /// @nodoc
-class _$WorkerReply_ProjectGithubUrlAckCopyWithImpl<$Res>
-    implements $WorkerReply_ProjectGithubUrlAckCopyWith<$Res> {
-  _$WorkerReply_ProjectGithubUrlAckCopyWithImpl(this._self, this._then);
+class _$WorkerReply_StageAllChangesAckCopyWithImpl<$Res>
+    implements $WorkerReply_StageAllChangesAckCopyWith<$Res> {
+  _$WorkerReply_StageAllChangesAckCopyWithImpl(this._self, this._then);
 
-  final WorkerReply_ProjectGithubUrlAck _self;
-  final $Res Function(WorkerReply_ProjectGithubUrlAck) _then;
+  final WorkerReply_StageAllChangesAck _self;
+  final $Res Function(WorkerReply_StageAllChangesAck) _then;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? url = freezed,}) {
-  return _then(WorkerReply_ProjectGithubUrlAck(
-url: freezed == url ? _self.url : url // ignore: cast_nullable_to_non_nullable
-as String?,
+@pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
+  return _then(WorkerReply_StageAllChangesAck(
+changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
+as List<ChangedFile>,
   ));
 }
 
@@ -838,43 +578,49 @@ as String?,
 /// @nodoc
 
 
-class WorkerReply_RecentCommitsAck extends WorkerReply {
-  const WorkerReply_RecentCommitsAck({this.view}): super._();
+class WorkerReply_UnstageAllChangesAck extends WorkerReply {
+  const WorkerReply_UnstageAllChangesAck({required final  List<ChangedFile> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  RecentCommitsWire? view;
+ final  List<ChangedFile> _changedFiles;
+ List<ChangedFile> get changedFiles {
+  if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_changedFiles);
+}
+
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
 @pragma('vm:prefer-inline')
-$WorkerReply_RecentCommitsAckCopyWith<WorkerReply_RecentCommitsAck> get copyWith => _$WorkerReply_RecentCommitsAckCopyWithImpl<WorkerReply_RecentCommitsAck>(this, _$identity);
+$WorkerReply_UnstageAllChangesAckCopyWith<WorkerReply_UnstageAllChangesAck> get copyWith => _$WorkerReply_UnstageAllChangesAckCopyWithImpl<WorkerReply_UnstageAllChangesAck>(this, _$identity);
 
 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_RecentCommitsAck&&(identical(other.view, view) || other.view == view));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_UnstageAllChangesAck&&const DeepCollectionEquality().equals(other._changedFiles, _changedFiles));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,view);
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_changedFiles));
 
 @override
 String toString() {
-  return 'WorkerReply.recentCommitsAck(view: $view)';
+  return 'WorkerReply.unstageAllChangesAck(changedFiles: $changedFiles)';
 }
 
 
 }
 
 /// @nodoc
-abstract mixin class $WorkerReply_RecentCommitsAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
-  factory $WorkerReply_RecentCommitsAckCopyWith(WorkerReply_RecentCommitsAck value, $Res Function(WorkerReply_RecentCommitsAck) _then) = _$WorkerReply_RecentCommitsAckCopyWithImpl;
+abstract mixin class $WorkerReply_UnstageAllChangesAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_UnstageAllChangesAckCopyWith(WorkerReply_UnstageAllChangesAck value, $Res Function(WorkerReply_UnstageAllChangesAck) _then) = _$WorkerReply_UnstageAllChangesAckCopyWithImpl;
 @useResult
 $Res call({
- RecentCommitsWire? view
+ List<ChangedFile> changedFiles
 });
 
 
@@ -882,19 +628,305 @@ $Res call({
 
 }
 /// @nodoc
-class _$WorkerReply_RecentCommitsAckCopyWithImpl<$Res>
-    implements $WorkerReply_RecentCommitsAckCopyWith<$Res> {
-  _$WorkerReply_RecentCommitsAckCopyWithImpl(this._self, this._then);
+class _$WorkerReply_UnstageAllChangesAckCopyWithImpl<$Res>
+    implements $WorkerReply_UnstageAllChangesAckCopyWith<$Res> {
+  _$WorkerReply_UnstageAllChangesAckCopyWithImpl(this._self, this._then);
 
-  final WorkerReply_RecentCommitsAck _self;
-  final $Res Function(WorkerReply_RecentCommitsAck) _then;
+  final WorkerReply_UnstageAllChangesAck _self;
+  final $Res Function(WorkerReply_UnstageAllChangesAck) _then;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? view = freezed,}) {
-  return _then(WorkerReply_RecentCommitsAck(
-view: freezed == view ? _self.view : view // ignore: cast_nullable_to_non_nullable
-as RecentCommitsWire?,
+@pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
+  return _then(WorkerReply_UnstageAllChangesAck(
+changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
+as List<ChangedFile>,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_DiscardChangedFileAck extends WorkerReply {
+  const WorkerReply_DiscardChangedFileAck({required final  List<ChangedFile> changedFiles}): _changedFiles = changedFiles,super._();
+  
+
+ final  List<ChangedFile> _changedFiles;
+ List<ChangedFile> get changedFiles {
+  if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_changedFiles);
+}
+
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_DiscardChangedFileAckCopyWith<WorkerReply_DiscardChangedFileAck> get copyWith => _$WorkerReply_DiscardChangedFileAckCopyWithImpl<WorkerReply_DiscardChangedFileAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_DiscardChangedFileAck&&const DeepCollectionEquality().equals(other._changedFiles, _changedFiles));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_changedFiles));
+
+@override
+String toString() {
+  return 'WorkerReply.discardChangedFileAck(changedFiles: $changedFiles)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_DiscardChangedFileAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_DiscardChangedFileAckCopyWith(WorkerReply_DiscardChangedFileAck value, $Res Function(WorkerReply_DiscardChangedFileAck) _then) = _$WorkerReply_DiscardChangedFileAckCopyWithImpl;
+@useResult
+$Res call({
+ List<ChangedFile> changedFiles
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_DiscardChangedFileAckCopyWithImpl<$Res>
+    implements $WorkerReply_DiscardChangedFileAckCopyWith<$Res> {
+  _$WorkerReply_DiscardChangedFileAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_DiscardChangedFileAck _self;
+  final $Res Function(WorkerReply_DiscardChangedFileAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
+  return _then(WorkerReply_DiscardChangedFileAck(
+changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
+as List<ChangedFile>,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_ToolbarActionOutcomeAck extends WorkerReply {
+  const WorkerReply_ToolbarActionOutcomeAck({required this.outcome}): super._();
+  
+
+ final  ToolbarActionOutcome outcome;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_ToolbarActionOutcomeAckCopyWith<WorkerReply_ToolbarActionOutcomeAck> get copyWith => _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl<WorkerReply_ToolbarActionOutcomeAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ToolbarActionOutcomeAck&&(identical(other.outcome, outcome) || other.outcome == outcome));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,outcome);
+
+@override
+String toString() {
+  return 'WorkerReply.toolbarActionOutcomeAck(outcome: $outcome)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_ToolbarActionOutcomeAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_ToolbarActionOutcomeAckCopyWith(WorkerReply_ToolbarActionOutcomeAck value, $Res Function(WorkerReply_ToolbarActionOutcomeAck) _then) = _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl;
+@useResult
+$Res call({
+ ToolbarActionOutcome outcome
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl<$Res>
+    implements $WorkerReply_ToolbarActionOutcomeAckCopyWith<$Res> {
+  _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_ToolbarActionOutcomeAck _self;
+  final $Res Function(WorkerReply_ToolbarActionOutcomeAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? outcome = null,}) {
+  return _then(WorkerReply_ToolbarActionOutcomeAck(
+outcome: null == outcome ? _self.outcome : outcome // ignore: cast_nullable_to_non_nullable
+as ToolbarActionOutcome,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_CreateBranchAck extends WorkerReply {
+  const WorkerReply_CreateBranchAck({required this.sectionId, required final  List<ProjectSummary> projects}): _projects = projects,super._();
+  
+
+ final  String sectionId;
+ final  List<ProjectSummary> _projects;
+ List<ProjectSummary> get projects {
+  if (_projects is EqualUnmodifiableListView) return _projects;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_projects);
+}
+
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_CreateBranchAckCopyWith<WorkerReply_CreateBranchAck> get copyWith => _$WorkerReply_CreateBranchAckCopyWithImpl<WorkerReply_CreateBranchAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_CreateBranchAck&&(identical(other.sectionId, sectionId) || other.sectionId == sectionId)&&const DeepCollectionEquality().equals(other._projects, _projects));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,sectionId,const DeepCollectionEquality().hash(_projects));
+
+@override
+String toString() {
+  return 'WorkerReply.createBranchAck(sectionId: $sectionId, projects: $projects)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_CreateBranchAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_CreateBranchAckCopyWith(WorkerReply_CreateBranchAck value, $Res Function(WorkerReply_CreateBranchAck) _then) = _$WorkerReply_CreateBranchAckCopyWithImpl;
+@useResult
+$Res call({
+ String sectionId, List<ProjectSummary> projects
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_CreateBranchAckCopyWithImpl<$Res>
+    implements $WorkerReply_CreateBranchAckCopyWith<$Res> {
+  _$WorkerReply_CreateBranchAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_CreateBranchAck _self;
+  final $Res Function(WorkerReply_CreateBranchAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? sectionId = null,Object? projects = null,}) {
+  return _then(WorkerReply_CreateBranchAck(
+sectionId: null == sectionId ? _self.sectionId : sectionId // ignore: cast_nullable_to_non_nullable
+as String,projects: null == projects ? _self._projects : projects // ignore: cast_nullable_to_non_nullable
+as List<ProjectSummary>,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_CreateReviewTaskAck extends WorkerReply {
+  const WorkerReply_CreateReviewTaskAck({required this.sectionId, required final  List<ProjectSummary> projects}): _projects = projects,super._();
+  
+
+ final  String sectionId;
+ final  List<ProjectSummary> _projects;
+ List<ProjectSummary> get projects {
+  if (_projects is EqualUnmodifiableListView) return _projects;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_projects);
+}
+
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_CreateReviewTaskAckCopyWith<WorkerReply_CreateReviewTaskAck> get copyWith => _$WorkerReply_CreateReviewTaskAckCopyWithImpl<WorkerReply_CreateReviewTaskAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_CreateReviewTaskAck&&(identical(other.sectionId, sectionId) || other.sectionId == sectionId)&&const DeepCollectionEquality().equals(other._projects, _projects));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,sectionId,const DeepCollectionEquality().hash(_projects));
+
+@override
+String toString() {
+  return 'WorkerReply.createReviewTaskAck(sectionId: $sectionId, projects: $projects)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_CreateReviewTaskAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_CreateReviewTaskAckCopyWith(WorkerReply_CreateReviewTaskAck value, $Res Function(WorkerReply_CreateReviewTaskAck) _then) = _$WorkerReply_CreateReviewTaskAckCopyWithImpl;
+@useResult
+$Res call({
+ String sectionId, List<ProjectSummary> projects
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_CreateReviewTaskAckCopyWithImpl<$Res>
+    implements $WorkerReply_CreateReviewTaskAckCopyWith<$Res> {
+  _$WorkerReply_CreateReviewTaskAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_CreateReviewTaskAck _self;
+  final $Res Function(WorkerReply_CreateReviewTaskAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? sectionId = null,Object? projects = null,}) {
+  return _then(WorkerReply_CreateReviewTaskAck(
+sectionId: null == sectionId ? _self.sectionId : sectionId // ignore: cast_nullable_to_non_nullable
+as String,projects: null == projects ? _self._projects : projects // ignore: cast_nullable_to_non_nullable
+as List<ProjectSummary>,
   ));
 }
 

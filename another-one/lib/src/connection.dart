@@ -281,12 +281,7 @@ abstract class DaemonConnection {
     required String branchName,
     required bool useCurrentTask,
     required bool migrateChanges,
-  }) {
-    throw UnimplementedError(
-      'createBranch: requires Control::CreateBranch wire variant on '
-      'the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Compute the canonical branch slug for a free-text input.
   /// Powers the Create Branch modal's live `Branch: …` preview.
@@ -336,12 +331,7 @@ abstract class DaemonConnection {
   Future<ToolbarActionOutcomeDto> runToolbarGitAction({
     required String projectId,
     required String actionId,
-  }) {
-    throw UnimplementedError(
-      'runToolbarGitAction: requires Control::RunToolbarGitAction wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Diff the project's current branch against `targetBranch`
   /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
@@ -399,12 +389,7 @@ abstract class DaemonConnection {
     required int pullRequestNumber,
     required String headBranch,
     AgentProvider? agentProvider,
-  }) {
-    throw UnimplementedError(
-      'createReviewTask: requires Control::CreateReviewTask wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Update one branch-setting field. `field` is `"default-branch"`
   /// or `"default-target-branch"`; `branchName` of `null` clears
@@ -440,16 +425,16 @@ abstract class DaemonConnection {
   /// only on rename/copy entries — git needs both source and
   /// destination to resolve the pair correctly. Throws on git
   /// failure with the stderr appended.
+  ///
+  /// Implemented by both transports as of `another-one-ojm.5`:
+  /// `LocalTransport` calls the FRB-bound `LocalSession`;
+  /// `IrohTransport` issues `Control::StageChangedFile` and awaits
+  /// the matching `WorkerReply::StageChangedFileAck`.
   Future<void> stageChangedFile({
     required String projectId,
     required String path,
     String? originalPath,
-  }) {
-    throw UnimplementedError(
-      'stageChangedFile: requires Control::StageChangedFile wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Unstage one changed file via `git restore --staged` (or
   /// `git reset HEAD` on older git). See [`stageChangedFile`] for
@@ -458,28 +443,13 @@ abstract class DaemonConnection {
     required String projectId,
     required String path,
     String? originalPath,
-  }) {
-    throw UnimplementedError(
-      'unstageChangedFile: requires Control::UnstageChangedFile wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// `git add -A` on the project root — stage every change.
-  Future<void> stageAllChanges(String projectId) {
-    throw UnimplementedError(
-      'stageAllChanges: requires Control::StageAllChanges wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<void> stageAllChanges(String projectId);
 
   /// Unstage every currently-staged change.
-  Future<void> unstageAllChanges(String projectId) {
-    throw UnimplementedError(
-      'unstageAllChanges: requires Control::UnstageAllChanges wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<void> unstageAllChanges(String projectId);
 
   /// Discard one file's changes. Untracked files are deleted from
   /// disk; tracked files are restored from HEAD. `untracked` is
@@ -491,12 +461,7 @@ abstract class DaemonConnection {
     required String path,
     required bool untracked,
     String? originalPath,
-  }) {
-    throw UnimplementedError(
-      'discardChangedFile: requires Control::DiscardChangedFile wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   // ── Custom actions (titlebar split-button + modal editor) ───────
 

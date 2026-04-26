@@ -552,7 +552,157 @@ async fn handle_control(
                 Err(e) => {
                     let reply = WorkerReply::Err {
                         message: format!("{e:#}"),
-                        kind: crate::frame::ErrKind::Internal,
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::StageChangedFile {
+            project_id,
+            path,
+            original_path,
+        } => {
+            // Inline-snapshot ack: the registry's stage helper runs
+            // the git mutation *and* re-reads the post-mutation
+            // changed-files list, so the caller's ack carries the
+            // refreshed Changes pane state in the same round-trip.
+            let outcome = registry
+                .stage_changed_file(&project_id, &path, original_path.as_deref())
+                .await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::StageChangedFileAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::UnstageChangedFile {
+            project_id,
+            path,
+            original_path,
+        } => {
+            let outcome = registry
+                .unstage_changed_file(&project_id, &path, original_path.as_deref())
+                .await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::UnstageChangedFileAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::StageAllChanges { project_id } => {
+            let outcome = registry.stage_all_changes(&project_id).await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::StageAllChangesAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::UnstageAllChanges { project_id } => {
+            let outcome = registry.unstage_all_changes(&project_id).await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::UnstageAllChangesAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::DiscardChangedFile {
+            project_id,
+            path,
+            untracked,
+            original_path,
+        } => {
+            let outcome = registry
+                .discard_changed_file(&project_id, &path, untracked, original_path.as_deref())
+                .await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::DiscardChangedFileAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::RunToolbarGitAction {
+            project_id,
+            action_id,
+        } => {
+            let outcome = registry
+                .run_toolbar_git_action(&project_id, &action_id)
+                .await;
+            match outcome {
+                Ok(outcome) => {
+                    let reply = WorkerReply::ToolbarActionOutcomeAck { outcome };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::CreateBranch {
+            project_id,
+            branch_name,
+            use_current_task,
+            migrate_changes,
+        } => {
+            let outcome = registry
+                .create_branch(&project_id, &branch_name, use_current_task, migrate_changes)
+                .await;
+            match outcome {
+                Ok((section_id, projects)) => {
+                    let reply = WorkerReply::CreateBranchAck {
+                        section_id,
+                        projects,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
                     };
                     send_worker_reply(outbound_tx, request_id, &reply).await?;
                 }
@@ -623,6 +773,37 @@ async fn handle_control(
                 }
                 Err(message) => {
                     send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+                }
+            }
+        }
+        Control::CreateReviewTask {
+            project_id,
+            pull_request_number,
+            head_branch,
+            agent_provider,
+        } => {
+            let outcome = registry
+                .create_review_task(
+                    &project_id,
+                    pull_request_number,
+                    &head_branch,
+                    agent_provider,
+                )
+                .await;
+            match outcome {
+                Ok((section_id, projects)) => {
+                    let reply = WorkerReply::CreateReviewTaskAck {
+                        section_id,
+                        projects,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
                 }
             }
         }

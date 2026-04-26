@@ -14,7 +14,7 @@ use tokio::sync::broadcast;
 
 use crate::frame::{
     ActiveGitStateWire, AgentProvider, ChangedFileWire, ProjectSummary, RecentCommitsWire,
-    TaskSummary,
+    TaskSummary, ToolbarActionOutcome,
 };
 
 /// Boxed-future return type for `DaemonRegistry` methods that are
@@ -133,8 +133,6 @@ impl Drop for EndpointHandle {
 ///   `run_project_action`, `read_open_in_state`).
 /// - `.8` — settings (`read_git_action_scripts`, `set_shortcut_binding`,
 ///   `read_mcp_settings`).
-///
-/// This task only renames; the new methods land in their own PRs.
 pub trait DaemonRegistry: Send + Sync + 'static {
     /// Snapshot of projects + tasks + tabs as of now. The daemon
     /// calls this on every `Control::ListProjects`, so cheap.
@@ -342,6 +340,134 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         _limit: usize,
     ) -> Result<Option<RecentCommitsWire>, String> {
         Ok(None)
+    }
+
+    // ── Git mutation (another-one-ojm.5) ──────────────────────────
+
+    /// `another-one-ojm.5` — stage one changed file via `git add -A`.
+    /// `original_path` is `Some(_)` only on rename/copy entries.
+    /// Returns the post-mutation `changed_files` snapshot so the
+    /// caller's ack can carry it inline (per the inline-snapshot
+    /// contract in `frame.rs`).
+    fn stage_changed_file<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _path: &'a str,
+        _original_path: Option<&'a str>,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "stage_changed_file: not supported on this registry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — unstage one changed file. Same
+    /// inline-snapshot return shape as [`Self::stage_changed_file`].
+    fn unstage_changed_file<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _path: &'a str,
+        _original_path: Option<&'a str>,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "unstage_changed_file: not supported on this registry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — `git add -A` on the project root.
+    /// Returns the post-mutation `changed_files` snapshot for the
+    /// caller's inline-snapshot ack.
+    fn stage_all_changes<'a>(
+        &'a self,
+        _project_id: &'a str,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "stage_all_changes: not supported on this registry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — unstage every staged change in one shot.
+    fn unstage_all_changes<'a>(
+        &'a self,
+        _project_id: &'a str,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "unstage_all_changes: not supported on this registry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — discard one file's working-tree changes.
+    /// `untracked` is passed verbatim to the core helper; rename pairs
+    /// surface via `original_path`.
+    fn discard_changed_file<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _path: &'a str,
+        _untracked: bool,
+        _original_path: Option<&'a str>,
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "discard_changed_file: not supported on this registry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — run one of the titlebar git actions.
+    /// `action_id` strings round-trip verbatim from the wire (see
+    /// [`crate::frame::Control::RunToolbarGitAction`]).
+    fn run_toolbar_git_action<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _action_id: &'a str,
+    ) -> RegistryFuture<'a, anyhow::Result<ToolbarActionOutcome>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "run_toolbar_git_action: not supported on this registry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — create a branch from HEAD. Returns the
+    /// new task's `section_id` (or empty string for the current-task
+    /// case) plus the post-mutation `projects` snapshot for the
+    /// caller's inline-snapshot ack.
+    fn create_branch<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _branch_name: &'a str,
+        _use_current_task: bool,
+        _migrate_changes: bool,
+    ) -> RegistryFuture<'a, anyhow::Result<(String, Vec<ProjectSummary>)>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "create_branch: not supported on this registry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — spawn a review task targeting a PR.
+    /// Returns the new task's `section_id` plus the post-mutation
+    /// `projects` snapshot, same shape as [`Self::create_branch`].
+    fn create_review_task<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _pull_request_number: u64,
+        _head_branch: &'a str,
+        _agent_provider: Option<AgentProvider>,
+    ) -> RegistryFuture<'a, anyhow::Result<(String, Vec<ProjectSummary>)>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "create_review_task: not supported on this registry"
+            ))
+        })
     }
 }
 

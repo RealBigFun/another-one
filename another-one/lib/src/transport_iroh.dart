@@ -353,8 +353,9 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// Issue a control frame keyed by a freshly-allocated request_id
   /// and return a future that completes with the matching daemon
   /// reply. Domain verbs landing in `another-one-ojm.2..8` use
-  /// this in place of the existing fire-and-forget `session.foo()`
-  /// pattern.
+  /// this in place of fire-and-forget `session.foo()` so per-call
+  /// replies (acks, error frames) land at the awaiting caller via
+  /// the completer table — see `_dispatchWorkerReplyMessage`.
   ///
   /// `send` is the caller-supplied closure that performs the actual
   /// FRB call once the request_id has been registered in the
@@ -362,15 +363,9 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// which `Control::*` variant + arguments to encode without this
   /// helper having to know about every variant. Callers receive the
   /// `request_id` so they can pass it to a Rust-side `send_control`
-  /// equivalent (added per-verb in domain tasks).
-  ///
-  /// Each domain verb landing in `another-one-ojm.2..8` routes its
-  /// reply through this helper. First adopters: the git-state read
-  /// verbs landed in `another-one-ojm.4`. Each Rust-side helper on
-  /// `IrohSession` (e.g. `slugifyBranchName`) returns the freshly-
-  /// allocated `request_id`; the Dart layer registers a completer
-  /// keyed on it after the FRB call resolves and the recv loop
-  /// dispatches the matching reply via [_dispatchWorkerReplyMessage].
+  /// equivalent (added per-verb in domain tasks). Each domain verb
+  /// landing in `another-one-ojm.2..8` routes its reply through this
+  /// helper.
   Future<WorkerReply> _sendControlAndAwait(
     Future<void> Function(int requestId) send,
   ) async {
@@ -732,4 +727,257 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         worktreeStatus: f.worktreeStatus,
         untracked: f.untracked,
       );
+
+  // ── Git mutation verbs (`another-one-ojm.5`) ───────────────────
+  //
+  // Each method allocates a request_id via [_sendControlAndAwait],
+  // issues the matching `Control::*` frame, and unwraps the
+  // `WorkerReply::*Ack`. On `WorkerReply::Err`, throws
+  // [IrohWireException] so callers can `try/catch` and route to a
+  // toast.
+
+  /// Map a `WorkerReply.err` payload to a thrown exception.
+  Never _throwForErr(WorkerReply_Err err) {
+    throw IrohWireException(message: err.message, kind: err.kind);
+  }
+
+  /// `another-one-ojm.5` — stage one changed file via the iroh wire.
+  @override
+  Future<void> stageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.stageChangedFile(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        path: path,
+        originalPath: originalPath,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_StageChangedFileAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'stageChangedFile: unexpected reply variant $reply',
+        );
+    }
+  }
+
+  /// `another-one-ojm.5` — unstage one changed file. Same shape as
+  /// [`stageChangedFile`] but `Control::UnstageChangedFile` →
+  /// `WorkerReply::UnstageChangedFileAck`.
+  @override
+  Future<void> unstageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.unstageChangedFile(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        path: path,
+        originalPath: originalPath,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_UnstageChangedFileAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'unstageChangedFile: unexpected reply variant $reply',
+        );
+    }
+  }
+
+  /// `another-one-ojm.5` — `git add -A` over the iroh wire.
+  @override
+  Future<void> stageAllChanges(String projectId) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.stageAllChanges(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_StageAllChangesAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'stageAllChanges: unexpected reply variant $reply',
+        );
+    }
+  }
+
+  /// `another-one-ojm.5` — `git restore --staged -- .` over the
+  /// iroh wire.
+  @override
+  Future<void> unstageAllChanges(String projectId) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.unstageAllChanges(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_UnstageAllChangesAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'unstageAllChanges: unexpected reply variant $reply',
+        );
+    }
+  }
+
+  /// `another-one-ojm.5` — discard one file's working-tree changes
+  /// over the iroh wire. Destructive — the calling UI gates this
+  /// behind a confirmation modal before invoking.
+  @override
+  Future<void> discardChangedFile({
+    required String projectId,
+    required String path,
+    required bool untracked,
+    String? originalPath,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.discardChangedFile(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        path: path,
+        untracked: untracked,
+        originalPath: originalPath,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_DiscardChangedFileAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'discardChangedFile: unexpected reply variant $reply',
+        );
+    }
+  }
+
+  /// `another-one-ojm.5` — run one of the titlebar git actions over
+  /// the iroh wire. The returned `ls.ToolbarActionOutcomeDto` matches
+  /// what `LocalTransport` produces, so the titlebar's snackbar
+  /// rendering doesn't have to branch on transport.
+  @override
+  Future<ls.ToolbarActionOutcomeDto> runToolbarGitAction({
+    required String projectId,
+    required String actionId,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.runToolbarGitAction(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        actionId: actionId,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_ToolbarActionOutcomeAck(:final outcome):
+        return ls.ToolbarActionOutcomeDto(
+          toastMessage: outcome.toastMessage,
+          warning: outcome.warning,
+          refreshGitState: outcome.refreshGitState,
+        );
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'runToolbarGitAction: unexpected reply variant $reply',
+        );
+    }
+  }
+
+  /// `another-one-ojm.5` — create a branch from HEAD over the iroh
+  /// wire. Returns the new worktree task's `sectionId` (empty string
+  /// in current-task mode) so the caller can navigate to it. The
+  /// ack also carries the post-mutation `projects` snapshot, which
+  /// today the transport discards; consuming it in-band (e.g.
+  /// pushing into [workerReplies]) is a follow-up hook.
+  @override
+  Future<String> createBranch({
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.createBranch(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        branchName: branchName,
+        useCurrentTask: useCurrentTask,
+        migrateChanges: migrateChanges,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_CreateBranchAck(:final sectionId, :final projects):
+        // Re-broadcast the post-mutation project snapshot so any
+        // listener on `workerReplies` (the projects drawer's
+        // FRB-side consumer) repaints in the same round-trip the
+        // ack carried. Mirrors LocalSession::create_branch which
+        // calls `self.list_projects()` after the mutation.
+        if (!_workerReplies.isClosed) {
+          _workerReplies.add(WorkerReply.projectList(projects: projects));
+        }
+        return sectionId;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'createBranch: unexpected reply variant $reply',
+        );
+    }
+  }
+
+  /// `another-one-ojm.5` — spawn a review task for a PR over the iroh
+  /// wire. Returns the new task's `sectionId` and re-broadcasts the
+  /// post-mutation `projects` snapshot on [workerReplies] (same shape
+  /// as [createBranch]).
+  @override
+  Future<String> createReviewTask({
+    required String projectId,
+    required int pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.createReviewTask(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        pullRequestNumber: BigInt.from(pullRequestNumber),
+        headBranch: headBranch,
+        agentProvider: agentProvider,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_CreateReviewTaskAck(:final sectionId, :final projects):
+        if (!_workerReplies.isClosed) {
+          _workerReplies.add(WorkerReply.projectList(projects: projects));
+        }
+        return sectionId;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'createReviewTask: unexpected reply variant $reply',
+        );
+    }
+  }
 }
+

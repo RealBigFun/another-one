@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 901275048;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1489969649;
 
 // Section: executor
 
@@ -167,6 +167,143 @@ fn wire__crate__api__iroh_client__IrohSession_close_impl(
         },
     )
 }
+fn wire__crate__api__iroh_client__IrohSession_create_branch_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_create_branch",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_branch_name = <String>::sse_decode(&mut deserializer);
+            let api_use_current_task = <bool>::sse_decode(&mut deserializer);
+            let api_migrate_changes = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::create_branch(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_branch_name,
+                            api_use_current_task,
+                            api_migrate_changes,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_create_review_task_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_create_review_task",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_pull_request_number = <u64>::sse_decode(&mut deserializer);
+            let api_head_branch = <String>::sse_decode(&mut deserializer);
+            let api_agent_provider =
+                <Option<crate::api::iroh_client::AgentProvider>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::create_review_task(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_pull_request_number,
+                            api_head_branch,
+                            api_agent_provider,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -216,6 +353,74 @@ fn wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
                         let output_ok =
                             crate::api::iroh_client::IrohSession::detach_tab(&*api_that_guard)
                                 .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_discard_changed_file_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_discard_changed_file",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_untracked = <bool>::sse_decode(&mut deserializer);
+            let api_original_path = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::discard_changed_file(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_path,
+                            api_untracked,
+                            api_original_path,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -394,433 +599,6 @@ fn wire__crate__api__iroh_client__IrohSession_next_request_id_impl(
         },
     )
 }
-fn wire__crate__api__iroh_client__IrohSession_primary_branch_for_project_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "IrohSession_primary_branch_for_project",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
-            >>::sse_decode(&mut deserializer);
-            let api_project_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let mut api_that_guard = None;
-                        let decode_indices_ =
-                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
-                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                    &api_that, 0, false,
-                                )],
-                            );
-                        for i in decode_indices_ {
-                            match i {
-                                0 => {
-                                    api_that_guard =
-                                        Some(api_that.lockable_decode_async_ref().await)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        let api_that_guard = api_that_guard.unwrap();
-                        let output_ok =
-                            crate::api::iroh_client::IrohSession::primary_branch_for_project(
-                                &*api_that_guard,
-                                api_project_id,
-                            )
-                            .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-fn wire__crate__api__iroh_client__IrohSession_read_active_git_state_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "IrohSession_read_active_git_state",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
-            >>::sse_decode(&mut deserializer);
-            let api_project_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let mut api_that_guard = None;
-                        let decode_indices_ =
-                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
-                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                    &api_that, 0, false,
-                                )],
-                            );
-                        for i in decode_indices_ {
-                            match i {
-                                0 => {
-                                    api_that_guard =
-                                        Some(api_that.lockable_decode_async_ref().await)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        let api_that_guard = api_that_guard.unwrap();
-                        let output_ok =
-                            crate::api::iroh_client::IrohSession::read_active_git_state(
-                                &*api_that_guard,
-                                api_project_id,
-                            )
-                            .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-fn wire__crate__api__iroh_client__IrohSession_read_changed_files_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "IrohSession_read_changed_files",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
-            >>::sse_decode(&mut deserializer);
-            let api_project_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let mut api_that_guard = None;
-                        let decode_indices_ =
-                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
-                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                    &api_that, 0, false,
-                                )],
-                            );
-                        for i in decode_indices_ {
-                            match i {
-                                0 => {
-                                    api_that_guard =
-                                        Some(api_that.lockable_decode_async_ref().await)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        let api_that_guard = api_that_guard.unwrap();
-                        let output_ok = crate::api::iroh_client::IrohSession::read_changed_files(
-                            &*api_that_guard,
-                            api_project_id,
-                        )
-                        .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-fn wire__crate__api__iroh_client__IrohSession_read_project_branches_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "IrohSession_read_project_branches",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
-            >>::sse_decode(&mut deserializer);
-            let api_project_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let mut api_that_guard = None;
-                        let decode_indices_ =
-                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
-                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                    &api_that, 0, false,
-                                )],
-                            );
-                        for i in decode_indices_ {
-                            match i {
-                                0 => {
-                                    api_that_guard =
-                                        Some(api_that.lockable_decode_async_ref().await)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        let api_that_guard = api_that_guard.unwrap();
-                        let output_ok =
-                            crate::api::iroh_client::IrohSession::read_project_branches(
-                                &*api_that_guard,
-                                api_project_id,
-                            )
-                            .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-fn wire__crate__api__iroh_client__IrohSession_read_project_github_url_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "IrohSession_read_project_github_url",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
-            >>::sse_decode(&mut deserializer);
-            let api_project_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let mut api_that_guard = None;
-                        let decode_indices_ =
-                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
-                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                    &api_that, 0, false,
-                                )],
-                            );
-                        for i in decode_indices_ {
-                            match i {
-                                0 => {
-                                    api_that_guard =
-                                        Some(api_that.lockable_decode_async_ref().await)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        let api_that_guard = api_that_guard.unwrap();
-                        let output_ok =
-                            crate::api::iroh_client::IrohSession::read_project_github_url(
-                                &*api_that_guard,
-                                api_project_id,
-                            )
-                            .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-fn wire__crate__api__iroh_client__IrohSession_read_recent_commits_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "IrohSession_read_recent_commits",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
-            >>::sse_decode(&mut deserializer);
-            let api_project_id = <String>::sse_decode(&mut deserializer);
-            let api_limit = <u32>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let mut api_that_guard = None;
-                        let decode_indices_ =
-                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
-                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                    &api_that, 0, false,
-                                )],
-                            );
-                        for i in decode_indices_ {
-                            match i {
-                                0 => {
-                                    api_that_guard =
-                                        Some(api_that.lockable_decode_async_ref().await)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        let api_that_guard = api_that_guard.unwrap();
-                        let output_ok = crate::api::iroh_client::IrohSession::read_recent_commits(
-                            &*api_that_guard,
-                            api_project_id,
-                            api_limit,
-                        )
-                        .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-fn wire__crate__api__iroh_client__IrohSession_repo_default_commit_action_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "IrohSession_repo_default_commit_action",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
-            >>::sse_decode(&mut deserializer);
-            let api_project_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let mut api_that_guard = None;
-                        let decode_indices_ =
-                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
-                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                    &api_that, 0, false,
-                                )],
-                            );
-                        for i in decode_indices_ {
-                            match i {
-                                0 => {
-                                    api_that_guard =
-                                        Some(api_that.lockable_decode_async_ref().await)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        let api_that_guard = api_that_guard.unwrap();
-                        let output_ok =
-                            crate::api::iroh_client::IrohSession::repo_default_commit_action(
-                                &*api_that_guard,
-                                api_project_id,
-                            )
-                            .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
 fn wire__crate__api__iroh_client__IrohSession_resize_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -875,6 +653,71 @@ fn wire__crate__api__iroh_client__IrohSession_resize_impl(
                             api_rows,
                         )
                         .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_run_toolbar_git_action_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_run_toolbar_git_action",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_action_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok =
+                            crate::api::iroh_client::IrohSession::run_toolbar_git_action(
+                                &*api_that_guard,
+                                api_request_id,
+                                api_project_id,
+                                api_action_id,
+                            )
+                            .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -941,7 +784,7 @@ fn wire__crate__api__iroh_client__IrohSession_send_impl(
         },
     )
 }
-fn wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
+fn wire__crate__api__iroh_client__IrohSession_stage_all_changes_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -949,7 +792,7 @@ fn wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "IrohSession_slugify_branch_name",
+            debug_name: "IrohSession_stage_all_changes",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -966,7 +809,8 @@ fn wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
             let api_that = <RustOpaqueMoi<
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
             >>::sse_decode(&mut deserializer);
-            let api_name = <String>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -988,9 +832,76 @@ fn wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
                             }
                         }
                         let api_that_guard = api_that_guard.unwrap();
-                        let output_ok = crate::api::iroh_client::IrohSession::slugify_branch_name(
+                        let output_ok = crate::api::iroh_client::IrohSession::stage_all_changes(
                             &*api_that_guard,
-                            api_name,
+                            api_request_id,
+                            api_project_id,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_stage_changed_file_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_stage_changed_file",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_original_path = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::stage_changed_file(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_path,
+                            api_original_path,
                         )
                         .await?;
                         Ok(output_ok)
@@ -1180,6 +1091,134 @@ fn wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
                             &*api_that_guard,
                             api_cols,
                             api_rows,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_unstage_all_changes_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_unstage_all_changes",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::unstage_all_changes(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_unstage_changed_file_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_unstage_changed_file",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_original_path = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::unstage_changed_file(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_path,
+                            api_original_path,
                         )
                         .await?;
                         Ok(output_ok)
@@ -6147,20 +6186,6 @@ impl SseDecode for crate::api::local_session::ActiveGitStateDto {
     }
 }
 
-impl SseDecode for crate::api::iroh_client::ActiveGitStateWire {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_currentBranch = <Option<String>>::sse_decode(deserializer);
-        let mut var_aheadCount = <u32>::sse_decode(deserializer);
-        let mut var_behindCount = <u32>::sse_decode(deserializer);
-        return crate::api::iroh_client::ActiveGitStateWire {
-            current_branch: var_currentBranch,
-            ahead_count: var_aheadCount,
-            behind_count: var_behindCount,
-        };
-    }
-}
-
 impl SseDecode for crate::api::iroh_client::AgentProvider {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -6310,7 +6335,7 @@ impl SseDecode for crate::api::terminal_engine::CellDto {
     }
 }
 
-impl SseDecode for crate::api::local_session::ChangedFileDto {
+impl SseDecode for crate::api::iroh_client::ChangedFile {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_path = <String>::sse_decode(deserializer);
@@ -6322,7 +6347,7 @@ impl SseDecode for crate::api::local_session::ChangedFileDto {
         let mut var_indexStatus = <String>::sse_decode(deserializer);
         let mut var_worktreeStatus = <String>::sse_decode(deserializer);
         let mut var_untracked = <bool>::sse_decode(deserializer);
-        return crate::api::local_session::ChangedFileDto {
+        return crate::api::iroh_client::ChangedFile {
             path: var_path,
             original_path: var_originalPath,
             staged_additions: var_stagedAdditions,
@@ -6336,7 +6361,7 @@ impl SseDecode for crate::api::local_session::ChangedFileDto {
     }
 }
 
-impl SseDecode for crate::api::iroh_client::ChangedFileWire {
+impl SseDecode for crate::api::local_session::ChangedFileDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_path = <String>::sse_decode(deserializer);
@@ -6348,7 +6373,7 @@ impl SseDecode for crate::api::iroh_client::ChangedFileWire {
         let mut var_indexStatus = <String>::sse_decode(deserializer);
         let mut var_worktreeStatus = <String>::sse_decode(deserializer);
         let mut var_untracked = <bool>::sse_decode(deserializer);
-        return crate::api::iroh_client::ChangedFileWire {
+        return crate::api::local_session::ChangedFileDto {
             path: var_path,
             original_path: var_originalPath,
             staged_additions: var_stagedAdditions,
@@ -6406,24 +6431,6 @@ impl SseDecode for crate::api::local_session::CommitDto {
         let mut var_authorName = <String>::sse_decode(deserializer);
         let mut var_authoredRelative = <String>::sse_decode(deserializer);
         return crate::api::local_session::CommitDto {
-            id: var_id,
-            short_id: var_shortId,
-            subject: var_subject,
-            author_name: var_authorName,
-            authored_relative: var_authoredRelative,
-        };
-    }
-}
-
-impl SseDecode for crate::api::iroh_client::CommitWire {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_id = <String>::sse_decode(deserializer);
-        let mut var_shortId = <String>::sse_decode(deserializer);
-        let mut var_subject = <String>::sse_decode(deserializer);
-        let mut var_authorName = <String>::sse_decode(deserializer);
-        let mut var_authoredRelative = <String>::sse_decode(deserializer);
-        return crate::api::iroh_client::CommitWire {
             id: var_id,
             short_id: var_shortId,
             subject: var_subject,
@@ -6568,13 +6575,13 @@ impl SseDecode for Vec<crate::api::terminal_engine::CellDto> {
     }
 }
 
-impl SseDecode for Vec<crate::api::local_session::ChangedFileDto> {
+impl SseDecode for Vec<crate::api::iroh_client::ChangedFile> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut len_ = <i32>::sse_decode(deserializer);
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
-            ans_.push(<crate::api::local_session::ChangedFileDto>::sse_decode(
+            ans_.push(<crate::api::iroh_client::ChangedFile>::sse_decode(
                 deserializer,
             ));
         }
@@ -6582,13 +6589,13 @@ impl SseDecode for Vec<crate::api::local_session::ChangedFileDto> {
     }
 }
 
-impl SseDecode for Vec<crate::api::iroh_client::ChangedFileWire> {
+impl SseDecode for Vec<crate::api::local_session::ChangedFileDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut len_ = <i32>::sse_decode(deserializer);
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
-            ans_.push(<crate::api::iroh_client::ChangedFileWire>::sse_decode(
+            ans_.push(<crate::api::local_session::ChangedFileDto>::sse_decode(
                 deserializer,
             ));
         }
@@ -6617,20 +6624,6 @@ impl SseDecode for Vec<crate::api::local_session::CommitDto> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::local_session::CommitDto>::sse_decode(
-                deserializer,
-            ));
-        }
-        return ans_;
-    }
-}
-
-impl SseDecode for Vec<crate::api::iroh_client::CommitWire> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut len_ = <i32>::sse_decode(deserializer);
-        let mut ans_ = Vec::with_capacity(len_ as usize);
-        for idx_ in 0..len_ {
-            ans_.push(<crate::api::iroh_client::CommitWire>::sse_decode(
                 deserializer,
             ));
         }
@@ -6982,19 +6975,6 @@ impl SseDecode for Option<crate::api::local_session::ActiveGitStateDto> {
     }
 }
 
-impl SseDecode for Option<crate::api::iroh_client::ActiveGitStateWire> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        if (<bool>::sse_decode(deserializer)) {
-            return Some(<crate::api::iroh_client::ActiveGitStateWire>::sse_decode(
-                deserializer,
-            ));
-        } else {
-            return None;
-        }
-    }
-}
-
 impl SseDecode for Option<crate::api::iroh_client::AgentProvider> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7050,19 +7030,6 @@ impl SseDecode for Option<crate::api::local_session::RecentCommitsView> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::api::local_session::RecentCommitsView>::sse_decode(
-                deserializer,
-            ));
-        } else {
-            return None;
-        }
-    }
-}
-
-impl SseDecode for Option<crate::api::iroh_client::RecentCommitsWire> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        if (<bool>::sse_decode(deserializer)) {
-            return Some(<crate::api::iroh_client::RecentCommitsWire>::sse_decode(
                 deserializer,
             ));
         } else {
@@ -7130,19 +7097,6 @@ impl SseDecode for Option<Vec<crate::api::local_session::ChangedFileDto>> {
             return Some(
                 <Vec<crate::api::local_session::ChangedFileDto>>::sse_decode(deserializer),
             );
-        } else {
-            return None;
-        }
-    }
-}
-
-impl SseDecode for Option<Vec<crate::api::iroh_client::ChangedFileWire>> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        if (<bool>::sse_decode(deserializer)) {
-            return Some(<Vec<crate::api::iroh_client::ChangedFileWire>>::sse_decode(
-                deserializer,
-            ));
         } else {
             return None;
         }
@@ -7398,20 +7352,6 @@ impl SseDecode for crate::api::local_session::RecentCommitsView {
     }
 }
 
-impl SseDecode for crate::api::iroh_client::RecentCommitsWire {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_currentBranch = <Option<String>>::sse_decode(deserializer);
-        let mut var_hasMore = <bool>::sse_decode(deserializer);
-        let mut var_commits = <Vec<crate::api::iroh_client::CommitWire>>::sse_decode(deserializer);
-        return crate::api::iroh_client::RecentCommitsWire {
-            current_branch: var_currentBranch,
-            has_more: var_hasMore,
-            commits: var_commits,
-        };
-    }
-}
-
 impl SseDecode for crate::api::local_session::ResolvedProjectBranchSettingsDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7631,6 +7571,20 @@ impl SseDecode for crate::api::iroh_client::TaskSummary {
     }
 }
 
+impl SseDecode for crate::api::iroh_client::ToolbarActionOutcome {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_toastMessage = <String>::sse_decode(deserializer);
+        let mut var_warning = <bool>::sse_decode(deserializer);
+        let mut var_refreshGitState = <bool>::sse_decode(deserializer);
+        return crate::api::iroh_client::ToolbarActionOutcome {
+            toast_message: var_toastMessage,
+            warning: var_warning,
+            refresh_git_state: var_refreshGitState,
+        };
+    }
+}
+
 impl SseDecode for crate::api::local_session::ToolbarActionOutcomeDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7706,51 +7660,64 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                 };
             }
             2 => {
-                let mut var_slug = <String>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::SlugifyBranchNameAck {
-                    slug: var_slug,
+                let mut var_changedFiles =
+                    <Vec<crate::api::iroh_client::ChangedFile>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::StageChangedFileAck {
+                    changed_files: var_changedFiles,
                 };
             }
             3 => {
-                let mut var_branches = <Vec<String>>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::ProjectBranchesAck {
-                    branches: var_branches,
+                let mut var_changedFiles =
+                    <Vec<crate::api::iroh_client::ChangedFile>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::UnstageChangedFileAck {
+                    changed_files: var_changedFiles,
                 };
             }
             4 => {
-                let mut var_branch = <Option<String>>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::PrimaryBranchAck {
-                    branch: var_branch,
+                let mut var_changedFiles =
+                    <Vec<crate::api::iroh_client::ChangedFile>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::StageAllChangesAck {
+                    changed_files: var_changedFiles,
                 };
             }
             5 => {
-                let mut var_action = <Option<String>>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::RepoDefaultCommitActionAck {
-                    action: var_action,
+                let mut var_changedFiles =
+                    <Vec<crate::api::iroh_client::ChangedFile>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::UnstageAllChangesAck {
+                    changed_files: var_changedFiles,
                 };
             }
             6 => {
-                let mut var_state =
-                    <Option<crate::api::iroh_client::ActiveGitStateWire>>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::ActiveGitStateAck {
-                    state: var_state,
+                let mut var_changedFiles =
+                    <Vec<crate::api::iroh_client::ChangedFile>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::DiscardChangedFileAck {
+                    changed_files: var_changedFiles,
                 };
             }
             7 => {
-                let mut var_files =
-                    <Option<Vec<crate::api::iroh_client::ChangedFileWire>>>::sse_decode(
-                        deserializer,
-                    );
-                return crate::api::iroh_client::WorkerReply::ChangedFilesAck { files: var_files };
+                let mut var_outcome =
+                    <crate::api::iroh_client::ToolbarActionOutcome>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::ToolbarActionOutcomeAck {
+                    outcome: var_outcome,
+                };
             }
             8 => {
-                let mut var_url = <Option<String>>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::ProjectGithubUrlAck { url: var_url };
+                let mut var_sectionId = <String>::sse_decode(deserializer);
+                let mut var_projects =
+                    <Vec<crate::api::iroh_client::ProjectSummary>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::CreateBranchAck {
+                    section_id: var_sectionId,
+                    projects: var_projects,
+                };
             }
             9 => {
-                let mut var_view =
-                    <Option<crate::api::iroh_client::RecentCommitsWire>>::sse_decode(deserializer);
-                return crate::api::iroh_client::WorkerReply::RecentCommitsAck { view: var_view };
+                let mut var_sectionId = <String>::sse_decode(deserializer);
+                let mut var_projects =
+                    <Vec<crate::api::iroh_client::ProjectSummary>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::CreateReviewTaskAck {
+                    section_id: var_sectionId,
+                    projects: var_projects,
+                };
             }
             _ => {
                 unimplemented!("");
@@ -7789,100 +7756,100 @@ fn pde_ffi_dispatcher_primary_impl(
         2 => {
             wire__crate__api__iroh_client__IrohSession_close_impl(port, ptr, rust_vec_len, data_len)
         }
-        3 => wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
+        3 => wire__crate__api__iroh_client__IrohSession_create_branch_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        4 => wire__crate__api__iroh_client__IrohSession_launch_tab_impl(
+        4 => wire__crate__api__iroh_client__IrohSession_create_review_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        5 => wire__crate__api__iroh_client__IrohSession_list_projects_impl(
+        5 => wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        6 => wire__crate__api__iroh_client__IrohSession_next_request_id_impl(
+        6 => wire__crate__api__iroh_client__IrohSession_discard_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        7 => wire__crate__api__iroh_client__IrohSession_primary_branch_for_project_impl(
+        7 => wire__crate__api__iroh_client__IrohSession_launch_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        8 => wire__crate__api__iroh_client__IrohSession_read_active_git_state_impl(
+        8 => wire__crate__api__iroh_client__IrohSession_list_projects_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        9 => wire__crate__api__iroh_client__IrohSession_read_changed_files_impl(
+        9 => wire__crate__api__iroh_client__IrohSession_next_request_id_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        10 => wire__crate__api__iroh_client__IrohSession_read_project_branches_impl(
+        10 => wire__crate__api__iroh_client__IrohSession_resize_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        11 => wire__crate__api__iroh_client__IrohSession_read_project_github_url_impl(
+        11 => wire__crate__api__iroh_client__IrohSession_run_toolbar_git_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__iroh_client__IrohSession_read_recent_commits_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        13 => wire__crate__api__iroh_client__IrohSession_repo_default_commit_action_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        14 => wire__crate__api__iroh_client__IrohSession_resize_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        15 => {
+        12 => {
             wire__crate__api__iroh_client__IrohSession_send_impl(port, ptr, rust_vec_len, data_len)
         }
-        16 => wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
+        13 => wire__crate__api__iroh_client__IrohSession_stage_all_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => wire__crate__api__iroh_client__IrohSession_subscribe_impl(
+        14 => wire__crate__api__iroh_client__IrohSession_stage_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__iroh_client__IrohSession_subscribe_worker_replies_impl(
+        15 => wire__crate__api__iroh_client__IrohSession_subscribe_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
+        16 => wire__crate__api__iroh_client__IrohSession_subscribe_worker_replies_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        17 => wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        18 => wire__crate__api__iroh_client__IrohSession_unstage_all_changes_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        19 => wire__crate__api__iroh_client__IrohSession_unstage_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
@@ -8431,28 +8398,6 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::ActiveGitState
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::ActiveGitStateWire {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [
-            self.current_branch.into_into_dart().into_dart(),
-            self.ahead_count.into_into_dart().into_dart(),
-            self.behind_count.into_into_dart().into_dart(),
-        ]
-        .into_dart()
-    }
-}
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::iroh_client::ActiveGitStateWire
-{
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::ActiveGitStateWire>
-    for crate::api::iroh_client::ActiveGitStateWire
-{
-    fn into_into_dart(self) -> crate::api::iroh_client::ActiveGitStateWire {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::AgentProvider {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
@@ -8646,6 +8591,34 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal_engine::CellDto>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::ChangedFile {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.path.into_into_dart().into_dart(),
+            self.original_path.into_into_dart().into_dart(),
+            self.staged_additions.into_into_dart().into_dart(),
+            self.staged_deletions.into_into_dart().into_dart(),
+            self.unstaged_additions.into_into_dart().into_dart(),
+            self.unstaged_deletions.into_into_dart().into_dart(),
+            self.index_status.into_into_dart().into_dart(),
+            self.worktree_status.into_into_dart().into_dart(),
+            self.untracked.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::iroh_client::ChangedFile
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::ChangedFile>
+    for crate::api::iroh_client::ChangedFile
+{
+    fn into_into_dart(self) -> crate::api::iroh_client::ChangedFile {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::local_session::ChangedFileDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -8670,34 +8643,6 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::ChangedFileDto
     for crate::api::local_session::ChangedFileDto
 {
     fn into_into_dart(self) -> crate::api::local_session::ChangedFileDto {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::ChangedFileWire {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [
-            self.path.into_into_dart().into_dart(),
-            self.original_path.into_into_dart().into_dart(),
-            self.staged_additions.into_into_dart().into_dart(),
-            self.staged_deletions.into_into_dart().into_dart(),
-            self.unstaged_additions.into_into_dart().into_dart(),
-            self.unstaged_deletions.into_into_dart().into_dart(),
-            self.index_status.into_into_dart().into_dart(),
-            self.worktree_status.into_into_dart().into_dart(),
-            self.untracked.into_into_dart().into_dart(),
-        ]
-        .into_dart()
-    }
-}
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::iroh_client::ChangedFileWire
-{
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::ChangedFileWire>
-    for crate::api::iroh_client::ChangedFileWire
-{
-    fn into_into_dart(self) -> crate::api::iroh_client::ChangedFileWire {
         self
     }
 }
@@ -8771,30 +8716,6 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::CommitDto>
     for crate::api::local_session::CommitDto
 {
     fn into_into_dart(self) -> crate::api::local_session::CommitDto {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::CommitWire {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [
-            self.id.into_into_dart().into_dart(),
-            self.short_id.into_into_dart().into_dart(),
-            self.subject.into_into_dart().into_dart(),
-            self.author_name.into_into_dart().into_dart(),
-            self.authored_relative.into_into_dart().into_dart(),
-        ]
-        .into_dart()
-    }
-}
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::iroh_client::CommitWire
-{
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::CommitWire>
-    for crate::api::iroh_client::CommitWire
-{
-    fn into_into_dart(self) -> crate::api::iroh_client::CommitWire {
         self
     }
 }
@@ -9381,28 +9302,6 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::RecentCommitsV
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::RecentCommitsWire {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [
-            self.current_branch.into_into_dart().into_dart(),
-            self.has_more.into_into_dart().into_dart(),
-            self.commits.into_into_dart().into_dart(),
-        ]
-        .into_dart()
-    }
-}
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::iroh_client::RecentCommitsWire
-{
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::RecentCommitsWire>
-    for crate::api::iroh_client::RecentCommitsWire
-{
-    fn into_into_dart(self) -> crate::api::iroh_client::RecentCommitsWire {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::local_session::ResolvedProjectBranchSettingsDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -9676,6 +9575,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::TaskSummary>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::ToolbarActionOutcome {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.toast_message.into_into_dart().into_dart(),
+            self.warning.into_into_dart().into_dart(),
+            self.refresh_git_state.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::iroh_client::ToolbarActionOutcome
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::ToolbarActionOutcome>
+    for crate::api::iroh_client::ToolbarActionOutcome
+{
+    fn into_into_dart(self) -> crate::api::iroh_client::ToolbarActionOutcome {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::local_session::ToolbarActionOutcomeDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -9710,30 +9631,42 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::WorkerReply {
                 kind.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::api::iroh_client::WorkerReply::SlugifyBranchNameAck { slug } => {
-                [2.into_dart(), slug.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::StageChangedFileAck { changed_files } => {
+                [2.into_dart(), changed_files.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ProjectBranchesAck { branches } => {
-                [3.into_dart(), branches.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::UnstageChangedFileAck { changed_files } => {
+                [3.into_dart(), changed_files.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::PrimaryBranchAck { branch } => {
-                [4.into_dart(), branch.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::StageAllChangesAck { changed_files } => {
+                [4.into_dart(), changed_files.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::RepoDefaultCommitActionAck { action } => {
-                [5.into_dart(), action.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::UnstageAllChangesAck { changed_files } => {
+                [5.into_dart(), changed_files.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ActiveGitStateAck { state } => {
-                [6.into_dart(), state.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::DiscardChangedFileAck { changed_files } => {
+                [6.into_dart(), changed_files.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ChangedFilesAck { files } => {
-                [7.into_dart(), files.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::ToolbarActionOutcomeAck { outcome } => {
+                [7.into_dart(), outcome.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ProjectGithubUrlAck { url } => {
-                [8.into_dart(), url.into_into_dart().into_dart()].into_dart()
-            }
-            crate::api::iroh_client::WorkerReply::RecentCommitsAck { view } => {
-                [9.into_dart(), view.into_into_dart().into_dart()].into_dart()
-            }
+            crate::api::iroh_client::WorkerReply::CreateBranchAck {
+                section_id,
+                projects,
+            } => [
+                8.into_dart(),
+                section_id.into_into_dart().into_dart(),
+                projects.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::iroh_client::WorkerReply::CreateReviewTaskAck {
+                section_id,
+                projects,
+            } => [
+                9.into_dart(),
+                section_id.into_into_dart().into_dart(),
+                projects.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -9863,15 +9796,6 @@ impl SseEncode for crate::api::local_session::ActiveGitStateDto {
     }
 }
 
-impl SseEncode for crate::api::iroh_client::ActiveGitStateWire {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <Option<String>>::sse_encode(self.current_branch, serializer);
-        <u32>::sse_encode(self.ahead_count, serializer);
-        <u32>::sse_encode(self.behind_count, serializer);
-    }
-}
-
 impl SseEncode for crate::api::iroh_client::AgentProvider {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -9976,7 +9900,7 @@ impl SseEncode for crate::api::terminal_engine::CellDto {
     }
 }
 
-impl SseEncode for crate::api::local_session::ChangedFileDto {
+impl SseEncode for crate::api::iroh_client::ChangedFile {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.path, serializer);
@@ -9991,7 +9915,7 @@ impl SseEncode for crate::api::local_session::ChangedFileDto {
     }
 }
 
-impl SseEncode for crate::api::iroh_client::ChangedFileWire {
+impl SseEncode for crate::api::local_session::ChangedFileDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.path, serializer);
@@ -10038,17 +9962,6 @@ impl SseEncode for crate::api::local_session::CheckDto {
 }
 
 impl SseEncode for crate::api::local_session::CommitDto {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <String>::sse_encode(self.id, serializer);
-        <String>::sse_encode(self.short_id, serializer);
-        <String>::sse_encode(self.subject, serializer);
-        <String>::sse_encode(self.author_name, serializer);
-        <String>::sse_encode(self.authored_relative, serializer);
-    }
-}
-
-impl SseEncode for crate::api::iroh_client::CommitWire {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.id, serializer);
@@ -10167,22 +10080,22 @@ impl SseEncode for Vec<crate::api::terminal_engine::CellDto> {
     }
 }
 
+impl SseEncode for Vec<crate::api::iroh_client::ChangedFile> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::iroh_client::ChangedFile>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::local_session::ChangedFileDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::local_session::ChangedFileDto>::sse_encode(item, serializer);
-        }
-    }
-}
-
-impl SseEncode for Vec<crate::api::iroh_client::ChangedFileWire> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <i32>::sse_encode(self.len() as _, serializer);
-        for item in self {
-            <crate::api::iroh_client::ChangedFileWire>::sse_encode(item, serializer);
         }
     }
 }
@@ -10203,16 +10116,6 @@ impl SseEncode for Vec<crate::api::local_session::CommitDto> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::local_session::CommitDto>::sse_encode(item, serializer);
-        }
-    }
-}
-
-impl SseEncode for Vec<crate::api::iroh_client::CommitWire> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <i32>::sse_encode(self.len() as _, serializer);
-        for item in self {
-            <crate::api::iroh_client::CommitWire>::sse_encode(item, serializer);
         }
     }
 }
@@ -10488,16 +10391,6 @@ impl SseEncode for Option<crate::api::local_session::ActiveGitStateDto> {
     }
 }
 
-impl SseEncode for Option<crate::api::iroh_client::ActiveGitStateWire> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <bool>::sse_encode(self.is_some(), serializer);
-        if let Some(value) = self {
-            <crate::api::iroh_client::ActiveGitStateWire>::sse_encode(value, serializer);
-        }
-    }
-}
-
 impl SseEncode for Option<crate::api::iroh_client::AgentProvider> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -10544,16 +10437,6 @@ impl SseEncode for Option<crate::api::local_session::RecentCommitsView> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::local_session::RecentCommitsView>::sse_encode(value, serializer);
-        }
-    }
-}
-
-impl SseEncode for Option<crate::api::iroh_client::RecentCommitsWire> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <bool>::sse_encode(self.is_some(), serializer);
-        if let Some(value) = self {
-            <crate::api::iroh_client::RecentCommitsWire>::sse_encode(value, serializer);
         }
     }
 }
@@ -10606,16 +10489,6 @@ impl SseEncode for Option<Vec<crate::api::local_session::ChangedFileDto>> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <Vec<crate::api::local_session::ChangedFileDto>>::sse_encode(value, serializer);
-        }
-    }
-}
-
-impl SseEncode for Option<Vec<crate::api::iroh_client::ChangedFileWire>> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <bool>::sse_encode(self.is_some(), serializer);
-        if let Some(value) = self {
-            <Vec<crate::api::iroh_client::ChangedFileWire>>::sse_encode(value, serializer);
         }
     }
 }
@@ -10829,15 +10702,6 @@ impl SseEncode for crate::api::local_session::RecentCommitsView {
     }
 }
 
-impl SseEncode for crate::api::iroh_client::RecentCommitsWire {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <Option<String>>::sse_encode(self.current_branch, serializer);
-        <bool>::sse_encode(self.has_more, serializer);
-        <Vec<crate::api::iroh_client::CommitWire>>::sse_encode(self.commits, serializer);
-    }
-}
-
 impl SseEncode for crate::api::local_session::ResolvedProjectBranchSettingsDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -10973,6 +10837,15 @@ impl SseEncode for crate::api::iroh_client::TaskSummary {
     }
 }
 
+impl SseEncode for crate::api::iroh_client::ToolbarActionOutcome {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.toast_message, serializer);
+        <bool>::sse_encode(self.warning, serializer);
+        <bool>::sse_encode(self.refresh_git_state, serializer);
+    }
+}
+
 impl SseEncode for crate::api::local_session::ToolbarActionOutcomeDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -11038,41 +10911,45 @@ impl SseEncode for crate::api::iroh_client::WorkerReply {
                 <String>::sse_encode(message, serializer);
                 <crate::api::iroh_client::ErrKind>::sse_encode(kind, serializer);
             }
-            crate::api::iroh_client::WorkerReply::SlugifyBranchNameAck { slug } => {
+            crate::api::iroh_client::WorkerReply::StageChangedFileAck { changed_files } => {
                 <i32>::sse_encode(2, serializer);
-                <String>::sse_encode(slug, serializer);
+                <Vec<crate::api::iroh_client::ChangedFile>>::sse_encode(changed_files, serializer);
             }
-            crate::api::iroh_client::WorkerReply::ProjectBranchesAck { branches } => {
+            crate::api::iroh_client::WorkerReply::UnstageChangedFileAck { changed_files } => {
                 <i32>::sse_encode(3, serializer);
-                <Vec<String>>::sse_encode(branches, serializer);
+                <Vec<crate::api::iroh_client::ChangedFile>>::sse_encode(changed_files, serializer);
             }
-            crate::api::iroh_client::WorkerReply::PrimaryBranchAck { branch } => {
+            crate::api::iroh_client::WorkerReply::StageAllChangesAck { changed_files } => {
                 <i32>::sse_encode(4, serializer);
-                <Option<String>>::sse_encode(branch, serializer);
+                <Vec<crate::api::iroh_client::ChangedFile>>::sse_encode(changed_files, serializer);
             }
-            crate::api::iroh_client::WorkerReply::RepoDefaultCommitActionAck { action } => {
+            crate::api::iroh_client::WorkerReply::UnstageAllChangesAck { changed_files } => {
                 <i32>::sse_encode(5, serializer);
-                <Option<String>>::sse_encode(action, serializer);
+                <Vec<crate::api::iroh_client::ChangedFile>>::sse_encode(changed_files, serializer);
             }
-            crate::api::iroh_client::WorkerReply::ActiveGitStateAck { state } => {
+            crate::api::iroh_client::WorkerReply::DiscardChangedFileAck { changed_files } => {
                 <i32>::sse_encode(6, serializer);
-                <Option<crate::api::iroh_client::ActiveGitStateWire>>::sse_encode(
-                    state, serializer,
-                );
+                <Vec<crate::api::iroh_client::ChangedFile>>::sse_encode(changed_files, serializer);
             }
-            crate::api::iroh_client::WorkerReply::ChangedFilesAck { files } => {
+            crate::api::iroh_client::WorkerReply::ToolbarActionOutcomeAck { outcome } => {
                 <i32>::sse_encode(7, serializer);
-                <Option<Vec<crate::api::iroh_client::ChangedFileWire>>>::sse_encode(
-                    files, serializer,
-                );
+                <crate::api::iroh_client::ToolbarActionOutcome>::sse_encode(outcome, serializer);
             }
-            crate::api::iroh_client::WorkerReply::ProjectGithubUrlAck { url } => {
+            crate::api::iroh_client::WorkerReply::CreateBranchAck {
+                section_id,
+                projects,
+            } => {
                 <i32>::sse_encode(8, serializer);
-                <Option<String>>::sse_encode(url, serializer);
+                <String>::sse_encode(section_id, serializer);
+                <Vec<crate::api::iroh_client::ProjectSummary>>::sse_encode(projects, serializer);
             }
-            crate::api::iroh_client::WorkerReply::RecentCommitsAck { view } => {
+            crate::api::iroh_client::WorkerReply::CreateReviewTaskAck {
+                section_id,
+                projects,
+            } => {
                 <i32>::sse_encode(9, serializer);
-                <Option<crate::api::iroh_client::RecentCommitsWire>>::sse_encode(view, serializer);
+                <String>::sse_encode(section_id, serializer);
+                <Vec<crate::api::iroh_client::ProjectSummary>>::sse_encode(projects, serializer);
             }
             _ => {
                 unimplemented!("");
