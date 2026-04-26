@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `run_changed_file_action`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -225,12 +225,37 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// reply on success so the sidebar redraws.
   Future<bool> renameTask({required String taskId, required String newName});
 
+  /// Snapshot the resolved branch settings for `project_id` —
+  /// configured + effective values for default and target branch
+  /// plus the available branch list for the dropdown.
+  /// Returns `Ok(None)` when the project is unknown or has no
+  /// repo metadata yet.
+  Future<ResolvedProjectBranchSettingsDto?> resolvedBranchSettings({
+    required String projectId,
+  });
+
   /// Send raw PTY stdin bytes to the currently-attached tab.
   ///
   /// Looks up the tab's writer in `RegistryState::writers` and
   /// writes synchronously. Errors if no tab is attached or the
   /// writer has been dropped (tab exited / runtime gone).
   Future<void> send({required List<int> bytes});
+
+  /// Update the configured default branch or default-target branch
+  /// for `project_id`'s root project. `field` must be one of
+  /// `"default-branch"` or `"default-target-branch"`. `branch_name`
+  /// of `None` clears the configured override (resolved-effective
+  /// goes back to automatic).
+  ///
+  /// Returns `Ok(true)` when the persisted store changed,
+  /// `Ok(false)` for a no-op re-set. Errors when the branch isn't
+  /// in the available list (matches GPUI's validation), or when
+  /// the project lookup fails.
+  Future<bool> setProjectBranchSetting({
+    required String projectId,
+    required String field,
+    String? branchName,
+  });
 
   /// Pin or unpin a task. Pinned tasks float to the top of their
   /// project's task list (mirrors `child_entries.sort_by_key(!is_pinned)`
@@ -607,4 +632,57 @@ class RecentCommitsView {
           currentBranch == other.currentBranch &&
           hasMore == other.hasMore &&
           commits == other.commits;
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ResolvedProjectBranchSettings`].
+/// Drives the project page Configuration panel: the current
+/// configured + effective values for both fields, plus the
+/// available branch list the dropdowns enumerate.
+class ResolvedProjectBranchSettingsDto {
+  final String rootProjectId;
+  final List<String> availableBranches;
+
+  /// `Some(name)` when the user explicitly picked a default branch;
+  /// `None` means automatic (UI shows the trigger label as
+  /// "Automatic").
+  final String? configuredDefaultBranch;
+
+  /// What the project actually uses today — falls back to
+  /// `automatic_primary_branch_name` when configured is None or
+  /// unavailable.
+  final String? effectiveDefaultBranch;
+  final String? configuredDefaultTargetBranch;
+  final String? effectiveDefaultTargetBranch;
+
+  const ResolvedProjectBranchSettingsDto({
+    required this.rootProjectId,
+    required this.availableBranches,
+    this.configuredDefaultBranch,
+    this.effectiveDefaultBranch,
+    this.configuredDefaultTargetBranch,
+    this.effectiveDefaultTargetBranch,
+  });
+
+  @override
+  int get hashCode =>
+      rootProjectId.hashCode ^
+      availableBranches.hashCode ^
+      configuredDefaultBranch.hashCode ^
+      effectiveDefaultBranch.hashCode ^
+      configuredDefaultTargetBranch.hashCode ^
+      effectiveDefaultTargetBranch.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResolvedProjectBranchSettingsDto &&
+          runtimeType == other.runtimeType &&
+          rootProjectId == other.rootProjectId &&
+          availableBranches == other.availableBranches &&
+          configuredDefaultBranch == other.configuredDefaultBranch &&
+          effectiveDefaultBranch == other.effectiveDefaultBranch &&
+          configuredDefaultTargetBranch ==
+              other.configuredDefaultTargetBranch &&
+          effectiveDefaultTargetBranch == other.effectiveDefaultTargetBranch;
 }

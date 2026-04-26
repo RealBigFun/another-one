@@ -662,6 +662,78 @@ impl LocalSession {
         .await
     }
 
+    /// Snapshot the resolved branch settings for `project_id` —
+    /// configured + effective values for default and target branch
+    /// plus the available branch list for the dropdown.
+    /// Returns `Ok(None)` when the project is unknown or has no
+    /// repo metadata yet.
+    pub async fn resolved_branch_settings(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Option<ResolvedProjectBranchSettingsDto>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "resolved_branch_settings: set_local_registry not called"
+            )
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "resolved_branch_settings: RegistryState mutex poisoned"
+            )
+        })?;
+        Ok(state
+            .project_store
+            .resolved_branch_settings(&project_id)
+            .map(|s| ResolvedProjectBranchSettingsDto {
+                root_project_id: s.root_project_id,
+                available_branches: s.available_branches,
+                configured_default_branch: s.configured_default_branch,
+                effective_default_branch: s.effective_default_branch,
+                configured_default_target_branch: s.configured_default_target_branch,
+                effective_default_target_branch: s.effective_default_target_branch,
+            }))
+    }
+
+    /// Update the configured default branch or default-target branch
+    /// for `project_id`'s root project. `field` must be one of
+    /// `"default-branch"` or `"default-target-branch"`. `branch_name`
+    /// of `None` clears the configured override (resolved-effective
+    /// goes back to automatic).
+    ///
+    /// Returns `Ok(true)` when the persisted store changed,
+    /// `Ok(false)` for a no-op re-set. Errors when the branch isn't
+    /// in the available list (matches GPUI's validation), or when
+    /// the project lookup fails.
+    pub async fn set_project_branch_setting(
+        &self,
+        project_id: String,
+        field: String,
+        branch_name: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "set_project_branch_setting: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "set_project_branch_setting: RegistryState mutex poisoned"
+            )
+        })?;
+        let result = match field.as_str() {
+            "default-branch" => state
+                .project_store
+                .update_default_branch(&project_id, branch_name),
+            "default-target-branch" => state
+                .project_store
+                .update_default_target_branch(&project_id, branch_name),
+            other => Err(format!(
+                "set_project_branch_setting: unknown field `{other}`"
+            )),
+        };
+        result.map_err(|e| anyhow::anyhow!(e))
+    }
+
     /// Per-commit file change list for `project_id` / `commit_id`.
     /// Powers the right-sidebar Commits pane's expandable per-row
     /// file list. Routes
@@ -1280,6 +1352,27 @@ where
         .await
         .map_err(|e| anyhow::anyhow!("changed-file action join: {e}"))?
         .map_err(|e| anyhow::anyhow!(e))
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::project_store::ResolvedProjectBranchSettings`].
+/// Drives the project page Configuration panel: the current
+/// configured + effective values for both fields, plus the
+/// available branch list the dropdowns enumerate.
+#[derive(Debug, Clone)]
+pub struct ResolvedProjectBranchSettingsDto {
+    pub root_project_id: String,
+    pub available_branches: Vec<String>,
+    /// `Some(name)` when the user explicitly picked a default branch;
+    /// `None` means automatic (UI shows the trigger label as
+    /// "Automatic").
+    pub configured_default_branch: Option<String>,
+    /// What the project actually uses today — falls back to
+    /// `automatic_primary_branch_name` when configured is None or
+    /// unavailable.
+    pub effective_default_branch: Option<String>,
+    pub configured_default_target_branch: Option<String>,
+    pub effective_default_target_branch: Option<String>,
 }
 
 /// FRB-friendly mirror of

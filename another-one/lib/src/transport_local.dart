@@ -295,6 +295,34 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     );
   }
 
+  @override
+  Future<ResolvedProjectBranchSettingsDto?> readBranchSettings(
+    String projectId,
+  ) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readBranchSettings: LocalTransport not connected');
+    }
+    return session.resolvedBranchSettings(projectId: projectId);
+  }
+
+  @override
+  Future<bool> setBranchSetting({
+    required String projectId,
+    required String field,
+    String? branchName,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setBranchSetting: LocalTransport not connected');
+    }
+    return session.setProjectBranchSetting(
+      projectId: projectId,
+      field: field,
+      branchName: branchName,
+    );
+  }
+
   /// Shell out (via the embedded daemon) to `gh pr checks` for the
   /// current branch's PR. See [`DaemonConnection.readPullRequestChecks`]
   /// for the three-state return contract.

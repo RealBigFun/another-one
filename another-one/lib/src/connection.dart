@@ -37,7 +37,8 @@ import 'rust/api/local_session.dart'
         ChangedFileDto,
         CheckDto,
         OpenInState,
-        RecentCommitsView;
+        RecentCommitsView,
+        ResolvedProjectBranchSettingsDto;
 import 'transport.dart';
 
 /// Unified interface for any daemon — local FFI or remote iroh —
@@ -256,6 +257,35 @@ abstract class DaemonConnection {
     throw UnimplementedError(
       'readCommitFileChanges: requires Control::ReadCommitFileChanges '
       'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Resolve the project's branch settings — configured + effective
+  /// values for default and target branch, plus the available
+  /// branch list. Powers the project page's Configuration panel
+  /// and the right sidebar's Compare tab gate. Returns `null` for
+  /// unknown project ids or projects without repo metadata.
+  Future<ResolvedProjectBranchSettingsDto?> readBranchSettings(
+    String projectId,
+  ) {
+    throw UnimplementedError(
+      'readBranchSettings: requires Control::ReadBranchSettings wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Update one branch-setting field. `field` is `"default-branch"`
+  /// or `"default-target-branch"`; `branchName` of `null` clears
+  /// the override (effective falls back to automatic resolution).
+  /// Returns true when the persisted store changed.
+  Future<bool> setBranchSetting({
+    required String projectId,
+    required String field,
+    String? branchName,
+  }) {
+    throw UnimplementedError(
+      'setBranchSetting: requires Control::SetBranchSetting wire '
+      'variant on the iroh transport (not yet implemented).',
     );
   }
 

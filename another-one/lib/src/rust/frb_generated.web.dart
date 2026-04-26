@@ -101,6 +101,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RecentCommitsView dco_decode_box_autoadd_recent_commits_view(dynamic raw);
 
   @protected
+  ResolvedProjectBranchSettingsDto
+  dco_decode_box_autoadd_resolved_project_branch_settings_dto(dynamic raw);
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -180,6 +184,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ResolvedProjectBranchSettingsDto?
+  dco_decode_opt_box_autoadd_resolved_project_branch_settings_dto(dynamic raw);
+
+  @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -204,6 +212,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RecentCommitsView dco_decode_recent_commits_view(dynamic raw);
+
+  @protected
+  ResolvedProjectBranchSettingsDto
+  dco_decode_resolved_project_branch_settings_dto(dynamic raw);
 
   @protected
   ResourceSample dco_decode_resource_sample(dynamic raw);
@@ -307,6 +319,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ResolvedProjectBranchSettingsDto
+  sse_decode_box_autoadd_resolved_project_branch_settings_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
@@ -398,6 +416,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ResolvedProjectBranchSettingsDto?
+  sse_decode_opt_box_autoadd_resolved_project_branch_settings_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
@@ -426,6 +450,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RecentCommitsView sse_decode_recent_commits_view(
     SseDeserializer deserializer,
   );
+
+  @protected
+  ResolvedProjectBranchSettingsDto
+  sse_decode_resolved_project_branch_settings_dto(SseDeserializer deserializer);
 
   @protected
   ResourceSample sse_decode_resource_sample(SseDeserializer deserializer);
@@ -545,6 +573,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_resolved_project_branch_settings_dto(
+    ResolvedProjectBranchSettingsDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
@@ -659,6 +693,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_resolved_project_branch_settings_dto(
+    ResolvedProjectBranchSettingsDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
@@ -694,6 +734,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_recent_commits_view(
     RecentCommitsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_resolved_project_branch_settings_dto(
+    ResolvedProjectBranchSettingsDto self,
     SseSerializer serializer,
   );
 

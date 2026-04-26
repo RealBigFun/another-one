@@ -20,9 +20,9 @@ import '../../state/github_url_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
-import '../../widgets/empty_state.dart';
 import '../../widgets/run_mutation.dart';
 import '../new_task/new_task_modal.dart';
+import 'configuration_section.dart';
 
 class DesktopProjectPage extends ConsumerWidget {
   const DesktopProjectPage({super.key, required this.project});
@@ -36,7 +36,7 @@ class DesktopProjectPage extends ConsumerWidget {
       child: Column(
         children: [
           _ProjectPageHeader(project: project),
-          const Expanded(child: _ProjectPageBody()),
+          Expanded(child: _ProjectPageBody(projectId: project.id)),
         ],
       ),
     );
@@ -257,15 +257,22 @@ class _SquareIconButtonState extends State<_SquareIconButton> {
 }
 
 class _ProjectPageBody extends StatelessWidget {
-  const _ProjectPageBody();
+  const _ProjectPageBody({required this.projectId});
+
+  final String projectId;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: EmptyState(
-        text: 'Pull requests and branch settings come online with a future '
-            'bridge update.',
-        padding: EdgeInsets.all(AppTokens.space10),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Open PRs section is filed under another-one-g7f.1; will
+          // land here when its bridge surface ships. The
+          // Configuration panel below is independent.
+          ConfigurationSection(projectId: projectId),
+        ],
       ),
     );
   }
