@@ -71,40 +71,48 @@ class _ProjectRowState extends ConsumerState<_ProjectRow> {
                   children: [
                     _ProjectAvatar(project: project),
                     const SizedBox(width: AppTokens.space3),
+                    // Name + chevron live inside a single flex
+                    // group so the chevron always sits immediately
+                    // after the project name (mirrors GPUI's
+                    // `project_row` where the name has `flex_1` +
+                    // `min_w(0) + truncate` and the chevron is its
+                    // sibling, NOT part of the right-side action
+                    // cluster). Chevron only renders when the
+                    // project has children to expand
+                    // (`state.has_children` gate in GPUI).
                     Expanded(
-                      child: Text(
-                        project.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          // GPUI's `project_row` text_col =
-                          // hsla(0,0,0.90,1) → opaque gray
-                          // 0xFFE5E5E5; 14px / w500.
-                          fontSize: AppTokens.fontHeadingSm,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFFE5E5E5),
-                        ),
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              project.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                // hsla(0,0,0.90,1) → opaque gray.
+                                fontSize: AppTokens.fontHeadingSm,
+                                fontWeight: FontWeight.w500,
+                                color: Color(0xFFE5E5E5),
+                              ),
+                            ),
+                          ),
+                          if (project.tasks.isNotEmpty)
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () =>
+                                  setState(() => _expanded = !_expanded),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: AppTokens.space1),
+                                child: AppIcon(
+                                  _expanded ? 'chevron-down' : 'chevron-right',
+                                  size: 12,
+                                  color: AppTokens.chevron,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: AppTokens.space2),
-                    // Chevron is its own gesture region so the tap
-                    // toggles expansion without bubbling up to the
-                    // row's "activate project page" handler. Mirrors
-                    // GPUI's `cx.stop_propagation()` on the chevron.
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () =>
-                          setState(() => _expanded = !_expanded),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: AppTokens.space1),
-                        child: AppIcon(
-                          _expanded ? 'chevron-down' : 'chevron-right',
-                          size: 12,
-                          color: AppTokens.chevron,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppTokens.space2),
                     HoverIconButton(
                       icon: 'ellipsis',
                       tooltip: 'More',
