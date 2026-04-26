@@ -93,6 +93,14 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
+  /// Issue a [`Control::RenameTask`] under `request_id`. Mirror of
+  /// `LocalSession::rename_task`.
+  Future<void> renameTask({
+    required BigInt requestId,
+    required String taskId,
+    required String newName,
+  });
+
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
@@ -355,6 +363,13 @@ sealed class WorkerReply with _$WorkerReply {
     required String projectId,
     required TaskSummary task,
   }) = WorkerReply_TaskCreated;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRenamed`.
+  /// Reply to [`Control::RenameTask`].
+  const factory WorkerReply.taskRenamed({
+    required bool changed,
+    TaskSummary? task,
+  }) = WorkerReply_TaskRenamed;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

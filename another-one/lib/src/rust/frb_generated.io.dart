@@ -335,6 +335,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_opt_box_autoadd_resource_usage_snapshot_dto(dynamic raw);
 
   @protected
+  TaskSummary? dco_decode_opt_box_autoadd_task_summary(dynamic raw);
+
+  @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -810,6 +813,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   ResourceUsageSnapshotDto?
   sse_decode_opt_box_autoadd_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TaskSummary? sse_decode_opt_box_autoadd_task_summary(
     SseDeserializer deserializer,
   );
 
@@ -1405,6 +1413,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_resource_usage_snapshot_dto(
     ResourceUsageSnapshotDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_task_summary(
+    TaskSummary? self,
     SseSerializer serializer,
   );
 

@@ -201,6 +201,14 @@ pub trait DaemonRegistry: Send + Sync + 'static {
             ))
         })
     }
+
+    /// Rename a task. Returns `(changed, task)`: `changed` is `false`
+    /// for an unknown id or a no-op rename; `task` is the post-
+    /// rename snapshot when the task exists, `None` for an unknown
+    /// id. Default returns `(false, None)`.
+    fn rename_task(&self, _task_id: &str, _new_name: &str) -> (bool, Option<TaskSummary>) {
+        (false, None)
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

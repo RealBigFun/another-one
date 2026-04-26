@@ -169,13 +169,10 @@ abstract class DaemonConnection {
   });
 
   /// Rename a task. Returns whether the on-disk store actually
-  /// changed (false on unknown id or no-op rename).
-  Future<bool> renameTask(String taskId, String newName) {
-    throw UnimplementedError(
-      'renameTask: requires Control::RenameTask wire variant on the '
-      'iroh transport (not yet implemented).',
-    );
-  }
+  /// changed (false on unknown id or no-op rename). Implemented on
+  /// both transports (another-one-ojm.3) — IrohTransport routes
+  /// through `Control::RenameTask` + `WorkerReply::TaskRenamed`.
+  Future<bool> renameTask(String taskId, String newName);
 
   /// Pin or unpin a task. Returns whether state changed.
   Future<bool> setTaskPinned(String taskId, bool pinned) {

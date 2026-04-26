@@ -441,6 +441,33 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
     }
 
+    fn rename_task(&self, task_id: &str, new_name: &str) -> (bool, Option<TaskSummary>) {
+        let trimmed = new_name.trim().to_string();
+        if trimmed.is_empty() {
+            // Reject blank renames daemon-side, same as LocalSession.
+            // Return the existing snapshot so the issuer can render
+            // the old name in its UI without a follow-up read.
+            return self
+                .with_state(|state| (false, lookup_task_summary(state, task_id)))
+                .unwrap_or((false, None));
+        }
+        self.with_state(|state| {
+            let Some(task) = state.project_store.task_mut(task_id) else {
+                return (false, None);
+            };
+            let changed = if task.name == trimmed {
+                false
+            } else {
+                task.name = trimmed;
+                true
+            };
+            if changed {
+                state.project_store.save();
+            }
+            (changed, lookup_task_summary(state, task_id))
+        })
+        .unwrap_or((false, None))
+    }
 }
 
 /// Wire `frame::AgentProvider` → core `AgentProviderKind`. Mirror of

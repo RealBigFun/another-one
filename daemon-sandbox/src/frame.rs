@@ -178,6 +178,11 @@ pub enum Control {
         source_branch: String,
         agent_provider: Option<AgentProvider>,
     },
+    /// Rename a task. Empty / whitespace-only names are rejected
+    /// daemon-side. Reply is [`WorkerReply::TaskRenamed`] with the
+    /// post-rename inline `TaskSummary` and a `changed` flag — an
+    /// unknown id or no-op rename returns `changed = false`.
+    RenameTask { task_id: String, new_name: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -293,6 +298,13 @@ pub enum WorkerReply {
     TaskCreated {
         project_id: String,
         task: TaskSummary,
+    },
+    /// Reply to [`Control::RenameTask`]. `changed` is `false` for an
+    /// unknown id or a no-op rename — in that case `task` is the
+    /// pre-existing snapshot (or absent if the id was unknown).
+    TaskRenamed {
+        changed: bool,
+        task: Option<TaskSummary>,
     },
 }
 

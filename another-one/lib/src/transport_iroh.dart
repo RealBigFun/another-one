@@ -407,4 +407,26 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         ),
     };
   }
+
+  @override
+  Future<bool> renameTask(String taskId, String newName) async {
+    final reply = await _sendControlAndAwait((id) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.renameTask(
+        requestId: BigInt.from(id),
+        taskId: taskId,
+        newName: newName,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_TaskRenamed(:final changed) => changed,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'renameTask: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
 }

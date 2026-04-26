@@ -523,6 +523,11 @@ async fn handle_control(
                 }
             }
         }
+        Control::RenameTask { task_id, new_name } => {
+            let (changed, task) = registry.rename_task(&task_id, &new_name);
+            let reply = WorkerReply::TaskRenamed { changed, task };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

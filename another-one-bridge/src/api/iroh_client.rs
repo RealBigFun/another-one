@@ -145,6 +145,8 @@ enum Control {
         source_branch: String,
         agent_provider: Option<AgentProvider>,
     },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::RenameTask`.
+    RenameTask { task_id: String, new_name: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -181,6 +183,12 @@ pub enum WorkerReply {
     TaskCreated {
         project_id: String,
         task: TaskSummary,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRenamed`.
+    /// Reply to [`Control::RenameTask`].
+    TaskRenamed {
+        changed: bool,
+        task: Option<TaskSummary>,
     },
 }
 
@@ -898,6 +906,18 @@ impl IrohSession {
             },
         )
         .await
+    }
+
+    /// Issue a [`Control::RenameTask`] under `request_id`. Mirror of
+    /// `LocalSession::rename_task`.
+    pub async fn rename_task(
+        &self,
+        request_id: u64,
+        task_id: String,
+        new_name: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::RenameTask { task_id, new_name })
+            .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push
