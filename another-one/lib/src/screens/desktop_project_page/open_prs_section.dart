@@ -202,9 +202,14 @@ class _FilterTabState extends State<_FilterTab> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: Container(
+          // No `alignment: Alignment.center` — that hint makes
+          // Container expand to its loose-constraint max, so inside
+          // the parent's stretched Column each tab took the full row
+          // width and the Wrap stacked them vertically. With just
+          // padding the Container shrink-wraps the Text and the
+          // tabs sit inline like GPUI's `flex_row` cluster.
           height: 26,
           padding: const EdgeInsets.symmetric(horizontal: 7),
-          alignment: Alignment.center,
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(5),

@@ -26,9 +26,11 @@ final branchSettingsProvider =
 );
 
 /// Whether the Configuration panel header is expanded. Mirrors
-/// GPUI's `project_page_config_panel_expanded` — same default
-/// (collapsed) and same in-memory lifetime.
-final configurationPanelExpandedProvider = StateProvider<bool>((_) => false);
+/// GPUI's `project_page_config_panel_expanded` — initialised to
+/// `true` in `AnotherOneApp::new` (`app.rs:3622`), so the panel
+/// shows the Default Branch / Default Target Branch rows on first
+/// paint of every project page.
+final configurationPanelExpandedProvider = StateProvider<bool>((_) => true);
 
 /// Which branch-setting dropdown is open, if any. Only one row's
 /// dropdown is visible at a time; opening a second one closes the
