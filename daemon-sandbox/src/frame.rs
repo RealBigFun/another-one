@@ -188,6 +188,15 @@ pub enum Control {
     /// with the inline `TaskSummary` and a `changed` flag (idempotent
     /// re-set returns `false`).
     SetTaskPinned { task_id: String, pinned: bool },
+    /// Remove a task (and its terminal sections) from the daemon's
+    /// store. The on-disk worktree branch is left untouched — same
+    /// semantics as the desktop side. Reply is
+    /// [`WorkerReply::TaskRemoved`] with `removed = true` if a task
+    /// was deleted, `false` for an unknown id (idempotent).
+    RemoveTask {
+        project_id: String,
+        task_id: String,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -317,6 +326,15 @@ pub enum WorkerReply {
     TaskPinned {
         changed: bool,
         task: Option<TaskSummary>,
+    },
+    /// Reply to [`Control::RemoveTask`]. `removed` is `false` for an
+    /// unknown id (idempotent). `project_id` echoes the request so
+    /// the issuer can prune the right project subtree without
+    /// re-deriving it.
+    TaskRemoved {
+        project_id: String,
+        task_id: String,
+        removed: bool,
     },
 }
 

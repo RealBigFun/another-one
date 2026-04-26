@@ -216,6 +216,13 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     fn set_task_pinned(&self, _task_id: &str, _pinned: bool) -> (bool, Option<TaskSummary>) {
         (false, None)
     }
+
+    /// Remove a task and its sections. Returns whether anything was
+    /// actually removed (idempotent for unknown ids). Default
+    /// returns `false`.
+    fn remove_task(&self, _project_id: &str, _task_id: &str) -> bool {
+        false
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

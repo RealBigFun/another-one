@@ -149,6 +149,11 @@ enum Control {
     RenameTask { task_id: String, new_name: String },
     /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetTaskPinned`.
     SetTaskPinned { task_id: String, pinned: bool },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveTask`.
+    RemoveTask {
+        project_id: String,
+        task_id: String,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -197,6 +202,13 @@ pub enum WorkerReply {
     TaskPinned {
         changed: bool,
         task: Option<TaskSummary>,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRemoved`.
+    /// Reply to [`Control::RemoveTask`].
+    TaskRemoved {
+        project_id: String,
+        task_id: String,
+        removed: bool,
     },
 }
 
@@ -938,6 +950,24 @@ impl IrohSession {
     ) -> anyhow::Result<()> {
         self.send_control(request_id, Control::SetTaskPinned { task_id, pinned })
             .await
+    }
+
+    /// Issue a [`Control::RemoveTask`] under `request_id`. Mirror of
+    /// `LocalSession::remove_task`.
+    pub async fn remove_task(
+        &self,
+        request_id: u64,
+        project_id: String,
+        task_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::RemoveTask {
+                project_id,
+                task_id,
+            },
+        )
+        .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

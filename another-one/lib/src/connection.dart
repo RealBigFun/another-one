@@ -181,13 +181,12 @@ abstract class DaemonConnection {
   Future<bool> setTaskPinned(String taskId, bool pinned);
 
   /// Remove a task from the daemon's store. The on-disk worktree
-  /// branch is left untouched.
-  Future<bool> removeTask(String projectId, String taskId) {
-    throw UnimplementedError(
-      'removeTask: requires Control::DeleteTask wire variant on the '
-      'iroh transport (not yet implemented).',
-    );
-  }
+  /// branch is left untouched. Returns whether anything was
+  /// actually removed (false on unknown id — idempotent).
+  /// Implemented on both transports (another-one-ojm.3) —
+  /// IrohTransport routes through `Control::RemoveTask` +
+  /// `WorkerReply::TaskRemoved`.
+  Future<bool> removeTask(String projectId, String taskId);
 
   /// Resolve a project's GitHub remote URL (`git remote get-url
   /// origin`, normalised). Returns `null` when not a github.com

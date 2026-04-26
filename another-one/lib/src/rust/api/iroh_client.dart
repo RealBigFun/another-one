@@ -93,6 +93,14 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
+  /// Issue a [`Control::RemoveTask`] under `request_id`. Mirror of
+  /// `LocalSession::remove_task`.
+  Future<void> removeTask({
+    required BigInt requestId,
+    required String projectId,
+    required String taskId,
+  });
+
   /// Issue a [`Control::RenameTask`] under `request_id`. Mirror of
   /// `LocalSession::rename_task`.
   Future<void> renameTask({
@@ -385,6 +393,14 @@ sealed class WorkerReply with _$WorkerReply {
     required bool changed,
     TaskSummary? task,
   }) = WorkerReply_TaskPinned;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRemoved`.
+  /// Reply to [`Control::RemoveTask`].
+  const factory WorkerReply.taskRemoved({
+    required String projectId,
+    required String taskId,
+    required bool removed,
+  }) = WorkerReply_TaskRemoved;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

@@ -533,6 +533,18 @@ async fn handle_control(
             let reply = WorkerReply::TaskPinned { changed, task };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::RemoveTask {
+            project_id,
+            task_id,
+        } => {
+            let removed = registry.remove_task(&project_id, &task_id);
+            let reply = WorkerReply::TaskRemoved {
+                project_id,
+                task_id,
+                removed,
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

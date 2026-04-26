@@ -55,7 +55,7 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_TaskCreated value)?  taskCreated,TResult Function( WorkerReply_TaskRenamed value)?  taskRenamed,TResult Function( WorkerReply_TaskPinned value)?  taskPinned,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_TaskCreated value)?  taskCreated,TResult Function( WorkerReply_TaskRenamed value)?  taskRenamed,TResult Function( WorkerReply_TaskPinned value)?  taskPinned,TResult Function( WorkerReply_TaskRemoved value)?  taskRemoved,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -63,7 +63,8 @@ return projectList(_that);case WorkerReply_Err() when err != null:
 return err(_that);case WorkerReply_TaskCreated() when taskCreated != null:
 return taskCreated(_that);case WorkerReply_TaskRenamed() when taskRenamed != null:
 return taskRenamed(_that);case WorkerReply_TaskPinned() when taskPinned != null:
-return taskPinned(_that);case _:
+return taskPinned(_that);case WorkerReply_TaskRemoved() when taskRemoved != null:
+return taskRemoved(_that);case _:
   return orElse();
 
 }
@@ -81,7 +82,7 @@ return taskPinned(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_TaskCreated value)  taskCreated,required TResult Function( WorkerReply_TaskRenamed value)  taskRenamed,required TResult Function( WorkerReply_TaskPinned value)  taskPinned,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_TaskCreated value)  taskCreated,required TResult Function( WorkerReply_TaskRenamed value)  taskRenamed,required TResult Function( WorkerReply_TaskPinned value)  taskPinned,required TResult Function( WorkerReply_TaskRemoved value)  taskRemoved,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
@@ -89,7 +90,8 @@ return projectList(_that);case WorkerReply_Err():
 return err(_that);case WorkerReply_TaskCreated():
 return taskCreated(_that);case WorkerReply_TaskRenamed():
 return taskRenamed(_that);case WorkerReply_TaskPinned():
-return taskPinned(_that);}
+return taskPinned(_that);case WorkerReply_TaskRemoved():
+return taskRemoved(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -103,7 +105,7 @@ return taskPinned(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_TaskCreated value)?  taskCreated,TResult? Function( WorkerReply_TaskRenamed value)?  taskRenamed,TResult? Function( WorkerReply_TaskPinned value)?  taskPinned,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_TaskCreated value)?  taskCreated,TResult? Function( WorkerReply_TaskRenamed value)?  taskRenamed,TResult? Function( WorkerReply_TaskPinned value)?  taskPinned,TResult? Function( WorkerReply_TaskRemoved value)?  taskRemoved,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -111,7 +113,8 @@ return projectList(_that);case WorkerReply_Err() when err != null:
 return err(_that);case WorkerReply_TaskCreated() when taskCreated != null:
 return taskCreated(_that);case WorkerReply_TaskRenamed() when taskRenamed != null:
 return taskRenamed(_that);case WorkerReply_TaskPinned() when taskPinned != null:
-return taskPinned(_that);case _:
+return taskPinned(_that);case WorkerReply_TaskRemoved() when taskRemoved != null:
+return taskRemoved(_that);case _:
   return null;
 
 }
@@ -128,14 +131,15 @@ return taskPinned(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String projectId,  TaskSummary task)?  taskCreated,TResult Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult Function( bool changed,  TaskSummary? task)?  taskPinned,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String projectId,  TaskSummary task)?  taskCreated,TResult Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult Function( bool changed,  TaskSummary? task)?  taskPinned,TResult Function( String projectId,  String taskId,  bool removed)?  taskRemoved,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
 return err(_that.message,_that.kind);case WorkerReply_TaskCreated() when taskCreated != null:
 return taskCreated(_that.projectId,_that.task);case WorkerReply_TaskRenamed() when taskRenamed != null:
 return taskRenamed(_that.changed,_that.task);case WorkerReply_TaskPinned() when taskPinned != null:
-return taskPinned(_that.changed,_that.task);case _:
+return taskPinned(_that.changed,_that.task);case WorkerReply_TaskRemoved() when taskRemoved != null:
+return taskRemoved(_that.projectId,_that.taskId,_that.removed);case _:
   return orElse();
 
 }
@@ -153,14 +157,15 @@ return taskPinned(_that.changed,_that.task);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String projectId,  TaskSummary task)  taskCreated,required TResult Function( bool changed,  TaskSummary? task)  taskRenamed,required TResult Function( bool changed,  TaskSummary? task)  taskPinned,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String projectId,  TaskSummary task)  taskCreated,required TResult Function( bool changed,  TaskSummary? task)  taskRenamed,required TResult Function( bool changed,  TaskSummary? task)  taskPinned,required TResult Function( String projectId,  String taskId,  bool removed)  taskRemoved,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
 return err(_that.message,_that.kind);case WorkerReply_TaskCreated():
 return taskCreated(_that.projectId,_that.task);case WorkerReply_TaskRenamed():
 return taskRenamed(_that.changed,_that.task);case WorkerReply_TaskPinned():
-return taskPinned(_that.changed,_that.task);}
+return taskPinned(_that.changed,_that.task);case WorkerReply_TaskRemoved():
+return taskRemoved(_that.projectId,_that.taskId,_that.removed);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -174,14 +179,15 @@ return taskPinned(_that.changed,_that.task);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String projectId,  TaskSummary task)?  taskCreated,TResult? Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult? Function( bool changed,  TaskSummary? task)?  taskPinned,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String projectId,  TaskSummary task)?  taskCreated,TResult? Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult? Function( bool changed,  TaskSummary? task)?  taskPinned,TResult? Function( String projectId,  String taskId,  bool removed)?  taskRemoved,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
 return err(_that.message,_that.kind);case WorkerReply_TaskCreated() when taskCreated != null:
 return taskCreated(_that.projectId,_that.task);case WorkerReply_TaskRenamed() when taskRenamed != null:
 return taskRenamed(_that.changed,_that.task);case WorkerReply_TaskPinned() when taskPinned != null:
-return taskPinned(_that.changed,_that.task);case _:
+return taskPinned(_that.changed,_that.task);case WorkerReply_TaskRemoved() when taskRemoved != null:
+return taskRemoved(_that.projectId,_that.taskId,_that.removed);case _:
   return null;
 
 }
@@ -527,6 +533,76 @@ class _$WorkerReply_TaskPinnedCopyWithImpl<$Res>
 changed: null == changed ? _self.changed : changed // ignore: cast_nullable_to_non_nullable
 as bool,task: freezed == task ? _self.task : task // ignore: cast_nullable_to_non_nullable
 as TaskSummary?,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_TaskRemoved extends WorkerReply {
+  const WorkerReply_TaskRemoved({required this.projectId, required this.taskId, required this.removed}): super._();
+  
+
+ final  String projectId;
+ final  String taskId;
+ final  bool removed;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_TaskRemovedCopyWith<WorkerReply_TaskRemoved> get copyWith => _$WorkerReply_TaskRemovedCopyWithImpl<WorkerReply_TaskRemoved>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_TaskRemoved&&(identical(other.projectId, projectId) || other.projectId == projectId)&&(identical(other.taskId, taskId) || other.taskId == taskId)&&(identical(other.removed, removed) || other.removed == removed));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,projectId,taskId,removed);
+
+@override
+String toString() {
+  return 'WorkerReply.taskRemoved(projectId: $projectId, taskId: $taskId, removed: $removed)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_TaskRemovedCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_TaskRemovedCopyWith(WorkerReply_TaskRemoved value, $Res Function(WorkerReply_TaskRemoved) _then) = _$WorkerReply_TaskRemovedCopyWithImpl;
+@useResult
+$Res call({
+ String projectId, String taskId, bool removed
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_TaskRemovedCopyWithImpl<$Res>
+    implements $WorkerReply_TaskRemovedCopyWith<$Res> {
+  _$WorkerReply_TaskRemovedCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_TaskRemoved _self;
+  final $Res Function(WorkerReply_TaskRemoved) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? projectId = null,Object? taskId = null,Object? removed = null,}) {
+  return _then(WorkerReply_TaskRemoved(
+projectId: null == projectId ? _self.projectId : projectId // ignore: cast_nullable_to_non_nullable
+as String,taskId: null == taskId ? _self.taskId : taskId // ignore: cast_nullable_to_non_nullable
+as String,removed: null == removed ? _self.removed : removed // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 

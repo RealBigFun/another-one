@@ -479,6 +479,16 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
         .unwrap_or((false, None))
     }
+
+    fn remove_task(&self, project_id: &str, task_id: &str) -> bool {
+        self.with_state(|state| {
+            state
+                .project_store
+                .remove_task(project_id, task_id)
+                .is_some()
+        })
+        .unwrap_or(false)
+    }
 }
 
 /// Wire `frame::AgentProvider` → core `AgentProviderKind`. Mirror of
