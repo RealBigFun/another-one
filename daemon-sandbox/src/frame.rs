@@ -183,6 +183,10 @@ pub enum Control {
     /// every change in one shot. Reply is
     /// [`WorkerReply::StageAllChangesAck`].
     StageAllChanges { project_id: String },
+    /// `another-one-ojm.5` — unstage every staged change in one shot
+    /// (`git restore --staged -- .` with `git reset HEAD -- .`
+    /// fallback). Reply is [`WorkerReply::UnstageAllChangesAck`].
+    UnstageAllChanges { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -311,6 +315,10 @@ pub enum WorkerReply {
     /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
     /// Inline post-mutation snapshot.
     StageAllChangesAck {
+        changed_files: Vec<ChangedFile>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
+    UnstageAllChangesAck {
         changed_files: Vec<ChangedFile>,
     },
 }

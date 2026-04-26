@@ -457,6 +457,28 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         );
     }
   }
+
+  /// `another-one-ojm.5` — `git restore --staged -- .` over the
+  /// iroh wire.
+  @override
+  Future<void> unstageAllChanges(String projectId) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.unstageAllChanges(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_UnstageAllChangesAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'unstageAllChanges: unexpected reply variant $reply',
+        );
+    }
+  }
 }
 
 /// Exception thrown by `IrohTransport` mutator overrides when the

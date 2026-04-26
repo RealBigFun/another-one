@@ -466,12 +466,7 @@ abstract class DaemonConnection {
   Future<void> stageAllChanges(String projectId);
 
   /// Unstage every currently-staged change.
-  Future<void> unstageAllChanges(String projectId) {
-    throw UnimplementedError(
-      'unstageAllChanges: requires Control::UnstageAllChanges wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<void> unstageAllChanges(String projectId);
 
   /// Discard one file's changes. Untracked files are deleted from
   /// disk; tracked files are restored from HEAD. `untracked` is

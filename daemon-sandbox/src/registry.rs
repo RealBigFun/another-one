@@ -215,6 +215,20 @@ pub trait DaemonRegistry: Send + Sync + 'static {
             ))
         })
     }
+
+    /// `another-one-ojm.5` — unstage every staged change in one shot.
+    fn unstage_all_changes<'a>(
+        &'a self,
+        _project_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
+    > {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "unstage_all_changes: not implemented on this DaemonRegistry"
+            ))
+        })
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

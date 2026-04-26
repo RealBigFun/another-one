@@ -127,6 +127,13 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
   Future<void> tabResize({required int cols, required int rows});
 
+  /// `another-one-ojm.5` — issue a `Control::UnstageAllChanges`
+  /// frame.
+  Future<void> unstageAllChanges({
+    required BigInt requestId,
+    required String projectId,
+  });
+
   /// `another-one-ojm.5` — issue a `Control::UnstageChangedFile`
   /// frame. Same correlation contract as [`Self::stage_changed_file`].
   Future<void> unstageChangedFile({
@@ -436,6 +443,11 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.stageAllChangesAck({
     required List<ChangedFile> changedFiles,
   }) = WorkerReply_StageAllChangesAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
+  const factory WorkerReply.unstageAllChangesAck({
+    required List<ChangedFile> changedFiles,
+  }) = WorkerReply_UnstageAllChangesAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`
