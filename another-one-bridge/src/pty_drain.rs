@@ -37,9 +37,10 @@ use std::thread;
 use std::time::Duration;
 
 use another_one_core::agents::{
-    agent_id_for_provider, TerminalLaunchConfig,
+    agent_id_for_provider, AgentProviderKind, TerminalLaunchConfig, AGENTS,
 };
 use another_one_core::daemon_embed::{RegistryState, TabLaunchRequest};
+use another_one_core::process::TrackedProcess;
 use another_one_core::terminal_launch::{
     spawn_terminal_launch, TerminalLaunchReply,
 };
@@ -99,9 +100,19 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
         loop {
             match rx.try_recv() {
                 Ok(TerminalLaunchReply::Launched {
-                    key, runtime, ..
+                    key,
+                    runtime,
+                    launch_config,
+                    process_id,
                 }) => {
-                    handle_launched(&registry, &mut live, key, runtime);
+                    handle_launched(
+                        &registry,
+                        &mut live,
+                        key,
+                        runtime,
+                        launch_config,
+                        process_id,
+                    );
                 }
                 Ok(TerminalLaunchReply::Output { .. }) => {
                     // The PTY reader already broadcasts each chunk
@@ -207,6 +218,8 @@ fn handle_launched(
     live: &mut HashMap<TerminalRuntimeKey, LiveTab>,
     key: TerminalRuntimeKey,
     mut runtime: PreparedTerminalRuntime,
+    launch_config: TerminalLaunchConfig,
+    process_id: Option<u32>,
 ) {
     // Take writer + broadcast out of the runtime struct without
     // dropping `master` / `child_killer` (which would SIGHUP the
@@ -233,6 +246,10 @@ fn handle_launched(
         state.broadcasts.insert(key.clone(), output_broadcast);
         state.writers.insert(key.clone(), writer_arc.clone());
         state.in_flight_launches.remove(&key);
+        if let Some(pid) = process_id {
+            let tracked = build_tracked_process(&state, &key, &launch_config, pid);
+            state.tracked_processes.insert(key.clone(), tracked);
+        }
         state.pending_post_launch_input.remove(&key)
     };
     if let Some(bytes) = pending_input {
@@ -241,6 +258,83 @@ fn handle_launched(
             let _ = writer.flush();
         }
     }
+}
+
+/// Build the per-tab `TrackedProcess` row the resource sampler
+/// groups by. Mirrors `desktop::AnotherOneApp::tracked_process_for_tab`
+/// + `resource_group_for_key` so the popover's project / task /
+/// session labels match GPUI's exactly.
+fn build_tracked_process(
+    state: &RegistryState,
+    key: &TerminalRuntimeKey,
+    launch_config: &TerminalLaunchConfig,
+    pid: u32,
+) -> TrackedProcess {
+    let (project_key, project_label, task_key, task_label) =
+        resource_group_for_key(state, key);
+    TrackedProcess {
+        pid,
+        key: format!("session:{}:{}", key.section_id.store_key(), key.tab_id),
+        label: launch_config.default_title(),
+        project_key,
+        project_label,
+        task_key,
+        task_label,
+        icon_path: resource_session_icon_path(launch_config.provider),
+    }
+}
+
+fn resource_group_for_key(
+    state: &RegistryState,
+    key: &TerminalRuntimeKey,
+) -> (String, String, String, String) {
+    let store = &state.project_store;
+    if let Some(task_id) = key.section_id.task_id.as_deref() {
+        if let Some(task) = store.task(task_id) {
+            let project_id = task.root_project_id.clone();
+            let project_label = store
+                .project(&project_id)
+                .map(|project| project.name.clone())
+                .unwrap_or_else(|| project_id.clone());
+            let task_label = if task.name.trim().is_empty() {
+                task.branch_name.clone()
+            } else {
+                task.name.clone()
+            };
+            return (
+                format!("resource-project:{project_id}"),
+                project_label,
+                format!("resource-task:{}", task.id),
+                task_label,
+            );
+        }
+    }
+    let project_id = key.section_id.project_id.clone();
+    let project = store.project(&project_id);
+    let project_label = project
+        .map(|project| project.name.clone())
+        .unwrap_or_else(|| project_id.clone());
+    let task_label = project
+        .and_then(|project| project.worktree_name.clone())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| key.section_id.branch_name.clone());
+    (
+        format!("resource-project:{project_id}"),
+        project_label,
+        format!("resource-task:{}", key.section_id.store_key()),
+        task_label,
+    )
+}
+
+fn resource_session_icon_path(provider: Option<AgentProviderKind>) -> &'static str {
+    provider
+        .and_then(|provider| {
+            AGENTS
+                .iter()
+                .find(|agent| agent.provider == Some(provider))
+                .map(|agent| agent.icon)
+        })
+        .unwrap_or("assets/icons/icons__terminal.svg")
 }
 
 /// Tab's PTY exited or failed to launch. Drop the live entry so
@@ -260,4 +354,5 @@ fn handle_terminated(
     state.writers.remove(key);
     state.in_flight_launches.remove(key);
     state.pending_post_launch_input.remove(key);
+    state.tracked_processes.remove(key);
 }

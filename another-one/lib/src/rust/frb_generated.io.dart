@@ -129,6 +129,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_resolved_project_branch_settings_dto(dynamic raw);
 
   @protected
+  ResourceUsageSnapshotDto dco_decode_box_autoadd_resource_usage_snapshot_dto(
+    dynamic raw,
+  );
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -154,6 +159,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   EnabledAgentsView dco_decode_enabled_agents_view(dynamic raw);
+
+  @protected
+  double dco_decode_f_64(dynamic raw);
 
   @protected
   GitActionScriptsView dco_decode_git_action_scripts_view(dynamic raw);
@@ -214,6 +222,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ProjectSummary> dco_decode_list_project_summary(dynamic raw);
+
+  @protected
+  List<ResourceUsageProjectDto> dco_decode_list_resource_usage_project_dto(
+    dynamic raw,
+  );
+
+  @protected
+  List<ResourceUsageSessionDto> dco_decode_list_resource_usage_session_dto(
+    dynamic raw,
+  );
+
+  @protected
+  List<ResourceUsageTaskDto> dco_decode_list_resource_usage_task_dto(
+    dynamic raw,
+  );
 
   @protected
   List<ShortcutSettingsRow> dco_decode_list_shortcut_settings_row(dynamic raw);
@@ -285,6 +308,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_opt_box_autoadd_resolved_project_branch_settings_dto(dynamic raw);
 
   @protected
+  ResourceUsageSnapshotDto?
+  dco_decode_opt_box_autoadd_resource_usage_snapshot_dto(dynamic raw);
+
+  @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -346,6 +373,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ResourceSample dco_decode_resource_sample(dynamic raw);
+
+  @protected
+  ResourceUsageProjectDto dco_decode_resource_usage_project_dto(dynamic raw);
+
+  @protected
+  ResourceUsageSessionDto dco_decode_resource_usage_session_dto(dynamic raw);
+
+  @protected
+  ResourceUsageSnapshotDto dco_decode_resource_usage_snapshot_dto(dynamic raw);
+
+  @protected
+  ResourceUsageTaskDto dco_decode_resource_usage_task_dto(dynamic raw);
 
   @protected
   ShortcutSettingsRow dco_decode_shortcut_settings_row(dynamic raw);
@@ -497,6 +536,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ResourceUsageSnapshotDto sse_decode_box_autoadd_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
@@ -528,6 +572,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   EnabledAgentsView sse_decode_enabled_agents_view(
     SseDeserializer deserializer,
   );
+
+  @protected
+  double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
   GitActionScriptsView sse_decode_git_action_scripts_view(
@@ -604,6 +651,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ProjectSummary> sse_decode_list_project_summary(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ResourceUsageProjectDto> sse_decode_list_resource_usage_project_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ResourceUsageSessionDto> sse_decode_list_resource_usage_session_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ResourceUsageTaskDto> sse_decode_list_resource_usage_task_dto(
     SseDeserializer deserializer,
   );
 
@@ -693,6 +755,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ResourceUsageSnapshotDto?
+  sse_decode_opt_box_autoadd_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
@@ -772,6 +840,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ResourceSample sse_decode_resource_sample(SseDeserializer deserializer);
+
+  @protected
+  ResourceUsageProjectDto sse_decode_resource_usage_project_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ResourceUsageSessionDto sse_decode_resource_usage_session_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ResourceUsageSnapshotDto sse_decode_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ResourceUsageTaskDto sse_decode_resource_usage_task_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ShortcutSettingsRow sse_decode_shortcut_settings_row(
@@ -957,6 +1045,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_resource_usage_snapshot_dto(
+    ResourceUsageSnapshotDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
@@ -994,6 +1088,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     EnabledAgentsView self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_git_action_scripts_view(
@@ -1088,6 +1185,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_project_summary(
     List<ProjectSummary> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_resource_usage_project_dto(
+    List<ResourceUsageProjectDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_resource_usage_session_dto(
+    List<ResourceUsageSessionDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_resource_usage_task_dto(
+    List<ResourceUsageTaskDto> self,
     SseSerializer serializer,
   );
 
@@ -1197,6 +1312,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_resource_usage_snapshot_dto(
+    ResourceUsageSnapshotDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
@@ -1298,6 +1419,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_resource_sample(
     ResourceSample self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_resource_usage_project_dto(
+    ResourceUsageProjectDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_resource_usage_session_dto(
+    ResourceUsageSessionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_resource_usage_snapshot_dto(
+    ResourceUsageSnapshotDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_resource_usage_task_dto(
+    ResourceUsageTaskDto self,
     SseSerializer serializer,
   );
 

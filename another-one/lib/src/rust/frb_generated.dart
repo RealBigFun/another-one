@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 807938888;
+  int get rustContentHash => -870975113;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -538,6 +538,9 @@ abstract class RustLibApi extends BaseApi {
   Future<ResourceSample> crateApiResourcesReadAppResourceSample();
 
   Future<BuildInfo> crateApiBuildInfoReadBuildInfo();
+
+  Future<ResourceUsageSnapshotDto?>
+  crateApiResourcesReadResourceUsageSnapshot();
 
   Future<void> crateApiPairRegenerateLocalPairing();
 
@@ -3946,7 +3949,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "read_build_info", argNames: []);
 
   @override
-  Future<void> crateApiPairRegenerateLocalPairing() {
+  Future<ResourceUsageSnapshotDto?>
+  crateApiResourcesReadResourceUsageSnapshot() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -3955,6 +3959,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 86,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_opt_box_autoadd_resource_usage_snapshot_dto,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiResourcesReadResourceUsageSnapshotConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiResourcesReadResourceUsageSnapshotConstMeta =>
+      const TaskConstMeta(
+        debugName: "read_resource_usage_snapshot",
+        argNames: [],
+      );
+
+  @override
+  Future<void> crateApiPairRegenerateLocalPairing() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 87,
             port: port_,
           );
         },
@@ -3982,7 +4017,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 87,
+            funcId: 88,
             port: port_,
           );
         },
@@ -4218,6 +4253,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ResourceUsageSnapshotDto dco_decode_box_autoadd_resource_usage_snapshot_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_resource_usage_snapshot_dto(raw);
+  }
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_u_64(raw);
@@ -4333,6 +4376,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       agents: dco_decode_list_agent_summary_dto(arr[0]),
       defaultAgentId: dco_decode_opt_String(arr[1]),
     );
+  }
+
+  @protected
+  double dco_decode_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
   }
 
   @protected
@@ -4463,6 +4512,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<ProjectSummary> dco_decode_list_project_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_project_summary).toList();
+  }
+
+  @protected
+  List<ResourceUsageProjectDto> dco_decode_list_resource_usage_project_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_resource_usage_project_dto)
+        .toList();
+  }
+
+  @protected
+  List<ResourceUsageSessionDto> dco_decode_list_resource_usage_session_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_resource_usage_session_dto)
+        .toList();
+  }
+
+  @protected
+  List<ResourceUsageTaskDto> dco_decode_list_resource_usage_task_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_resource_usage_task_dto)
+        .toList();
   }
 
   @protected
@@ -4652,6 +4731,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return raw == null
         ? null
         : dco_decode_box_autoadd_resolved_project_branch_settings_dto(raw);
+  }
+
+  @protected
+  ResourceUsageSnapshotDto?
+  dco_decode_opt_box_autoadd_resource_usage_snapshot_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_resource_usage_snapshot_dto(raw);
   }
 
   @protected
@@ -4861,6 +4949,69 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       cpuTimeNs: dco_decode_u_64(arr[1]),
       memoryBytes: dco_decode_u_64(arr[2]),
       totalMemoryBytes: dco_decode_opt_box_autoadd_u_64(arr[3]),
+    );
+  }
+
+  @protected
+  ResourceUsageProjectDto dco_decode_resource_usage_project_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return ResourceUsageProjectDto(
+      key: dco_decode_String(arr[0]),
+      label: dco_decode_String(arr[1]),
+      cpuPercent: dco_decode_f_64(arr[2]),
+      memoryBytes: dco_decode_u_64(arr[3]),
+      tasks: dco_decode_list_resource_usage_task_dto(arr[4]),
+    );
+  }
+
+  @protected
+  ResourceUsageSessionDto dco_decode_resource_usage_session_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return ResourceUsageSessionDto(
+      key: dco_decode_String(arr[0]),
+      label: dco_decode_String(arr[1]),
+      iconPath: dco_decode_String(arr[2]),
+      cpuPercent: dco_decode_f_64(arr[3]),
+      memoryBytes: dco_decode_u_64(arr[4]),
+    );
+  }
+
+  @protected
+  ResourceUsageSnapshotDto dco_decode_resource_usage_snapshot_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return ResourceUsageSnapshotDto(
+      totalCpuPercent: dco_decode_f_64(arr[0]),
+      totalMemoryBytes: dco_decode_u_64(arr[1]),
+      ramSharePercent: dco_decode_f_64(arr[2]),
+      sessionCount: dco_decode_u_64(arr[3]),
+      appLabel: dco_decode_String(arr[4]),
+      appCpuPercent: dco_decode_f_64(arr[5]),
+      appMemoryBytes: dco_decode_u_64(arr[6]),
+      projects: dco_decode_list_resource_usage_project_dto(arr[7]),
+    );
+  }
+
+  @protected
+  ResourceUsageTaskDto dco_decode_resource_usage_task_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return ResourceUsageTaskDto(
+      key: dco_decode_String(arr[0]),
+      label: dco_decode_String(arr[1]),
+      cpuPercent: dco_decode_f_64(arr[2]),
+      memoryBytes: dco_decode_u_64(arr[3]),
+      sessions: dco_decode_list_resource_usage_session_dto(arr[4]),
     );
   }
 
@@ -5233,6 +5384,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ResourceUsageSnapshotDto sse_decode_box_autoadd_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_resource_usage_snapshot_dto(deserializer));
+  }
+
+  @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_u_64(deserializer));
@@ -5370,6 +5529,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       agents: var_agents,
       defaultAgentId: var_defaultAgentId,
     );
+  }
+
+  @protected
+  double sse_decode_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat64();
   }
 
   @protected
@@ -5595,6 +5760,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <ProjectSummary>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_project_summary(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ResourceUsageProjectDto> sse_decode_list_resource_usage_project_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ResourceUsageProjectDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_resource_usage_project_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ResourceUsageSessionDto> sse_decode_list_resource_usage_session_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ResourceUsageSessionDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_resource_usage_session_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ResourceUsageTaskDto> sse_decode_list_resource_usage_task_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ResourceUsageTaskDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_resource_usage_task_dto(deserializer));
     }
     return ans_;
   }
@@ -5858,6 +6065,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       return (sse_decode_box_autoadd_resolved_project_branch_settings_dto(
         deserializer,
       ));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  ResourceUsageSnapshotDto?
+  sse_decode_opt_box_autoadd_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_resource_usage_snapshot_dto(deserializer));
     } else {
       return null;
     }
@@ -6142,6 +6363,88 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       cpuTimeNs: var_cpuTimeNs,
       memoryBytes: var_memoryBytes,
       totalMemoryBytes: var_totalMemoryBytes,
+    );
+  }
+
+  @protected
+  ResourceUsageProjectDto sse_decode_resource_usage_project_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_key = sse_decode_String(deserializer);
+    var var_label = sse_decode_String(deserializer);
+    var var_cpuPercent = sse_decode_f_64(deserializer);
+    var var_memoryBytes = sse_decode_u_64(deserializer);
+    var var_tasks = sse_decode_list_resource_usage_task_dto(deserializer);
+    return ResourceUsageProjectDto(
+      key: var_key,
+      label: var_label,
+      cpuPercent: var_cpuPercent,
+      memoryBytes: var_memoryBytes,
+      tasks: var_tasks,
+    );
+  }
+
+  @protected
+  ResourceUsageSessionDto sse_decode_resource_usage_session_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_key = sse_decode_String(deserializer);
+    var var_label = sse_decode_String(deserializer);
+    var var_iconPath = sse_decode_String(deserializer);
+    var var_cpuPercent = sse_decode_f_64(deserializer);
+    var var_memoryBytes = sse_decode_u_64(deserializer);
+    return ResourceUsageSessionDto(
+      key: var_key,
+      label: var_label,
+      iconPath: var_iconPath,
+      cpuPercent: var_cpuPercent,
+      memoryBytes: var_memoryBytes,
+    );
+  }
+
+  @protected
+  ResourceUsageSnapshotDto sse_decode_resource_usage_snapshot_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_totalCpuPercent = sse_decode_f_64(deserializer);
+    var var_totalMemoryBytes = sse_decode_u_64(deserializer);
+    var var_ramSharePercent = sse_decode_f_64(deserializer);
+    var var_sessionCount = sse_decode_u_64(deserializer);
+    var var_appLabel = sse_decode_String(deserializer);
+    var var_appCpuPercent = sse_decode_f_64(deserializer);
+    var var_appMemoryBytes = sse_decode_u_64(deserializer);
+    var var_projects = sse_decode_list_resource_usage_project_dto(deserializer);
+    return ResourceUsageSnapshotDto(
+      totalCpuPercent: var_totalCpuPercent,
+      totalMemoryBytes: var_totalMemoryBytes,
+      ramSharePercent: var_ramSharePercent,
+      sessionCount: var_sessionCount,
+      appLabel: var_appLabel,
+      appCpuPercent: var_appCpuPercent,
+      appMemoryBytes: var_appMemoryBytes,
+      projects: var_projects,
+    );
+  }
+
+  @protected
+  ResourceUsageTaskDto sse_decode_resource_usage_task_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_key = sse_decode_String(deserializer);
+    var var_label = sse_decode_String(deserializer);
+    var var_cpuPercent = sse_decode_f_64(deserializer);
+    var var_memoryBytes = sse_decode_u_64(deserializer);
+    var var_sessions = sse_decode_list_resource_usage_session_dto(deserializer);
+    return ResourceUsageTaskDto(
+      key: var_key,
+      label: var_label,
+      cpuPercent: var_cpuPercent,
+      memoryBytes: var_memoryBytes,
+      sessions: var_sessions,
     );
   }
 
@@ -6543,6 +6846,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_resource_usage_snapshot_dto(
+    ResourceUsageSnapshotDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_resource_usage_snapshot_dto(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_64(self, serializer);
@@ -6635,6 +6947,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_agent_summary_dto(self.agents, serializer);
     sse_encode_opt_String(self.defaultAgentId, serializer);
+  }
+
+  @protected
+  void sse_encode_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat64(self);
   }
 
   @protected
@@ -6839,6 +7157,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_project_summary(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_resource_usage_project_dto(
+    List<ResourceUsageProjectDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_resource_usage_project_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_resource_usage_session_dto(
+    List<ResourceUsageSessionDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_resource_usage_session_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_resource_usage_task_dto(
+    List<ResourceUsageTaskDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_resource_usage_task_dto(item, serializer);
     }
   }
 
@@ -7065,6 +7419,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         self,
         serializer,
       );
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_resource_usage_snapshot_dto(
+    ResourceUsageSnapshotDto? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_resource_usage_snapshot_dto(self, serializer);
     }
   }
 
@@ -7301,6 +7668,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_64(self.cpuTimeNs, serializer);
     sse_encode_u_64(self.memoryBytes, serializer);
     sse_encode_opt_box_autoadd_u_64(self.totalMemoryBytes, serializer);
+  }
+
+  @protected
+  void sse_encode_resource_usage_project_dto(
+    ResourceUsageProjectDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.key, serializer);
+    sse_encode_String(self.label, serializer);
+    sse_encode_f_64(self.cpuPercent, serializer);
+    sse_encode_u_64(self.memoryBytes, serializer);
+    sse_encode_list_resource_usage_task_dto(self.tasks, serializer);
+  }
+
+  @protected
+  void sse_encode_resource_usage_session_dto(
+    ResourceUsageSessionDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.key, serializer);
+    sse_encode_String(self.label, serializer);
+    sse_encode_String(self.iconPath, serializer);
+    sse_encode_f_64(self.cpuPercent, serializer);
+    sse_encode_u_64(self.memoryBytes, serializer);
+  }
+
+  @protected
+  void sse_encode_resource_usage_snapshot_dto(
+    ResourceUsageSnapshotDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self.totalCpuPercent, serializer);
+    sse_encode_u_64(self.totalMemoryBytes, serializer);
+    sse_encode_f_64(self.ramSharePercent, serializer);
+    sse_encode_u_64(self.sessionCount, serializer);
+    sse_encode_String(self.appLabel, serializer);
+    sse_encode_f_64(self.appCpuPercent, serializer);
+    sse_encode_u_64(self.appMemoryBytes, serializer);
+    sse_encode_list_resource_usage_project_dto(self.projects, serializer);
+  }
+
+  @protected
+  void sse_encode_resource_usage_task_dto(
+    ResourceUsageTaskDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.key, serializer);
+    sse_encode_String(self.label, serializer);
+    sse_encode_f_64(self.cpuPercent, serializer);
+    sse_encode_u_64(self.memoryBytes, serializer);
+    sse_encode_list_resource_usage_session_dto(self.sessions, serializer);
   }
 
   @protected

@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 807938888;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -870975113;
 
 // Section: executor
 
@@ -5105,6 +5105,39 @@ fn wire__crate__api__build_info__read_build_info_impl(
         },
     )
 }
+fn wire__crate__api__resources__read_resource_usage_snapshot_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "read_resource_usage_snapshot",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Result::<_, ()>::Ok(crate::api::resources::read_resource_usage_snapshot())?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__pair__regenerate_local_pairing_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -5500,6 +5533,13 @@ impl SseDecode for crate::api::local_session::EnabledAgentsView {
     }
 }
 
+impl SseDecode for f64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_f64::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for crate::api::local_session::GitActionScriptsView {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -5718,6 +5758,44 @@ impl SseDecode for Vec<crate::api::iroh_client::ProjectSummary> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::iroh_client::ProjectSummary>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::resources::ResourceUsageProjectDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::resources::ResourceUsageProjectDto>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::resources::ResourceUsageSessionDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::resources::ResourceUsageSessionDto>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::resources::ResourceUsageTaskDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::resources::ResourceUsageTaskDto>::sse_decode(
                 deserializer,
             ));
         }
@@ -5994,6 +6072,19 @@ impl SseDecode for Option<crate::api::local_session::ResolvedProjectBranchSettin
                 <crate::api::local_session::ResolvedProjectBranchSettingsDto>::sse_decode(
                     deserializer,
                 ),
+            );
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::resources::ResourceUsageSnapshotDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(
+                <crate::api::resources::ResourceUsageSnapshotDto>::sse_decode(deserializer),
             );
         } else {
             return None;
@@ -6319,6 +6410,87 @@ impl SseDecode for crate::api::resources::ResourceSample {
             cpu_time_ns: var_cpuTimeNs,
             memory_bytes: var_memoryBytes,
             total_memory_bytes: var_totalMemoryBytes,
+        };
+    }
+}
+
+impl SseDecode for crate::api::resources::ResourceUsageProjectDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_key = <String>::sse_decode(deserializer);
+        let mut var_label = <String>::sse_decode(deserializer);
+        let mut var_cpuPercent = <f64>::sse_decode(deserializer);
+        let mut var_memoryBytes = <u64>::sse_decode(deserializer);
+        let mut var_tasks =
+            <Vec<crate::api::resources::ResourceUsageTaskDto>>::sse_decode(deserializer);
+        return crate::api::resources::ResourceUsageProjectDto {
+            key: var_key,
+            label: var_label,
+            cpu_percent: var_cpuPercent,
+            memory_bytes: var_memoryBytes,
+            tasks: var_tasks,
+        };
+    }
+}
+
+impl SseDecode for crate::api::resources::ResourceUsageSessionDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_key = <String>::sse_decode(deserializer);
+        let mut var_label = <String>::sse_decode(deserializer);
+        let mut var_iconPath = <String>::sse_decode(deserializer);
+        let mut var_cpuPercent = <f64>::sse_decode(deserializer);
+        let mut var_memoryBytes = <u64>::sse_decode(deserializer);
+        return crate::api::resources::ResourceUsageSessionDto {
+            key: var_key,
+            label: var_label,
+            icon_path: var_iconPath,
+            cpu_percent: var_cpuPercent,
+            memory_bytes: var_memoryBytes,
+        };
+    }
+}
+
+impl SseDecode for crate::api::resources::ResourceUsageSnapshotDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_totalCpuPercent = <f64>::sse_decode(deserializer);
+        let mut var_totalMemoryBytes = <u64>::sse_decode(deserializer);
+        let mut var_ramSharePercent = <f64>::sse_decode(deserializer);
+        let mut var_sessionCount = <u64>::sse_decode(deserializer);
+        let mut var_appLabel = <String>::sse_decode(deserializer);
+        let mut var_appCpuPercent = <f64>::sse_decode(deserializer);
+        let mut var_appMemoryBytes = <u64>::sse_decode(deserializer);
+        let mut var_projects =
+            <Vec<crate::api::resources::ResourceUsageProjectDto>>::sse_decode(deserializer);
+        return crate::api::resources::ResourceUsageSnapshotDto {
+            total_cpu_percent: var_totalCpuPercent,
+            total_memory_bytes: var_totalMemoryBytes,
+            ram_share_percent: var_ramSharePercent,
+            session_count: var_sessionCount,
+            app_label: var_appLabel,
+            app_cpu_percent: var_appCpuPercent,
+            app_memory_bytes: var_appMemoryBytes,
+            projects: var_projects,
+        };
+    }
+}
+
+impl SseDecode for crate::api::resources::ResourceUsageTaskDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_key = <String>::sse_decode(deserializer);
+        let mut var_label = <String>::sse_decode(deserializer);
+        let mut var_cpuPercent = <f64>::sse_decode(deserializer);
+        let mut var_memoryBytes = <u64>::sse_decode(deserializer);
+        let mut var_sessions =
+            <Vec<crate::api::resources::ResourceUsageSessionDto>>::sse_decode(deserializer);
+        return crate::api::resources::ResourceUsageTaskDto {
+            key: var_key,
+            label: var_label,
+            cpu_percent: var_cpuPercent,
+            memory_bytes: var_memoryBytes,
+            sessions: var_sessions,
         };
     }
 }
@@ -6964,10 +7136,16 @@ fn pde_ffi_dispatcher_primary_impl(
             data_len,
         ),
         85 => wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len),
-        86 => {
+        86 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        87 => {
             wire__crate__api__pair__regenerate_local_pairing_impl(port, ptr, rust_vec_len, data_len)
         }
-        87 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -7900,6 +8078,105 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::resources::ResourceSample>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::resources::ResourceUsageProjectDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.key.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+            self.cpu_percent.into_into_dart().into_dart(),
+            self.memory_bytes.into_into_dart().into_dart(),
+            self.tasks.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::resources::ResourceUsageProjectDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::resources::ResourceUsageProjectDto>
+    for crate::api::resources::ResourceUsageProjectDto
+{
+    fn into_into_dart(self) -> crate::api::resources::ResourceUsageProjectDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::resources::ResourceUsageSessionDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.key.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+            self.icon_path.into_into_dart().into_dart(),
+            self.cpu_percent.into_into_dart().into_dart(),
+            self.memory_bytes.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::resources::ResourceUsageSessionDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::resources::ResourceUsageSessionDto>
+    for crate::api::resources::ResourceUsageSessionDto
+{
+    fn into_into_dart(self) -> crate::api::resources::ResourceUsageSessionDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::resources::ResourceUsageSnapshotDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.total_cpu_percent.into_into_dart().into_dart(),
+            self.total_memory_bytes.into_into_dart().into_dart(),
+            self.ram_share_percent.into_into_dart().into_dart(),
+            self.session_count.into_into_dart().into_dart(),
+            self.app_label.into_into_dart().into_dart(),
+            self.app_cpu_percent.into_into_dart().into_dart(),
+            self.app_memory_bytes.into_into_dart().into_dart(),
+            self.projects.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::resources::ResourceUsageSnapshotDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::resources::ResourceUsageSnapshotDto>
+    for crate::api::resources::ResourceUsageSnapshotDto
+{
+    fn into_into_dart(self) -> crate::api::resources::ResourceUsageSnapshotDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::resources::ResourceUsageTaskDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.key.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+            self.cpu_percent.into_into_dart().into_dart(),
+            self.memory_bytes.into_into_dart().into_dart(),
+            self.sessions.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::resources::ResourceUsageTaskDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::resources::ResourceUsageTaskDto>
+    for crate::api::resources::ResourceUsageTaskDto
+{
+    fn into_into_dart(self) -> crate::api::resources::ResourceUsageTaskDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::local_session::ShortcutSettingsRow {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -8278,6 +8555,13 @@ impl SseEncode for crate::api::local_session::EnabledAgentsView {
     }
 }
 
+impl SseEncode for f64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_f64::<NativeEndian>(self).unwrap();
+    }
+}
+
 impl SseEncode for crate::api::local_session::GitActionScriptsView {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -8441,6 +8725,36 @@ impl SseEncode for Vec<crate::api::iroh_client::ProjectSummary> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::iroh_client::ProjectSummary>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::resources::ResourceUsageProjectDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::resources::ResourceUsageProjectDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::resources::ResourceUsageSessionDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::resources::ResourceUsageSessionDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::resources::ResourceUsageTaskDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::resources::ResourceUsageTaskDto>::sse_encode(item, serializer);
         }
     }
 }
@@ -8664,6 +8978,16 @@ impl SseEncode for Option<crate::api::local_session::ResolvedProjectBranchSettin
             <crate::api::local_session::ResolvedProjectBranchSettingsDto>::sse_encode(
                 value, serializer,
             );
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::resources::ResourceUsageSnapshotDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::resources::ResourceUsageSnapshotDto>::sse_encode(value, serializer);
         }
     }
 }
@@ -8926,6 +9250,59 @@ impl SseEncode for crate::api::resources::ResourceSample {
         <u64>::sse_encode(self.cpu_time_ns, serializer);
         <u64>::sse_encode(self.memory_bytes, serializer);
         <Option<u64>>::sse_encode(self.total_memory_bytes, serializer);
+    }
+}
+
+impl SseEncode for crate::api::resources::ResourceUsageProjectDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.key, serializer);
+        <String>::sse_encode(self.label, serializer);
+        <f64>::sse_encode(self.cpu_percent, serializer);
+        <u64>::sse_encode(self.memory_bytes, serializer);
+        <Vec<crate::api::resources::ResourceUsageTaskDto>>::sse_encode(self.tasks, serializer);
+    }
+}
+
+impl SseEncode for crate::api::resources::ResourceUsageSessionDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.key, serializer);
+        <String>::sse_encode(self.label, serializer);
+        <String>::sse_encode(self.icon_path, serializer);
+        <f64>::sse_encode(self.cpu_percent, serializer);
+        <u64>::sse_encode(self.memory_bytes, serializer);
+    }
+}
+
+impl SseEncode for crate::api::resources::ResourceUsageSnapshotDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f64>::sse_encode(self.total_cpu_percent, serializer);
+        <u64>::sse_encode(self.total_memory_bytes, serializer);
+        <f64>::sse_encode(self.ram_share_percent, serializer);
+        <u64>::sse_encode(self.session_count, serializer);
+        <String>::sse_encode(self.app_label, serializer);
+        <f64>::sse_encode(self.app_cpu_percent, serializer);
+        <u64>::sse_encode(self.app_memory_bytes, serializer);
+        <Vec<crate::api::resources::ResourceUsageProjectDto>>::sse_encode(
+            self.projects,
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::resources::ResourceUsageTaskDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.key, serializer);
+        <String>::sse_encode(self.label, serializer);
+        <f64>::sse_encode(self.cpu_percent, serializer);
+        <u64>::sse_encode(self.memory_bytes, serializer);
+        <Vec<crate::api::resources::ResourceUsageSessionDto>>::sse_encode(
+            self.sessions,
+            serializer,
+        );
     }
 }
 

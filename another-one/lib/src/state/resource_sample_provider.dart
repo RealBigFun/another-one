@@ -10,12 +10,14 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../rust/api/resources.dart' as resources_api;
+import '../rust/api/resources.dart' show ResourceUsageSnapshotDto;
 
 class ResourceUsage {
   const ResourceUsage({
     required this.cpuPercent,
     required this.memoryMib,
     required this.totalMemoryMib,
+    this.snapshot,
   });
 
   /// CPU% over the last sampling window — `null` until we've taken
@@ -28,6 +30,12 @@ class ResourceUsage {
   /// Total system memory in MiB if the platform reports it
   /// (Linux/macOS yes, Windows no).
   final double? totalMemoryMib;
+
+  /// Hierarchical snapshot — APP SHELL row + project → task → session
+  /// tree. `null` until the embedded daemon has booted and the first
+  /// `read_resource_usage_snapshot` returns. Populated on every tick
+  /// once available.
+  final ResourceUsageSnapshotDto? snapshot;
 }
 
 class _ResourceUsageNotifier extends StateNotifier<ResourceUsage?> {
@@ -68,11 +76,21 @@ class _ResourceUsageNotifier extends StateNotifier<ResourceUsage?> {
       }
       _lastCpuTimeNs = sample.cpuTimeNs;
       _lastTimestampMs = sample.timestampMs;
+      // Pull the hierarchical tree on the same tick — it has its own
+      // delta-state on the Rust side, so calling it once per 1.5s
+      // matches the GPUI desktop's `RESOURCE_SAMPLE_INTERVAL`.
+      ResourceUsageSnapshotDto? snapshot;
+      try {
+        snapshot = await resources_api.readResourceUsageSnapshot();
+      } catch (_) {
+        snapshot = null;
+      }
       if (!mounted) return;
       state = ResourceUsage(
         cpuPercent: cpuPct,
         memoryMib: memMib,
         totalMemoryMib: totalMib,
+        snapshot: snapshot,
       );
     } catch (_) {
       // Don't surface — the indicator just shows the previous value

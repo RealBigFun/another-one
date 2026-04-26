@@ -33,6 +33,11 @@ import '../../rust/api/local_session.dart'
         ProjectActionKindDto_Shell,
         ProjectActionScopeDto,
         PullRequestStateDto;
+import '../../rust/api/resources.dart'
+    show
+        ResourceUsageProjectDto,
+        ResourceUsageSessionDto,
+        ResourceUsageTaskDto;
 import '../../state/active_git_action_provider.dart';
 import '../../state/active_git_state_provider.dart';
 import '../../state/active_project_provider.dart';
@@ -133,10 +138,35 @@ class _ResourceIndicator extends ConsumerStatefulWidget {
       _ResourceIndicatorState();
 }
 
+/// Build-time flag — `--dart-define=ANOTHER_ONE_AUTO_OPEN=resource-popover`
+/// auto-opens the resource indicator popover after the first frame.
+/// Used by screenshot tooling to capture the popover without driving
+/// the cursor through synthetic input.
+const String _kAutoOpen =
+    String.fromEnvironment('ANOTHER_ONE_AUTO_OPEN', defaultValue: '');
+
 class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
   bool _hover = false;
   final OverlayPortalController _popover = OverlayPortalController();
   final LayerLink _link = LayerLink();
+  // Stable across repolls — collapsing a project/task in GPUI is
+  // tracked the same way (`AnotherOneApp::resource_collapsed_nodes`).
+  final Set<String> _collapsedNodes = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    if (_kAutoOpen == 'resource-popover') {
+      // 800ms gives the embedded daemon time to publish at least one
+      // tracked-process sample so the popover renders the tree on
+      // open instead of the empty-state pill.
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted && !_popover.isShowing) {
+          setState(_popover.show);
+        }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -247,14 +277,19 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
   /// 360w, rounded(14), bg #2b2d31, border white@0.08. Header
   /// (`RESOURCE USAGE` muted + refresh icon), APP SHELL section
   /// (3 stat cards: CPU / MEM / SESSIONS), TERMINAL SESSIONS
-  /// section (currently an empty-state — the hierarchical tree
-  /// needs a richer bridge surface, tracked as another-one #72).
+  /// section (project → task → session tree, sorted by memory
+  /// then CPU then label, matching GPUI's `ResourceIndicator`).
   Widget _buildPopover(
     BuildContext context,
     ResourceUsage? usage,
     String cpuLabel,
     String memLabel,
   ) {
+    final snapshot = usage?.snapshot;
+    final sessionCount = snapshot != null
+        ? snapshot.sessionCount.toString()
+        : '—';
+    final projects = snapshot?.projects ?? const <ResourceUsageProjectDto>[];
     return Stack(
       children: [
         // Outside-tap dismiss.
@@ -272,7 +307,7 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
           child: Material(
             color: Colors.transparent,
             child: Container(
-              width: 360,
+              width: 420,
               decoration: BoxDecoration(
                 color: AppTokens.cardBg,
                 borderRadius: BorderRadius.circular(14),
@@ -353,14 +388,10 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        const Expanded(
-                          // Session count requires the hierarchical
-                          // sampler — show em-dash until that lands
-                          // (#72), matching how the indicator's own
-                          // labels show "— %" / "— MB" pre-sample.
+                        Expanded(
                           child: _StatCard(
                             title: 'SESSIONS',
-                            value: '—',
+                            value: sessionCount,
                           ),
                         ),
                       ],
@@ -378,30 +409,46 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
                       ),
                     ),
                   ),
-                  // Empty state — hierarchical sampler is the
-                  // follow-up tracked under bd #72. Until that
-                  // lands, the panel only has the app-level row.
                   Padding(
                     padding:
                         const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0x14000000),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Text(
-                        'No active terminal sessions',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Color(0x94FFFFFF),
-                        ),
-                      ),
-                    ),
+                    child: projects.isEmpty
+                        ? Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0x14000000),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Text(
+                              'No active terminal sessions',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0x94FFFFFF),
+                              ),
+                            ),
+                          )
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (final project in projects)
+                                _ProjectGroup(
+                                  project: project,
+                                  collapsed: _collapsedNodes
+                                      .contains(project.key),
+                                  collapsedNodes: _collapsedNodes,
+                                  onToggle: (key) => setState(() {
+                                    if (!_collapsedNodes.add(key)) {
+                                      _collapsedNodes.remove(key);
+                                    }
+                                  }),
+                                ),
+                            ],
+                          ),
                   ),
                 ],
               ),
@@ -513,6 +560,244 @@ class _StatCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+String _formatMemory(BigInt bytes) {
+  const kib = 1024.0;
+  const mib = kib * 1024.0;
+  const gib = mib * 1024.0;
+  final b = bytes.toDouble();
+  if (b >= gib) return '${(b / gib).toStringAsFixed(1)} GB';
+  if (b >= mib) return '${(b / mib).toStringAsFixed(1)} MB';
+  if (b >= kib) return '${(b / kib).toStringAsFixed(0)} KB';
+  return '${b.toStringAsFixed(0)} B';
+}
+
+class _ProjectGroup extends StatelessWidget {
+  const _ProjectGroup({
+    required this.project,
+    required this.collapsed,
+    required this.collapsedNodes,
+    required this.onToggle,
+  });
+
+  final ResourceUsageProjectDto project;
+  final bool collapsed;
+  final Set<String> collapsedNodes;
+  final void Function(String key) onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _GroupRow(
+          label: project.label,
+          cpuPercent: project.cpuPercent,
+          memoryBytes: project.memoryBytes,
+          indent: 0,
+          collapsed: collapsed,
+          textColor: const Color(0xD1FFFFFF),
+          onTap: () => onToggle(project.key),
+        ),
+        if (!collapsed)
+          for (final task in project.tasks)
+            _TaskGroup(
+              task: task,
+              collapsed: collapsedNodes.contains(task.key),
+              onToggle: onToggle,
+            ),
+      ],
+    );
+  }
+}
+
+class _TaskGroup extends StatelessWidget {
+  const _TaskGroup({
+    required this.task,
+    required this.collapsed,
+    required this.onToggle,
+  });
+
+  final ResourceUsageTaskDto task;
+  final bool collapsed;
+  final void Function(String key) onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _GroupRow(
+          label: task.label,
+          cpuPercent: task.cpuPercent,
+          memoryBytes: task.memoryBytes,
+          indent: 20,
+          collapsed: collapsed,
+          textColor: const Color(0xBDFFFFFF),
+          onTap: () => onToggle(task.key),
+        ),
+        if (!collapsed)
+          for (final session in task.sessions) _SessionRow(session: session),
+      ],
+    );
+  }
+}
+
+class _GroupRow extends StatefulWidget {
+  const _GroupRow({
+    required this.label,
+    required this.cpuPercent,
+    required this.memoryBytes,
+    required this.indent,
+    required this.collapsed,
+    required this.textColor,
+    required this.onTap,
+  });
+
+  final String label;
+  final double cpuPercent;
+  final BigInt memoryBytes;
+  final double indent;
+  final bool collapsed;
+  final Color textColor;
+  final VoidCallback onTap;
+
+  @override
+  State<_GroupRow> createState() => _GroupRowState();
+}
+
+class _GroupRowState extends State<_GroupRow> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Container(
+          height: 32,
+          padding: EdgeInsets.only(left: widget.indent, right: 4),
+          decoration: BoxDecoration(
+            color: _hover ? const Color(0x0DFFFFFF) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 14,
+                child: AppIcon(
+                  widget.collapsed ? 'chevron-right' : 'chevron-down',
+                  size: 10,
+                  color: const Color(0x94FFFFFF),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  widget.label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: widget.textColor,
+                  ),
+                ),
+              ),
+              _Metrics(
+                cpuPercent: widget.cpuPercent,
+                memoryBytes: widget.memoryBytes,
+                color: const Color(0xADFFFFFF),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionRow extends StatelessWidget {
+  const _SessionRow({required this.session});
+  final ResourceUsageSessionDto session;
+
+  @override
+  Widget build(BuildContext context) {
+    const titleCol = Color(0xA3FFFFFF);
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.only(left: 42, right: 4),
+      child: Row(
+        children: [
+          _SessionGlyph(iconPath: session.iconPath, color: titleCol),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              session.label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12.5, color: titleCol),
+            ),
+          ),
+          _Metrics(
+            cpuPercent: session.cpuPercent,
+            memoryBytes: session.memoryBytes,
+            color: titleCol,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SessionGlyph extends StatelessWidget {
+  const _SessionGlyph({required this.iconPath, required this.color});
+  final String iconPath;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (iconPath.endsWith('.svg')) {
+      return SvgPicture.asset(
+        iconPath,
+        width: 16,
+        height: 16,
+        colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+      );
+    }
+    return Image.asset(iconPath, width: 16, height: 16);
+  }
+}
+
+class _Metrics extends StatelessWidget {
+  const _Metrics({
+    required this.cpuPercent,
+    required this.memoryBytes,
+    required this.color,
+  });
+  final double cpuPercent;
+  final BigInt memoryBytes;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final cpu = '${cpuPercent.toStringAsFixed(1)}%';
+    final mem = _formatMemory(memoryBytes);
+    final style = TextStyle(fontSize: 14, color: color);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(width: 58, child: Text(cpu, style: style)),
+        const SizedBox(width: 18),
+        SizedBox(width: 84, child: Text(mem, style: style)),
+      ],
     );
   }
 }

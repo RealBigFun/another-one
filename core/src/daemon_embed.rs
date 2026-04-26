@@ -47,7 +47,9 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
 
+use crate::process::TrackedProcess;
 use crate::project_store::ProjectStore;
+use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot};
 use crate::section::SectionId;
 use crate::terminal_types::TerminalRuntimeKey;
 
@@ -114,6 +116,18 @@ pub struct RegistryState {
     /// command line here; GPUI's drain on `Launched` writes the bytes
     /// once and removes the entry so a re-launch doesn't replay them.
     pub pending_post_launch_input: HashMap<TerminalRuntimeKey, Vec<u8>>,
+    /// Per-tab tracked processes — populated by the bridge's PTY drain
+    /// on `Launched` (with project / task labels resolved through the
+    /// store) and removed on `Exited` / `Failed`. Fed into
+    /// [`ResourceUsageSampler::sample`] every tick so the resource
+    /// indicator's tree groups CPU + memory by project → task →
+    /// session, mirroring the GPUI desktop's `ResourceIndicator`.
+    pub tracked_processes: HashMap<TerminalRuntimeKey, TrackedProcess>,
+    /// Hierarchical CPU + memory sampler. Holds previous-tick CPU
+    /// samples internally for delta computation; we keep one instance
+    /// in the registry rather than rebuilding it each call so the
+    /// CPU% values aren't stuck at 0 every poll.
+    pub resource_sampler: ResourceUsageSampler,
 }
 
 impl RegistryState {
@@ -129,7 +143,18 @@ impl RegistryState {
             viewer_focus: HashMap::new(),
             effective_sizes: HashMap::new(),
             pending_post_launch_input: HashMap::new(),
+            tracked_processes: HashMap::new(),
+            resource_sampler: ResourceUsageSampler::default(),
         }
+    }
+
+    /// Take one resource-usage sample. Walks every PID under the host
+    /// UI process plus every tracked PTY child, deltas CPU times
+    /// against the previous tick, and groups the result into a
+    /// project → task → session tree.
+    pub fn sample_resource_usage(&mut self, app_pid: u32) -> ResourceUsageSnapshot {
+        let tracked = self.tracked_processes.values().cloned().collect::<Vec<_>>();
+        self.resource_sampler.sample(app_pid, &tracked)
     }
 
     /// Recompute the min-across-viewers size for `key` and, if it

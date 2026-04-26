@@ -6,6 +6,17 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `project_to_dto`, `session_to_dto`, `snapshot_to_dto`, `task_to_dto`
+
+/// Hierarchical resource snapshot — host UI process + every tracked
+/// PTY child grouped by project → task → session, sorted descending
+/// by memory then CPU then label (matching the GPUI desktop's
+/// `ResourceIndicator`). Returns `None` if the embedded daemon
+/// hasn't booted yet — the popover renders the empty-state pill in
+/// that case.
+Future<ResourceUsageSnapshotDto?> readResourceUsageSnapshot() =>
+    RustLib.instance.api.crateApiResourcesReadResourceUsageSnapshot();
+
 /// One-shot sample of the host UI's own CPU + memory. Returns
 /// zeros for `cpu_time_ns` / `memory_bytes` if the platform
 /// sampler returned nothing for our pid (Windows path today).
@@ -53,4 +64,160 @@ class ResourceSample {
           cpuTimeNs == other.cpuTimeNs &&
           memoryBytes == other.memoryBytes &&
           totalMemoryBytes == other.totalMemoryBytes;
+}
+
+class ResourceUsageProjectDto {
+  final String key;
+  final String label;
+  final double cpuPercent;
+  final BigInt memoryBytes;
+  final List<ResourceUsageTaskDto> tasks;
+
+  const ResourceUsageProjectDto({
+    required this.key,
+    required this.label,
+    required this.cpuPercent,
+    required this.memoryBytes,
+    required this.tasks,
+  });
+
+  @override
+  int get hashCode =>
+      key.hashCode ^
+      label.hashCode ^
+      cpuPercent.hashCode ^
+      memoryBytes.hashCode ^
+      tasks.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResourceUsageProjectDto &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          label == other.label &&
+          cpuPercent == other.cpuPercent &&
+          memoryBytes == other.memoryBytes &&
+          tasks == other.tasks;
+}
+
+class ResourceUsageSessionDto {
+  final String key;
+  final String label;
+  final String iconPath;
+  final double cpuPercent;
+  final BigInt memoryBytes;
+
+  const ResourceUsageSessionDto({
+    required this.key,
+    required this.label,
+    required this.iconPath,
+    required this.cpuPercent,
+    required this.memoryBytes,
+  });
+
+  @override
+  int get hashCode =>
+      key.hashCode ^
+      label.hashCode ^
+      iconPath.hashCode ^
+      cpuPercent.hashCode ^
+      memoryBytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResourceUsageSessionDto &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          label == other.label &&
+          iconPath == other.iconPath &&
+          cpuPercent == other.cpuPercent &&
+          memoryBytes == other.memoryBytes;
+}
+
+/// FRB-exposed projection of `core::resource_usage::ResourceUsageSnapshot`.
+/// Identical numeric fields plus the nested project → task → session
+/// tree the popover renders. The `app` row is always populated; the
+/// `projects` vec is empty when no PTY children are tracked.
+class ResourceUsageSnapshotDto {
+  final double totalCpuPercent;
+  final BigInt totalMemoryBytes;
+  final double ramSharePercent;
+  final BigInt sessionCount;
+  final String appLabel;
+  final double appCpuPercent;
+  final BigInt appMemoryBytes;
+  final List<ResourceUsageProjectDto> projects;
+
+  const ResourceUsageSnapshotDto({
+    required this.totalCpuPercent,
+    required this.totalMemoryBytes,
+    required this.ramSharePercent,
+    required this.sessionCount,
+    required this.appLabel,
+    required this.appCpuPercent,
+    required this.appMemoryBytes,
+    required this.projects,
+  });
+
+  @override
+  int get hashCode =>
+      totalCpuPercent.hashCode ^
+      totalMemoryBytes.hashCode ^
+      ramSharePercent.hashCode ^
+      sessionCount.hashCode ^
+      appLabel.hashCode ^
+      appCpuPercent.hashCode ^
+      appMemoryBytes.hashCode ^
+      projects.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResourceUsageSnapshotDto &&
+          runtimeType == other.runtimeType &&
+          totalCpuPercent == other.totalCpuPercent &&
+          totalMemoryBytes == other.totalMemoryBytes &&
+          ramSharePercent == other.ramSharePercent &&
+          sessionCount == other.sessionCount &&
+          appLabel == other.appLabel &&
+          appCpuPercent == other.appCpuPercent &&
+          appMemoryBytes == other.appMemoryBytes &&
+          projects == other.projects;
+}
+
+class ResourceUsageTaskDto {
+  final String key;
+  final String label;
+  final double cpuPercent;
+  final BigInt memoryBytes;
+  final List<ResourceUsageSessionDto> sessions;
+
+  const ResourceUsageTaskDto({
+    required this.key,
+    required this.label,
+    required this.cpuPercent,
+    required this.memoryBytes,
+    required this.sessions,
+  });
+
+  @override
+  int get hashCode =>
+      key.hashCode ^
+      label.hashCode ^
+      cpuPercent.hashCode ^
+      memoryBytes.hashCode ^
+      sessions.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResourceUsageTaskDto &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          label == other.label &&
+          cpuPercent == other.cpuPercent &&
+          memoryBytes == other.memoryBytes &&
+          sessions == other.sessions;
 }
