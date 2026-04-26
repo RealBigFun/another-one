@@ -16,8 +16,8 @@ use crate::frame::{
     ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, BranchCompareFileWire,
     BranchCompareWire, ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView,
     McpSettingsView, OpenInStateWire, ProjectActionWire, ProjectPagePullRequest, ProjectSummary,
-    PullRequestStatus, RecentCommitsWire, ShortcutSettingsView, TaskSummary,
-    ToolbarActionOutcome,
+    PullRequestStatus, RecentCommitsWire, ResolvedBranchSettingsWire, ShortcutSettingsView,
+    TaskSummary, ToolbarActionOutcome,
 };
 
 /// Boxed-future return type for `DaemonRegistry` methods that are
@@ -366,6 +366,13 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         _target_branch: &str,
     ) -> Result<Option<BranchCompareWire>, String> {
         Ok(None)
+    }
+
+    /// Snapshot the resolved branch settings for `project_id`'s
+    /// root project. Returns `None` for unknown / repo-less
+    /// projects. Sister to `LocalSession::resolved_branch_settings`.
+    fn read_branch_settings(&self, _project_id: &str) -> Option<ResolvedBranchSettingsWire> {
+        None
     }
 
     // ── Git mutation (another-one-ojm.5) ──────────────────────────

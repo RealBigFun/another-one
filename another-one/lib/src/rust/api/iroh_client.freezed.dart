@@ -55,7 +55,7 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,TResult Function( WorkerReply_CommitFileChangesAck value)?  commitFileChangesAck,TResult Function( WorkerReply_BranchCompareAck value)?  branchCompareAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,TResult Function( WorkerReply_CommitFileChangesAck value)?  commitFileChangesAck,TResult Function( WorkerReply_BranchCompareAck value)?  branchCompareAck,TResult Function( WorkerReply_BranchSettingsAck value)?  branchSettingsAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -70,7 +70,8 @@ return changedFilesAck(_that);case WorkerReply_ProjectGithubUrlAck() when projec
 return projectGithubUrlAck(_that);case WorkerReply_RecentCommitsAck() when recentCommitsAck != null:
 return recentCommitsAck(_that);case WorkerReply_CommitFileChangesAck() when commitFileChangesAck != null:
 return commitFileChangesAck(_that);case WorkerReply_BranchCompareAck() when branchCompareAck != null:
-return branchCompareAck(_that);case _:
+return branchCompareAck(_that);case WorkerReply_BranchSettingsAck() when branchSettingsAck != null:
+return branchSettingsAck(_that);case _:
   return orElse();
 
 }
@@ -88,7 +89,7 @@ return branchCompareAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_SlugifyBranchNameAck value)  slugifyBranchNameAck,required TResult Function( WorkerReply_ProjectBranchesAck value)  projectBranchesAck,required TResult Function( WorkerReply_PrimaryBranchAck value)  primaryBranchAck,required TResult Function( WorkerReply_RepoDefaultCommitActionAck value)  repoDefaultCommitActionAck,required TResult Function( WorkerReply_ActiveGitStateAck value)  activeGitStateAck,required TResult Function( WorkerReply_ChangedFilesAck value)  changedFilesAck,required TResult Function( WorkerReply_ProjectGithubUrlAck value)  projectGithubUrlAck,required TResult Function( WorkerReply_RecentCommitsAck value)  recentCommitsAck,required TResult Function( WorkerReply_CommitFileChangesAck value)  commitFileChangesAck,required TResult Function( WorkerReply_BranchCompareAck value)  branchCompareAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_SlugifyBranchNameAck value)  slugifyBranchNameAck,required TResult Function( WorkerReply_ProjectBranchesAck value)  projectBranchesAck,required TResult Function( WorkerReply_PrimaryBranchAck value)  primaryBranchAck,required TResult Function( WorkerReply_RepoDefaultCommitActionAck value)  repoDefaultCommitActionAck,required TResult Function( WorkerReply_ActiveGitStateAck value)  activeGitStateAck,required TResult Function( WorkerReply_ChangedFilesAck value)  changedFilesAck,required TResult Function( WorkerReply_ProjectGithubUrlAck value)  projectGithubUrlAck,required TResult Function( WorkerReply_RecentCommitsAck value)  recentCommitsAck,required TResult Function( WorkerReply_CommitFileChangesAck value)  commitFileChangesAck,required TResult Function( WorkerReply_BranchCompareAck value)  branchCompareAck,required TResult Function( WorkerReply_BranchSettingsAck value)  branchSettingsAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
@@ -103,7 +104,8 @@ return changedFilesAck(_that);case WorkerReply_ProjectGithubUrlAck():
 return projectGithubUrlAck(_that);case WorkerReply_RecentCommitsAck():
 return recentCommitsAck(_that);case WorkerReply_CommitFileChangesAck():
 return commitFileChangesAck(_that);case WorkerReply_BranchCompareAck():
-return branchCompareAck(_that);}
+return branchCompareAck(_that);case WorkerReply_BranchSettingsAck():
+return branchSettingsAck(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -117,7 +119,7 @@ return branchCompareAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult? Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult? Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult? Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult? Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult? Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult? Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult? Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,TResult? Function( WorkerReply_CommitFileChangesAck value)?  commitFileChangesAck,TResult? Function( WorkerReply_BranchCompareAck value)?  branchCompareAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult? Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult? Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult? Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult? Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult? Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult? Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult? Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,TResult? Function( WorkerReply_CommitFileChangesAck value)?  commitFileChangesAck,TResult? Function( WorkerReply_BranchCompareAck value)?  branchCompareAck,TResult? Function( WorkerReply_BranchSettingsAck value)?  branchSettingsAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -132,7 +134,8 @@ return changedFilesAck(_that);case WorkerReply_ProjectGithubUrlAck() when projec
 return projectGithubUrlAck(_that);case WorkerReply_RecentCommitsAck() when recentCommitsAck != null:
 return recentCommitsAck(_that);case WorkerReply_CommitFileChangesAck() when commitFileChangesAck != null:
 return commitFileChangesAck(_that);case WorkerReply_BranchCompareAck() when branchCompareAck != null:
-return branchCompareAck(_that);case _:
+return branchCompareAck(_that);case WorkerReply_BranchSettingsAck() when branchSettingsAck != null:
+return branchSettingsAck(_that);case _:
   return null;
 
 }
@@ -149,7 +152,7 @@ return branchCompareAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String slug)?  slugifyBranchNameAck,TResult Function( List<String> branches)?  projectBranchesAck,TResult Function( String? branch)?  primaryBranchAck,TResult Function( String? action)?  repoDefaultCommitActionAck,TResult Function( ActiveGitStateWire? state)?  activeGitStateAck,TResult Function( List<ChangedFileWire>? files)?  changedFilesAck,TResult Function( String? url)?  projectGithubUrlAck,TResult Function( RecentCommitsWire? view)?  recentCommitsAck,TResult Function( List<BranchCompareFileWire>? files)?  commitFileChangesAck,TResult Function( BranchCompareWire? view)?  branchCompareAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String slug)?  slugifyBranchNameAck,TResult Function( List<String> branches)?  projectBranchesAck,TResult Function( String? branch)?  primaryBranchAck,TResult Function( String? action)?  repoDefaultCommitActionAck,TResult Function( ActiveGitStateWire? state)?  activeGitStateAck,TResult Function( List<ChangedFileWire>? files)?  changedFilesAck,TResult Function( String? url)?  projectGithubUrlAck,TResult Function( RecentCommitsWire? view)?  recentCommitsAck,TResult Function( List<BranchCompareFileWire>? files)?  commitFileChangesAck,TResult Function( BranchCompareWire? view)?  branchCompareAck,TResult Function( ResolvedBranchSettingsWire? settings)?  branchSettingsAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
@@ -163,7 +166,8 @@ return changedFilesAck(_that.files);case WorkerReply_ProjectGithubUrlAck() when 
 return projectGithubUrlAck(_that.url);case WorkerReply_RecentCommitsAck() when recentCommitsAck != null:
 return recentCommitsAck(_that.view);case WorkerReply_CommitFileChangesAck() when commitFileChangesAck != null:
 return commitFileChangesAck(_that.files);case WorkerReply_BranchCompareAck() when branchCompareAck != null:
-return branchCompareAck(_that.view);case _:
+return branchCompareAck(_that.view);case WorkerReply_BranchSettingsAck() when branchSettingsAck != null:
+return branchSettingsAck(_that.settings);case _:
   return orElse();
 
 }
@@ -181,7 +185,7 @@ return branchCompareAck(_that.view);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String slug)  slugifyBranchNameAck,required TResult Function( List<String> branches)  projectBranchesAck,required TResult Function( String? branch)  primaryBranchAck,required TResult Function( String? action)  repoDefaultCommitActionAck,required TResult Function( ActiveGitStateWire? state)  activeGitStateAck,required TResult Function( List<ChangedFileWire>? files)  changedFilesAck,required TResult Function( String? url)  projectGithubUrlAck,required TResult Function( RecentCommitsWire? view)  recentCommitsAck,required TResult Function( List<BranchCompareFileWire>? files)  commitFileChangesAck,required TResult Function( BranchCompareWire? view)  branchCompareAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String slug)  slugifyBranchNameAck,required TResult Function( List<String> branches)  projectBranchesAck,required TResult Function( String? branch)  primaryBranchAck,required TResult Function( String? action)  repoDefaultCommitActionAck,required TResult Function( ActiveGitStateWire? state)  activeGitStateAck,required TResult Function( List<ChangedFileWire>? files)  changedFilesAck,required TResult Function( String? url)  projectGithubUrlAck,required TResult Function( RecentCommitsWire? view)  recentCommitsAck,required TResult Function( List<BranchCompareFileWire>? files)  commitFileChangesAck,required TResult Function( BranchCompareWire? view)  branchCompareAck,required TResult Function( ResolvedBranchSettingsWire? settings)  branchSettingsAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
@@ -195,7 +199,8 @@ return changedFilesAck(_that.files);case WorkerReply_ProjectGithubUrlAck():
 return projectGithubUrlAck(_that.url);case WorkerReply_RecentCommitsAck():
 return recentCommitsAck(_that.view);case WorkerReply_CommitFileChangesAck():
 return commitFileChangesAck(_that.files);case WorkerReply_BranchCompareAck():
-return branchCompareAck(_that.view);}
+return branchCompareAck(_that.view);case WorkerReply_BranchSettingsAck():
+return branchSettingsAck(_that.settings);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -209,7 +214,7 @@ return branchCompareAck(_that.view);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String slug)?  slugifyBranchNameAck,TResult? Function( List<String> branches)?  projectBranchesAck,TResult? Function( String? branch)?  primaryBranchAck,TResult? Function( String? action)?  repoDefaultCommitActionAck,TResult? Function( ActiveGitStateWire? state)?  activeGitStateAck,TResult? Function( List<ChangedFileWire>? files)?  changedFilesAck,TResult? Function( String? url)?  projectGithubUrlAck,TResult? Function( RecentCommitsWire? view)?  recentCommitsAck,TResult? Function( List<BranchCompareFileWire>? files)?  commitFileChangesAck,TResult? Function( BranchCompareWire? view)?  branchCompareAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String slug)?  slugifyBranchNameAck,TResult? Function( List<String> branches)?  projectBranchesAck,TResult? Function( String? branch)?  primaryBranchAck,TResult? Function( String? action)?  repoDefaultCommitActionAck,TResult? Function( ActiveGitStateWire? state)?  activeGitStateAck,TResult? Function( List<ChangedFileWire>? files)?  changedFilesAck,TResult? Function( String? url)?  projectGithubUrlAck,TResult? Function( RecentCommitsWire? view)?  recentCommitsAck,TResult? Function( List<BranchCompareFileWire>? files)?  commitFileChangesAck,TResult? Function( BranchCompareWire? view)?  branchCompareAck,TResult? Function( ResolvedBranchSettingsWire? settings)?  branchSettingsAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
@@ -223,7 +228,8 @@ return changedFilesAck(_that.files);case WorkerReply_ProjectGithubUrlAck() when 
 return projectGithubUrlAck(_that.url);case WorkerReply_RecentCommitsAck() when recentCommitsAck != null:
 return recentCommitsAck(_that.view);case WorkerReply_CommitFileChangesAck() when commitFileChangesAck != null:
 return commitFileChangesAck(_that.files);case WorkerReply_BranchCompareAck() when branchCompareAck != null:
-return branchCompareAck(_that.view);case _:
+return branchCompareAck(_that.view);case WorkerReply_BranchSettingsAck() when branchSettingsAck != null:
+return branchSettingsAck(_that.settings);case _:
   return null;
 
 }
@@ -1047,6 +1053,72 @@ class _$WorkerReply_BranchCompareAckCopyWithImpl<$Res>
   return _then(WorkerReply_BranchCompareAck(
 view: freezed == view ? _self.view : view // ignore: cast_nullable_to_non_nullable
 as BranchCompareWire?,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_BranchSettingsAck extends WorkerReply {
+  const WorkerReply_BranchSettingsAck({this.settings}): super._();
+  
+
+ final  ResolvedBranchSettingsWire? settings;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_BranchSettingsAckCopyWith<WorkerReply_BranchSettingsAck> get copyWith => _$WorkerReply_BranchSettingsAckCopyWithImpl<WorkerReply_BranchSettingsAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_BranchSettingsAck&&(identical(other.settings, settings) || other.settings == settings));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,settings);
+
+@override
+String toString() {
+  return 'WorkerReply.branchSettingsAck(settings: $settings)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_BranchSettingsAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_BranchSettingsAckCopyWith(WorkerReply_BranchSettingsAck value, $Res Function(WorkerReply_BranchSettingsAck) _then) = _$WorkerReply_BranchSettingsAckCopyWithImpl;
+@useResult
+$Res call({
+ ResolvedBranchSettingsWire? settings
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_BranchSettingsAckCopyWithImpl<$Res>
+    implements $WorkerReply_BranchSettingsAckCopyWith<$Res> {
+  _$WorkerReply_BranchSettingsAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_BranchSettingsAck _self;
+  final $Res Function(WorkerReply_BranchSettingsAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? settings = freezed,}) {
+  return _then(WorkerReply_BranchSettingsAck(
+settings: freezed == settings ? _self.settings : settings // ignore: cast_nullable_to_non_nullable
+as ResolvedBranchSettingsWire?,
   ));
 }
 

@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -93,6 +93,9 @@ abstract class IrohSession implements RustOpaqueInterface {
     required String projectId,
     required String targetBranch,
   });
+
+  /// Issue [`Control::ReadBranchSettings`] for `project_id`.
+  Future<BigInt> readBranchSettings({required String projectId});
 
   /// Issue [`Control::ReadChangedFiles`] for `project_id`.
   Future<BigInt> readChangedFiles({required String projectId});
@@ -423,6 +426,47 @@ class RecentCommitsWire {
           commits == other.commits;
 }
 
+/// Mirror of `daemon-sandbox/src/frame.rs::ResolvedBranchSettingsWire`.
+class ResolvedBranchSettingsWire {
+  final String rootProjectId;
+  final List<String> availableBranches;
+  final String? configuredDefaultBranch;
+  final String? effectiveDefaultBranch;
+  final String? configuredDefaultTargetBranch;
+  final String? effectiveDefaultTargetBranch;
+
+  const ResolvedBranchSettingsWire({
+    required this.rootProjectId,
+    required this.availableBranches,
+    this.configuredDefaultBranch,
+    this.effectiveDefaultBranch,
+    this.configuredDefaultTargetBranch,
+    this.effectiveDefaultTargetBranch,
+  });
+
+  @override
+  int get hashCode =>
+      rootProjectId.hashCode ^
+      availableBranches.hashCode ^
+      configuredDefaultBranch.hashCode ^
+      effectiveDefaultBranch.hashCode ^
+      configuredDefaultTargetBranch.hashCode ^
+      effectiveDefaultTargetBranch.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResolvedBranchSettingsWire &&
+          runtimeType == other.runtimeType &&
+          rootProjectId == other.rootProjectId &&
+          availableBranches == other.availableBranches &&
+          configuredDefaultBranch == other.configuredDefaultBranch &&
+          effectiveDefaultBranch == other.effectiveDefaultBranch &&
+          configuredDefaultTargetBranch ==
+              other.configuredDefaultTargetBranch &&
+          effectiveDefaultTargetBranch == other.effectiveDefaultTargetBranch;
+}
+
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
 /// reflects whether the desktop has a live `LiveTerminalRuntime` for
 /// this tab right now; `AttachTab` on a non-running tab yields no
@@ -630,6 +674,12 @@ sealed class WorkerReply with _$WorkerReply {
   /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchCompareAck`.
   const factory WorkerReply.branchCompareAck({BranchCompareWire? view}) =
       WorkerReply_BranchCompareAck;
+
+  /// Reply to [`Control::ReadBranchSettings`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchSettingsAck`.
+  const factory WorkerReply.branchSettingsAck({
+    ResolvedBranchSettingsWire? settings,
+  }) = WorkerReply_BranchSettingsAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

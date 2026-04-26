@@ -849,6 +849,11 @@ async fn handle_control(
                 send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
             }
         },
+        Control::ReadBranchSettings { project_id } => {
+            let settings = registry.read_branch_settings(&project_id);
+            let reply = WorkerReply::BranchSettingsAck { settings };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
         Control::CreateReviewTask {
             project_id,
             pull_request_number,

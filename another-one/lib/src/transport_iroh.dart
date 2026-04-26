@@ -923,6 +923,33 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     );
   }
 
+  @override
+  Future<ls.ResolvedProjectBranchSettingsDto?> readBranchSettings(
+    String projectId,
+  ) async {
+    final reply = await _sendControlAndAwait(
+      () => _session!.readBranchSettings(projectId: projectId),
+    );
+    return reply.maybeWhen(
+      branchSettingsAck: (settings) => settings == null
+          ? null
+          : ls.ResolvedProjectBranchSettingsDto(
+              rootProjectId: settings.rootProjectId,
+              availableBranches: settings.availableBranches,
+              configuredDefaultBranch: settings.configuredDefaultBranch,
+              effectiveDefaultBranch: settings.effectiveDefaultBranch,
+              configuredDefaultTargetBranch:
+                  settings.configuredDefaultTargetBranch,
+              effectiveDefaultTargetBranch:
+                  settings.effectiveDefaultTargetBranch,
+            ),
+      err: _throwErr,
+      orElse: () => throw StateError(
+        'readBranchSettings: unexpected reply variant ${reply.runtimeType}',
+      ),
+    );
+  }
+
   ls.ChangedFileDto _changedFileWireToDto(ChangedFileWire f) =>
       ls.ChangedFileDto(
         path: f.path,

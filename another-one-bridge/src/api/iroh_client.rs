@@ -235,6 +235,9 @@ enum Control {
         project_id: String,
         target_branch: String,
     },
+    /// Snapshot the resolved branch settings for a project. Mirror
+    /// of `daemon-sandbox/src/frame.rs::Control::ReadBranchSettings`.
+    ReadBranchSettings { project_id: String },
     /// `another-one-ojm.5` — stage one changed file. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::StageChangedFile`.
     /// Reply is `WorkerReply::StageChangedFileAck` carrying the
@@ -438,6 +441,11 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadBranchCompareState`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchCompareAck`.
     BranchCompareAck { view: Option<BranchCompareWire> },
+    /// Reply to [`Control::ReadBranchSettings`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchSettingsAck`.
+    BranchSettingsAck {
+        settings: Option<ResolvedBranchSettingsWire>,
+    },
     /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
     /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::StageChangedFileAck`.
     /// Carries the post-mutation `changed_files` snapshot inline so
@@ -594,6 +602,17 @@ pub struct BranchCompareWire {
     pub current_branch: Option<String>,
     pub target_branch: String,
     pub files: Vec<BranchCompareFileWire>,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ResolvedBranchSettingsWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ResolvedBranchSettingsWire {
+    pub root_project_id: String,
+    pub available_branches: Vec<String>,
+    pub configured_default_branch: Option<String>,
+    pub effective_default_branch: Option<String>,
+    pub configured_default_target_branch: Option<String>,
+    pub effective_default_target_branch: Option<String>,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
@@ -2001,6 +2020,14 @@ impl IrohSession {
             },
         )
         .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::ReadBranchSettings`] for `project_id`.
+    pub async fn read_branch_settings(&self, project_id: String) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(id, Control::ReadBranchSettings { project_id })
+            .await?;
         Ok(id)
     }
 

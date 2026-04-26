@@ -52,8 +52,9 @@ use daemon_sandbox::frame::{
     McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto, OpenInAppWire,
     OpenInStateWire, ProjectActionAccessWire, ProjectActionIconWire, ProjectActionKindWire,
     ProjectActionScopeWire, ProjectActionWire, ProjectKind, ProjectPagePullRequest,
-    ProjectSummary, PullRequestState, PullRequestStatus, RecentCommitsWire, ShortcutSettingsRow,
-    ShortcutSettingsView, TabSummary, TaskSummary, ToolbarActionOutcome,
+    ProjectSummary, PullRequestState, PullRequestStatus, RecentCommitsWire,
+    ResolvedBranchSettingsWire, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
+    ToolbarActionOutcome,
 };
 use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
@@ -707,6 +708,23 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 .map(branch_compare_file_to_wire)
                 .collect(),
         }))
+    }
+
+    fn read_branch_settings(&self, project_id: &str) -> Option<ResolvedBranchSettingsWire> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .resolved_branch_settings(project_id)
+                .map(|s| ResolvedBranchSettingsWire {
+                    root_project_id: s.root_project_id,
+                    available_branches: s.available_branches,
+                    configured_default_branch: s.configured_default_branch,
+                    effective_default_branch: s.effective_default_branch,
+                    configured_default_target_branch: s.configured_default_target_branch,
+                    effective_default_target_branch: s.effective_default_target_branch,
+                })
+        })
+        .flatten()
     }
 
     fn stage_changed_file<'a>(

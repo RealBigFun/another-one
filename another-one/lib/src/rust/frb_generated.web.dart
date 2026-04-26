@@ -147,6 +147,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RecentCommitsWire dco_decode_box_autoadd_recent_commits_wire(dynamic raw);
 
   @protected
+  ResolvedBranchSettingsWire
+  dco_decode_box_autoadd_resolved_branch_settings_wire(dynamic raw);
+
+  @protected
   ResolvedProjectBranchSettingsDto
   dco_decode_box_autoadd_resolved_project_branch_settings_dto(dynamic raw);
 
@@ -376,6 +380,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ResolvedBranchSettingsWire?
+  dco_decode_opt_box_autoadd_resolved_branch_settings_wire(dynamic raw);
+
+  @protected
   ResolvedProjectBranchSettingsDto?
   dco_decode_opt_box_autoadd_resolved_project_branch_settings_dto(dynamic raw);
 
@@ -449,6 +457,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RecentCommitsWire dco_decode_recent_commits_wire(dynamic raw);
+
+  @protected
+  ResolvedBranchSettingsWire dco_decode_resolved_branch_settings_wire(
+    dynamic raw,
+  );
 
   @protected
   ResolvedProjectBranchSettingsDto
@@ -644,6 +657,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RecentCommitsWire sse_decode_box_autoadd_recent_commits_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ResolvedBranchSettingsWire
+  sse_decode_box_autoadd_resolved_branch_settings_wire(
     SseDeserializer deserializer,
   );
 
@@ -923,6 +942,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ResolvedBranchSettingsWire?
+  sse_decode_opt_box_autoadd_resolved_branch_settings_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ResolvedProjectBranchSettingsDto?
   sse_decode_opt_box_autoadd_resolved_project_branch_settings_dto(
     SseDeserializer deserializer,
@@ -1020,6 +1045,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RecentCommitsWire sse_decode_recent_commits_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ResolvedBranchSettingsWire sse_decode_resolved_branch_settings_wire(
     SseDeserializer deserializer,
   );
 
@@ -1268,6 +1298,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_recent_commits_wire(
     RecentCommitsWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_resolved_branch_settings_wire(
+    ResolvedBranchSettingsWire self,
     SseSerializer serializer,
   );
 
@@ -1608,6 +1644,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_resolved_branch_settings_wire(
+    ResolvedBranchSettingsWire? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_resolved_project_branch_settings_dto(
     ResolvedProjectBranchSettingsDto? self,
     SseSerializer serializer,
@@ -1727,6 +1769,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_recent_commits_wire(
     RecentCommitsWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_resolved_branch_settings_wire(
+    ResolvedBranchSettingsWire self,
     SseSerializer serializer,
   );
 

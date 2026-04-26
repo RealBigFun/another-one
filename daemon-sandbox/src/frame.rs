@@ -329,6 +329,12 @@ pub enum Control {
         project_id: String,
         target_branch: String,
     },
+    /// Snapshot the resolved branch settings for `project_id`'s
+    /// root project — configured + effective values for default and
+    /// default-target branches plus the available branch list.
+    /// Reply is [`WorkerReply::BranchSettingsAck`] with `None` when
+    /// the project is unknown or has no repo metadata.
+    ReadBranchSettings { project_id: String },
     /// `another-one-ojm.5` — stage one changed file via `git add -A`.
     /// `original_path` is set only on rename/copy entries — git needs
     /// both source and destination to resolve the rename pair. Reply
@@ -717,6 +723,11 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadBranchCompareState`]. `view == None`
     /// when the project id is unknown.
     BranchCompareAck { view: Option<BranchCompareWire> },
+    /// Reply to [`Control::ReadBranchSettings`]. `settings == None`
+    /// when the project is unknown or lacks repo metadata.
+    BranchSettingsAck {
+        settings: Option<ResolvedBranchSettingsWire>,
+    },
     /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
     /// Carries the post-mutation `changed_files` snapshot inline so
     /// the issuing client refreshes the right-sidebar Changes pane
@@ -853,6 +864,18 @@ pub struct BranchCompareWire {
     pub current_branch: Option<String>,
     pub target_branch: String,
     pub files: Vec<BranchCompareFileWire>,
+}
+
+/// Wire mirror of the bridge's `ResolvedProjectBranchSettingsDto`
+/// (FRB-bound). Powers the project page's Configuration panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedBranchSettingsWire {
+    pub root_project_id: String,
+    pub available_branches: Vec<String>,
+    pub configured_default_branch: Option<String>,
+    pub effective_default_branch: Option<String>,
+    pub configured_default_target_branch: Option<String>,
+    pub effective_default_target_branch: Option<String>,
 }
 
 /// Wire mirror of the bridge's `CommitDto` (FRB-bound). Carries
