@@ -174,6 +174,13 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     fn slugify_branch_name(&self, name: &str) -> String {
         another_one_core::project_store::slugify_branch_name(name)
     }
+
+    /// Branch names available on `project_id`'s git repo. Empty
+    /// list for unknown projects. Sister to
+    /// `LocalSession::read_project_branches`.
+    fn read_project_branches(&self, _project_id: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

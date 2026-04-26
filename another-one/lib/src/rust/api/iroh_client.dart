@@ -79,6 +79,9 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
+  /// Issue [`Control::ReadProjectBranches`] for `project_id`.
+  Future<BigInt> readProjectBranches({required String projectId});
+
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
@@ -338,6 +341,12 @@ sealed class WorkerReply with _$WorkerReply {
   /// `daemon-sandbox/src/frame.rs::WorkerReply::SlugifyBranchNameAck`.
   const factory WorkerReply.slugifyBranchNameAck({required String slug}) =
       WorkerReply_SlugifyBranchNameAck;
+
+  /// Reply to [`Control::ReadProjectBranches`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectBranchesAck`.
+  const factory WorkerReply.projectBranchesAck({
+    required List<String> branches,
+  }) = WorkerReply_ProjectBranchesAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

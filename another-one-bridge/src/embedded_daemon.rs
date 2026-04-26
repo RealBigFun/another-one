@@ -309,6 +309,18 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
     }
+
+    // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
+    //
+    // Mirror of `LocalSession::read_*`/`*_branch_*` methods in
+    // `api/local_session.rs`. The shapes are intentionally
+    // field-for-field identical — keep them in sync when the FRB DTO
+    // is extended.
+
+    fn read_project_branches(&self, project_id: &str) -> Vec<String> {
+        self.with_state(|state| state.project_store.branch_names(project_id))
+            .unwrap_or_default()
+    }
 }
 
 /// Flatten the bridge's `RegistryState` into the iroh wire's

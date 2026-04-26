@@ -162,6 +162,11 @@ pub enum Control {
     /// Pure function — no project state involved. Reply is
     /// [`WorkerReply::SlugifyBranchNameAck`] with the slug.
     SlugifyBranchName { name: String },
+    /// Branch names available on `project_id`'s git repo. Powers the
+    /// new-task modal's source-branch dropdown. Reply is
+    /// [`WorkerReply::ProjectBranchesAck`] with an empty list when
+    /// the project id is unknown.
+    ReadProjectBranches { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -272,6 +277,9 @@ pub enum WorkerReply {
     },
     /// Reply to [`Control::SlugifyBranchName`].
     SlugifyBranchNameAck { slug: String },
+    /// Reply to [`Control::ReadProjectBranches`]. Empty list for
+    /// unknown projects.
+    ProjectBranchesAck { branches: Vec<String> },
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —

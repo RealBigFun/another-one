@@ -55,13 +55,14 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
 return err(_that);case WorkerReply_SlugifyBranchNameAck() when slugifyBranchNameAck != null:
-return slugifyBranchNameAck(_that);case _:
+return slugifyBranchNameAck(_that);case WorkerReply_ProjectBranchesAck() when projectBranchesAck != null:
+return projectBranchesAck(_that);case _:
   return orElse();
 
 }
@@ -79,13 +80,14 @@ return slugifyBranchNameAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_SlugifyBranchNameAck value)  slugifyBranchNameAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_SlugifyBranchNameAck value)  slugifyBranchNameAck,required TResult Function( WorkerReply_ProjectBranchesAck value)  projectBranchesAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that);case WorkerReply_Err():
 return err(_that);case WorkerReply_SlugifyBranchNameAck():
-return slugifyBranchNameAck(_that);}
+return slugifyBranchNameAck(_that);case WorkerReply_ProjectBranchesAck():
+return projectBranchesAck(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -99,13 +101,14 @@ return slugifyBranchNameAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult? Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
 return err(_that);case WorkerReply_SlugifyBranchNameAck() when slugifyBranchNameAck != null:
-return slugifyBranchNameAck(_that);case _:
+return slugifyBranchNameAck(_that);case WorkerReply_ProjectBranchesAck() when projectBranchesAck != null:
+return projectBranchesAck(_that);case _:
   return null;
 
 }
@@ -122,12 +125,13 @@ return slugifyBranchNameAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String slug)?  slugifyBranchNameAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String slug)?  slugifyBranchNameAck,TResult Function( List<String> branches)?  projectBranchesAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
 return err(_that.message,_that.kind);case WorkerReply_SlugifyBranchNameAck() when slugifyBranchNameAck != null:
-return slugifyBranchNameAck(_that.slug);case _:
+return slugifyBranchNameAck(_that.slug);case WorkerReply_ProjectBranchesAck() when projectBranchesAck != null:
+return projectBranchesAck(_that.branches);case _:
   return orElse();
 
 }
@@ -145,12 +149,13 @@ return slugifyBranchNameAck(_that.slug);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String slug)  slugifyBranchNameAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String slug)  slugifyBranchNameAck,required TResult Function( List<String> branches)  projectBranchesAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
 return err(_that.message,_that.kind);case WorkerReply_SlugifyBranchNameAck():
-return slugifyBranchNameAck(_that.slug);}
+return slugifyBranchNameAck(_that.slug);case WorkerReply_ProjectBranchesAck():
+return projectBranchesAck(_that.branches);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -164,12 +169,13 @@ return slugifyBranchNameAck(_that.slug);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String slug)?  slugifyBranchNameAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String slug)?  slugifyBranchNameAck,TResult? Function( List<String> branches)?  projectBranchesAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
 return err(_that.message,_that.kind);case WorkerReply_SlugifyBranchNameAck() when slugifyBranchNameAck != null:
-return slugifyBranchNameAck(_that.slug);case _:
+return slugifyBranchNameAck(_that.slug);case WorkerReply_ProjectBranchesAck() when projectBranchesAck != null:
+return projectBranchesAck(_that.branches);case _:
   return null;
 
 }
@@ -377,6 +383,78 @@ class _$WorkerReply_SlugifyBranchNameAckCopyWithImpl<$Res>
   return _then(WorkerReply_SlugifyBranchNameAck(
 slug: null == slug ? _self.slug : slug // ignore: cast_nullable_to_non_nullable
 as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_ProjectBranchesAck extends WorkerReply {
+  const WorkerReply_ProjectBranchesAck({required final  List<String> branches}): _branches = branches,super._();
+  
+
+ final  List<String> _branches;
+ List<String> get branches {
+  if (_branches is EqualUnmodifiableListView) return _branches;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_branches);
+}
+
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_ProjectBranchesAckCopyWith<WorkerReply_ProjectBranchesAck> get copyWith => _$WorkerReply_ProjectBranchesAckCopyWithImpl<WorkerReply_ProjectBranchesAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ProjectBranchesAck&&const DeepCollectionEquality().equals(other._branches, _branches));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_branches));
+
+@override
+String toString() {
+  return 'WorkerReply.projectBranchesAck(branches: $branches)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_ProjectBranchesAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_ProjectBranchesAckCopyWith(WorkerReply_ProjectBranchesAck value, $Res Function(WorkerReply_ProjectBranchesAck) _then) = _$WorkerReply_ProjectBranchesAckCopyWithImpl;
+@useResult
+$Res call({
+ List<String> branches
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_ProjectBranchesAckCopyWithImpl<$Res>
+    implements $WorkerReply_ProjectBranchesAckCopyWith<$Res> {
+  _$WorkerReply_ProjectBranchesAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_ProjectBranchesAck _self;
+  final $Res Function(WorkerReply_ProjectBranchesAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? branches = null,}) {
+  return _then(WorkerReply_ProjectBranchesAck(
+branches: null == branches ? _self._branches : branches // ignore: cast_nullable_to_non_nullable
+as List<String>,
   ));
 }
 

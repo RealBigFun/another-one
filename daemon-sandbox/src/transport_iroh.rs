@@ -496,6 +496,11 @@ async fn handle_control(
             let reply = WorkerReply::SlugifyBranchNameAck { slug };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ReadProjectBranches { project_id } => {
+            let branches = registry.read_project_branches(&project_id);
+            let reply = WorkerReply::ProjectBranchesAck { branches };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }
