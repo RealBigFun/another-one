@@ -29,6 +29,21 @@ import '../../state/local_connection_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../transport.dart';
+import '../../widgets/terminal_view_alacritty.dart';
+
+/// Phase 0 spike flag. Set with `--dart-define=ANOTHER_ONE_ALACRITTY=1`
+/// (or `=true`, or any non-empty string) to mount the alacritty-
+/// engine pane instead of xterm.dart. Default builds keep the
+/// existing pane.
+///
+/// Both forms accepted because `bool.fromEnvironment` only honours
+/// the literal string `"true"` — `=1` (the cargokit-style convention
+/// people reach for, and what the previous launch instructions
+/// suggested) silently parses as `false`. The `String.fromEnvironment
+/// .isNotEmpty` fallback catches that.
+const bool _useAlacrittyEngine =
+    bool.fromEnvironment('ANOTHER_ONE_ALACRITTY', defaultValue: false) ||
+        String.fromEnvironment('ANOTHER_ONE_ALACRITTY').isNotEmpty;
 
 class DesktopTerminalPane extends ConsumerWidget {
   const DesktopTerminalPane({super.key, required this.selection});
@@ -38,6 +53,15 @@ class DesktopTerminalPane extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final transport = ref.watch(localConnectionProvider);
+    if (_useAlacrittyEngine) {
+      return TerminalViewAlacritty(
+        key: ValueKey(
+            'alacritty::${selection.sectionId}::${selection.tabId}'),
+        transport: transport,
+        sectionId: selection.sectionId,
+        tabId: selection.tabId,
+      );
+    }
     return _AttachedTerminal(
       key: ValueKey('${selection.sectionId}::${selection.tabId}'),
       transport: transport,
