@@ -332,12 +332,12 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                       color: AppTokens.textMuted,
                     ),
                   ],
-                  // Spacer so the inline-icons cluster keeps its
-                  // tight spacing on the left and the row's right
-                  // edge is empty (GPUI keeps right-side controls
-                  // — delete button — in a separate hover-only
-                  // group; nothing to render here).
-                  const Spacer(),
+                  // No trailing `Spacer()` — `Flexible(flex:1)`
+                  // and `Spacer(flex:1)` would split the leftover
+                  // row width 50/50 and cap the title at ~half
+                  // the row. Row's default `MainAxisAlignment.start`
+                  // already keeps children left-clustered; the
+                  // unused space at the right end stays empty.
                 ],
               ),
               if (subtitle != null || _hasDiff(task))
