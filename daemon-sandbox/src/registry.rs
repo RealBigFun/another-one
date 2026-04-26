@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{ActiveGitStateWire, ProjectSummary};
+use crate::frame::{ActiveGitStateWire, ChangedFileWire, ProjectSummary};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -204,6 +204,13 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// `spawn_blocking` so the daemon's tokio worker isn't held
     /// across the syscalls.
     fn read_active_git_state(&self, _project_id: &str) -> Option<ActiveGitStateWire> {
+        None
+    }
+
+    /// Working-tree changes for `project_id`. Sister to
+    /// `LocalSession::read_changed_files`. Returns `None` for
+    /// unknown project ids.
+    fn read_changed_files(&self, _project_id: &str) -> Option<Vec<ChangedFileWire>> {
         None
     }
 }

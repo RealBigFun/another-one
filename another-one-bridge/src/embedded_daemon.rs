@@ -40,7 +40,8 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    ActiveGitStateWire, AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    ActiveGitStateWire, AgentProvider, ChangedFileWire, ProjectKind, ProjectSummary, TabSummary,
+    TaskSummary,
 };
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
@@ -363,6 +364,20 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             behind_count: state.behind_count as u32,
         })
     }
+
+    fn read_changed_files(&self, project_id: &str) -> Option<Vec<ChangedFileWire>> {
+        let project_path = self.project_path(project_id)?;
+        let git_state = tokio::task::block_in_place(|| {
+            another_one_core::project_store::read_project_git_state(&project_path, false)
+        });
+        Some(
+            git_state
+                .changed_files
+                .into_iter()
+                .map(changed_file_to_wire)
+                .collect(),
+        )
+    }
 }
 
 impl BridgeDaemonRegistry {
@@ -489,5 +504,19 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         // `.map(map_agent_provider)`, so a `None` core provider
         // stays `None` on the wire (mobile renders it as Shell on
         // its end). No core `Shell` variant exists, intentionally.
+    }
+}
+
+fn changed_file_to_wire(f: another_one_core::project_store::ChangedFile) -> ChangedFileWire {
+    ChangedFileWire {
+        path: f.path,
+        original_path: f.original_path,
+        staged_additions: f.staged_additions,
+        staged_deletions: f.staged_deletions,
+        unstaged_additions: f.unstaged_additions,
+        unstaged_deletions: f.unstaged_deletions,
+        index_status: f.index_status.to_string(),
+        worktree_status: f.worktree_status.to_string(),
+        untracked: f.untracked,
     }
 }

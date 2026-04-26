@@ -166,6 +166,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChangedFileDto dco_decode_changed_file_dto(dynamic raw);
 
   @protected
+  ChangedFileWire dco_decode_changed_file_wire(dynamic raw);
+
+  @protected
   CheckBucket dco_decode_check_bucket(dynamic raw);
 
   @protected
@@ -211,6 +214,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
+
+  @protected
+  List<ChangedFileWire> dco_decode_list_changed_file_wire(dynamic raw);
 
   @protected
   List<CheckDto> dco_decode_list_check_dto(dynamic raw);
@@ -352,6 +358,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto>? dco_decode_opt_list_changed_file_dto(dynamic raw);
+
+  @protected
+  List<ChangedFileWire>? dco_decode_opt_list_changed_file_wire(dynamic raw);
 
   @protected
   List<CheckDto>? dco_decode_opt_list_check_dto(dynamic raw);
@@ -619,6 +628,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer);
 
   @protected
+  ChangedFileWire sse_decode_changed_file_wire(SseDeserializer deserializer);
+
+  @protected
   CheckBucket sse_decode_check_bucket(SseDeserializer deserializer);
 
   @protected
@@ -672,6 +684,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto> sse_decode_list_changed_file_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ChangedFileWire> sse_decode_list_changed_file_wire(
     SseDeserializer deserializer,
   );
 
@@ -843,6 +860,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto>? sse_decode_opt_list_changed_file_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ChangedFileWire>? sse_decode_opt_list_changed_file_wire(
     SseDeserializer deserializer,
   );
 
@@ -1183,6 +1205,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_changed_file_wire(
+    ChangedFileWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_check_bucket(CheckBucket self, SseSerializer serializer);
 
   @protected
@@ -1242,6 +1270,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_changed_file_dto(
     List<ChangedFileDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_changed_file_wire(
+    List<ChangedFileWire> self,
     SseSerializer serializer,
   );
 
@@ -1452,6 +1486,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_list_changed_file_dto(
     List<ChangedFileDto>? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_list_changed_file_wire(
+    List<ChangedFileWire>? self,
     SseSerializer serializer,
   );
 

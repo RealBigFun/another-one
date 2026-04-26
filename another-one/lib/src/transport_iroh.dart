@@ -477,6 +477,34 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     );
   }
 
+  @override
+  Future<List<ls.ChangedFileDto>?> readChangedFiles(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      () => _session!.readChangedFiles(projectId: projectId),
+    );
+    return reply.maybeWhen(
+      changedFilesAck: (files) =>
+          files?.map(_changedFileWireToDto).toList(growable: false),
+      err: _throwErr,
+      orElse: () => throw StateError(
+        'readChangedFiles: unexpected reply variant ${reply.runtimeType}',
+      ),
+    );
+  }
+
+  ls.ChangedFileDto _changedFileWireToDto(ChangedFileWire f) =>
+      ls.ChangedFileDto(
+        path: f.path,
+        originalPath: f.originalPath,
+        stagedAdditions: f.stagedAdditions,
+        stagedDeletions: f.stagedDeletions,
+        unstagedAdditions: f.unstagedAdditions,
+        unstagedDeletions: f.unstagedDeletions,
+        indexStatus: f.indexStatus,
+        worktreeStatus: f.worktreeStatus,
+        untracked: f.untracked,
+      );
+
   /// Common Err-frame handler used by every read verb override.
   /// Throws so the caller's `try/catch` (or Riverpod async value's
   /// error state) sees a thrown failure rather than a typed `null`

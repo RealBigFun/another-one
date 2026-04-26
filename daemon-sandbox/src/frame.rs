@@ -189,6 +189,12 @@ pub enum Control {
     /// Reply is [`WorkerReply::ActiveGitStateAck`] with a `None`
     /// payload when the project id is unknown.
     ReadActiveGitState { project_id: String },
+    /// Working-tree changes for `project_id`. Powers the right
+    /// sidebar's Changes pane. Sister to
+    /// `LocalSession::read_changed_files`. Reply is
+    /// [`WorkerReply::ChangedFilesAck`] with a `None` payload when
+    /// the project id is unknown.
+    ReadChangedFiles { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -315,6 +321,11 @@ pub enum WorkerReply {
     ActiveGitStateAck {
         state: Option<ActiveGitStateWire>,
     },
+    /// Reply to [`Control::ReadChangedFiles`]. `files == None` when
+    /// the project id is unknown.
+    ChangedFilesAck {
+        files: Option<Vec<ChangedFileWire>>,
+    },
 }
 
 /// Wire mirror of the bridge's `ActiveGitStateDto` (FRB-bound) and
@@ -331,6 +342,27 @@ pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
     pub ahead_count: u32,
     pub behind_count: u32,
+}
+
+/// Wire mirror of the bridge's `ChangedFileDto` (FRB-bound). Carries
+/// the raw `git status` chars + diff counts; UI maps them to glyphs
+/// per the desktop's existing `changed_file_status_*` tables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangedFileWire {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub staged_additions: i32,
+    pub staged_deletions: i32,
+    pub unstaged_additions: i32,
+    pub unstaged_deletions: i32,
+    /// Single-char index status, encoded as a 1-char `String` so
+    /// JSON wire and FRB conversion are uniform (FRB doesn't expose
+    /// `char` directly).
+    pub index_status: String,
+    /// Single-char worktree status, same encoding as
+    /// `index_status`.
+    pub worktree_status: String,
+    pub untracked: bool,
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —

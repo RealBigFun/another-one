@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -86,6 +86,9 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// the allocated `request_id` so the Dart caller can correlate
   /// the daemon's reply.
   Future<BigInt> readActiveGitState({required String projectId});
+
+  /// Issue [`Control::ReadChangedFiles`] for `project_id`.
+  Future<BigInt> readChangedFiles({required String projectId});
 
   /// Issue [`Control::ReadProjectBranches`] for `project_id`.
   Future<BigInt> readProjectBranches({required String projectId});
@@ -168,6 +171,58 @@ enum AgentProvider {
   rovoDev,
   forge,
   shell,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFileWire`.
+class ChangedFileWire {
+  final String path;
+  final String? originalPath;
+  final int stagedAdditions;
+  final int stagedDeletions;
+  final int unstagedAdditions;
+  final int unstagedDeletions;
+  final String indexStatus;
+  final String worktreeStatus;
+  final bool untracked;
+
+  const ChangedFileWire({
+    required this.path,
+    this.originalPath,
+    required this.stagedAdditions,
+    required this.stagedDeletions,
+    required this.unstagedAdditions,
+    required this.unstagedDeletions,
+    required this.indexStatus,
+    required this.worktreeStatus,
+    required this.untracked,
+  });
+
+  @override
+  int get hashCode =>
+      path.hashCode ^
+      originalPath.hashCode ^
+      stagedAdditions.hashCode ^
+      stagedDeletions.hashCode ^
+      unstagedAdditions.hashCode ^
+      unstagedDeletions.hashCode ^
+      indexStatus.hashCode ^
+      worktreeStatus.hashCode ^
+      untracked.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChangedFileWire &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          originalPath == other.originalPath &&
+          stagedAdditions == other.stagedAdditions &&
+          stagedDeletions == other.stagedDeletions &&
+          unstagedAdditions == other.unstagedAdditions &&
+          unstagedDeletions == other.unstagedDeletions &&
+          indexStatus == other.indexStatus &&
+          worktreeStatus == other.worktreeStatus &&
+          untracked == other.untracked;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -401,6 +456,11 @@ sealed class WorkerReply with _$WorkerReply {
   /// `daemon-sandbox/src/frame.rs::WorkerReply::ActiveGitStateAck`.
   const factory WorkerReply.activeGitStateAck({ActiveGitStateWire? state}) =
       WorkerReply_ActiveGitStateAck;
+
+  /// Reply to [`Control::ReadChangedFiles`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ChangedFilesAck`.
+  const factory WorkerReply.changedFilesAck({List<ChangedFileWire>? files}) =
+      WorkerReply_ChangedFilesAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

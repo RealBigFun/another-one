@@ -153,6 +153,9 @@ enum Control {
     /// branch + ahead/behind counts. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadActiveGitState`.
     ReadActiveGitState { project_id: String },
+    /// Working-tree changes for a project. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadChangedFiles`.
+    ReadChangedFiles { project_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -202,6 +205,11 @@ pub enum WorkerReply {
     ActiveGitStateAck {
         state: Option<ActiveGitStateWire>,
     },
+    /// Reply to [`Control::ReadChangedFiles`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ChangedFilesAck`.
+    ChangedFilesAck {
+        files: Option<Vec<ChangedFileWire>>,
+    },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
@@ -211,6 +219,20 @@ pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
     pub ahead_count: u32,
     pub behind_count: u32,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFileWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChangedFileWire {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub staged_additions: i32,
+    pub staged_deletions: i32,
+    pub unstaged_additions: i32,
+    pub unstaged_deletions: i32,
+    pub index_status: String,
+    pub worktree_status: String,
+    pub untracked: bool,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -946,6 +968,14 @@ impl IrohSession {
     pub async fn read_active_git_state(&self, project_id: String) -> anyhow::Result<u64> {
         let id = self.next_request_id();
         self.send_control(id, Control::ReadActiveGitState { project_id })
+            .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::ReadChangedFiles`] for `project_id`.
+    pub async fn read_changed_files(&self, project_id: String) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(id, Control::ReadChangedFiles { project_id })
             .await?;
         Ok(id)
     }

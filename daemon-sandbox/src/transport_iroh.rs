@@ -516,6 +516,11 @@ async fn handle_control(
             let reply = WorkerReply::ActiveGitStateAck { state };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ReadChangedFiles { project_id } => {
+            let files = registry.read_changed_files(&project_id);
+            let reply = WorkerReply::ChangedFilesAck { files };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }
