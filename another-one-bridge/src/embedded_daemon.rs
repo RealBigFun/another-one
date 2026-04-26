@@ -30,13 +30,18 @@ use std::thread;
 
 use tokio::sync::broadcast;
 
+use another_one_core::agents::AgentProviderKind;
 use another_one_core::daemon_embed::{
     daemon_paths, key_from_wire, RegistryState, TabLaunchRequest,
 };
+use another_one_core::project_store::ProjectKind as CoreProjectKind;
 use another_one_core::project_store::ProjectStore;
+use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
-use daemon_sandbox::frame::ProjectSummary;
+use daemon_sandbox::frame::{
+    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+};
 use daemon_sandbox::{EndpointHandle, TerminalRegistry};
 
 use crate::local_pair::{set_local_pair_info, LocalPairInfo};
@@ -183,10 +188,12 @@ impl BridgeTerminalRegistry {
 
 impl TerminalRegistry for BridgeTerminalRegistry {
     fn list_projects(&self) -> Vec<ProjectSummary> {
-        // Iroh peers list nothing until the Flutter desktop owns the
-        // project tree itself. Returning `vec![]` is a real "no
-        // projects yet" state, not an error.
-        Vec::new()
+        // Project flattening mirrors `LocalSession::list_projects`'s
+        // `flatten_project_store`. Worktree-kind projects collapse
+        // into their root via `Task::target_project_id`; mobile sees
+        // the same tree the desktop sidebar does.
+        self.with_state(|state| flatten_state_to_frame(state))
+            .unwrap_or_default()
     }
 
     fn attach_tab(
@@ -301,5 +308,113 @@ impl TerminalRegistry for BridgeTerminalRegistry {
             }
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
+    }
+}
+
+/// Flatten the bridge's `RegistryState` into the iroh wire's
+/// `frame::ProjectSummary` shape. Mirrors `flatten_project_store`
+/// in `api/local_session.rs` (which produces the FRB-side
+/// `ProjectSummary`); the two namespaces are field-for-field
+/// compatible. Worktree-kind projects collapse into their root via
+/// `Task::target_project_id`, so mobile peers see the same tree
+/// the desktop sidebar paints.
+fn flatten_state_to_frame(state: &RegistryState) -> Vec<ProjectSummary> {
+    let store = &state.project_store;
+    store
+        .projects
+        .iter()
+        .filter(|project| matches!(project.kind, CoreProjectKind::Root))
+        .map(|project| {
+            let tasks = store
+                .tasks
+                .get(&project.id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|task| {
+                    let section_key = task.section_id.clone();
+                    let parsed_section = SectionId::from_store_key(&section_key);
+                    let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
+                    let tabs = task
+                        .tabs
+                        .into_iter()
+                        .map(|tab| {
+                            let running = parsed_section
+                                .as_ref()
+                                .map(|section| TerminalRuntimeKey {
+                                    section_id: section.clone(),
+                                    tab_id: tab.id.clone(),
+                                })
+                                .map(|key| state.broadcasts.contains_key(&key))
+                                .unwrap_or(false);
+                            TabSummary {
+                                id: tab.id,
+                                title: tab.title,
+                                provider: tab.provider.map(map_agent_provider),
+                                running,
+                                pinned: tab.pinned,
+                                fixed_title: tab.fixed_title,
+                            }
+                        })
+                        .collect();
+                    let branch_view =
+                        store.branch_view(&task.target_project_id, &task.branch_name);
+                    let last_commit_relative = branch_view
+                        .as_ref()
+                        .map(|branch| branch.last_commit_relative.clone())
+                        .unwrap_or_default();
+                    let (lines_added, lines_removed) = branch_view
+                        .map(|branch| (branch.lines_added, branch.lines_removed))
+                        .unwrap_or((0, 0));
+                    TaskSummary {
+                        id: task.id,
+                        name: task.name,
+                        section_id: section_key,
+                        branch_name: task.branch_name,
+                        active_tab_id: task.active_tab_id,
+                        tabs,
+                        pinned: task_pinned,
+                        last_commit_relative,
+                        lines_added,
+                        lines_removed,
+                        target_project_id: task.target_project_id,
+                    }
+                })
+                .collect();
+            ProjectSummary {
+                id: project.id.clone(),
+                name: project.name.clone(),
+                path: project.path.to_string_lossy().into_owned(),
+                kind: map_project_kind(project.kind),
+                current_branch: project.checkout.current_branch.clone(),
+                tasks,
+            }
+        })
+        .collect()
+}
+
+fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {
+    match kind {
+        CoreProjectKind::Root => ProjectKind::Root,
+        CoreProjectKind::Worktree => ProjectKind::Worktree,
+    }
+}
+
+fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
+    match kind {
+        AgentProviderKind::ClaudeCode => AgentProvider::ClaudeCode,
+        AgentProviderKind::CursorAgent => AgentProvider::CursorAgent,
+        AgentProviderKind::Codex => AgentProvider::Codex,
+        AgentProviderKind::Pi => AgentProvider::Pi,
+        AgentProviderKind::Gemini => AgentProvider::Gemini,
+        AgentProviderKind::OpenCode => AgentProvider::OpenCode,
+        AgentProviderKind::Amp => AgentProvider::Amp,
+        AgentProviderKind::RovoDev => AgentProvider::RovoDev,
+        AgentProviderKind::Forge => AgentProvider::Forge,
+        // `frame::AgentProvider::Shell` is the wire-side catch-all
+        // for `tab.provider == None`; the bridge maps via
+        // `.map(map_agent_provider)`, so a `None` core provider
+        // stays `None` on the wire (mobile renders it as Shell on
+        // its end). No core `Shell` variant exists, intentionally.
     }
 }
