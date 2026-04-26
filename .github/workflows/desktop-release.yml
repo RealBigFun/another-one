@@ -1,0 +1,220 @@
+name: Desktop release
+
+# Every push to `main` produces a public release in the
+# `another-one-releases` repo: a DMG and updater payload for macOS
+# (per arch), an AppImage for Linux x86_64, a SHA256SUMS file, a
+# signed `latest.json` manifest, and the matching `latest.json.sig`.
+# The desktop app polls the resulting GitHub Release URL on a 10
+# minute cadence (see `desktop/src/updater.rs`).
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_REPO: ${{ vars.ANOTHER_ONE_RELEASES_REPO || 'RealBigFun/another-one-releases' }}
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  identity:
+    name: Compute release identity
+    runs-on: ubuntu-22.04
+    outputs:
+      commit_sha: ${{ steps.identity.outputs.commit_sha }}
+      short_sha: ${{ steps.identity.outputs.short_sha }}
+      release_id: ${{ steps.identity.outputs.release_id }}
+      release_tag: ${{ steps.identity.outputs.release_tag }}
+      release_name: ${{ steps.identity.outputs.release_name }}
+      cargo_version: ${{ steps.identity.outputs.cargo_version }}
+      build_number: ${{ steps.identity.outputs.build_number }}
+      published_at: ${{ steps.identity.outputs.published_at }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT_SHA="${GITHUB_SHA}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          RELEASE_ID="${COMMIT_SHA}"
+          RELEASE_TAG="desktop-${COMMIT_SHA}"
+          RELEASE_NAME="AnotherOne Desktop ${SHORT_SHA}"
+          CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' desktop/Cargo.toml)"
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            echo "commit_sha=${COMMIT_SHA}"
+            echo "short_sha=${SHORT_SHA}"
+            echo "release_id=${RELEASE_ID}"
+            echo "release_tag=${RELEASE_TAG}"
+            echo "release_name=${RELEASE_NAME}"
+            echo "cargo_version=${CARGO_VERSION}"
+            echo "build_number=${BUILD_NUMBER}"
+            echo "published_at=${PUBLISHED_AT}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    name: Build macOS (${{ matrix.target }})
+    needs: identity
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-${{ matrix.target }}
+      - name: Run macOS packaging script
+        env:
+          CARGO_VERSION: ${{ needs.identity.outputs.cargo_version }}
+          RELEASE_ID: ${{ needs.identity.outputs.release_id }}
+          BUILD_NUMBER: ${{ needs.identity.outputs.build_number }}
+          TARGET_TRIPLE: ${{ matrix.target }}
+          OUTPUT_DIR: ${{ github.workspace }}/dist/macos-${{ matrix.arch }}
+          ANOTHER_ONE_BUILD_FULL_SHA: ${{ needs.identity.outputs.commit_sha }}
+          ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX: ${{ secrets.ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX }}
+          ANOTHER_ONE_UPDATE_MANIFEST_URL: https://github.com/${{ env.RELEASE_REPO }}/releases/latest/download/latest.json
+        run: |
+          mkdir -p "$OUTPUT_DIR"
+          ./scripts/package-macos.sh
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}-*.dmg
+            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}-*.app.tar.gz
+
+  build-linux:
+    name: Build Linux (x86_64)
+    needs: identity
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-x86_64
+      - name: Install AppImage runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 libxkbcommon0 libxkbcommon-x11-0 libxcb-xkb1
+      - name: Run Linux packaging script
+        env:
+          ALLOW_HOST_BUILD: "1"
+          RELEASE_ID: ${{ needs.identity.outputs.release_id }}
+          OUTPUT_DIR: ${{ github.workspace }}/dist/linux-x86_64
+          ANOTHER_ONE_BUILD_FULL_SHA: ${{ needs.identity.outputs.commit_sha }}
+          ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX: ${{ secrets.ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX }}
+          ANOTHER_ONE_UPDATE_MANIFEST_URL: https://github.com/${{ env.RELEASE_REPO }}/releases/latest/download/latest.json
+        run: |
+          mkdir -p "$OUTPUT_DIR"
+          ./scripts/package-linux.sh
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: |
+            dist/linux-x86_64/AnotherOne-linux-x86_64-*.AppImage
+
+  publish:
+    name: Publish release
+    needs:
+      - identity
+      - build-macos
+      - build-linux
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Stage release artifacts
+        id: stage
+        env:
+          RELEASE_ID: ${{ needs.identity.outputs.release_id }}
+          SHORT_SHA: ${{ needs.identity.outputs.short_sha }}
+          CARGO_VERSION: ${{ needs.identity.outputs.cargo_version }}
+          BUILD_NUMBER: ${{ needs.identity.outputs.build_number }}
+          PUBLISHED_AT: ${{ needs.identity.outputs.published_at }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+          RELEASE_REPO_OUT: ${{ env.RELEASE_REPO }}
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="${{ github.workspace }}/release"
+          mkdir -p "$RELEASE_DIR"
+          shopt -s nullglob
+          for f in dist/*/AnotherOne-*; do
+            cp -f "$f" "$RELEASE_DIR/"
+          done
+          ls -la "$RELEASE_DIR"
+          # SHA256SUMS over every staged asset (alphabetical for
+          # reproducibility).
+          ( cd "$RELEASE_DIR" && find . -maxdepth 1 -type f -name 'AnotherOne-*' -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS )
+          # Build latest.json from staged assets.
+          python3 scripts/release/build_manifest.py \
+            --release-dir "$RELEASE_DIR" \
+            --release-id "$RELEASE_ID" \
+            --short-sha "$SHORT_SHA" \
+            --cargo-version "$CARGO_VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --published-at "$PUBLISHED_AT" \
+            --release-repo "$RELEASE_REPO_OUT" \
+            --release-tag "$RELEASE_TAG" \
+            --output "$RELEASE_DIR/latest.json"
+          echo "release_dir=$RELEASE_DIR" >> "$GITHUB_OUTPUT"
+      - name: Sign latest.json
+        env:
+          ED25519_PRIVKEY_HEX: ${{ secrets.ANOTHER_ONE_UPDATE_SIGN_PRIVKEY_HEX }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ED25519_PRIVKEY_HEX:-}" ]]; then
+            echo "ANOTHER_ONE_UPDATE_SIGN_PRIVKEY_HEX secret is not set; cannot sign latest.json." >&2
+            exit 1
+          fi
+          python3 -m pip install --quiet "PyNaCl>=1.5"
+          python3 scripts/release/sign_manifest.py \
+            --manifest "${{ steps.stage.outputs.release_dir }}/latest.json" \
+            --signature "${{ steps.stage.outputs.release_dir }}/latest.json.sig"
+      - name: Publish to public release repo
+        env:
+          GH_TOKEN: ${{ secrets.ANOTHER_ONE_RELEASES_TOKEN }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+          RELEASE_NAME: ${{ needs.identity.outputs.release_name }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "ANOTHER_ONE_RELEASES_TOKEN secret is not set." >&2
+            exit 1
+          fi
+          RELEASE_DIR="${{ steps.stage.outputs.release_dir }}"
+          gh release create "$RELEASE_TAG" \
+            --repo "$RELEASE_REPO" \
+            --title "$RELEASE_NAME" \
+            --notes "Automated release from ${GITHUB_SHA}." \
+            "$RELEASE_DIR"/AnotherOne-* \
+            "$RELEASE_DIR"/SHA256SUMS \
+            "$RELEASE_DIR"/latest.json \
+            "$RELEASE_DIR"/latest.json.sig

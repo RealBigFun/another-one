@@ -29,6 +29,8 @@ mod terminal_runtime;
 mod theme;
 mod titlebar;
 mod tokens;
+mod updater;
+mod updater_install;
 
 // These modules live in the `another-one-core` crate and are re-exported
 // at the crate root so pre-existing `crate::<module>::…` paths throughout

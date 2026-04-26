@@ -14,6 +14,25 @@ Options:
   --open    Open the generated DMG after packaging.
   -h, --help
             Show this help message.
+
+Environment overrides (used by CI):
+  CARGO_VERSION       Override the bundled CFBundleShortVersionString
+                      (defaults to the version in desktop/Cargo.toml).
+  RELEASE_ID          Full git SHA stamped into output filenames.
+  BUILD_NUMBER        Monotonic CFBundleVersion value (default: 1).
+  TARGET_TRIPLE       Cargo target triple, e.g. aarch64-apple-darwin.
+  OUTPUT_DIR          Where to drop the .app bundle, .dmg, and the
+                      updater payload (.app.tar.gz). Defaults to
+                      target/release/macos.
+  ARTIFACT_PREFIX     Filename prefix for release-named outputs.
+  ANOTHER_ONE_BUILD_FULL_SHA
+                      Forwarded to cargo so build.rs can stamp the
+                      full SHA into the binary even when the worktree
+                      lacks .git history (CI shallow clones).
+  ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX
+                      Forwarded to cargo so the binary embeds the
+                      Ed25519 public key used to verify update
+                      manifests.
 EOF
 }
 
@@ -49,8 +68,21 @@ PACKAGE_NAME="another-one"
 BUNDLE_ID="dev.anotherone.desktop"
 MIN_MACOS_VERSION="11.0"
 
-RELEASE_DIR="$ROOT_DIR/target/release"
-PACKAGE_DIR="$RELEASE_DIR/macos"
+CARGO_VERSION="${CARGO_VERSION:-}"
+if [[ -z "$CARGO_VERSION" ]]; then
+  CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$ROOT_DIR/desktop/Cargo.toml")"
+fi
+RELEASE_ID="${RELEASE_ID:-}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
+TARGET_TRIPLE="${TARGET_TRIPLE:-}"
+ARTIFACT_PREFIX="${ARTIFACT_PREFIX:-}"
+
+if [[ -n "$TARGET_TRIPLE" ]]; then
+  RELEASE_DIR="$ROOT_DIR/target/$TARGET_TRIPLE/release"
+else
+  RELEASE_DIR="$ROOT_DIR/target/release"
+fi
+PACKAGE_DIR="${OUTPUT_DIR:-$RELEASE_DIR/macos}"
 APP_BUNDLE="$PACKAGE_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -59,6 +91,7 @@ ASSETS_DIR="$RESOURCES_DIR/assets"
 BINARY_PATH="$RELEASE_DIR/$PACKAGE_NAME"
 DMG_PATH="$PACKAGE_DIR/$APP_NAME.dmg"
 STAGING_DIR="$PACKAGE_DIR/dmg-staging"
+UPDATE_PAYLOAD="$PACKAGE_DIR/$APP_NAME.app.tar.gz"
 
 ICON_PATH="$ROOT_DIR/desktop/assets/app-icon/macos/$APP_NAME.icns"
 ASSETS_SOURCE="$ROOT_DIR/desktop/assets"
@@ -72,9 +105,13 @@ SHIM_NAME="another-one-mcp-shim"
 SHIM_BINARY_PATH="$ROOT_DIR/target/release/$SHIM_NAME"
 
 echo "Building $PACKAGE_NAME + $SHIM_NAME for release..."
+build_args=(build -p "$PACKAGE_NAME" -p "$SHIM_NAME" --release)
+if [[ -n "$TARGET_TRIPLE" ]]; then
+  build_args+=(--target "$TARGET_TRIPLE")
+fi
 (
   cd "$ROOT_DIR"
-  cargo build -p "$PACKAGE_NAME" -p "$SHIM_NAME" --release
+  cargo "${build_args[@]}"
 )
 
 if [[ ! -x "$BINARY_PATH" ]]; then
@@ -122,9 +159,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>$CARGO_VERSION</string>
   <key>CFBundleVersion</key>
-  <string>0.1.0</string>
+  <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_MACOS_VERSION</string>
   <key>NSHighResolutionCapable</key>
@@ -148,9 +185,33 @@ hdiutil create \
   "$DMG_PATH"
 rm -rf "$STAGING_DIR"
 
+echo "Creating updater payload $UPDATE_PAYLOAD..."
+# Used by the in-app updater: a tarball containing the .app bundle
+# at its root so the install helper can extract and atomically
+# replace the running bundle. Uses gnu-tar/bsdtar's --format=ustar
+# so xattrs/quarantine are stripped and the archive is reproducible.
+( cd "$PACKAGE_DIR" && tar -czf "$UPDATE_PAYLOAD" "$APP_NAME.app" )
+
+if [[ -n "$RELEASE_ID" ]]; then
+  ARCH_LABEL="$(uname -m)"
+  case "$ARCH_LABEL" in
+    arm64) ARCH_LABEL="aarch64" ;;
+    x86_64) ARCH_LABEL="x86_64" ;;
+  esac
+  PREFIX="${ARTIFACT_PREFIX:-AnotherOne}"
+  RELEASE_DMG="$PACKAGE_DIR/${PREFIX}-macos-${ARCH_LABEL}-${RELEASE_ID}.dmg"
+  RELEASE_PAYLOAD="$PACKAGE_DIR/${PREFIX}-macos-${ARCH_LABEL}-${RELEASE_ID}.app.tar.gz"
+  cp -f "$DMG_PATH" "$RELEASE_DMG"
+  cp -f "$UPDATE_PAYLOAD" "$RELEASE_PAYLOAD"
+  echo "Release-named copies:"
+  echo "  $RELEASE_DMG"
+  echo "  $RELEASE_PAYLOAD"
+fi
+
 echo "Created:"
 echo "  $APP_BUNDLE"
 echo "  $DMG_PATH"
+echo "  $UPDATE_PAYLOAD"
 
 if [[ "$OPEN_DMG" -eq 1 ]]; then
   echo "Opening $APP_NAME.dmg..."

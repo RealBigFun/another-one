@@ -1452,6 +1452,13 @@ pub struct AnotherOneApp {
     pub(crate) resource_usage_sampler: ResourceUsageSampler,
     /// Last time resource usage was sampled.
     pub(crate) last_resource_usage_refresh: Instant,
+    /// In-app updater worker handle. Owns a dedicated OS thread
+    /// that polls the public release manifest on a 10 minute
+    /// cadence and downloads/verifies new payloads. The
+    /// render-tick drain pulls events off it via `try_recv`.
+    pub(crate) updater: crate::updater::UpdaterHandle,
+    /// Latest updater state surfaced in Settings → General.
+    pub(crate) updater_state: crate::updater::UpdateState,
 }
 
 impl Focusable for AnotherOneApp {
@@ -3785,7 +3792,7 @@ impl AnotherOneApp {
             project_check_runs_requests: HashSet::new(),
             project_check_runs_checked_at: HashMap::new(),
             settings_open: false,
-            settings_section: crate::settings_page::SettingsSection::Agents,
+            settings_section: crate::settings_page::SettingsSection::General,
             mcp_registry: {
                 let mut reg = another_one_core::mcp::registry::McpRegistry::load();
                 // Re-register the daemon MCP entry on every
@@ -3881,6 +3888,10 @@ impl AnotherOneApp {
             resource_usage: ResourceUsageSnapshot::default(),
             resource_usage_sampler: ResourceUsageSampler::default(),
             last_resource_usage_refresh: Instant::now() - RESOURCE_REFRESH_INTERVAL_CLOSED,
+            updater: crate::updater::UpdaterHandle::spawn(
+                crate::updater::BuildIdentity::current(),
+            ),
+            updater_state: crate::updater::UpdateState::Idle,
         };
 
         let mut app = app;
@@ -7604,6 +7615,24 @@ impl AnotherOneApp {
         }
     }
 
+    pub(crate) fn drain_updater_events(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut should_notify = false;
+        while let Some(event) = self.updater.try_recv() {
+            match event {
+                crate::updater::UpdaterEvent::StateChanged(state) => {
+                    self.updater_state = state;
+                    should_notify = true;
+                }
+                crate::updater::UpdaterEvent::Notice { kind, message } => match kind {
+                    crate::updater::NoticeKind::Success => self.show_success_toast(message, cx),
+                    crate::updater::NoticeKind::Warning => self.show_warning_toast(message, cx),
+                    crate::updater::NoticeKind::Error => self.show_error_toast(message, cx),
+                },
+            }
+        }
+        should_notify
+    }
+
     fn drain_commit_file_changes(&mut self, cx: &mut Context<Self>) -> bool {
         let mut should_notify = false;
 
@@ -11310,6 +11339,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_daemon_handle(cx);
                             should_notify |= this.drain_pending_tab_launches(cx);
                             should_notify |= this.drain_pending_tab_resizes(cx);
+                            should_notify |= this.drain_updater_events(cx);
                             should_notify |= this.tick_toasts();
                             should_notify |= this.tick_resource_usage();
                             should_notify |= this.tick_pasted_image_preview(cx);

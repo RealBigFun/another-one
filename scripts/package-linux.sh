@@ -85,10 +85,13 @@ else
   RELEASE_DIR="$ROOT_DIR/target/docker-linux/release"
 fi
 
-PACKAGE_DIR="$ROOT_DIR/target/release/linux"
+PACKAGE_DIR="${OUTPUT_DIR:-$ROOT_DIR/target/release/linux}"
 APPDIR="$PACKAGE_DIR/AppDir"
 TOOLS_DIR="$PACKAGE_DIR/tools"
 APPIMAGE_OUT="$PACKAGE_DIR/${APP_NAME}-${ARCH}.AppImage"
+
+RELEASE_ID="${RELEASE_ID:-}"
+ARTIFACT_PREFIX="${ARTIFACT_PREFIX:-AnotherOne}"
 
 BINARY_PATH="$RELEASE_DIR/$PACKAGE_NAME"
 SHIM_BINARY_PATH="$RELEASE_DIR/$SHIM_NAME"
@@ -197,6 +200,18 @@ fi
 echo ""
 echo "AppImage built: $APPIMAGE_OUT"
 ls -lh "$APPIMAGE_OUT"
+
+if [[ -n "$RELEASE_ID" ]]; then
+  case "$ARCH" in
+    aarch64|x86_64) ARCH_LABEL="$ARCH" ;;
+    arm64) ARCH_LABEL="aarch64" ;;
+    *) ARCH_LABEL="$ARCH" ;;
+  esac
+  RELEASE_APPIMAGE="$PACKAGE_DIR/${ARTIFACT_PREFIX}-linux-${ARCH_LABEL}-${RELEASE_ID}.AppImage"
+  cp -f "$APPIMAGE_OUT" "$RELEASE_APPIMAGE"
+  chmod +x "$RELEASE_APPIMAGE"
+  echo "Release-named copy: $RELEASE_APPIMAGE"
+fi
 
 if [[ "$INSTALL_AFTER" -eq 1 ]]; then
   echo ""
