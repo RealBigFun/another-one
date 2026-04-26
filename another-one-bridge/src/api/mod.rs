@@ -4,3 +4,4 @@ pub mod iroh_client;
 pub mod local_session;
 pub mod pair;
 pub mod resources;
+pub mod terminal_engine;

@@ -30,6 +30,7 @@ pub mod resource_usage;
 pub mod section;
 pub mod shortcuts;
 pub mod task_launcher;
+pub mod terminal_engine;
 pub mod terminal_launch;
 pub mod terminal_manager;
 pub mod terminal_types;

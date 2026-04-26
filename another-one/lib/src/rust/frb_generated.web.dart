@@ -12,6 +12,7 @@ import 'api/iroh_client.dart';
 import 'api/local_session.dart';
 import 'api/pair.dart';
 import 'api/resources.dart';
+import 'api/terminal_engine.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -117,6 +118,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BranchCompareView dco_decode_box_autoadd_branch_compare_view(dynamic raw);
 
   @protected
+  InputEventDto dco_decode_box_autoadd_input_event_dto(dynamic raw);
+
+  @protected
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
 
   @protected
@@ -152,6 +156,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BuildInfo dco_decode_build_info(dynamic raw);
 
   @protected
+  CellDto dco_decode_cell_dto(dynamic raw);
+
+  @protected
   ChangedFileDto dco_decode_changed_file_dto(dynamic raw);
 
   @protected
@@ -176,6 +183,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_i_32(dynamic raw);
 
   @protected
+  InputEventDto dco_decode_input_event_dto(dynamic raw);
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
@@ -188,6 +198,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<BranchCompareFileDto> dco_decode_list_branch_compare_file_dto(
     dynamic raw,
   );
+
+  @protected
+  List<CellDto> dco_decode_list_cell_dto(dynamic raw);
 
   @protected
   List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
@@ -399,6 +412,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ShortcutSettingsView dco_decode_shortcut_settings_view(dynamic raw);
 
   @protected
+  SnapshotDto dco_decode_snapshot_dto(dynamic raw);
+
+  @protected
   TabSummary dco_decode_tab_summary(dynamic raw);
 
   @protected
@@ -525,6 +541,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  InputEventDto sse_decode_box_autoadd_input_event_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   PairingInfo sse_decode_box_autoadd_pairing_info(SseDeserializer deserializer);
 
   @protected
@@ -570,6 +591,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BuildInfo sse_decode_build_info(SseDeserializer deserializer);
 
   @protected
+  CellDto sse_decode_cell_dto(SseDeserializer deserializer);
+
+  @protected
   ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer);
 
   @protected
@@ -598,6 +622,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
+  InputEventDto sse_decode_input_event_dto(SseDeserializer deserializer);
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
@@ -614,6 +641,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<BranchCompareFileDto> sse_decode_list_branch_compare_file_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<CellDto> sse_decode_list_cell_dto(SseDeserializer deserializer);
 
   @protected
   List<ChangedFileDto> sse_decode_list_changed_file_dto(
@@ -885,6 +915,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SnapshotDto sse_decode_snapshot_dto(SseDeserializer deserializer);
+
+  @protected
   TabSummary sse_decode_tab_summary(SseDeserializer deserializer);
 
   @protected
@@ -1039,6 +1072,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_input_event_dto(
+    InputEventDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_pairing_info(
     PairingInfo self,
     SseSerializer serializer,
@@ -1093,6 +1132,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_build_info(BuildInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_cell_dto(CellDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_changed_file_dto(
     ChangedFileDto self,
     SseSerializer serializer,
@@ -1126,6 +1168,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_input_event_dto(InputEventDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
@@ -1145,6 +1190,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     List<BranchCompareFileDto> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_list_cell_dto(List<CellDto> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_changed_file_dto(
@@ -1481,6 +1529,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     ShortcutSettingsView self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_snapshot_dto(SnapshotDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_tab_summary(TabSummary self, SseSerializer serializer);

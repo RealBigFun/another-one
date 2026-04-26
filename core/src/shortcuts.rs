@@ -69,15 +69,33 @@ const fn close_current_tab_default_binding() -> &'static str {
     {
         "cmd-w"
     }
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "android"))]
     {
         "control-w"
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    compile_error!(
-        "another-one-core only supports macos, linux, and windows; \
-         add a default binding for this target."
-    );
+    // iOS doesn't surface a hardware-keyboard shortcut for tab close
+    // in the GPUI build; mobile drives this via the on-screen tab
+    // menu instead. Return an empty string so the const-fn remains
+    // total — callers that depend on a real binding gate on
+    // `Platform::is_keyboard_capable()` already.
+    #[cfg(target_os = "ios")]
+    {
+        ""
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "android",
+        target_os = "ios",
+    )))]
+    {
+        compile_error!(
+            "another-one-core: add a `close_current_tab` default binding \
+             for this target."
+        );
+        ""
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
