@@ -16,9 +16,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../state/active_project_page_provider.dart';
 import '../state/left_sidebar_provider.dart';
 import '../state/local_connection_provider.dart';
+import '../state/right_sidebar_provider.dart';
+import '../state/settings_provider.dart';
 import '../state/tab_selection_provider.dart';
 import '../tokens.dart';
-import '../state/right_sidebar_provider.dart';
 import '../widgets/empty_state.dart';
 import 'desktop_project_page/desktop_project_page.dart';
 import 'desktop_right_sidebar/desktop_right_sidebar.dart';
@@ -26,6 +27,7 @@ import 'desktop_sidebar/desktop_sidebar.dart';
 import 'desktop_terminal/desktop_tab_strip.dart';
 import 'desktop_terminal/desktop_terminal_pane.dart';
 import 'desktop_titlebar/desktop_titlebar.dart';
+import 'settings_page/settings_page.dart';
 
 class DesktopShell extends ConsumerWidget {
   const DesktopShell({super.key});
@@ -37,6 +39,7 @@ class DesktopShell extends ConsumerWidget {
     ref.watch(localConnectionProvider);
     final leftOpen = ref.watch(leftSidebarOpenProvider);
     final rightOpen = ref.watch(rightSidebarOpenProvider);
+    final settingsOpen = ref.watch(settingsOpenProvider);
     return Scaffold(
       backgroundColor: AppTokens.terminalBg,
       body: Column(
@@ -46,8 +49,12 @@ class DesktopShell extends ConsumerWidget {
             child: Row(
               children: [
                 if (leftOpen) const DesktopSidebar(),
-                const Expanded(child: _MainArea()),
-                if (rightOpen) const DesktopRightSidebar(),
+                Expanded(
+                  child: settingsOpen
+                      ? const SettingsPage()
+                      : const _MainArea(),
+                ),
+                if (rightOpen && !settingsOpen) const DesktopRightSidebar(),
               ],
             ),
           ),

@@ -26,6 +26,7 @@ import '../../state/active_project_page_provider.dart';
 import '../../state/github_url_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/rename_target_provider.dart';
+import '../../state/settings_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
@@ -123,14 +124,7 @@ class _SidebarFooter extends ConsumerWidget {
             tooltip: 'Settings',
             icon: 'settings',
             onPressed: () {
-              // Settings page port comes in a later phase; the
-              // GPUI version opens an in-app sheet.
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Settings page is not yet ported'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
+              ref.read(settingsOpenProvider.notifier).state = true;
             },
           ),
           const SizedBox(width: AppTokens.space1),
