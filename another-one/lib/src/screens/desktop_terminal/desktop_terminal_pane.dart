@@ -39,11 +39,14 @@ import '../../widgets/terminal_view_alacritty.dart';
 /// Both forms accepted because `bool.fromEnvironment` only honours
 /// the literal string `"true"` — `=1` (the cargokit-style convention
 /// people reach for, and what the previous launch instructions
-/// suggested) silently parses as `false`. The `String.fromEnvironment
-/// .isNotEmpty` fallback catches that.
+/// suggested) silently parses as `false`. The `String.fromEnvironment`
+/// fallback catches that. `!= ''` rather than `.isNotEmpty` because
+/// the analyser's const-evaluator rejects getter access on a
+/// `String.fromEnvironment` result; `String.==` is fine.
 const bool _useAlacrittyEngine =
     bool.fromEnvironment('ANOTHER_ONE_ALACRITTY', defaultValue: false) ||
-        String.fromEnvironment('ANOTHER_ONE_ALACRITTY').isNotEmpty;
+        String.fromEnvironment('ANOTHER_ONE_ALACRITTY', defaultValue: '') !=
+            '';
 
 class DesktopTerminalPane extends ConsumerWidget {
   const DesktopTerminalPane({super.key, required this.selection});
