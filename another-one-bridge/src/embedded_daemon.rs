@@ -371,6 +371,27 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             .await
         })
     }
+
+    fn stage_all_changes<'a>(
+        &'a self,
+        project_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
+    > {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        Box::pin(async move {
+            run_changed_file_mutation(
+                &inner,
+                "stage_all_changes",
+                &project_id,
+                |project_path| {
+                    another_one_core::project_store::stage_all_changes(&project_path)
+                },
+            )
+            .await
+        })
+    }
 }
 
 /// Common scaffolding for the stage / unstage / discard / stage-all /

@@ -539,6 +539,22 @@ async fn handle_control(
                 }
             }
         }
+        Control::StageAllChanges { project_id } => {
+            let outcome = registry.stage_all_changes(&project_id).await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::StageAllChangesAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
     }
     Ok(())
 }

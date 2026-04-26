@@ -151,6 +151,9 @@ enum Control {
         path: String,
         original_path: Option<String>,
     },
+    /// `another-one-ojm.5` — `git add -A` on the project root.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::StageAllChanges`.
+    StageAllChanges { project_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -192,6 +195,8 @@ pub enum WorkerReply {
     /// Same inline-snapshot semantics as
     /// [`Self::StageChangedFileAck`].
     UnstageChangedFileAck { changed_files: Vec<ChangedFile> },
+    /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
+    StageAllChangesAck { changed_files: Vec<ChangedFile> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -941,6 +946,16 @@ impl IrohSession {
             },
         )
         .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::StageAllChanges` frame.
+    pub async fn stage_all_changes(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::StageAllChanges { project_id })
+            .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

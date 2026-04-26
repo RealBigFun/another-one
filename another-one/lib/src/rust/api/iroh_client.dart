@@ -88,6 +88,12 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
 
+  /// `another-one-ojm.5` — issue a `Control::StageAllChanges` frame.
+  Future<void> stageAllChanges({
+    required BigInt requestId,
+    required String projectId,
+  });
+
   /// `another-one-ojm.5` — issue a `Control::StageChangedFile`
   /// frame against the daemon. Fire-and-forget at the FRB level:
   /// the matching `WorkerReply::StageChangedFileAck` arrives on
@@ -425,6 +431,11 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.unstageChangedFileAck({
     required List<ChangedFile> changedFiles,
   }) = WorkerReply_UnstageChangedFileAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
+  const factory WorkerReply.stageAllChangesAck({
+    required List<ChangedFile> changedFiles,
+  }) = WorkerReply_StageAllChangesAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

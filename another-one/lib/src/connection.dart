@@ -463,12 +463,7 @@ abstract class DaemonConnection {
   });
 
   /// `git add -A` on the project root — stage every change.
-  Future<void> stageAllChanges(String projectId) {
-    throw UnimplementedError(
-      'stageAllChanges: requires Control::StageAllChanges wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<void> stageAllChanges(String projectId);
 
   /// Unstage every currently-staged change.
   Future<void> unstageAllChanges(String projectId) {

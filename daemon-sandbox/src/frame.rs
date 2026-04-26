@@ -179,6 +179,10 @@ pub enum Control {
         path: String,
         original_path: Option<String>,
     },
+    /// `another-one-ojm.5` — `git add -A` on the project root: stage
+    /// every change in one shot. Reply is
+    /// [`WorkerReply::StageAllChangesAck`].
+    StageAllChanges { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -302,6 +306,11 @@ pub enum WorkerReply {
     /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
     /// Same inline-snapshot semantics as [`Self::StageChangedFileAck`].
     UnstageChangedFileAck {
+        changed_files: Vec<ChangedFile>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
+    /// Inline post-mutation snapshot.
+    StageAllChangesAck {
         changed_files: Vec<ChangedFile>,
     },
 }
