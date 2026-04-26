@@ -43,6 +43,7 @@ use daemon_sandbox::frame::{
     AgentProvider, ChangedFile, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
     ToolbarActionOutcome,
 };
+use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
 use crate::local_pair::{set_local_pair_info, LocalPairInfo};
@@ -316,9 +317,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         project_id: &'a str,
         path: &'a str,
         original_path: Option<&'a str>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
-    > {
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFile>>> {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         let path_arg = path.to_string();
@@ -347,9 +346,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         project_id: &'a str,
         path: &'a str,
         original_path: Option<&'a str>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
-    > {
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFile>>> {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         let path_arg = path.to_string();
@@ -376,9 +373,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
     fn stage_all_changes<'a>(
         &'a self,
         project_id: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
-    > {
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFile>>> {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         Box::pin(async move {
@@ -397,9 +392,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
     fn unstage_all_changes<'a>(
         &'a self,
         project_id: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
-    > {
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFile>>> {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         Box::pin(async move {
@@ -421,9 +414,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         path: &'a str,
         untracked: bool,
         original_path: Option<&'a str>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
-    > {
+    ) -> RegistryFuture<'a, anyhow::Result<Vec<ChangedFile>>> {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         let path_arg = path.to_string();
@@ -459,13 +450,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         pull_request_number: u64,
         head_branch: &'a str,
         agent_provider: Option<AgentProvider>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = anyhow::Result<(String, Vec<ProjectSummary>)>>
-                + Send
-                + 'a,
-        >,
-    > {
+    ) -> RegistryFuture<'a, anyhow::Result<(String, Vec<ProjectSummary>)>> {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         let head_branch = head_branch.to_string();
@@ -596,13 +581,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         branch_name: &'a str,
         use_current_task: bool,
         migrate_changes: bool,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = anyhow::Result<(String, Vec<ProjectSummary>)>>
-                + Send
-                + 'a,
-        >,
-    > {
+    ) -> RegistryFuture<'a, anyhow::Result<(String, Vec<ProjectSummary>)>> {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         let branch_name = branch_name.to_string();
@@ -741,9 +720,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         &'a self,
         project_id: &'a str,
         action_id: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<ToolbarActionOutcome>> + Send + 'a>,
-    > {
+    ) -> RegistryFuture<'a, anyhow::Result<ToolbarActionOutcome>> {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         let action_id = action_id.to_string();

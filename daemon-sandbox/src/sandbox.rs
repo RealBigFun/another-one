@@ -17,7 +17,7 @@ use tracing::{debug, warn};
 
 use crate::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
 use crate::pty::PtySession;
-use crate::registry::DaemonRegistry;
+use crate::registry::{DaemonRegistry, RegistryFuture};
 
 const SANDBOX_PROJECT_ID: &str = "sandbox";
 const SANDBOX_TASK_ID: &str = "sandbox-task";
@@ -146,5 +146,21 @@ impl DaemonRegistry for SandboxRegistry {
             pixel_width: 0,
             pixel_height: 0,
         });
+    }
+
+    // Project mutation isn't meaningful on the sandbox — there's a
+    // single hard-coded project (see `list_projects` above). The
+    // smoke-test binary can't add or remove anything because there's
+    // no backing store. Surface that as a typed error rather than a
+    // fake-success Ack so a misbehaving client gets a clear signal.
+    fn add_project<'a>(
+        &'a self,
+        _path: String,
+    ) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
+        Box::pin(async { Err(anyhow::anyhow!("add_project: not supported on sandbox")) })
+    }
+
+    fn remove_project(&self, _project_id: &str) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("remove_project: not supported on sandbox"))
     }
 }
