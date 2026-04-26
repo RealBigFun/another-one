@@ -155,6 +155,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<ProjectPagePullRequestDto> dco_decode_list_project_page_pull_request_dto(
+    dynamic raw,
+  );
+
+  @protected
   List<ProjectSummary> dco_decode_list_project_summary(dynamic raw);
 
   @protected
@@ -202,13 +207,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CheckDto>? dco_decode_opt_list_check_dto(dynamic raw);
 
   @protected
+  List<ProjectPagePullRequestDto>?
+  dco_decode_opt_list_project_page_pull_request_dto(dynamic raw);
+
+  @protected
   PairingInfo dco_decode_pairing_info(dynamic raw);
 
   @protected
   ProjectKind dco_decode_project_kind(dynamic raw);
 
   @protected
+  ProjectPagePullRequestDto dco_decode_project_page_pull_request_dto(
+    dynamic raw,
+  );
+
+  @protected
   ProjectSummary dco_decode_project_summary(dynamic raw);
+
+  @protected
+  PullRequestStateDto dco_decode_pull_request_state_dto(dynamic raw);
 
   @protected
   RecentCommitsView dco_decode_recent_commits_view(dynamic raw);
@@ -381,6 +398,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<ProjectPagePullRequestDto> sse_decode_list_project_page_pull_request_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<ProjectSummary> sse_decode_list_project_summary(
     SseDeserializer deserializer,
   );
@@ -438,13 +460,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CheckDto>? sse_decode_opt_list_check_dto(SseDeserializer deserializer);
 
   @protected
+  List<ProjectPagePullRequestDto>?
+  sse_decode_opt_list_project_page_pull_request_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   PairingInfo sse_decode_pairing_info(SseDeserializer deserializer);
 
   @protected
   ProjectKind sse_decode_project_kind(SseDeserializer deserializer);
 
   @protected
+  ProjectPagePullRequestDto sse_decode_project_page_pull_request_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ProjectSummary sse_decode_project_summary(SseDeserializer deserializer);
+
+  @protected
+  PullRequestStateDto sse_decode_pull_request_state_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   RecentCommitsView sse_decode_recent_commits_view(
@@ -648,6 +686,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_project_page_pull_request_dto(
+    List<ProjectPagePullRequestDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_project_summary(
     List<ProjectSummary> self,
     SseSerializer serializer,
@@ -720,14 +764,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_list_project_page_pull_request_dto(
+    List<ProjectPagePullRequestDto>? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_pairing_info(PairingInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_project_kind(ProjectKind self, SseSerializer serializer);
 
   @protected
+  void sse_encode_project_page_pull_request_dto(
+    ProjectPagePullRequestDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_project_summary(
     ProjectSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_pull_request_state_dto(
+    PullRequestStateDto self,
     SseSerializer serializer,
   );
 

@@ -296,6 +296,44 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError(
+        'findProjectPullRequests: LocalTransport not connected',
+      );
+    }
+    return session.findProjectPullRequests(
+      projectId: projectId,
+      filterIndex: filterIndex,
+      query: query,
+    );
+  }
+
+  @override
+  Future<String> createReviewTask({
+    required String projectId,
+    required int pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('createReviewTask: LocalTransport not connected');
+    }
+    return session.createReviewTask(
+      projectId: projectId,
+      pullRequestNumber: BigInt.from(pullRequestNumber),
+      headBranch: headBranch,
+      agentProvider: agentProvider,
+    );
+  }
+
+  @override
   Future<ResolvedProjectBranchSettingsDto?> readBranchSettings(
     String projectId,
   ) async {

@@ -37,6 +37,7 @@ import 'rust/api/local_session.dart'
         ChangedFileDto,
         CheckDto,
         OpenInState,
+        ProjectPagePullRequestDto,
         RecentCommitsView,
         ResolvedProjectBranchSettingsDto;
 import 'transport.dart';
@@ -270,6 +271,41 @@ abstract class DaemonConnection {
   ) {
     throw UnimplementedError(
       'readBranchSettings: requires Control::ReadBranchSettings wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Fetch open pull requests for `projectId` filtered by
+  /// `filterIndex` (0=all, 1=needs my review, 2=author:@me, 3=draft)
+  /// plus an optional free-text `query` (GitHub search syntax).
+  /// Returns `null` for unknown project ids; throws when gh CLI
+  /// fails (CLI missing, auth, network).
+  Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  }) {
+    throw UnimplementedError(
+      'findProjectPullRequests: requires Control::FindProjectPullRequests '
+      'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Spawn a review task targeting a specific PR. Clones the PR's
+  /// head branch into a worktree, prepares the project, inserts the
+  /// task. Returns the new task's `sectionId`.
+  ///
+  /// `agentProvider` of `null` (or `AgentProvider.shell`) launches
+  /// a plain shell tab. Any concrete provider value selects the
+  /// corresponding agent CLI for the new task.
+  Future<String> createReviewTask({
+    required String projectId,
+    required int pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  }) {
+    throw UnimplementedError(
+      'createReviewTask: requires Control::CreateReviewTask wire '
       'variant on the iroh transport (not yet implemented).',
     );
   }

@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 91003026;
+  int get rustContentHash => -679159316;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -145,6 +145,14 @@ abstract class RustLibApi extends BaseApi {
     required LocalSession that,
   });
 
+  Future<String> crateApiLocalSessionLocalSessionCreateReviewTask({
+    required LocalSession that,
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  });
+
   Future<String> crateApiLocalSessionLocalSessionCreateWorktreeTask({
     required LocalSession that,
     required String projectId,
@@ -163,6 +171,14 @@ abstract class RustLibApi extends BaseApi {
     required String path,
     String? originalPath,
     required bool untracked,
+  });
+
+  Future<List<ProjectPagePullRequestDto>?>
+  crateApiLocalSessionLocalSessionFindProjectPullRequests({
+    required LocalSession that,
+    required String projectId,
+    required int filterIndex,
+    required String query,
   });
 
   Future<void> crateApiLocalSessionLocalSessionLaunchTab({
@@ -839,6 +855,63 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "LocalSession_close", argNames: ["that"]);
 
   @override
+  Future<String> crateApiLocalSessionLocalSessionCreateReviewTask({
+    required LocalSession that,
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          sse_encode_u_64(pullRequestNumber, serializer);
+          sse_encode_String(headBranch, serializer);
+          sse_encode_opt_box_autoadd_agent_provider(agentProvider, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionCreateReviewTaskConstMeta,
+        argValues: [
+          that,
+          projectId,
+          pullRequestNumber,
+          headBranch,
+          agentProvider,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionCreateReviewTaskConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_create_review_task",
+        argNames: [
+          "that",
+          "projectId",
+          "pullRequestNumber",
+          "headBranch",
+          "agentProvider",
+        ],
+      );
+
+  @override
   Future<String> crateApiLocalSessionLocalSessionCreateWorktreeTask({
     required LocalSession that,
     required String projectId,
@@ -861,7 +934,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 15,
             port: port_,
           );
         },
@@ -904,7 +977,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 16,
             port: port_,
           );
         },
@@ -948,7 +1021,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 17,
             port: port_,
           );
         },
@@ -971,6 +1044,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<List<ProjectPagePullRequestDto>?>
+  crateApiLocalSessionLocalSessionFindProjectPullRequests({
+    required LocalSession that,
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          sse_encode_u_32(filterIndex, serializer);
+          sse_encode_String(query, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 18,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_list_project_page_pull_request_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta:
+            kCrateApiLocalSessionLocalSessionFindProjectPullRequestsConstMeta,
+        argValues: [that, projectId, filterIndex, query],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionFindProjectPullRequestsConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_find_project_pull_requests",
+        argNames: ["that", "projectId", "filterIndex", "query"],
+      );
+
+  @override
   Future<void> crateApiLocalSessionLocalSessionLaunchTab({
     required LocalSession that,
     required String sectionId,
@@ -989,7 +1107,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 19,
             port: port_,
           );
         },
@@ -1025,7 +1143,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 20,
             port: port_,
           );
         },
@@ -1061,7 +1179,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 21,
             port: port_,
           );
         },
@@ -1101,7 +1219,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 22,
             port: port_,
           );
         },
@@ -1141,7 +1259,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 23,
             port: port_,
           );
         },
@@ -1183,7 +1301,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1223,7 +1341,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 25,
             port: port_,
           );
         },
@@ -1264,7 +1382,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1306,7 +1424,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 27,
             port: port_,
           );
         },
@@ -1345,7 +1463,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1385,7 +1503,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 29,
             port: port_,
           );
         },
@@ -1425,7 +1543,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1464,7 +1582,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 31,
             port: port_,
           );
         },
@@ -1505,7 +1623,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 30,
+            funcId: 32,
             port: port_,
           );
         },
@@ -1547,7 +1665,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 33,
             port: port_,
           );
         },
@@ -1589,7 +1707,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 32,
+            funcId: 34,
             port: port_,
           );
         },
@@ -1627,7 +1745,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 33,
+            funcId: 35,
             port: port_,
           );
         },
@@ -1669,7 +1787,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 34,
+            funcId: 36,
             port: port_,
           );
         },
@@ -1709,7 +1827,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 35,
+              funcId: 37,
               port: port_,
             );
           },
@@ -1750,7 +1868,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 36,
+              funcId: 38,
               port: port_,
             );
           },
@@ -1794,7 +1912,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 39,
             port: port_,
           );
         },
@@ -1832,7 +1950,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 40,
             port: port_,
           );
         },
@@ -1875,7 +1993,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 41,
             port: port_,
           );
         },
@@ -1906,7 +2024,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 42,
             port: port_,
           );
         },
@@ -1933,7 +2051,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 41,
+            funcId: 43,
             port: port_,
           );
         },
@@ -1969,7 +2087,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 42,
+            funcId: 44,
             port: port_,
           );
         },
@@ -2000,7 +2118,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 43,
+            funcId: 45,
             port: port_,
           );
         },
@@ -2028,7 +2146,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 44,
+            funcId: 46,
             port: port_,
           );
         },
@@ -2055,7 +2173,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 45,
+            funcId: 47,
             port: port_,
           );
         },
@@ -2082,7 +2200,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 46,
+            funcId: 48,
             port: port_,
           );
         },
@@ -2109,7 +2227,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 47,
+            funcId: 49,
             port: port_,
           );
         },
@@ -2137,7 +2255,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 48,
+            funcId: 50,
             port: port_,
           );
         },
@@ -2442,6 +2560,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProjectPagePullRequestDto> dco_decode_list_project_page_pull_request_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_project_page_pull_request_dto)
+        .toList();
+  }
+
+  @protected
   List<ProjectSummary> dco_decode_list_project_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_project_summary).toList();
@@ -2547,6 +2675,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProjectPagePullRequestDto>?
+  dco_decode_opt_list_project_page_pull_request_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_list_project_page_pull_request_dto(raw);
+  }
+
+  @protected
   PairingInfo dco_decode_pairing_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2565,6 +2702,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ProjectPagePullRequestDto dco_decode_project_page_pull_request_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    return ProjectPagePullRequestDto(
+      number: dco_decode_u_64(arr[0]),
+      url: dco_decode_String(arr[1]),
+      title: dco_decode_String(arr[2]),
+      branch: dco_decode_String(arr[3]),
+      author: dco_decode_String(arr[4]),
+      linesAdded: dco_decode_i_32(arr[5]),
+      linesRemoved: dco_decode_i_32(arr[6]),
+      draft: dco_decode_bool(arr[7]),
+      reviewRequired: dco_decode_bool(arr[8]),
+      reviewRequestedToMe: dco_decode_bool(arr[9]),
+      createdByMe: dco_decode_bool(arr[10]),
+      state: dco_decode_pull_request_state_dto(arr[11]),
+    );
+  }
+
+  @protected
   ProjectSummary dco_decode_project_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2578,6 +2739,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       currentBranch: dco_decode_opt_String(arr[4]),
       tasks: dco_decode_list_task_summary(arr[5]),
     );
+  }
+
+  @protected
+  PullRequestStateDto dco_decode_pull_request_state_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return PullRequestStateDto.values[raw as int];
   }
 
   @protected
@@ -3068,6 +3235,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProjectPagePullRequestDto> sse_decode_list_project_page_pull_request_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ProjectPagePullRequestDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_project_page_pull_request_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<ProjectSummary> sse_decode_list_project_summary(
     SseDeserializer deserializer,
   ) {
@@ -3246,6 +3427,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProjectPagePullRequestDto>?
+  sse_decode_opt_list_project_page_pull_request_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_list_project_page_pull_request_dto(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   PairingInfo sse_decode_pairing_info(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_url = sse_decode_String(deserializer);
@@ -3258,6 +3453,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return ProjectKind.values[inner];
+  }
+
+  @protected
+  ProjectPagePullRequestDto sse_decode_project_page_pull_request_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_number = sse_decode_u_64(deserializer);
+    var var_url = sse_decode_String(deserializer);
+    var var_title = sse_decode_String(deserializer);
+    var var_branch = sse_decode_String(deserializer);
+    var var_author = sse_decode_String(deserializer);
+    var var_linesAdded = sse_decode_i_32(deserializer);
+    var var_linesRemoved = sse_decode_i_32(deserializer);
+    var var_draft = sse_decode_bool(deserializer);
+    var var_reviewRequired = sse_decode_bool(deserializer);
+    var var_reviewRequestedToMe = sse_decode_bool(deserializer);
+    var var_createdByMe = sse_decode_bool(deserializer);
+    var var_state = sse_decode_pull_request_state_dto(deserializer);
+    return ProjectPagePullRequestDto(
+      number: var_number,
+      url: var_url,
+      title: var_title,
+      branch: var_branch,
+      author: var_author,
+      linesAdded: var_linesAdded,
+      linesRemoved: var_linesRemoved,
+      draft: var_draft,
+      reviewRequired: var_reviewRequired,
+      reviewRequestedToMe: var_reviewRequestedToMe,
+      createdByMe: var_createdByMe,
+      state: var_state,
+    );
   }
 
   @protected
@@ -3277,6 +3505,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       currentBranch: var_currentBranch,
       tasks: var_tasks,
     );
+  }
+
+  @protected
+  PullRequestStateDto sse_decode_pull_request_state_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return PullRequestStateDto.values[inner];
   }
 
   @protected
@@ -3773,6 +4010,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_project_page_pull_request_dto(
+    List<ProjectPagePullRequestDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_project_page_pull_request_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_project_summary(
     List<ProjectSummary> self,
     SseSerializer serializer,
@@ -3939,6 +4188,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_list_project_page_pull_request_dto(
+    List<ProjectPagePullRequestDto>? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_list_project_page_pull_request_dto(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_pairing_info(PairingInfo self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.url, serializer);
@@ -3949,6 +4211,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_project_kind(ProjectKind self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_project_page_pull_request_dto(
+    ProjectPagePullRequestDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.number, serializer);
+    sse_encode_String(self.url, serializer);
+    sse_encode_String(self.title, serializer);
+    sse_encode_String(self.branch, serializer);
+    sse_encode_String(self.author, serializer);
+    sse_encode_i_32(self.linesAdded, serializer);
+    sse_encode_i_32(self.linesRemoved, serializer);
+    sse_encode_bool(self.draft, serializer);
+    sse_encode_bool(self.reviewRequired, serializer);
+    sse_encode_bool(self.reviewRequestedToMe, serializer);
+    sse_encode_bool(self.createdByMe, serializer);
+    sse_encode_pull_request_state_dto(self.state, serializer);
   }
 
   @protected
@@ -3963,6 +4245,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_project_kind(self.kind, serializer);
     sse_encode_opt_String(self.currentBranch, serializer);
     sse_encode_list_task_summary(self.tasks, serializer);
+  }
+
+  @protected
+  void sse_encode_pull_request_state_dto(
+    PullRequestStateDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -4221,6 +4512,29 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
   Future<void> close() =>
       RustLib.instance.api.crateApiLocalSessionLocalSessionClose(that: this);
 
+  /// Spawn a review task for a pull request — clones into a
+  /// worktree at the PR's head branch, prepares the project,
+  /// inserts both into the daemon's store, and returns the new
+  /// section_id.
+  ///
+  /// Routes
+  /// [`another_one_core::project_service::spawn_review_task_creation`]
+  /// and mirrors the `create_worktree_task` pattern. Auto-runs
+  /// project actions and the configured agent CLI when
+  /// `agent_provider` is set.
+  Future<String> createReviewTask({
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionCreateReviewTask(
+    that: this,
+    projectId: projectId,
+    pullRequestNumber: pullRequestNumber,
+    headBranch: headBranch,
+    agentProvider: agentProvider,
+  );
+
   /// Create a worktree task on `project_id`. Spawns a fresh git
   /// worktree from `source_branch` (the new branch is named after
   /// the slugified `task_name`), prepares the project, and inserts
@@ -4272,6 +4586,27 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
     originalPath: originalPath,
     untracked: untracked,
   );
+
+  /// Fetch open pull requests for `project_id` filtered by
+  /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
+  /// 3=draft) plus an optional free-text `query`. Powers the
+  /// project page's Open PRs section.
+  ///
+  /// Routes [`another_one_core::git_actions::find_project_pull_requests`]
+  /// inside `spawn_blocking` (it shells out to `gh pr list`).
+  /// Returns `Ok(None)` for unknown projects; errors propagate
+  /// for gh CLI failures (CLI missing, auth, network).
+  Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  }) => RustLib.instance.api
+      .crateApiLocalSessionLocalSessionFindProjectPullRequests(
+        that: this,
+        projectId: projectId,
+        filterIndex: filterIndex,
+        query: query,
+      );
 
   /// Ask the daemon to spawn the given tab's PTY if it isn't
   /// already running. See [`Self`] doc for the launch flow.

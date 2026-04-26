@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `run_changed_file_action`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `pr_to_dto`, `run_changed_file_action`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -48,6 +48,23 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// per-viewer state on the registry. Idempotent.
   Future<void> close();
 
+  /// Spawn a review task for a pull request — clones into a
+  /// worktree at the PR's head branch, prepares the project,
+  /// inserts both into the daemon's store, and returns the new
+  /// section_id.
+  ///
+  /// Routes
+  /// [`another_one_core::project_service::spawn_review_task_creation`]
+  /// and mirrors the `create_worktree_task` pattern. Auto-runs
+  /// project actions and the configured agent CLI when
+  /// `agent_provider` is set.
+  Future<String> createReviewTask({
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  });
+
   /// Create a worktree task on `project_id`. Spawns a fresh git
   /// worktree from `source_branch` (the new branch is named after
   /// the slugified `task_name`), prepares the project, and inserts
@@ -85,6 +102,21 @@ abstract class LocalSession implements RustOpaqueInterface {
     required String path,
     String? originalPath,
     required bool untracked,
+  });
+
+  /// Fetch open pull requests for `project_id` filtered by
+  /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
+  /// 3=draft) plus an optional free-text `query`. Powers the
+  /// project page's Open PRs section.
+  ///
+  /// Routes [`another_one_core::git_actions::find_project_pull_requests`]
+  /// inside `spawn_blocking` (it shells out to `gh pr list`).
+  /// Returns `Ok(None)` for unknown projects; errors propagate
+  /// for gh CLI failures (CLI missing, auth, network).
+  Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
+    required String projectId,
+    required int filterIndex,
+    required String query,
   });
 
   /// Ask the daemon to spawn the given tab's PTY if it isn't
@@ -603,6 +635,84 @@ class OpenInState {
           enabledApps == other.enabledApps &&
           preferredAppId == other.preferredAppId;
 }
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::ProjectPagePullRequest`]. One
+/// entry per row in the project page's Open PRs section.
+class ProjectPagePullRequestDto {
+  final BigInt number;
+  final String url;
+  final String title;
+
+  /// Head ref (the PR's source branch). Rendered in mono on the
+  /// row's bottom line.
+  final String branch;
+  final String author;
+  final int linesAdded;
+  final int linesRemoved;
+  final bool draft;
+
+  /// `true` when GitHub's review_decision is REVIEW_REQUIRED —
+  /// drives the red CI badge and 'Review required' chip.
+  final bool reviewRequired;
+  final bool reviewRequestedToMe;
+  final bool createdByMe;
+  final PullRequestStateDto state;
+
+  const ProjectPagePullRequestDto({
+    required this.number,
+    required this.url,
+    required this.title,
+    required this.branch,
+    required this.author,
+    required this.linesAdded,
+    required this.linesRemoved,
+    required this.draft,
+    required this.reviewRequired,
+    required this.reviewRequestedToMe,
+    required this.createdByMe,
+    required this.state,
+  });
+
+  @override
+  int get hashCode =>
+      number.hashCode ^
+      url.hashCode ^
+      title.hashCode ^
+      branch.hashCode ^
+      author.hashCode ^
+      linesAdded.hashCode ^
+      linesRemoved.hashCode ^
+      draft.hashCode ^
+      reviewRequired.hashCode ^
+      reviewRequestedToMe.hashCode ^
+      createdByMe.hashCode ^
+      state.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ProjectPagePullRequestDto &&
+          runtimeType == other.runtimeType &&
+          number == other.number &&
+          url == other.url &&
+          title == other.title &&
+          branch == other.branch &&
+          author == other.author &&
+          linesAdded == other.linesAdded &&
+          linesRemoved == other.linesRemoved &&
+          draft == other.draft &&
+          reviewRequired == other.reviewRequired &&
+          reviewRequestedToMe == other.reviewRequestedToMe &&
+          createdByMe == other.createdByMe &&
+          state == other.state;
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::PullRequestState`]. Drives the
+/// chip + chrome on each PR row: open vs merged vs closed shapes
+/// the badge palette and the row-level affordances.
+enum PullRequestStateDto { open, closed, merged }
 
 /// FRB-friendly snapshot of the right sidebar's Commits pane data.
 class RecentCommitsView {

@@ -662,6 +662,176 @@ impl LocalSession {
         .await
     }
 
+    /// Fetch open pull requests for `project_id` filtered by
+    /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
+    /// 3=draft) plus an optional free-text `query`. Powers the
+    /// project page's Open PRs section.
+    ///
+    /// Routes [`another_one_core::git_actions::find_project_pull_requests`]
+    /// inside `spawn_blocking` (it shells out to `gh pr list`).
+    /// Returns `Ok(None)` for unknown projects; errors propagate
+    /// for gh CLI failures (CLI missing, auth, network).
+    pub async fn find_project_pull_requests(
+        &self,
+        project_id: String,
+        filter_index: u32,
+        query: String,
+    ) -> anyhow::Result<Option<Vec<ProjectPagePullRequestDto>>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "find_project_pull_requests: set_local_registry not called"
+            )
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "find_project_pull_requests: RegistryState mutex poisoned"
+                )
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        };
+        let Some(project_path) = project_path else {
+            return Ok(None);
+        };
+        let trimmed = query.trim().to_string();
+        let q = if trimmed.is_empty() { None } else { Some(trimmed) };
+        let result = tokio::task::spawn_blocking(move || {
+            another_one_core::git_actions::find_project_pull_requests(
+                &project_path,
+                filter_index as usize,
+                q.as_deref(),
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("find_project_pull_requests join: {e}"))?
+        .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(Some(result.into_iter().map(pr_to_dto).collect()))
+    }
+
+    /// Spawn a review task for a pull request — clones into a
+    /// worktree at the PR's head branch, prepares the project,
+    /// inserts both into the daemon's store, and returns the new
+    /// section_id.
+    ///
+    /// Routes
+    /// [`another_one_core::project_service::spawn_review_task_creation`]
+    /// and mirrors the `create_worktree_task` pattern. Auto-runs
+    /// project actions and the configured agent CLI when
+    /// `agent_provider` is set.
+    pub async fn create_review_task(
+        &self,
+        project_id: String,
+        pull_request_number: u64,
+        head_branch: String,
+        agent_provider: Option<AgentProvider>,
+    ) -> anyhow::Result<String> {
+        let (project_path, project_name, target_project_id) = {
+            let registry = local_registry().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "create_review_task: set_local_registry not called"
+                )
+            })?;
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!("create_review_task: RegistryState mutex poisoned")
+            })?;
+            let project = state
+                .project_store
+                .project(&project_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "create_review_task: unknown project_id `{project_id}`"
+                    )
+                })?;
+            (
+                project.path.clone(),
+                project.name.clone(),
+                project.id.clone(),
+            )
+        };
+
+        let task_name = format!("review-pr-{pull_request_number}");
+        let launch_config = match agent_provider.map(map_agent_provider_back) {
+            Some(provider) => {
+                another_one_core::agents::TerminalLaunchConfig::for_provider(provider)
+            }
+            None => another_one_core::agents::TerminalLaunchConfig::default(),
+        };
+        let mut rx = another_one_core::project_service::spawn_review_task_creation(
+            target_project_id.clone(),
+            project_path,
+            task_name,
+            pull_request_number,
+            head_branch,
+            launch_config,
+            true,
+            true,
+        );
+        let reply = rx.recv().await.map_err(|_| {
+            anyhow::anyhow!("review task worker dropped before reply")
+        })?;
+        let success = reply
+            .result
+            .map_err(|f| anyhow::anyhow!("create review task: {}", f.message))?;
+
+        let section_id = {
+            let registry = local_registry().ok_or_else(|| {
+                anyhow::anyhow!("create_review_task: set_local_registry vanished")
+            })?;
+            let mut state = registry.lock().map_err(|_| {
+                anyhow::anyhow!("create_review_task: registry mutex poisoned")
+            })?;
+            let inserted_worktree = state
+                .project_store
+                .insert_prepared_project(success.project.clone());
+            let worktree_project_id = if inserted_worktree {
+                success.project.project.id.clone()
+            } else {
+                state
+                    .project_store
+                    .projects
+                    .iter()
+                    .find(|p| p.path == success.project.project.path)
+                    .map(|p| p.id.clone())
+                    .unwrap_or_else(|| success.project.project.id.clone())
+            };
+            // Use a name like "Review #42 (project-name)" for the
+            // task list entry so users can scan multiple review
+            // tasks easily.
+            let task_id = uuid::Uuid::new_v4().to_string();
+            let section = another_one_core::section::SectionId::for_task(
+                &worktree_project_id,
+                &success.branch_name,
+                &task_id,
+            );
+            let section_key = section.store_key();
+            state
+                .project_store
+                .insert_task(another_one_core::project_store::Task {
+                    id: task_id,
+                    name: format!("Review #{pull_request_number} ({project_name})"),
+                    kind: another_one_core::project_store::TaskKind::Worktree,
+                    root_project_id: target_project_id,
+                    target_project_id: worktree_project_id.clone(),
+                    branch_name: success.branch_name,
+                    section_id: section_key.clone(),
+                    worktree_project_id: Some(worktree_project_id),
+                    tabs: Vec::new(),
+                    active_tab_id: String::new(),
+                    next_tab_id: 0,
+                    cwd: None,
+                });
+            state.project_store.save();
+            section_key
+        };
+        self.list_projects().await?;
+        Ok(section_id)
+    }
+
     /// Snapshot the resolved branch settings for `project_id` —
     /// configured + effective values for default and target branch
     /// plus the available branch list for the dropdown.
@@ -1352,6 +1522,69 @@ where
         .await
         .map_err(|e| anyhow::anyhow!("changed-file action join: {e}"))?
         .map_err(|e| anyhow::anyhow!(e))
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::PullRequestState`]. Drives the
+/// chip + chrome on each PR row: open vs merged vs closed shapes
+/// the badge palette and the row-level affordances.
+#[derive(Debug, Clone, Copy)]
+pub enum PullRequestStateDto {
+    Open,
+    Closed,
+    Merged,
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::ProjectPagePullRequest`]. One
+/// entry per row in the project page's Open PRs section.
+#[derive(Debug, Clone)]
+pub struct ProjectPagePullRequestDto {
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+    /// Head ref (the PR's source branch). Rendered in mono on the
+    /// row's bottom line.
+    pub branch: String,
+    pub author: String,
+    pub lines_added: i32,
+    pub lines_removed: i32,
+    pub draft: bool,
+    /// `true` when GitHub's review_decision is REVIEW_REQUIRED —
+    /// drives the red CI badge and 'Review required' chip.
+    pub review_required: bool,
+    pub review_requested_to_me: bool,
+    pub created_by_me: bool,
+    pub state: PullRequestStateDto,
+}
+
+fn pr_to_dto(
+    pr: another_one_core::git_actions::ProjectPagePullRequest,
+) -> ProjectPagePullRequestDto {
+    ProjectPagePullRequestDto {
+        number: pr.number,
+        url: pr.url,
+        title: pr.title,
+        branch: pr.branch,
+        author: pr.author,
+        lines_added: pr.lines_added,
+        lines_removed: pr.lines_removed,
+        draft: pr.draft,
+        review_required: pr.review_required,
+        review_requested_to_me: pr.review_requested_to_me,
+        created_by_me: pr.created_by_me,
+        state: match pr.state {
+            another_one_core::git_actions::PullRequestState::Open => {
+                PullRequestStateDto::Open
+            }
+            another_one_core::git_actions::PullRequestState::Closed => {
+                PullRequestStateDto::Closed
+            }
+            another_one_core::git_actions::PullRequestState::Merged => {
+                PullRequestStateDto::Merged
+            }
+        },
+    }
 }
 
 /// FRB-friendly mirror of

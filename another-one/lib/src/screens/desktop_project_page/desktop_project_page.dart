@@ -23,6 +23,7 @@ import '../../widgets/app_icon.dart';
 import '../../widgets/run_mutation.dart';
 import '../new_task/new_task_modal.dart';
 import 'configuration_section.dart';
+import 'open_prs_section.dart';
 
 class DesktopProjectPage extends ConsumerWidget {
   const DesktopProjectPage({super.key, required this.project});
@@ -268,9 +269,7 @@ class _ProjectPageBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Open PRs section is filed under another-one-g7f.1; will
-          // land here when its bridge surface ships. The
-          // Configuration panel below is independent.
+          OpenPrsSection(projectId: projectId),
           ConfigurationSection(projectId: projectId),
         ],
       ),
