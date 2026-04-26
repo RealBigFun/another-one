@@ -322,12 +322,13 @@ abstract class DaemonConnection {
   /// Latest pull-request status for `projectId`'s current branch.
   /// Returns `null` when the project has no open PR. Drives the
   /// Create PR / Draft PR enabledness in the titlebar dropdown.
-  Future<PullRequestStatusDto?> findPullRequestStatus(String projectId) {
-    throw UnimplementedError(
-      'findPullRequestStatus: requires Control::FindPullRequestStatus '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  /// Both transports implement this against their respective code
+  /// paths: `LocalTransport` calls
+  /// `LocalSession::find_pull_request_status` directly; `IrohTransport`
+  /// issues `Control::FindPullRequestStatus` and dispatches the
+  /// `WorkerReply::PullRequestStatusAck` reply through its
+  /// completer table (see `another-one-ojm.6`).
+  Future<PullRequestStatusDto?> findPullRequestStatus(String projectId);
 
   /// Run a toolbar git action against `projectId`. `actionId` is one
   /// of `"commit"`, `"commit-and-push"`, `"undo-last-commit"`,

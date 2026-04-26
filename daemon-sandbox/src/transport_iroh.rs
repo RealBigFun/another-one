@@ -26,7 +26,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
+use crate::frame::{self, Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope};
 use crate::registry::{EndpointHandle, PairState, DaemonRegistry};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
@@ -490,6 +490,21 @@ async fn handle_control(
             // peer that sends it mid-session is harmless but pointless;
             // drop it rather than error.
             debug!("stray Control::Hello from already-paired peer; ignored");
+        }
+        Control::FindPullRequestStatus { project_id } => {
+            // Pure read: route into the registry, marshal Ok(None) /
+            // Ok(Some(_)) into PullRequestStatusAck, and convert any
+            // hard failure into WorkerReply::Err so the channel
+            // stays open for other in-flight requests on this
+            // session.
+            let reply = match registry.find_pull_request_status(&project_id) {
+                Ok(status) => WorkerReply::PullRequestStatusAck { status },
+                Err(message) => WorkerReply::Err {
+                    message,
+                    kind: ErrKind::Internal,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
     }
     Ok(())

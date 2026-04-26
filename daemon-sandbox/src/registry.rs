@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::ProjectSummary;
+use crate::frame::{ProjectSummary, PullRequestStatus};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -155,6 +155,23 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// attach briefly). Default impl is a no-op for registries that
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
+
+    /// Resolve the latest pull-request status for `project_id`'s
+    /// current branch. `Ok(None)` covers both "project not found"
+    /// and "no PR for the branch"; `Err(_)` is reserved for hard
+    /// failures (gh CLI missing, network) which the daemon then
+    /// surfaces as [`crate::frame::WorkerReply::Err`].
+    ///
+    /// Default impl returns `Ok(None)` so the standalone sandbox
+    /// can keep its in-memory shape (no real git host). The bridge
+    /// override delegates to
+    /// `another_one_core::git_actions::find_latest_pull_request_status`.
+    fn find_pull_request_status(
+        &self,
+        _project_id: &str,
+    ) -> Result<Option<PullRequestStatus>, String> {
+        Ok(None)
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

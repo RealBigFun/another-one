@@ -157,6 +157,14 @@ pub enum Control {
         #[serde(default)]
         protocol_version: u32,
     },
+    /// Resolve the latest pull-request status for `project_id`'s
+    /// current branch — drives the titlebar's "Create PR" / "Open PR"
+    /// pill enabledness on every connected client. Reply variant
+    /// is [`WorkerReply::PullRequestStatusAck`]; `status: None`
+    /// covers both "no PR for the branch" and "unknown project".
+    /// Hard failures (gh CLI missing, network error) come back as
+    /// [`WorkerReply::Err`] instead.
+    FindPullRequestStatus { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -264,6 +272,13 @@ pub enum WorkerReply {
         message: String,
         #[serde(rename = "err_kind")]
         kind: ErrKind,
+    },
+    /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
+    /// when the project has no open PR for its current branch (or
+    /// the project id is unknown). Mutator-snapshot rules don't
+    /// apply — this is a pure read.
+    PullRequestStatusAck {
+        status: Option<PullRequestStatus>,
     },
 }
 
@@ -392,9 +407,32 @@ pub enum ProjectKind {
     Worktree,
 }
 
-// `PullRequestInfo` + `PullRequestState` removed along with the
-// dead `WorkerReply::PullRequestStatus` variant. Reinstate when
-// there's an actual PR-status emission site.
+/// Lossy wire projection of `core::git_actions::PullRequestStatus`.
+/// One row per project that has an open PR for its current branch;
+/// drives the titlebar's PR pill state across desktop + mobile
+/// (Create vs Open vs Draft, plus the disabled state on the Git
+/// Actions dropdown). Encoded inline on
+/// [`WorkerReply::PullRequestStatusAck`] — the desktop bridge fills
+/// it from `core::git_actions::find_latest_pull_request_status`
+/// (which shells out to `gh pr list`); the sandbox always replies
+/// `None`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullRequestStatus {
+    pub number: u64,
+    pub url: String,
+    pub state: PullRequestState,
+}
+
+/// Mirror of `core::git_actions::PullRequestState`. Wire-serialised
+/// as lowercase strings — UI maps each to a chip palette + the
+/// titlebar PR pill copy.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestState {
+    Open,
+    Closed,
+    Merged,
+}
 
 /// Mirror of `core::agents::AgentProviderKind`. Wire-serialised as
 /// snake_case: `"claude_code"` / `"codex"` / `"cursor_agent"` etc.

@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'local_session.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
@@ -57,6 +58,21 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab();
+
+  /// Issue [`Control::FindPullRequestStatus`] under `request_id`.
+  /// The matching [`WorkerReply::PullRequestStatusAck`] (or
+  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
+  /// keyed by the same id; Dart's `IrohTransport` dispatches it
+  /// against its completer table.
+  ///
+  /// Caller-supplied `request_id` lets the Dart side allocate
+  /// the id via [`Self::next_request_id`] *before* registering
+  /// its completer, eliminating the race where a fast daemon
+  /// reply could arrive before the completer entry exists.
+  Future<void> findPullRequestStatus({
+    required BigInt requestId,
+    required String projectId,
+  });
 
   /// Ask the daemon to launch the tab's PTY if it isn't already
   /// live. No-op on the daemon side if the tab is already running.
@@ -329,6 +345,16 @@ sealed class WorkerReply with _$WorkerReply {
     required String message,
     required ErrKind kind,
   }) = WorkerReply_Err;
+
+  /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
+  /// when the project has no PR for its current branch (or the
+  /// project id is unknown). Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestStatusAck`.
+  /// The payload reuses `local_session::PullRequestStatusDto`
+  /// directly — see the comment above on parallel-mirror-avoidance.
+  const factory WorkerReply.pullRequestStatusAck({
+    PullRequestStatusDto? status,
+  }) = WorkerReply_PullRequestStatusAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

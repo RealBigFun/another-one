@@ -40,7 +40,8 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    AgentProvider, ProjectKind, ProjectSummary, PullRequestState, PullRequestStatus, TabSummary,
+    TaskSummary,
 };
 use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
@@ -308,6 +309,55 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             }
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
+    }
+
+    fn find_pull_request_status(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<PullRequestStatus>, String> {
+        // Mirror `LocalSession::find_pull_request_status`: snapshot
+        // the project's path + current branch under the registry
+        // mutex, then drop the lock before shelling out so the
+        // (slow) gh-CLI roundtrip never holds the daemon's project
+        // store. `Ok(None)` covers both unknown project and "branch
+        // has no PR"; gh-CLI execution failure surfaces upstream as
+        // a WorkerReply::Err.
+        let path_and_branch = self.with_state(|state| {
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .and_then(|project| {
+                    project
+                        .checkout
+                        .current_branch
+                        .clone()
+                        .map(|branch| (project.path.clone(), branch))
+                })
+        });
+        let Some(Some((project_path, head_branch))) = path_and_branch else {
+            return Ok(None);
+        };
+        Ok(another_one_core::git_actions::find_latest_pull_request_status(
+            &project_path,
+            &head_branch,
+        )
+        .map(|status| PullRequestStatus {
+            number: status.number,
+            url: status.url,
+            state: map_pull_request_state(status.state),
+        }))
+    }
+}
+
+fn map_pull_request_state(
+    state: another_one_core::git_actions::PullRequestState,
+) -> PullRequestState {
+    match state {
+        another_one_core::git_actions::PullRequestState::Open => PullRequestState::Open,
+        another_one_core::git_actions::PullRequestState::Closed => PullRequestState::Closed,
+        another_one_core::git_actions::PullRequestState::Merged => PullRequestState::Merged,
     }
 }
 

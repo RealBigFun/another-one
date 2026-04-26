@@ -135,6 +135,11 @@ enum Control {
         pair_token: Option<String>,
         protocol_version: u32,
     },
+    /// Resolve the latest pull-request status for `project_id`'s
+    /// current branch. Reply variant is
+    /// [`WorkerReply::PullRequestStatusAck`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::FindPullRequestStatus`.
+    FindPullRequestStatus { project_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -165,6 +170,15 @@ pub enum WorkerReply {
         message: String,
         #[serde(rename = "err_kind")]
         kind: ErrKind,
+    },
+    /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
+    /// when the project has no PR for its current branch (or the
+    /// project id is unknown). Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestStatusAck`.
+    /// The payload reuses `local_session::PullRequestStatusDto`
+    /// directly — see the comment above on parallel-mirror-avoidance.
+    PullRequestStatusAck {
+        status: Option<crate::api::local_session::PullRequestStatusDto>,
     },
 }
 
@@ -295,8 +309,12 @@ pub enum AgentProvider {
     Shell,
 }
 
-// `PullRequestInfo` + `PullRequestState` removed with the dead
-// `WorkerReply::PullRequestStatus` variant on the daemon side.
+// `PullRequestStatusDto` and `PullRequestStateDto` are reused from
+// `crate::api::local_session` directly — they already have
+// `Serialize`/`Deserialize` derived (added alongside this verb)
+// and produce the same Dart class on the FRB boundary regardless
+// of which transport asks for them. Avoiding a parallel mirror
+// here keeps a single source of truth for the PR-status shape.
 
 /// Writes one frame to the Iroh send stream.
 async fn write_frame(send: &mut SendStream, ty: u8, payload: &[u8]) -> anyhow::Result<()> {
@@ -851,6 +869,25 @@ impl IrohSession {
             Control::LaunchTab { section_id, tab_id },
         )
         .await
+    }
+
+    /// Issue [`Control::FindPullRequestStatus`] under `request_id`.
+    /// The matching [`WorkerReply::PullRequestStatusAck`] (or
+    /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
+    /// keyed by the same id; Dart's `IrohTransport` dispatches it
+    /// against its completer table.
+    ///
+    /// Caller-supplied `request_id` lets the Dart side allocate
+    /// the id via [`Self::next_request_id`] *before* registering
+    /// its completer, eliminating the race where a fast daemon
+    /// reply could arrive before the completer entry exists.
+    pub async fn find_pull_request_status(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::FindPullRequestStatus { project_id })
+            .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

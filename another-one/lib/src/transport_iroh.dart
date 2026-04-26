@@ -11,6 +11,7 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
+import 'rust/api/local_session.dart' show PullRequestStatusDto;
 import 'transport.dart';
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
@@ -251,6 +252,37 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     await session.launchTab(sectionId: sectionId, tabId: tabId);
   }
 
+  /// Resolve the latest pull-request status for `projectId`'s
+  /// current branch over the iroh wire. Returns `null` for unknown
+  /// projects or branches without an open PR; throws when the
+  /// daemon emits a `WorkerReply::Err` (gh CLI missing, network,
+  /// etc.) so the UI can surface the message verbatim.
+  ///
+  /// Routes through [_sendControlAndAwait] so the matching
+  /// `PullRequestStatusAck` reply is dispatched against this
+  /// session's completer table — order-independent with respect
+  /// to other in-flight verbs.
+  @override
+  Future<PullRequestStatusDto?> findPullRequestStatus(String projectId) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.findPullRequestStatus(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_PullRequestStatusAck(:final status) => status,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+        'unexpected WorkerReply for findPullRequestStatus: $reply',
+      ),
+    };
+  }
+
   @override
   void sendBytes(List<int> bytes) {
     final session = _session;
@@ -346,12 +378,10 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// `request_id` so they can pass it to a Rust-side `send_control`
   /// equivalent (added per-verb in domain tasks).
   ///
-  /// Currently unused: the existing `listProjects` / `attachTab`
-  /// helpers keep the fire-and-forget shape because the contemporary
-  /// daemon doesn't yet emit replies the UI awaits per-call. Once
-  /// the wire grows verbs that DO reply (e.g. `addProject`), each
-  /// such verb routes through here.
-  // ignore: unused_element
+  /// First consumer: [findPullRequestStatus] (added by
+  /// `another-one-ojm.6`). Domain children landing in
+  /// `another-one-ojm.2..8` will route their new verbs through
+  /// here too.
   Future<WorkerReply> _sendControlAndAwait(
     Future<void> Function(int requestId) send,
   ) async {
