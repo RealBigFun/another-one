@@ -108,6 +108,10 @@ flutter:
     # `desktop/assets/icons/` so sidebar + titlebar glyphs render
     # bit-identically across the two UIs.
     - assets/icons/
+    # Branded provider logos (Claude / Codex / Cursor / Gemini /
+    # etc.). Used by the new-task / add-agent / settings agent
+    # pages.
+    - assets/agent-icons/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
