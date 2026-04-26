@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 339978808;
+  int get rustContentHash => 2110209297;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -228,6 +228,18 @@ abstract class RustLibApi extends BaseApi {
     required bool pinned,
   });
 
+  Future<void> crateApiLocalSessionLocalSessionStageAllChanges({
+    required LocalSession that,
+    required String projectId,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionStageChangedFile({
+    required LocalSession that,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  });
+
   Stream<Uint8List> crateApiLocalSessionLocalSessionSubscribe({
     required LocalSession that,
   });
@@ -240,6 +252,18 @@ abstract class RustLibApi extends BaseApi {
     required LocalSession that,
     required int cols,
     required int rows,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionUnstageAllChanges({
+    required LocalSession that,
+    required String projectId,
+  });
+
+  Future<void> crateApiLocalSessionLocalSessionUnstageChangedFile({
+    required LocalSession that,
+    required String projectId,
+    required String path,
+    String? originalPath,
   });
 
   Future<void> crateApiEmbeddedDaemonBootEmbeddedDaemon();
@@ -1385,6 +1409,87 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiLocalSessionLocalSessionStageAllChanges({
+    required LocalSession that,
+    required String projectId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 29,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionStageAllChangesConstMeta,
+        argValues: [that, projectId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiLocalSessionLocalSessionStageAllChangesConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_stage_all_changes",
+        argNames: ["that", "projectId"],
+      );
+
+  @override
+  Future<void> crateApiLocalSessionLocalSessionStageChangedFile({
+    required LocalSession that,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(path, serializer);
+          sse_encode_opt_String(originalPath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 30,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionStageChangedFileConstMeta,
+        argValues: [that, projectId, path, originalPath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionStageChangedFileConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_stage_changed_file",
+        argNames: ["that", "projectId", "path", "originalPath"],
+      );
+
+  @override
   Stream<Uint8List> crateApiLocalSessionLocalSessionSubscribe({
     required LocalSession that,
   }) {
@@ -1402,7 +1507,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 29,
+              funcId: 31,
               port: port_,
             );
           },
@@ -1443,7 +1548,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 30,
+              funcId: 32,
               port: port_,
             );
           },
@@ -1487,7 +1592,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 33,
             port: port_,
           );
         },
@@ -1509,6 +1614,88 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiLocalSessionLocalSessionUnstageAllChanges({
+    required LocalSession that,
+    required String projectId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 34,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionUnstageAllChangesConstMeta,
+        argValues: [that, projectId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionUnstageAllChangesConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_unstage_all_changes",
+        argNames: ["that", "projectId"],
+      );
+
+  @override
+  Future<void> crateApiLocalSessionLocalSessionUnstageChangedFile({
+    required LocalSession that,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(projectId, serializer);
+          sse_encode_String(path, serializer);
+          sse_encode_opt_String(originalPath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 35,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiLocalSessionLocalSessionUnstageChangedFileConstMeta,
+        argValues: [that, projectId, path, originalPath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiLocalSessionLocalSessionUnstageChangedFileConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocalSession_unstage_changed_file",
+        argNames: ["that", "projectId", "path", "originalPath"],
+      );
+
+  @override
   Future<void> crateApiEmbeddedDaemonBootEmbeddedDaemon() {
     return handler.executeNormal(
       NormalTask(
@@ -1517,7 +1704,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 32,
+            funcId: 36,
             port: port_,
           );
         },
@@ -1544,7 +1731,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 33,
+            funcId: 37,
             port: port_,
           );
         },
@@ -1580,7 +1767,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 34,
+            funcId: 38,
             port: port_,
           );
         },
@@ -1611,7 +1798,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 35,
+            funcId: 39,
             port: port_,
           );
         },
@@ -1639,7 +1826,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 36,
+            funcId: 40,
             port: port_,
           );
         },
@@ -1666,7 +1853,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 41,
             port: port_,
           );
         },
@@ -1693,7 +1880,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 42,
             port: port_,
           );
         },
@@ -1720,7 +1907,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 43,
             port: port_,
           );
         },
@@ -1748,7 +1935,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 44,
             port: port_,
           );
         },
@@ -3818,6 +4005,29 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
         pinned: pinned,
       );
 
+  /// `git add -A` on the project root — stage every change.
+  Future<void> stageAllChanges({required String projectId}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionStageAllChanges(
+        that: this,
+        projectId: projectId,
+      );
+
+  /// Stage one changed file via `git add -A -- <path>`. `original_path`
+  /// is set only for renames/copies — the helper passes both
+  /// arguments so git can resolve the rename pair correctly.
+  /// Errors bubble up as anyhow with the git stderr appended,
+  /// matching what GPUI shows in toasts.
+  Future<void> stageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionStageChangedFile(
+    that: this,
+    projectId: projectId,
+    path: path,
+    originalPath: originalPath,
+  );
+
   /// Stream PTY bytes for the attached tab into a Dart sink.
   /// One-shot subscription; the second call returns
   /// "already subscribed".
@@ -3840,4 +4050,25 @@ class LocalSessionImpl extends RustOpaque implements LocalSession {
         cols: cols,
         rows: rows,
       );
+
+  /// Unstage every currently-staged change.
+  Future<void> unstageAllChanges({required String projectId}) =>
+      RustLib.instance.api.crateApiLocalSessionLocalSessionUnstageAllChanges(
+        that: this,
+        projectId: projectId,
+      );
+
+  /// Unstage one changed file via `git restore --staged -- <path>`,
+  /// falling back to `git reset HEAD -- <path>` if the repo is
+  /// pre-2.23 (matches `core::unstage_changed_file`).
+  Future<void> unstageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionUnstageChangedFile(
+    that: this,
+    projectId: projectId,
+    path: path,
+    originalPath: originalPath,
+  );
 }

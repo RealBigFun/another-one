@@ -255,6 +255,51 @@ abstract class DaemonConnection {
       'wire variant on the iroh transport (not yet implemented).',
     );
   }
+
+  /// Stage one changed file via `git add`. `originalPath` is set
+  /// only on rename/copy entries — git needs both source and
+  /// destination to resolve the pair correctly. Throws on git
+  /// failure with the stderr appended.
+  Future<void> stageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) {
+    throw UnimplementedError(
+      'stageChangedFile: requires Control::StageChangedFile wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Unstage one changed file via `git restore --staged` (or
+  /// `git reset HEAD` on older git). See [`stageChangedFile`] for
+  /// the rename-pair contract.
+  Future<void> unstageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) {
+    throw UnimplementedError(
+      'unstageChangedFile: requires Control::UnstageChangedFile wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// `git add -A` on the project root — stage every change.
+  Future<void> stageAllChanges(String projectId) {
+    throw UnimplementedError(
+      'stageAllChanges: requires Control::StageAllChanges wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Unstage every currently-staged change.
+  Future<void> unstageAllChanges(String projectId) {
+    throw UnimplementedError(
+      'unstageAllChanges: requires Control::UnstageAllChanges wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
 }
 
 /// In-memory list of active [DaemonConnection]s. Holds N regardless

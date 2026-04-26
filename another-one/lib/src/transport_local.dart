@@ -293,6 +293,58 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<void> stageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('stageChangedFile: LocalTransport not connected');
+    }
+    await session.stageChangedFile(
+      projectId: projectId,
+      path: path,
+      originalPath: originalPath,
+    );
+  }
+
+  @override
+  Future<void> unstageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('unstageChangedFile: LocalTransport not connected');
+    }
+    await session.unstageChangedFile(
+      projectId: projectId,
+      path: path,
+      originalPath: originalPath,
+    );
+  }
+
+  @override
+  Future<void> stageAllChanges(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('stageAllChanges: LocalTransport not connected');
+    }
+    await session.stageAllChanges(projectId: projectId);
+  }
+
+  @override
+  Future<void> unstageAllChanges(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('unstageAllChanges: LocalTransport not connected');
+    }
+    await session.unstageAllChanges(projectId: projectId);
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,

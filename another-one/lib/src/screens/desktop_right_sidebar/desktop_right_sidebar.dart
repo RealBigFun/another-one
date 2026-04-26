@@ -5,10 +5,12 @@
 // Checks. Body is a per-tab pane.
 //
 // Status:
-//   - Changes: flat list of files with status glyph + path + per-
-//     file +N/-N badges via `read_changed_files`. Stage/unstage
-//     actions and the Staged-vs-Uncommitted section grouping
-//     haven't landed — that needs `ChangedFilesGitMutation`.
+//   - Changes: Staged / Uncommitted sections with per-section
+//     totals + "stage/unstage all" action and per-row +/-
+//     stage/unstage buttons. Reads through `read_changed_files`,
+//     mutates through `stage_changed_file` / `stage_all_changes`
+//     and the unstage equivalents. Discard-all (the destructive
+//     companion GPUI ships) is deferred.
 //   - Commits: flat list of recent commits (short SHA + subject +
 //     author + relative time) via `read_recent_commits`. The
 //     expandable per-commit file list GPUI paints needs a
@@ -28,12 +30,15 @@ import '../../rust/api/local_session.dart'
     show ChangedFileDto, CheckBucket, CheckDto, CommitDto;
 import '../../state/active_project_provider.dart';
 import '../../state/changed_files_provider.dart';
+import '../../state/local_connection_provider.dart';
 import '../../state/pr_checks_provider.dart';
 import '../../state/recent_commits_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
+import '../../widgets/app_icon.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/pill.dart';
+import '../../widgets/run_mutation.dart';
 
 const double _rightSidebarWidth = 320;
 
@@ -136,12 +141,26 @@ class _ChangesPane extends ConsumerWidget {
         if (data.isEmpty) {
           return const EmptyState(text: 'Working tree clean');
         }
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(
-            vertical: AppTokens.space2,
-          ),
-          itemCount: data.length,
-          itemBuilder: (_, i) => _ChangedFileRow(file: data[i]),
+        final staged = data.where(_hasStagedChanges).toList();
+        final uncommitted = data.where(_hasUnstagedChanges).toList();
+        return ListView(
+          padding: const EdgeInsets.symmetric(vertical: AppTokens.space2),
+          children: [
+            if (staged.isNotEmpty)
+              _ChangedFilesSection(
+                projectId: projectId,
+                title: 'Staged',
+                files: staged,
+                group: _ChangeGroup.staged,
+              ),
+            if (uncommitted.isNotEmpty)
+              _ChangedFilesSection(
+                projectId: projectId,
+                title: 'Uncommitted',
+                files: uncommitted,
+                group: _ChangeGroup.uncommitted,
+              ),
+          ],
         );
       },
       loading: () => const EmptyState(text: 'Reading working tree…'),
@@ -150,30 +169,227 @@ class _ChangesPane extends ConsumerWidget {
   }
 }
 
-/// Single-line file row: status glyph + path (with parent-dir
-/// muted) + per-file +N/-N counts. Mirrors the grid GPUI paints in
-/// `desktop/src/right_sidebar.rs::changed_file_row`, but flattened
-/// — the Staged/Uncommitted section headers + per-file
-/// stage/unstage chevrons land when the mutation bridge does.
-class _ChangedFileRow extends StatelessWidget {
-  const _ChangedFileRow({required this.file});
+/// Which side of the staged/working-tree split a row is rendered
+/// for. A file with both staged and unstaged changes appears in
+/// both sections; the row's stage/unstage button + diff counts
+/// switch on this enum.
+enum _ChangeGroup { staged, uncommitted }
 
-  final ChangedFileDto file;
+bool _hasStagedChanges(ChangedFileDto f) {
+  final c = f.indexStatus;
+  return c.isNotEmpty && c != ' ' && c != '?';
+}
+
+bool _hasUnstagedChanges(ChangedFileDto f) {
+  if (f.untracked) return true;
+  final c = f.worktreeStatus;
+  return c.isNotEmpty && c != ' ' && c != '?';
+}
+
+/// Status char to render in the gutter for a given group. Mirrors
+/// GPUI's `changed_file_status_char`: untracked → 'A' on the
+/// uncommitted side; ' ' → 'M' (modified-but-no-status-char shows
+/// up on rename/copy partners).
+String _rowStatus(ChangedFileDto f, _ChangeGroup group) {
+  final raw = group == _ChangeGroup.staged
+      ? f.indexStatus
+      : (f.untracked ? 'A' : f.worktreeStatus);
+  if (raw == '?') return 'A';
+  if (raw.trim().isEmpty) return 'M';
+  return raw;
+}
+
+class _ChangedFilesSection extends ConsumerWidget {
+  const _ChangedFilesSection({
+    required this.projectId,
+    required this.title,
+    required this.files,
+    required this.group,
+  });
+
+  final String projectId;
+  final String title;
+  final List<ChangedFileDto> files;
+  final _ChangeGroup group;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final additions = files.fold<int>(
+      0,
+      (a, f) => a +
+          (group == _ChangeGroup.staged ? f.stagedAdditions : f.unstagedAdditions),
+    );
+    final deletions = files.fold<int>(
+      0,
+      (a, f) => a +
+          (group == _ChangeGroup.staged ? f.stagedDeletions : f.unstagedDeletions),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ChangedFilesSectionHeader(
+          title: title,
+          fileCount: files.length,
+          additions: additions,
+          deletions: deletions,
+          group: group,
+          onStageAll: group == _ChangeGroup.uncommitted
+              ? () => _stageAll(context, ref)
+              : null,
+          onUnstageAll: group == _ChangeGroup.staged
+              ? () => _unstageAll(context, ref)
+              : null,
+        ),
+        for (final file in files)
+          _ChangedFileRow(
+            projectId: projectId,
+            file: file,
+            group: group,
+          ),
+      ],
+    );
+  }
+
+  Future<void> _stageAll(BuildContext context, WidgetRef ref) async {
+    final connection = ref.read(localConnectionProvider);
+    await runMutation<bool>(
+      context,
+      () async {
+        await connection.stageAllChanges(projectId);
+        return true;
+      },
+      errorPrefix: 'Could not stage all changes',
+    );
+    ref.invalidate(changedFilesProvider(projectId));
+  }
+
+  Future<void> _unstageAll(BuildContext context, WidgetRef ref) async {
+    final connection = ref.read(localConnectionProvider);
+    await runMutation<bool>(
+      context,
+      () async {
+        await connection.unstageAllChanges(projectId);
+        return true;
+      },
+      errorPrefix: 'Could not unstage all changes',
+    );
+    ref.invalidate(changedFilesProvider(projectId));
+  }
+}
+
+class _ChangedFilesSectionHeader extends StatelessWidget {
+  const _ChangedFilesSectionHeader({
+    required this.title,
+    required this.fileCount,
+    required this.additions,
+    required this.deletions,
+    required this.group,
+    required this.onStageAll,
+    required this.onUnstageAll,
+  });
+
+  final String title;
+  final int fileCount;
+  final int additions;
+  final int deletions;
+  final _ChangeGroup group;
+  final VoidCallback? onStageAll;
+  final VoidCallback? onUnstageAll;
 
   @override
   Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppTokens.space3,
+        AppTokens.space2,
+        AppTokens.space2,
+        AppTokens.space1,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: AppTokens.fontSmall,
+              fontWeight: FontWeight.w600,
+              color: AppTokens.textPrimary,
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(width: AppTokens.space2),
+          Text(
+            '$fileCount',
+            style: const TextStyle(
+              fontSize: AppTokens.fontCaption,
+              color: AppTokens.textMuted,
+            ),
+          ),
+          const Spacer(),
+          if (additions > 0)
+            Text(
+              '+$additions',
+              style: const TextStyle(
+                fontSize: AppTokens.fontCaption,
+                fontWeight: FontWeight.w600,
+                color: AppTokens.diffAdded,
+              ),
+            ),
+          if (deletions > 0) ...[
+            const SizedBox(width: 4),
+            Text(
+              '-$deletions',
+              style: const TextStyle(
+                fontSize: AppTokens.fontCaption,
+                fontWeight: FontWeight.w600,
+                color: AppTokens.diffRemoved,
+              ),
+            ),
+          ],
+          if (onStageAll case final cb?) ...[
+            const SizedBox(width: AppTokens.space2),
+            _IconActionButton(
+              icon: 'plus',
+              tooltip: 'Stage all changes',
+              onPressed: cb,
+            ),
+          ],
+          if (onUnstageAll case final cb?) ...[
+            const SizedBox(width: AppTokens.space2),
+            _IconActionButton(
+              icon: 'pin-off',
+              tooltip: 'Unstage all changes',
+              onPressed: cb,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ChangedFileRow extends ConsumerWidget {
+  const _ChangedFileRow({
+    required this.projectId,
+    required this.file,
+    required this.group,
+  });
+
+  final String projectId;
+  final ChangedFileDto file;
+  final _ChangeGroup group;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final fileName = _basename(file.path);
     final parentDir = _parentDir(file.path);
-    // Worktree status takes precedence — that's what an unstaged
-    // user sees as their pending work. Untracked files are always
-    // 'A' regardless of the raw char ('?' otherwise).
-    final status = file.untracked
-        ? 'A'
-        : (file.worktreeStatus.trim().isEmpty
-            ? (file.indexStatus.trim().isEmpty ? 'M' : file.indexStatus)
-            : file.worktreeStatus);
-    final additions = file.unstagedAdditions + file.stagedAdditions;
-    final deletions = file.unstagedDeletions + file.stagedDeletions;
+    final status = _rowStatus(file, group);
+    final additions = group == _ChangeGroup.staged
+        ? file.stagedAdditions
+        : file.unstagedAdditions;
+    final deletions = group == _ChangeGroup.staged
+        ? file.stagedDeletions
+        : file.unstagedDeletions;
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: AppTokens.space3,
@@ -239,36 +455,134 @@ class _ChangedFileRow extends StatelessWidget {
               ),
             ],
           ],
+          const SizedBox(width: AppTokens.space2),
+          if (group == _ChangeGroup.uncommitted)
+            _IconActionButton(
+              icon: 'plus',
+              tooltip: 'Stage this file',
+              onPressed: () => _stage(context, ref),
+            )
+          else
+            _IconActionButton(
+              icon: 'pin-off',
+              tooltip: 'Unstage this file',
+              onPressed: () => _unstage(context, ref),
+            ),
         ],
       ),
     );
   }
 
-  /// Mirrors `desktop/src/right_sidebar.rs::changed_file_status_color`
-  /// — A=green, D=red, R/C=blue, anything else (M/T) amber.
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'A':
-        return AppTokens.diffAdded;
-      case 'D':
-        return AppTokens.diffRemoved;
-      case 'R':
-      case 'C':
-        return AppTokens.accent;
-      default:
-        return AppTokens.warningIcon;
-    }
+  Future<void> _stage(BuildContext context, WidgetRef ref) async {
+    final connection = ref.read(localConnectionProvider);
+    await runMutation<bool>(
+      context,
+      () async {
+        await connection.stageChangedFile(
+          projectId: projectId,
+          path: file.path,
+          originalPath: file.originalPath,
+        );
+        return true;
+      },
+      errorPrefix: 'Could not stage ${file.path}',
+    );
+    ref.invalidate(changedFilesProvider(projectId));
   }
 
-  String _basename(String path) {
-    final i = path.lastIndexOf('/');
-    return i < 0 ? path : path.substring(i + 1);
+  Future<void> _unstage(BuildContext context, WidgetRef ref) async {
+    final connection = ref.read(localConnectionProvider);
+    await runMutation<bool>(
+      context,
+      () async {
+        await connection.unstageChangedFile(
+          projectId: projectId,
+          path: file.path,
+          originalPath: file.originalPath,
+        );
+        return true;
+      },
+      errorPrefix: 'Could not unstage ${file.path}',
+    );
+    ref.invalidate(changedFilesProvider(projectId));
   }
+}
 
-  String? _parentDir(String path) {
-    final i = path.lastIndexOf('/');
-    if (i <= 0) return null;
-    return path.substring(0, i);
+/// Mirrors `desktop/src/right_sidebar.rs::changed_file_status_color`
+/// — A=green, D=red, R/C=blue, anything else (M/T) amber.
+Color _statusColor(String status) {
+  switch (status) {
+    case 'A':
+      return AppTokens.diffAdded;
+    case 'D':
+      return AppTokens.diffRemoved;
+    case 'R':
+    case 'C':
+      return AppTokens.accent;
+    default:
+      return AppTokens.warningIcon;
+  }
+}
+
+String _basename(String path) {
+  final i = path.lastIndexOf('/');
+  return i < 0 ? path : path.substring(i + 1);
+}
+
+String? _parentDir(String path) {
+  final i = path.lastIndexOf('/');
+  if (i <= 0) return null;
+  return path.substring(0, i);
+}
+
+/// Small in-row icon button used for per-file and per-section
+/// actions. Sized like GPUI's `changed_file_action_button`.
+class _IconActionButton extends StatefulWidget {
+  const _IconActionButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final String icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  State<_IconActionButton> createState() => _IconActionButtonState();
+}
+
+class _IconActionButtonState extends State<_IconActionButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onPressed,
+          child: Container(
+            width: 18,
+            height: 18,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _hover ? AppTokens.overlayHover : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppTokens.radiusXs),
+            ),
+            child: AppIcon(
+              widget.icon,
+              size: 11,
+              color: AppTokens.textSecondary,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

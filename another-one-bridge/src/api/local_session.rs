@@ -564,6 +564,72 @@ impl LocalSession {
         }))
     }
 
+    /// Stage one changed file via `git add -A -- <path>`. `original_path`
+    /// is set only for renames/copies — the helper passes both
+    /// arguments so git can resolve the rename pair correctly.
+    /// Errors bubble up as anyhow with the git stderr appended,
+    /// matching what GPUI shows in toasts.
+    pub async fn stage_changed_file(
+        &self,
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    ) -> anyhow::Result<()> {
+        run_changed_file_action(
+            &project_id,
+            move |project_path| {
+                let mut changed = another_one_core::project_store::ChangedFile::default();
+                changed.path = path;
+                changed.original_path = original_path;
+                another_one_core::project_store::stage_changed_file(
+                    &project_path,
+                    &changed,
+                )
+            },
+        )
+        .await
+    }
+
+    /// Unstage one changed file via `git restore --staged -- <path>`,
+    /// falling back to `git reset HEAD -- <path>` if the repo is
+    /// pre-2.23 (matches `core::unstage_changed_file`).
+    pub async fn unstage_changed_file(
+        &self,
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    ) -> anyhow::Result<()> {
+        run_changed_file_action(
+            &project_id,
+            move |project_path| {
+                let mut changed = another_one_core::project_store::ChangedFile::default();
+                changed.path = path;
+                changed.original_path = original_path;
+                another_one_core::project_store::unstage_changed_file(
+                    &project_path,
+                    &changed,
+                )
+            },
+        )
+        .await
+    }
+
+    /// `git add -A` on the project root — stage every change.
+    pub async fn stage_all_changes(&self, project_id: String) -> anyhow::Result<()> {
+        run_changed_file_action(&project_id, |project_path| {
+            another_one_core::project_store::stage_all_changes(&project_path)
+        })
+        .await
+    }
+
+    /// Unstage every currently-staged change.
+    pub async fn unstage_all_changes(&self, project_id: String) -> anyhow::Result<()> {
+        run_changed_file_action(&project_id, |project_path| {
+            another_one_core::project_store::unstage_all_changes(&project_path)
+        })
+        .await
+    }
+
     /// Pull-request CI checks for `project_id`'s current branch.
     /// Powers the right sidebar's Checks pane. Calls into
     /// [`another_one_core::git_actions::find_pull_request_checks`]
@@ -1098,6 +1164,40 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         AgentProviderKind::RovoDev => AgentProvider::RovoDev,
         AgentProviderKind::Forge => AgentProvider::Forge,
     }
+}
+
+/// Common scaffolding for the four stage/unstage verbs: resolve
+/// the project path off the registry, hop into `spawn_blocking`
+/// for the git shell-out, surface the core helper's `Result<_,
+/// String>` as `anyhow::Result`. Pulled out so each verb stays a
+/// thin wrapper.
+async fn run_changed_file_action<F>(project_id: &str, action: F) -> anyhow::Result<()>
+where
+    F: FnOnce(std::path::PathBuf) -> Result<(), String> + Send + 'static,
+{
+    let registry = local_registry().ok_or_else(|| {
+        anyhow::anyhow!("changed-file action: set_local_registry not called")
+    })?;
+    let project_path = {
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("changed-file action: RegistryState mutex poisoned")
+        })?;
+        state
+            .project_store
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .map(|project| project.path.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "changed-file action: unknown project_id `{project_id}`"
+                )
+            })?
+    };
+    tokio::task::spawn_blocking(move || action(project_path))
+        .await
+        .map_err(|e| anyhow::anyhow!("changed-file action join: {e}"))?
+        .map_err(|e| anyhow::anyhow!(e))
 }
 
 /// FRB-friendly mirror of

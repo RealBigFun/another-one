@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `run_changed_file_action`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -213,6 +213,20 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// immediately.
   Future<bool> setTaskPinned({required String taskId, required bool pinned});
 
+  /// `git add -A` on the project root — stage every change.
+  Future<void> stageAllChanges({required String projectId});
+
+  /// Stage one changed file via `git add -A -- <path>`. `original_path`
+  /// is set only for renames/copies — the helper passes both
+  /// arguments so git can resolve the rename pair correctly.
+  /// Errors bubble up as anyhow with the git stderr appended,
+  /// matching what GPUI shows in toasts.
+  Future<void> stageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  });
+
   /// Stream PTY bytes for the attached tab into a Dart sink.
   /// One-shot subscription; the second call returns
   /// "already subscribed".
@@ -228,6 +242,18 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// (min-across-viewers) size. The desktop UI render tick drains
   /// the resulting `pending_resizes` queue.
   Future<void> tabResize({required int cols, required int rows});
+
+  /// Unstage every currently-staged change.
+  Future<void> unstageAllChanges({required String projectId});
+
+  /// Unstage one changed file via `git restore --staged -- <path>`,
+  /// falling back to `git reset HEAD -- <path>` if the repo is
+  /// pre-2.23 (matches `core::unstage_changed_file`).
+  Future<void> unstageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  });
 }
 
 /// FRB-friendly mirror of
