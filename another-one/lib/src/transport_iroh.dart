@@ -585,6 +585,41 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         );
     }
   }
+
+  /// `another-one-ojm.5` — spawn a review task for a PR over the iroh
+  /// wire. Returns the new task's `sectionId` and re-broadcasts the
+  /// post-mutation `projects` snapshot on [workerReplies] (same shape
+  /// as [createBranch]).
+  @override
+  Future<String> createReviewTask({
+    required String projectId,
+    required int pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.createReviewTask(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        pullRequestNumber: BigInt.from(pullRequestNumber),
+        headBranch: headBranch,
+        agentProvider: agentProvider,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_CreateReviewTaskAck(:final sectionId, :final projects):
+        if (!_workerReplies.isClosed) {
+          _workerReplies.add(WorkerReply.projectList(projects: projects));
+        }
+        return sectionId;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'createReviewTask: unexpected reply variant $reply',
+        );
+    }
+  }
 }
 
 /// Exception thrown by `IrohTransport` mutator overrides when the

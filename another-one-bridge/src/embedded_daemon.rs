@@ -453,6 +453,143 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
     }
 
+    fn create_review_task<'a>(
+        &'a self,
+        project_id: &'a str,
+        pull_request_number: u64,
+        head_branch: &'a str,
+        agent_provider: Option<AgentProvider>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = anyhow::Result<(String, Vec<ProjectSummary>)>>
+                + Send
+                + 'a,
+        >,
+    > {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let head_branch = head_branch.to_string();
+        Box::pin(async move {
+            // Phase 1: snapshot the project — path + name + id —
+            // before kicking off the review-task worker. Mirrors
+            // LocalSession::create_review_task's lookup-then-spawn
+            // shape so the failure modes are identical.
+            let (project_path, project_name, target_project_id) = {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "create_review_task: registry vanished before lookup"
+                    )
+                })?;
+                let state = arc.lock().map_err(|_| {
+                    anyhow::anyhow!(
+                        "create_review_task: RegistryState mutex poisoned"
+                    )
+                })?;
+                let project = state
+                    .project_store
+                    .project(&project_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_review_task: unknown project_id `{project_id}`"
+                        )
+                    })?;
+                (
+                    project.path.clone(),
+                    project.name.clone(),
+                    project.id.clone(),
+                )
+            };
+
+            let task_name = format!("review-pr-{pull_request_number}");
+            let launch_config = match agent_provider.map(map_wire_agent_provider_back) {
+                Some(provider) => {
+                    another_one_core::agents::TerminalLaunchConfig::for_provider(provider)
+                }
+                None => another_one_core::agents::TerminalLaunchConfig::default(),
+            };
+
+            let mut rx = another_one_core::project_service::spawn_review_task_creation(
+                target_project_id.clone(),
+                project_path,
+                task_name,
+                pull_request_number,
+                head_branch,
+                launch_config,
+                true,
+                true,
+            );
+            let reply = rx.recv().await.map_err(|_| {
+                anyhow::anyhow!("review task worker dropped before reply")
+            })?;
+            let success = reply
+                .result
+                .map_err(|f| anyhow::anyhow!("create review task: {}", f.message))?;
+
+            // Phase 2: insert the prepared project + the review task.
+            let section_id = {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("create_review_task: registry vanished mid-flight")
+                })?;
+                let mut state = arc.lock().map_err(|_| {
+                    anyhow::anyhow!("create_review_task: registry mutex poisoned")
+                })?;
+                let inserted_worktree = state
+                    .project_store
+                    .insert_prepared_project(success.project.clone());
+                let worktree_project_id = if inserted_worktree {
+                    success.project.project.id.clone()
+                } else {
+                    state
+                        .project_store
+                        .projects
+                        .iter()
+                        .find(|p| p.path == success.project.project.path)
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| success.project.project.id.clone())
+                };
+                let task_id = uuid::Uuid::new_v4().to_string();
+                let section = another_one_core::section::SectionId::for_task(
+                    &worktree_project_id,
+                    &success.branch_name,
+                    &task_id,
+                );
+                let section_key = section.store_key();
+                state
+                    .project_store
+                    .insert_task(another_one_core::project_store::Task {
+                        id: task_id,
+                        name: format!("Review #{pull_request_number} ({project_name})"),
+                        kind: another_one_core::project_store::TaskKind::Worktree,
+                        root_project_id: target_project_id,
+                        target_project_id: worktree_project_id.clone(),
+                        branch_name: success.branch_name,
+                        section_id: section_key.clone(),
+                        worktree_project_id: Some(worktree_project_id),
+                        tabs: Vec::new(),
+                        active_tab_id: String::new(),
+                        next_tab_id: 0,
+                        cwd: None,
+                    });
+                state.project_store.save();
+                section_key
+            };
+
+            // Phase 3: re-flatten for the inline-snapshot ack.
+            let projects = {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "create_review_task: registry vanished during snapshot read"
+                    )
+                })?;
+                let state = arc.lock().map_err(|_| {
+                    anyhow::anyhow!("create_review_task: registry mutex poisoned")
+                })?;
+                flatten_state_to_frame(&state)
+            };
+            Ok((section_id, projects))
+        })
+    }
+
     fn create_branch<'a>(
         &'a self,
         project_id: &'a str,
@@ -636,6 +773,28 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 })
                 .map_err(|err| anyhow::anyhow!(err.message))
         })
+    }
+}
+
+/// Translate a wire `AgentProvider` back to a core
+/// `AgentProviderKind` for `TerminalLaunchConfig::for_provider`.
+/// Mirrors `local_session.rs`'s `map_agent_provider_back`. Wire
+/// `Shell` is the "no agent — plain PTY" sentinel; the caller
+/// upstream of this fn should treat `Some(Shell)` like `None`, but
+/// gate it here so the match stays exhaustive (mapping it to
+/// ClaudeCode is unreachable in practice).
+fn map_wire_agent_provider_back(kind: AgentProvider) -> AgentProviderKind {
+    match kind {
+        AgentProvider::ClaudeCode => AgentProviderKind::ClaudeCode,
+        AgentProvider::CursorAgent => AgentProviderKind::CursorAgent,
+        AgentProvider::Codex => AgentProviderKind::Codex,
+        AgentProvider::Pi => AgentProviderKind::Pi,
+        AgentProvider::Gemini => AgentProviderKind::Gemini,
+        AgentProvider::OpenCode => AgentProviderKind::OpenCode,
+        AgentProvider::Amp => AgentProviderKind::Amp,
+        AgentProvider::RovoDev => AgentProviderKind::RovoDev,
+        AgentProvider::Forge => AgentProviderKind::Forge,
+        AgentProvider::Shell => AgentProviderKind::ClaudeCode,
     }
 }
 

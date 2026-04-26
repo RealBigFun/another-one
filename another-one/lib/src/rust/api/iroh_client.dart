@@ -62,6 +62,15 @@ abstract class IrohSession implements RustOpaqueInterface {
     required bool migrateChanges,
   });
 
+  /// `another-one-ojm.5` — issue a `Control::CreateReviewTask` frame.
+  Future<void> createReviewTask({
+    required BigInt requestId,
+    required String projectId,
+    required BigInt pullRequestNumber,
+    required String headBranch,
+    AgentProvider? agentProvider,
+  });
+
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
@@ -530,6 +539,14 @@ sealed class WorkerReply with _$WorkerReply {
     required String sectionId,
     required List<ProjectSummary> projects,
   }) = WorkerReply_CreateBranchAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::CreateReviewTask`].
+  /// Same inline-snapshot semantics as
+  /// [`Self::CreateBranchAck`].
+  const factory WorkerReply.createReviewTaskAck({
+    required String sectionId,
+    required List<ProjectSummary> projects,
+  }) = WorkerReply_CreateReviewTaskAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

@@ -179,6 +179,14 @@ enum Control {
         use_current_task: bool,
         migrate_changes: bool,
     },
+    /// `another-one-ojm.5` — spawn a review task for a PR. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::CreateReviewTask`.
+    CreateReviewTask {
+        project_id: String,
+        pull_request_number: u64,
+        head_branch: String,
+        agent_provider: Option<AgentProvider>,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -236,6 +244,13 @@ pub enum WorkerReply {
     /// issuing client repaints the projects drawer without a follow-
     /// up `ListProjects` round-trip.
     CreateBranchAck {
+        section_id: String,
+        projects: Vec<ProjectSummary>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::CreateReviewTask`].
+    /// Same inline-snapshot semantics as
+    /// [`Self::CreateBranchAck`].
+    CreateReviewTaskAck {
         section_id: String,
         projects: Vec<ProjectSummary>,
     },
@@ -353,7 +368,7 @@ pub enum ProjectKind {
 /// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
 /// `Shell` is the catch-all for plain-PTY tabs with no agent
 /// provider set.
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentProvider {
     ClaudeCode,
@@ -1082,6 +1097,27 @@ impl IrohSession {
                 branch_name,
                 use_current_task,
                 migrate_changes,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::CreateReviewTask` frame.
+    pub async fn create_review_task(
+        &self,
+        request_id: u64,
+        project_id: String,
+        pull_request_number: u64,
+        head_branch: String,
+        agent_provider: Option<AgentProvider>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::CreateReviewTask {
+                project_id,
+                pull_request_number,
+                head_branch,
+                agent_provider,
             },
         )
         .await

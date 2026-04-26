@@ -55,7 +55,7 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult Function( WorkerReply_CreateBranchAck value)?  createBranchAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult Function( WorkerReply_CreateBranchAck value)?  createBranchAck,TResult Function( WorkerReply_CreateReviewTaskAck value)?  createReviewTaskAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -67,7 +67,8 @@ return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck() when un
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
 return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
 return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck() when createBranchAck != null:
-return createBranchAck(_that);case _:
+return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
+return createReviewTaskAck(_that);case _:
   return orElse();
 
 }
@@ -85,7 +86,7 @@ return createBranchAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,required TResult Function( WorkerReply_UnstageChangedFileAck value)  unstageChangedFileAck,required TResult Function( WorkerReply_StageAllChangesAck value)  stageAllChangesAck,required TResult Function( WorkerReply_UnstageAllChangesAck value)  unstageAllChangesAck,required TResult Function( WorkerReply_DiscardChangedFileAck value)  discardChangedFileAck,required TResult Function( WorkerReply_ToolbarActionOutcomeAck value)  toolbarActionOutcomeAck,required TResult Function( WorkerReply_CreateBranchAck value)  createBranchAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,required TResult Function( WorkerReply_UnstageChangedFileAck value)  unstageChangedFileAck,required TResult Function( WorkerReply_StageAllChangesAck value)  stageAllChangesAck,required TResult Function( WorkerReply_UnstageAllChangesAck value)  unstageAllChangesAck,required TResult Function( WorkerReply_DiscardChangedFileAck value)  discardChangedFileAck,required TResult Function( WorkerReply_ToolbarActionOutcomeAck value)  toolbarActionOutcomeAck,required TResult Function( WorkerReply_CreateBranchAck value)  createBranchAck,required TResult Function( WorkerReply_CreateReviewTaskAck value)  createReviewTaskAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
@@ -97,7 +98,8 @@ return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck():
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck():
 return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck():
 return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck():
-return createBranchAck(_that);}
+return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck():
+return createReviewTaskAck(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -111,7 +113,7 @@ return createBranchAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult? Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult? Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult? Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult? Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult? Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult? Function( WorkerReply_CreateBranchAck value)?  createBranchAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult? Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult? Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult? Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult? Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult? Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult? Function( WorkerReply_CreateBranchAck value)?  createBranchAck,TResult? Function( WorkerReply_CreateReviewTaskAck value)?  createReviewTaskAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -123,7 +125,8 @@ return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck() when un
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
 return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
 return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck() when createBranchAck != null:
-return createBranchAck(_that);case _:
+return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
+return createReviewTaskAck(_that);case _:
   return null;
 
 }
@@ -140,7 +143,7 @@ return createBranchAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,TResult Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,TResult Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
@@ -151,7 +154,8 @@ return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChanges
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
 return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
 return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck() when createBranchAck != null:
-return createBranchAck(_that.sectionId,_that.projects);case _:
+return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
+return createReviewTaskAck(_that.sectionId,_that.projects);case _:
   return orElse();
 
 }
@@ -169,7 +173,7 @@ return createBranchAck(_that.sectionId,_that.projects);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( List<ChangedFile> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  discardChangedFileAck,required TResult Function( ToolbarActionOutcome outcome)  toolbarActionOutcomeAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createBranchAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( List<ChangedFile> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFile> changedFiles)  discardChangedFileAck,required TResult Function( ToolbarActionOutcome outcome)  toolbarActionOutcomeAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createBranchAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createReviewTaskAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
@@ -180,7 +184,8 @@ return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChanges
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck():
 return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck():
 return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck():
-return createBranchAck(_that.sectionId,_that.projects);}
+return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck():
+return createReviewTaskAck(_that.sectionId,_that.projects);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -194,7 +199,7 @@ return createBranchAck(_that.sectionId,_that.projects);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,TResult? Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFile> changedFiles)?  discardChangedFileAck,TResult? Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
@@ -205,7 +210,8 @@ return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChanges
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
 return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
 return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck() when createBranchAck != null:
-return createBranchAck(_that.sectionId,_that.projects);case _:
+return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
+return createReviewTaskAck(_that.sectionId,_that.projects);case _:
   return null;
 
 }
@@ -844,6 +850,80 @@ class _$WorkerReply_CreateBranchAckCopyWithImpl<$Res>
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') $Res call({Object? sectionId = null,Object? projects = null,}) {
   return _then(WorkerReply_CreateBranchAck(
+sectionId: null == sectionId ? _self.sectionId : sectionId // ignore: cast_nullable_to_non_nullable
+as String,projects: null == projects ? _self._projects : projects // ignore: cast_nullable_to_non_nullable
+as List<ProjectSummary>,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_CreateReviewTaskAck extends WorkerReply {
+  const WorkerReply_CreateReviewTaskAck({required this.sectionId, required final  List<ProjectSummary> projects}): _projects = projects,super._();
+  
+
+ final  String sectionId;
+ final  List<ProjectSummary> _projects;
+ List<ProjectSummary> get projects {
+  if (_projects is EqualUnmodifiableListView) return _projects;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_projects);
+}
+
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_CreateReviewTaskAckCopyWith<WorkerReply_CreateReviewTaskAck> get copyWith => _$WorkerReply_CreateReviewTaskAckCopyWithImpl<WorkerReply_CreateReviewTaskAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_CreateReviewTaskAck&&(identical(other.sectionId, sectionId) || other.sectionId == sectionId)&&const DeepCollectionEquality().equals(other._projects, _projects));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,sectionId,const DeepCollectionEquality().hash(_projects));
+
+@override
+String toString() {
+  return 'WorkerReply.createReviewTaskAck(sectionId: $sectionId, projects: $projects)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_CreateReviewTaskAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_CreateReviewTaskAckCopyWith(WorkerReply_CreateReviewTaskAck value, $Res Function(WorkerReply_CreateReviewTaskAck) _then) = _$WorkerReply_CreateReviewTaskAckCopyWithImpl;
+@useResult
+$Res call({
+ String sectionId, List<ProjectSummary> projects
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_CreateReviewTaskAckCopyWithImpl<$Res>
+    implements $WorkerReply_CreateReviewTaskAckCopyWith<$Res> {
+  _$WorkerReply_CreateReviewTaskAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_CreateReviewTaskAck _self;
+  final $Res Function(WorkerReply_CreateReviewTaskAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? sectionId = null,Object? projects = null,}) {
+  return _then(WorkerReply_CreateReviewTaskAck(
 sectionId: null == sectionId ? _self.sectionId : sectionId // ignore: cast_nullable_to_non_nullable
 as String,projects: null == projects ? _self._projects : projects // ignore: cast_nullable_to_non_nullable
 as List<ProjectSummary>,

@@ -227,6 +227,18 @@ pub enum Control {
         use_current_task: bool,
         migrate_changes: bool,
     },
+    /// `another-one-ojm.5` — spawn a review task targeting a PR.
+    /// Clones the PR's `head_branch` into a worktree, prepares the
+    /// project, inserts the task, optionally launches the configured
+    /// agent CLI for the task. Reply is
+    /// [`WorkerReply::CreateReviewTaskAck`] carrying the new task's
+    /// `section_id` so the issuing client navigates to it.
+    CreateReviewTask {
+        project_id: String,
+        pull_request_number: u64,
+        head_branch: String,
+        agent_provider: Option<AgentProvider>,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -380,6 +392,13 @@ pub enum WorkerReply {
     /// contract — the mobile UI repaints the projects drawer
     /// without a follow-up `ListProjects` round-trip.
     CreateBranchAck {
+        section_id: String,
+        projects: Vec<ProjectSummary>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::CreateReviewTask`].
+    /// Same inline-snapshot semantics as
+    /// [`Self::CreateBranchAck`].
+    CreateReviewTaskAck {
         section_id: String,
         projects: Vec<ProjectSummary>,
     },

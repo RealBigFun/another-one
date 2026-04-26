@@ -641,6 +641,37 @@ async fn handle_control(
                 }
             }
         }
+        Control::CreateReviewTask {
+            project_id,
+            pull_request_number,
+            head_branch,
+            agent_provider,
+        } => {
+            let outcome = registry
+                .create_review_task(
+                    &project_id,
+                    pull_request_number,
+                    &head_branch,
+                    agent_provider,
+                )
+                .await;
+            match outcome {
+                Ok((section_id, projects)) => {
+                    let reply = WorkerReply::CreateReviewTaskAck {
+                        section_id,
+                        projects,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
     }
     Ok(())
 }

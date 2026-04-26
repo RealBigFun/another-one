@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{ChangedFile, ProjectSummary, ToolbarActionOutcome};
+use crate::frame::{AgentProvider, ChangedFile, ProjectSummary, ToolbarActionOutcome};
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
@@ -286,6 +286,29 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         Box::pin(async {
             Err(anyhow::anyhow!(
                 "create_branch: not implemented on this DaemonRegistry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — spawn a review task targeting a PR.
+    /// Returns the new task's `section_id` plus the post-mutation
+    /// `projects` snapshot, same shape as [`Self::create_branch`].
+    fn create_review_task<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _pull_request_number: u64,
+        _head_branch: &'a str,
+        _agent_provider: Option<AgentProvider>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = anyhow::Result<(String, Vec<ProjectSummary>)>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "create_review_task: not implemented on this DaemonRegistry"
             ))
         })
     }

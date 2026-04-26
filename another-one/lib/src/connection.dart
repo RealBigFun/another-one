@@ -391,12 +391,7 @@ abstract class DaemonConnection {
     required int pullRequestNumber,
     required String headBranch,
     AgentProvider? agentProvider,
-  }) {
-    throw UnimplementedError(
-      'createReviewTask: requires Control::CreateReviewTask wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Update one branch-setting field. `field` is `"default-branch"`
   /// or `"default-target-branch"`; `branchName` of `null` clears
