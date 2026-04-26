@@ -1,7 +1,7 @@
 //! Left sidebar content: project groups, default branches, and worktrees.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, ClipboardItem, Context, KeyDownEvent,
@@ -593,40 +593,68 @@ impl AnotherOneApp {
                     self.show_warning_toast(error, cx);
                 }
 
-                if let Some(task_id) = confirm.task_id.as_deref() {
-                    self.project_store
-                        .remove_task(&confirm.root_project_id, task_id);
-                    self.workspace_pane.update(cx, |workspace, cx| {
-                        workspace.remove_task_sections(task_id, cx);
-                    });
-                }
-
-                self.sidebar_task_delete_confirm = None;
-                self.remove_project_group_ids(std::slice::from_ref(&confirm.project_id), cx);
-                if was_active_project
-                    && self
-                        .project_store
-                        .projects
-                        .iter()
-                        .any(|project| project.id == confirm.root_project_id)
-                {
-                    let root_project_id = confirm.root_project_id.clone();
-                    self.workspace_pane.update(cx, |workspace, cx| {
-                        workspace.activate_project_page(root_project_id, cx);
-                    });
-                }
-                let worktree_display_name = confirm
-                    .project_path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| confirm.task_name.clone());
+                let worktree_display_name =
+                    self.remove_sidebar_worktree_task_from_store(&confirm, was_active_project, cx);
                 self.show_success_toast(format!("Deleted worktree {}.", worktree_display_name), cx);
                 cx.notify();
             }
             Err(error) => {
+                if should_remove_missing_worktree_task_from_store(
+                    &error,
+                    &confirm.repo_path,
+                    &confirm.project_path,
+                ) {
+                    let task_name = confirm.task_name.clone();
+                    self.remove_sidebar_worktree_task_from_store(&confirm, was_active_project, cx);
+                    self.show_warning_toast(
+                        format!(
+                            "The repository or worktree for {task_name} was already missing, so the task was removed from the app."
+                        ),
+                        cx,
+                    );
+                    cx.notify();
+                    return;
+                }
+
                 self.show_error_toast(error, cx);
             }
         }
+    }
+
+    fn remove_sidebar_worktree_task_from_store(
+        &mut self,
+        confirm: &SidebarTaskDeleteConfirmState,
+        was_active_project: bool,
+        cx: &mut Context<Self>,
+    ) -> String {
+        if let Some(task_id) = confirm.task_id.as_deref() {
+            self.project_store
+                .remove_task(&confirm.root_project_id, task_id);
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.remove_task_sections(task_id, cx);
+            });
+        }
+
+        self.sidebar_task_delete_confirm = None;
+        self.remove_project_group_ids(std::slice::from_ref(&confirm.project_id), cx);
+        if was_active_project
+            && self
+                .project_store
+                .projects
+                .iter()
+                .any(|project| project.id == confirm.root_project_id)
+        {
+            let root_project_id = confirm.root_project_id.clone();
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.activate_project_page(root_project_id, cx);
+            });
+        }
+
+        confirm
+            .project_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| confirm.task_name.clone())
     }
 
     pub(crate) fn handle_global_key_down(
@@ -2945,6 +2973,16 @@ fn control_key_byte(value: &str) -> Option<u8> {
     }
 }
 
+fn should_remove_missing_worktree_task_from_store(
+    error: &str,
+    repo_path: &Path,
+    worktree_path: &Path,
+) -> bool {
+    error.contains("Could not delete the worktree")
+        && error.contains("No such file or directory (os error 2)")
+        && (!repo_path.exists() || !worktree_path.exists())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3010,6 +3048,43 @@ mod tests {
             worktree_name: worktree_name.map(str::to_string),
             repo_common_dir: None,
         }
+    }
+
+    #[test]
+    fn should_remove_missing_worktree_task_from_store_requires_missing_path() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let repo_path = temp_dir.path().join("repo");
+        let worktree_path = temp_dir.path().join("worktree");
+        std::fs::create_dir_all(&repo_path).expect("repo path should be created");
+        std::fs::create_dir_all(&worktree_path).expect("worktree path should be created");
+        let error = "Could not delete the worktree: No such file or directory (os error 2)";
+
+        assert!(!should_remove_missing_worktree_task_from_store(
+            error,
+            &repo_path,
+            &worktree_path,
+        ));
+
+        std::fs::remove_dir_all(&worktree_path).expect("worktree path should be removed");
+
+        assert!(should_remove_missing_worktree_task_from_store(
+            error,
+            &repo_path,
+            &worktree_path,
+        ));
+    }
+
+    #[test]
+    fn should_remove_missing_worktree_task_from_store_ignores_unrelated_errors() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let repo_path = temp_dir.path().join("repo");
+        let worktree_path = temp_dir.path().join("worktree");
+
+        assert!(!should_remove_missing_worktree_task_from_store(
+            "Could not delete the worktree. permission denied",
+            &repo_path,
+            &worktree_path,
+        ));
     }
 
     #[test]
