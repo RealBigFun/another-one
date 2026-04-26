@@ -132,7 +132,7 @@ jobs:
       - name: Install AppImage runtime deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse2 libxkbcommon0 libxkbcommon-x11-0 libxcb-xkb1
+          sudo apt-get install -y libfuse2 libxkbcommon-dev libxkbcommon-x11-dev libxcb-xkb1
       - name: Run Linux packaging script
         env:
           ALLOW_HOST_BUILD: "1"
