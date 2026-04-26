@@ -374,7 +374,10 @@ impl WorkspacePane {
             .flex_row()
             .items_center()
             .h_full()
-            .flex_1()
+            // Size to the tabs when they fit so the add button hugs the
+            // latest tab, but still shrink before the add button when the
+            // tab list overflows.
+            .flex_shrink()
             .min_w_0()
             .overflow_scroll()
             .overflow_y_hidden();
