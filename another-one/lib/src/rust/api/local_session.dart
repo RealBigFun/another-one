@@ -11,7 +11,7 @@ part 'local_session.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `agent_def_to_dto`, `attached_key`, `available_open_in_apps`, `branch_compare_file_to_dto`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_action_access_back`, `map_action_access`, `map_action_icon_back`, `map_action_icon`, `map_action_scope_back`, `map_action_scope`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`, `parse_toolbar_action_id`, `pr_to_dto`, `project_action_from_dto`, `project_action_to_dto`, `run_changed_file_action`, `submit_direct_task`, `submit_worktree_task`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -263,6 +263,13 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// `spawn_blocking`. Returns `Ok(None)` for unknown projects.
   Future<ActiveGitStateDto?> readActiveGitState({required String projectId});
 
+  /// Full agent registry — every agent in
+  /// [`another_one_core::agents::AGENTS`] paired with its
+  /// per-host enabled flag, default flag, and launch-args list.
+  /// Drives the Settings → Agents page; the new-task /
+  /// add-agent modals use the narrower `read_enabled_agents`.
+  Future<AgentSettingsView> readAgentSettings();
+
   /// Diff the project's current branch against `target_branch`
   /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
   /// Routes
@@ -468,6 +475,25 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// writer has been dropped (tab exited / runtime gone).
   Future<void> send({required List<int> bytes});
 
+  /// Toggle an agent's enabled flag. Returns whether the value
+  /// actually changed (a redundant set is a no-op + `false`).
+  Future<bool> setAgentEnabled({
+    required String agentId,
+    required bool enabled,
+  });
+
+  /// Replace the launch-args list for `agent_id`. Empty `args`
+  /// removes the entry entirely (matches core's `set_agent_launch_args`
+  /// → `remove_agent_launch_args` short-circuit).
+  Future<bool> setAgentLaunchArgs({
+    required String agentId,
+    required List<String> args,
+  });
+
+  /// Mark `agent_id` as the default agent. Mirrors GPUI's
+  /// `set_default_agent`. Returns whether anything changed.
+  Future<bool> setDefaultAgent({required String agentId});
+
   /// Update the configured default branch or default-target branch
   /// for `project_id`'s root project. `field` must be one of
   /// `"default-branch"` or `"default-target-branch"`. `branch_name`
@@ -604,6 +630,73 @@ class ActiveGitStateDto {
           currentBranch == other.currentBranch &&
           aheadCount == other.aheadCount &&
           behindCount == other.behindCount;
+}
+
+/// One row of the Settings → Agents page. Carries everything the
+/// page renders (label + icon + enabled / default flags +
+/// per-agent launch args list) so the UI can update its state
+/// without re-issuing reads after every toggle.
+class AgentSettingsRow {
+  final String id;
+  final String label;
+  final String iconPath;
+  final AgentProvider? provider;
+  final bool enabled;
+  final bool isDefault;
+  final List<String> launchArgs;
+
+  const AgentSettingsRow({
+    required this.id,
+    required this.label,
+    required this.iconPath,
+    this.provider,
+    required this.enabled,
+    required this.isDefault,
+    required this.launchArgs,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      label.hashCode ^
+      iconPath.hashCode ^
+      provider.hashCode ^
+      enabled.hashCode ^
+      isDefault.hashCode ^
+      launchArgs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AgentSettingsRow &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          iconPath == other.iconPath &&
+          provider == other.provider &&
+          enabled == other.enabled &&
+          isDefault == other.isDefault &&
+          launchArgs == other.launchArgs;
+}
+
+/// Snapshot returned by [`LocalSession::read_agent_settings`].
+class AgentSettingsView {
+  /// Every agent in `AGENTS` (canonical order), enabled-or-not.
+  final List<AgentSettingsRow> agents;
+  final String? defaultAgentId;
+
+  const AgentSettingsView({required this.agents, this.defaultAgentId});
+
+  @override
+  int get hashCode => agents.hashCode ^ defaultAgentId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AgentSettingsView &&
+          runtimeType == other.runtimeType &&
+          agents == other.agents &&
+          defaultAgentId == other.defaultAgentId;
 }
 
 /// FRB-friendly mirror of one entry in

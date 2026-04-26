@@ -1455,6 +1455,100 @@ impl LocalSession {
         Ok(tab_id)
     }
 
+    /// Full agent registry — every agent in
+    /// [`another_one_core::agents::AGENTS`] paired with its
+    /// per-host enabled flag, default flag, and launch-args list.
+    /// Drives the Settings → Agents page; the new-task /
+    /// add-agent modals use the narrower `read_enabled_agents`.
+    pub async fn read_agent_settings(
+        &self,
+    ) -> anyhow::Result<AgentSettingsView> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("read_agent_settings: set_local_registry not called")
+        })?;
+        let state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("read_agent_settings: RegistryState mutex poisoned")
+        })?;
+        let default_agent_id =
+            state.project_store.default_agent_id().map(str::to_string);
+        let agents = another_one_core::agents::AGENTS
+            .iter()
+            .map(|agent| AgentSettingsRow {
+                id: agent.id.to_string(),
+                label: agent.label.to_string(),
+                icon_path: agent.icon.to_string(),
+                provider: agent.provider.map(map_agent_provider),
+                enabled: state.project_store.agent_enabled(agent.id),
+                is_default:
+                    default_agent_id.as_deref() == Some(agent.id),
+                launch_args: state
+                    .project_store
+                    .agent_launch_args(agent.id)
+                    .to_vec(),
+            })
+            .collect();
+        Ok(AgentSettingsView {
+            agents,
+            default_agent_id,
+        })
+    }
+
+    /// Toggle an agent's enabled flag. Returns whether the value
+    /// actually changed (a redundant set is a no-op + `false`).
+    pub async fn set_agent_enabled(
+        &self,
+        agent_id: String,
+        enabled: bool,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("set_agent_enabled: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("set_agent_enabled: RegistryState mutex poisoned")
+        })?;
+        Ok(state
+            .project_store
+            .set_agent_enabled(&agent_id, enabled))
+    }
+
+    /// Mark `agent_id` as the default agent. Mirrors GPUI's
+    /// `set_default_agent`. Returns whether anything changed.
+    pub async fn set_default_agent(
+        &self,
+        agent_id: String,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!("set_default_agent: set_local_registry not called")
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!("set_default_agent: RegistryState mutex poisoned")
+        })?;
+        Ok(state.project_store.set_default_agent(&agent_id))
+    }
+
+    /// Replace the launch-args list for `agent_id`. Empty `args`
+    /// removes the entry entirely (matches core's `set_agent_launch_args`
+    /// → `remove_agent_launch_args` short-circuit).
+    pub async fn set_agent_launch_args(
+        &self,
+        agent_id: String,
+        args: Vec<String>,
+    ) -> anyhow::Result<bool> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "set_agent_launch_args: set_local_registry not called"
+            )
+        })?;
+        let mut state = registry.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "set_agent_launch_args: RegistryState mutex poisoned"
+            )
+        })?;
+        Ok(state
+            .project_store
+            .set_agent_launch_args(agent_id, args))
+    }
+
     /// Snapshot of agents the user has enabled on this host plus
     /// the id of the one they've picked as default. Drives the
     /// new-task modal's agent multi-select. The returned list is
@@ -3047,6 +3141,29 @@ pub struct AgentSummaryDto {
 #[derive(Debug, Clone)]
 pub struct EnabledAgentsView {
     pub agents: Vec<AgentSummaryDto>,
+    pub default_agent_id: Option<String>,
+}
+
+/// One row of the Settings → Agents page. Carries everything the
+/// page renders (label + icon + enabled / default flags +
+/// per-agent launch args list) so the UI can update its state
+/// without re-issuing reads after every toggle.
+#[derive(Debug, Clone)]
+pub struct AgentSettingsRow {
+    pub id: String,
+    pub label: String,
+    pub icon_path: String,
+    pub provider: Option<AgentProvider>,
+    pub enabled: bool,
+    pub is_default: bool,
+    pub launch_args: Vec<String>,
+}
+
+/// Snapshot returned by [`LocalSession::read_agent_settings`].
+#[derive(Debug, Clone)]
+pub struct AgentSettingsView {
+    /// Every agent in `AGENTS` (canonical order), enabled-or-not.
+    pub agents: Vec<AgentSettingsRow>,
     pub default_agent_id: Option<String>,
 }
 

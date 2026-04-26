@@ -8,7 +8,8 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../rust/api/local_session.dart' show EnabledAgentsView;
+import '../rust/api/local_session.dart'
+    show AgentSettingsView, EnabledAgentsView;
 import 'local_connection_provider.dart';
 
 final projectBranchesProvider =
@@ -38,5 +39,18 @@ final enabledAgentsProvider =
     return await connection.readEnabledAgents();
   } on UnimplementedError {
     return const EnabledAgentsView(agents: []);
+  }
+});
+
+/// Full agent registry — Settings → Agents page reads from here.
+/// Refresh after every mutation (set_agent_enabled, etc.) by
+/// invalidating this provider.
+final agentSettingsProvider =
+    FutureProvider<AgentSettingsView>((ref) async {
+  final connection = ref.watch(localConnectionProvider);
+  try {
+    return await connection.readAgentSettings();
+  } on UnimplementedError {
+    return const AgentSettingsView(agents: []);
   }
 });

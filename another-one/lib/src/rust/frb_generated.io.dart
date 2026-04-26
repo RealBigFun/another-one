@@ -90,6 +90,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider dco_decode_agent_provider(dynamic raw);
 
   @protected
+  AgentSettingsRow dco_decode_agent_settings_row(dynamic raw);
+
+  @protected
+  AgentSettingsView dco_decode_agent_settings_view(dynamic raw);
+
+  @protected
   AgentSummaryDto dco_decode_agent_summary_dto(dynamic raw);
 
   @protected
@@ -154,6 +160,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<AgentSettingsRow> dco_decode_list_agent_settings_row(dynamic raw);
 
   @protected
   List<AgentSummaryDto> dco_decode_list_agent_summary_dto(dynamic raw);
@@ -391,6 +400,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AgentProvider sse_decode_agent_provider(SseDeserializer deserializer);
 
   @protected
+  AgentSettingsRow sse_decode_agent_settings_row(SseDeserializer deserializer);
+
+  @protected
+  AgentSettingsView sse_decode_agent_settings_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   AgentSummaryDto sse_decode_agent_summary_dto(SseDeserializer deserializer);
 
   @protected
@@ -473,6 +490,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<AgentSettingsRow> sse_decode_list_agent_settings_row(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<AgentSummaryDto> sse_decode_list_agent_summary_dto(
@@ -758,6 +780,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_agent_provider(AgentProvider self, SseSerializer serializer);
 
   @protected
+  void sse_encode_agent_settings_row(
+    AgentSettingsRow self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_agent_settings_view(
+    AgentSettingsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_agent_summary_dto(
     AgentSummaryDto self,
     SseSerializer serializer,
@@ -858,6 +892,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_agent_settings_row(
+    List<AgentSettingsRow> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_agent_summary_dto(

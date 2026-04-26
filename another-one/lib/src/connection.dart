@@ -34,6 +34,7 @@ import 'rust/api/iroh_client.dart';
 import 'rust/api/local_session.dart'
     show
         ActiveGitStateDto,
+        AgentSettingsView,
         BranchCompareFileDto,
         BranchCompareView,
         ChangedFileDto,
@@ -640,6 +641,50 @@ abstract class DaemonConnection {
     throw UnimplementedError(
       'toggleSectionTabPinned: requires Control::ToggleSectionTabPinned '
       'wire variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  // ── Settings → Agents ────────────────────────────────────────────
+
+  /// Full agent registry — every entry in `core::agents::AGENTS`
+  /// paired with per-host enabled/default flags + launch args.
+  /// Drives the Settings → Agents page.
+  Future<AgentSettingsView> readAgentSettings() {
+    throw UnimplementedError(
+      'readAgentSettings: requires Control::ReadAgentSettings wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Toggle an agent's enabled flag. Returns whether anything
+  /// changed.
+  Future<bool> setAgentEnabled({
+    required String agentId,
+    required bool enabled,
+  }) {
+    throw UnimplementedError(
+      'setAgentEnabled: requires Control::SetAgentEnabled wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Mark an agent as the default. Returns whether anything changed.
+  Future<bool> setDefaultAgent(String agentId) {
+    throw UnimplementedError(
+      'setDefaultAgent: requires Control::SetDefaultAgent wire '
+      'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// Replace the launch-args list for an agent. Returns whether
+  /// the value actually changed.
+  Future<bool> setAgentLaunchArgs({
+    required String agentId,
+    required List<String> args,
+  }) {
+    throw UnimplementedError(
+      'setAgentLaunchArgs: requires Control::SetAgentLaunchArgs wire '
+      'variant on the iroh transport (not yet implemented).',
     );
   }
 }

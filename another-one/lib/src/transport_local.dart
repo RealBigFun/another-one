@@ -697,6 +697,48 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
   }
 
   @override
+  Future<AgentSettingsView> readAgentSettings() async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readAgentSettings: LocalTransport not connected');
+    }
+    return session.readAgentSettings();
+  }
+
+  @override
+  Future<bool> setAgentEnabled({
+    required String agentId,
+    required bool enabled,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setAgentEnabled: LocalTransport not connected');
+    }
+    return session.setAgentEnabled(agentId: agentId, enabled: enabled);
+  }
+
+  @override
+  Future<bool> setDefaultAgent(String agentId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setDefaultAgent: LocalTransport not connected');
+    }
+    return session.setDefaultAgent(agentId: agentId);
+  }
+
+  @override
+  Future<bool> setAgentLaunchArgs({
+    required String agentId,
+    required List<String> args,
+  }) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('setAgentLaunchArgs: LocalTransport not connected');
+    }
+    return session.setAgentLaunchArgs(agentId: agentId, args: args);
+  }
+
+  @override
   Future<void> attachTab({
     required String sectionId,
     required String tabId,
