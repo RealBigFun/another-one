@@ -15,7 +15,10 @@
 //   5.   `RustLib.init()` — bridge native init.
 //   6.   `setDataDir(...)` — pin iroh's secret key path.
 //   7.   `bootEmbeddedDaemon()` — desktop only.
-//   8.   `runApp(...)`.
+//   8.   `awaitLoopbackSessionAddr()` — desktop only. Blocks until
+//        the daemon's iroh endpoint binds, then hands back its
+//        address. The loopback `DaemonConnection` dials this addr.
+//   9.   `runApp(ProviderScope(overrides: [...], …))`.
 
 import 'dart:io' show Platform;
 import 'dart:ui' show PlatformDispatcher;
@@ -31,6 +34,7 @@ import 'src/log.dart';
 import 'src/rust/api/embedded_daemon.dart' as embedded_daemon;
 import 'src/rust/api/iroh_client.dart';
 import 'src/rust/frb_generated.dart';
+import 'src/state/local_connection_provider.dart' show loopbackSessionAddrProvider;
 import 'src/surface_router.dart';
 import 'src/theme.dart';
 
@@ -102,21 +106,44 @@ void main() {
     // Mobile clients connect to remote daemons over iroh; running
     // an embedded daemon there would just chew battery for no
     // consumer.
+    embedded_daemon.LoopbackSessionAddr? loopbackAddr;
     if (_isDesktop) {
       try {
         await embedded_daemon.bootEmbeddedDaemon();
         _bootLog.info('embedded daemon up');
+        // Wait for the daemon's iroh endpoint to finish binding so the
+        // loopback `DaemonConnection` (`another-one-ojm.9`) has a real
+        // address to dial. 10s is generous — typical bind is ~150ms.
+        loopbackAddr = await embedded_daemon.awaitLoopbackSessionAddr(
+          timeoutMs: 10000,
+        );
+        _bootLog.info('loopback daemon address resolved', {
+          'endpoint_id': loopbackAddr.endpointId,
+          'direct_addrs': loopbackAddr.directAddrs.join(','),
+        });
       } catch (e, s) {
         // Surface but don't block UI — the pair-mobile modal will
-        // show its empty state until a retry succeeds.
+        // show its empty state until a retry succeeds. Without a
+        // loopback addr the desktop UI has no DaemonConnection to
+        // talk to its own daemon, so most screens will fail to load
+        // — that's a deliberate failure mode rather than a silent
+        // half-broken UI.
         _bootLog.error(
-          'embedded daemon boot failed',
+          'embedded daemon boot or loopback addr resolution failed',
           error: e,
           stackTrace: s,
         );
       }
     }
-    runApp(const ProviderScope(child: AnotherOneApp()));
+    runApp(
+      ProviderScope(
+        overrides: [
+          if (loopbackAddr != null)
+            loopbackSessionAddrProvider.overrideWithValue(loopbackAddr),
+        ],
+        child: const AnotherOneApp(),
+      ),
+    );
   });
 }
 

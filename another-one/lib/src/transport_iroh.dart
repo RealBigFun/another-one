@@ -105,11 +105,19 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   TransportStatus _current = const TransportStatus.disconnected();
   bool _closed = false;
 
+  /// Optional human label that overrides the truncated-hex default.
+  /// The desktop's loopback bootstrap sets this to `"Local"` so the
+  /// host switcher renders the same label the legacy LocalTransport
+  /// did. Null on a mobile pair flow where the truncated EndpointId
+  /// is the right thing to show until a friendly name is recorded.
+  final String? displayNameOverride;
+
   IrohTransport(
     this.endpointId, {
     this.directAddrs = const [],
     this.relayUrls = const [],
     this.pairToken,
+    this.displayNameOverride,
   });
 
   @override
@@ -133,12 +141,14 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   @override
   String get id => endpointId;
 
-  /// Renders as the truncated endpoint id for now. Future: pull a
+  /// Renders [displayNameOverride] when set (loopback bootstrap shows
+  /// `"Local"`), otherwise the truncated endpoint id. Future: pull a
   /// human-set name from `paired_peers` so the UI shows
   /// `"laptop@home"` instead of hex.
   @override
   String get displayName =>
-      endpointId.length > 12 ? '${endpointId.substring(0, 12)}…' : endpointId;
+      displayNameOverride ??
+      (endpointId.length > 12 ? '${endpointId.substring(0, 12)}…' : endpointId);
 
   @override
   void connect() {
