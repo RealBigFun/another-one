@@ -174,6 +174,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   EnabledAgentsView dco_decode_enabled_agents_view(dynamic raw);
 
   @protected
+  ErrKind dco_decode_err_kind(dynamic raw);
+
+  @protected
   double dco_decode_f_64(dynamic raw);
 
   @protected
@@ -609,6 +612,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   EnabledAgentsView sse_decode_enabled_agents_view(
     SseDeserializer deserializer,
   );
+
+  @protected
+  ErrKind sse_decode_err_kind(SseDeserializer deserializer);
 
   @protected
   double sse_decode_f_64(SseDeserializer deserializer);
@@ -1154,6 +1160,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     EnabledAgentsView self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_err_kind(ErrKind self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_64(double self, SseSerializer serializer);

@@ -156,6 +156,27 @@ pub enum WorkerReply {
     /// desktop sidebar. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectList`.
     ProjectList { projects: Vec<ProjectSummary> },
+    /// Uniform per-request failure frame. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
+    /// callers in `ojm.2..8` map this to a Dart-level exception
+    /// type so the UI can branch on `kind` without parsing
+    /// `message` strings.
+    Err {
+        message: String,
+        #[serde(rename = "err_kind")]
+        kind: ErrKind,
+    },
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
+/// snake_case; the Dart side gets a freezed enum via FRB.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrKind {
+    UnknownId,
+    Unsupported,
+    Unauthorised,
+    Internal,
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

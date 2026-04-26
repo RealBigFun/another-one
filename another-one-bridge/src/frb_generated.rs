@@ -5862,6 +5862,20 @@ impl SseDecode for crate::api::local_session::EnabledAgentsView {
     }
 }
 
+impl SseDecode for crate::api::iroh_client::ErrKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::iroh_client::ErrKind::UnknownId,
+            1 => crate::api::iroh_client::ErrKind::Unsupported,
+            2 => crate::api::iroh_client::ErrKind::Unauthorised,
+            3 => crate::api::iroh_client::ErrKind::Internal,
+            _ => unreachable!("Invalid variant for ErrKind: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for f64 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7018,6 +7032,14 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                     projects: var_projects,
                 };
             }
+            1 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                let mut var_kind = <crate::api::iroh_client::ErrKind>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::Err {
+                    message: var_message,
+                    kind: var_kind,
+                };
+            }
             _ => {
                 unimplemented!("");
             }
@@ -7956,6 +7978,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::local_session::EnabledAgentsV
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::ErrKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::UnknownId => 0.into_dart(),
+            Self::Unsupported => 1.into_dart(),
+            Self::Unauthorised => 2.into_dart(),
+            Self::Internal => 3.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::iroh_client::ErrKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::iroh_client::ErrKind>
+    for crate::api::iroh_client::ErrKind
+{
+    fn into_into_dart(self) -> crate::api::iroh_client::ErrKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::local_session::GitActionScriptsView {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -8795,6 +8840,12 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::WorkerReply {
             crate::api::iroh_client::WorkerReply::ProjectList { projects } => {
                 [0.into_dart(), projects.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::iroh_client::WorkerReply::Err { message, kind } => [
+                1.into_dart(),
+                message.into_into_dart().into_dart(),
+                kind.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -9090,6 +9141,24 @@ impl SseEncode for crate::api::local_session::EnabledAgentsView {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Vec<crate::api::local_session::AgentSummaryDto>>::sse_encode(self.agents, serializer);
         <Option<String>>::sse_encode(self.default_agent_id, serializer);
+    }
+}
+
+impl SseEncode for crate::api::iroh_client::ErrKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::iroh_client::ErrKind::UnknownId => 0,
+                crate::api::iroh_client::ErrKind::Unsupported => 1,
+                crate::api::iroh_client::ErrKind::Unauthorised => 2,
+                crate::api::iroh_client::ErrKind::Internal => 3,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -9981,6 +10050,11 @@ impl SseEncode for crate::api::iroh_client::WorkerReply {
             crate::api::iroh_client::WorkerReply::ProjectList { projects } => {
                 <i32>::sse_encode(0, serializer);
                 <Vec<crate::api::iroh_client::ProjectSummary>>::sse_encode(projects, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::Err { message, kind } => {
+                <i32>::sse_encode(1, serializer);
+                <String>::sse_encode(message, serializer);
+                <crate::api::iroh_client::ErrKind>::sse_encode(kind, serializer);
             }
             _ => {
                 unimplemented!("");

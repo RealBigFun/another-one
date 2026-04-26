@@ -4713,6 +4713,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ErrKind dco_decode_err_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ErrKind.values[raw as int];
+  }
+
+  @protected
   double dco_decode_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
@@ -5504,6 +5510,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return WorkerReply_ProjectList(
           projects: dco_decode_list_project_summary(raw[1]),
         );
+      case 1:
+        return WorkerReply_Err(
+          message: dco_decode_String(raw[1]),
+          kind: dco_decode_err_kind(raw[2]),
+        );
       default:
         throw Exception("unreachable");
     }
@@ -5936,6 +5947,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       agents: var_agents,
       defaultAgentId: var_defaultAgentId,
     );
+  }
+
+  @protected
+  ErrKind sse_decode_err_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ErrKind.values[inner];
   }
 
   @protected
@@ -7031,6 +7049,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 0:
         var var_projects = sse_decode_list_project_summary(deserializer);
         return WorkerReply_ProjectList(projects: var_projects);
+      case 1:
+        var var_message = sse_decode_String(deserializer);
+        var var_kind = sse_decode_err_kind(deserializer);
+        return WorkerReply_Err(message: var_message, kind: var_kind);
       default:
         throw UnimplementedError('');
     }
@@ -7442,6 +7464,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_agent_summary_dto(self.agents, serializer);
     sse_encode_opt_String(self.defaultAgentId, serializer);
+  }
+
+  @protected
+  void sse_encode_err_kind(ErrKind self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -8353,6 +8381,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case WorkerReply_ProjectList(projects: final projects):
         sse_encode_i_32(0, serializer);
         sse_encode_list_project_summary(projects, serializer);
+      case WorkerReply_Err(message: final message, kind: final kind):
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(message, serializer);
+        sse_encode_err_kind(kind, serializer);
     }
   }
 

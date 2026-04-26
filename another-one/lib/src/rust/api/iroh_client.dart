@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -124,6 +124,10 @@ enum AgentProvider {
   forge,
   shell,
 }
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
+/// snake_case; the Dart side gets a freezed enum via FRB.
+enum ErrKind { unknownId, unsupported, unauthorised, internal }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ProjectKind`.
 enum ProjectKind { root, worktree }
@@ -315,6 +319,16 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.projectList({
     required List<ProjectSummary> projects,
   }) = WorkerReply_ProjectList;
+
+  /// Uniform per-request failure frame. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
+  /// callers in `ojm.2..8` map this to a Dart-level exception
+  /// type so the UI can branch on `kind` without parsing
+  /// `message` strings.
+  const factory WorkerReply.err({
+    required String message,
+    required ErrKind kind,
+  }) = WorkerReply_Err;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

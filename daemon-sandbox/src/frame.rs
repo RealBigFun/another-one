@@ -191,6 +191,60 @@ pub enum WorkerReply {
     /// (the mobile UI can still group them by `repo_id` if it
     /// wants a tree rendering later).
     ProjectList { projects: Vec<ProjectSummary> },
+    /// Uniform per-request failure frame. The daemon emits this in
+    /// place of dropping the connection when a verb fails — keeps
+    /// the channel open for other in-flight requests on the same
+    /// session.
+    ///
+    /// `kind` is a small machine-classifiable enum (see [`ErrKind`])
+    /// so clients can branch on the failure mode (retry on transient
+    /// `internal`, surface auth UI on `unauthorised`, etc.) without
+    /// pattern-matching on free-form `message` strings. `message`
+    /// carries the human-readable detail and is logged / surfaced
+    /// in toasts.
+    ///
+    /// Future domain children (`ojm.2..8`) emit `Err` instead of
+    /// closing the connection on their own failure paths.
+    Err {
+        /// Pre-filled by `send_worker_reply`'s envelope wrapper, so
+        /// callers don't have to thread it twice. Kept here for
+        /// wire shape — payload is `{"kind":"err","request_id":N,"message":"...","err_kind":"..."}`
+        /// after `#[serde(flatten)]` from `WorkerReplyEnvelope`.
+        /// (Note the field name `err_kind` to avoid colliding with
+        /// the envelope's outer `kind` discriminator.)
+        message: String,
+        #[serde(rename = "err_kind")]
+        kind: ErrKind,
+    },
+}
+
+/// Coarse classification of a daemon-side failure. Keep small —
+/// callers branch on this in UI code, so adding a variant is a
+/// commitment to render it. Most failures fall into `internal` (an
+/// unexpected error worth logging) or `unsupported` (the daemon is
+/// older than the client and doesn't know this verb).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrKind {
+    /// The verb referenced an `id` (project/task/tab/section) the
+    /// daemon doesn't recognise. Typically a stale client cache
+    /// after the user removed something on another peer; clients
+    /// should refresh their view rather than retrying the call.
+    UnknownId,
+    /// The daemon doesn't speak this verb yet — likely an older
+    /// daemon paired with a newer client. The client can degrade
+    /// gracefully (hide the offending UI affordance) until the
+    /// host upgrades.
+    Unsupported,
+    /// The daemon recognises the verb but the calling peer isn't
+    /// authorised to use it (e.g. read-only viewer trying to
+    /// mutate). Reserved for the multi-peer authz model that
+    /// lands after the foundation; today this is unreachable.
+    Unauthorised,
+    /// Any other failure — disk full, command spawn failed, git
+    /// returned non-zero with stderr we don't classify. Treat as
+    /// transient and retryable.
+    Internal,
 }
 
 /// Lossy wire projection of `core::project_store::Project`, with
