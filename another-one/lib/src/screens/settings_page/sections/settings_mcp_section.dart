@@ -35,7 +35,7 @@ class SettingsMcpSection extends ConsumerWidget {
 
   static const Color _panelBg = Color(0xFF23252A);
   static const Color _rowBg = Color(0xFF1F2125);
-  static const Color _activeBg = Color(0xFF2E5DC2);
+  static const Color _activeBg = Color(0xFF2E67B8);
   static const Color _danger = Color(0xFFCC4646);
 
   // Mirrors `desktop/src/mcp_page.rs::MCP_PROVIDERS`.

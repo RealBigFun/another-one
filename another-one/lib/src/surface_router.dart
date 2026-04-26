@@ -29,6 +29,7 @@ import 'screens/new_task/new_task_modal.dart';
 import 'screens/pair_mobile/pair_mobile_modal.dart';
 import 'state/active_project_page_provider.dart';
 import 'state/local_connection_provider.dart';
+import 'state/settings_provider.dart';
 import 'tokens.dart';
 
 /// Build-time env flag — `--dart-define=ANOTHER_ONE_SURFACE=foo`.
@@ -55,6 +56,17 @@ Widget? surfaceFor(String name) {
     'new-task-first-project' =>
       const _ModalLauncher(_ModalKind.newTaskFirstProject),
     'project-page-first' => const _ProjectPageLauncher(),
+    'settings' => const _SettingsLauncher(),
+    'settings-agents' =>
+      const _SettingsLauncher(section: SettingsSection.agents),
+    'settings-open-in' =>
+      const _SettingsLauncher(section: SettingsSection.openIn),
+    'settings-git-actions' =>
+      const _SettingsLauncher(section: SettingsSection.gitActions),
+    'settings-keybindings' =>
+      const _SettingsLauncher(section: SettingsSection.keybindings),
+    'settings-mcp' =>
+      const _SettingsLauncher(section: SettingsSection.mcp),
     _ => _UnknownSurface(name: name),
   };
 }
@@ -164,6 +176,41 @@ class _ProjectPageLauncher extends ConsumerWidget {
       body: DesktopProjectPage(project: first),
     );
   }
+}
+
+/// Boots the desktop shell and forces `settingsOpenProvider=true`
+/// so the settings page renders in place of the main pane. The
+/// optional [section] picks the active sub-page (Agents by
+/// default).
+class _SettingsLauncher extends ConsumerStatefulWidget {
+  const _SettingsLauncher({this.section});
+
+  final SettingsSection? section;
+
+  @override
+  ConsumerState<_SettingsLauncher> createState() =>
+      _SettingsLauncherState();
+}
+
+class _SettingsLauncherState extends ConsumerState<_SettingsLauncher> {
+  bool _opened = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_opened || !mounted) return;
+      _opened = true;
+      ref.read(settingsOpenProvider.notifier).state = true;
+      if (widget.section != null) {
+        ref.read(settingsSectionProvider.notifier).state =
+            widget.section!;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const DesktopShell();
 }
 
 /// Surfaced when `ANOTHER_ONE_SURFACE=<unknown>` — clear visual

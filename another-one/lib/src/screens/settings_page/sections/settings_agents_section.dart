@@ -25,7 +25,7 @@ class SettingsAgentsSection extends ConsumerWidget {
 
   static const Color _panelBg = Color(0xFF23252A);
   static const Color _rowBg = Color(0xFF1F2125);
-  static const Color _activeBg = Color(0xFF2E5DC2);
+  static const Color _activeBg = Color(0xFF2E67B8);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -63,6 +63,11 @@ class SettingsAgentsSection extends ConsumerWidget {
             enabledCount: enabledCount,
             panelBg: _panelBg,
           ),
+        ),
+        const SizedBox(height: 12),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: _TokenRulesPanel(panelBg: _panelBg),
         ),
         const SizedBox(height: 16),
         if (view == null)
@@ -153,6 +158,44 @@ class _AvailabilityPanel extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w500,
               color: AppTokens.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TokenRulesPanel extends StatelessWidget {
+  const _TokenRulesPanel({required this.panelBg});
+  final Color panelBg;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: panelBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTokens.border),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          Text(
+            'Token rules',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppTokens.textPrimary,
+            ),
+          ),
+          SizedBox(height: 4),
+          Text(
+            'Whitespace is rejected because spaces would create multiple argv tokens. Reorder by removing and re-adding.',
+            style: TextStyle(
+              fontSize: 11,
+              color: AppTokens.textSecondary,
             ),
           ),
         ],
@@ -291,59 +334,72 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _AgentGlyph(iconPath: row.iconPath, size: 18),
-              const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 540),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _AgentGlyph(iconPath: row.iconPath, size: 18),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              row.label,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: AppTokens.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Extra argv tokens passed to ${row.label} on every launch and resume.',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppTokens.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 20),
+              Flexible(
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    Text(
-                      row.label,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: AppTokens.textPrimary,
-                      ),
+                    _ArgInput(
+                      controller: _draft,
+                      enabled: !_busy,
+                      onSubmit: _addArg,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Extra argv tokens passed to ${row.label} on every launch and resume.',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppTokens.textSecondary,
-                      ),
+                    _AddButton(
+                      busy: _busy,
+                      onTap: _addArg,
+                    ),
+                    _DefaultPill(
+                      isDefault: row.isDefault,
+                      enabled: row.enabled && !_busy,
+                      activeBg: widget.activeBg,
+                      onTap: _makeDefault,
+                    ),
+                    _EnabledPill(
+                      enabled: row.enabled,
+                      busy: _busy,
+                      activeBg: widget.activeBg,
+                      onTap: _toggleEnabled,
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 16),
-              Wrap(
-                alignment: WrapAlignment.end,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _ArgInput(
-                    controller: _draft,
-                    enabled: !_busy,
-                    onSubmit: _addArg,
-                  ),
-                  _AddButton(
-                    busy: _busy,
-                    onTap: _addArg,
-                  ),
-                  _DefaultPill(
-                    isDefault: row.isDefault,
-                    enabled: row.enabled && !_busy,
-                    activeBg: widget.activeBg,
-                    onTap: _makeDefault,
-                  ),
-                  _EnabledPill(
-                    enabled: row.enabled,
-                    busy: _busy,
-                    activeBg: widget.activeBg,
-                    onTap: _toggleEnabled,
-                  ),
-                ],
               ),
             ],
           ),

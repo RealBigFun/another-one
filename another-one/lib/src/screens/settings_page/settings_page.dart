@@ -26,7 +26,8 @@ class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
 
   static const double _sidebarW = 180;
-  static const Color _activeBg = Color(0xFF2E5DC2);
+  // hsla(215/360, 0.60, 0.45, 1) — see desktop/src/settings_page.rs.
+  static const Color _activeBg = Color(0xFF2E67B8);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -47,10 +48,7 @@ class SettingsPage extends ConsumerWidget {
           ),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 24,
-                vertical: 20,
-              ),
+              padding: const EdgeInsets.all(32),
               child: switch (section) {
                 SettingsSection.agents => const SettingsAgentsSection(),
                 SettingsSection.openIn => const SettingsOpenInSection(),
@@ -144,16 +142,16 @@ class _BackButtonState extends State<_BackButton> {
             mainAxisSize: MainAxisSize.min,
             children: const [
               AppIcon(
-                'chevron-right',
+                'chevron-left',
                 size: 14,
-                color: AppTokens.textMuted,
+                color: AppTokens.chevron,
               ),
               SizedBox(width: 4),
               Text(
                 'Back to app',
                 style: TextStyle(
                   fontSize: 12,
-                  color: AppTokens.textMuted,
+                  color: AppTokens.chevron,
                 ),
               ),
             ],
@@ -199,7 +197,7 @@ class _NavItemState extends State<_NavItem> {
         onTap: widget.onTap,
         child: Container(
           height: 30,
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+          margin: const EdgeInsets.symmetric(horizontal: 8),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           alignment: Alignment.centerLeft,
           decoration: BoxDecoration(

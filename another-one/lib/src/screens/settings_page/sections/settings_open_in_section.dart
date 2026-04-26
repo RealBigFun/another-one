@@ -31,7 +31,7 @@ class SettingsOpenInSection extends ConsumerWidget {
 
   static const Color _panelBg = Color(0xFF23252A);
   static const Color _rowBg = Color(0xFF1F2125);
-  static const Color _activeBg = Color(0xFF2E5DC2);
+  static const Color _activeBg = Color(0xFF2E67B8);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -110,7 +110,7 @@ class SettingsOpenInSection extends ConsumerWidget {
             constraints: const BoxConstraints(maxWidth: 860),
             child: Container(
               decoration: BoxDecoration(
-                color: _rowBg,
+                color: _panelBg,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: AppTokens.border),
               ),
@@ -121,6 +121,7 @@ class SettingsOpenInSection extends ConsumerWidget {
                     _OpenInRow(
                       row: apps[i],
                       isFirst: i == 0,
+                      rowBg: _rowBg,
                       activeBg: _activeBg,
                       onChanged: () =>
                           ref.invalidate(_openInSettingsProvider),
@@ -198,11 +199,13 @@ class _OpenInRow extends ConsumerStatefulWidget {
   const _OpenInRow({
     required this.row,
     required this.isFirst,
+    required this.rowBg,
     required this.activeBg,
     required this.onChanged,
   });
   final OpenInAppSettingsRow row;
   final bool isFirst;
+  final Color rowBg;
   final Color activeBg;
   final VoidCallback onChanged;
 
@@ -247,9 +250,7 @@ class _OpenInRowState extends ConsumerState<_OpenInRow> {
         onTap: () => unawaited(_toggle()),
         child: Container(
           decoration: BoxDecoration(
-            color: _hover
-                ? AppTokens.overlayHover
-                : Colors.transparent,
+            color: _hover ? AppTokens.overlayHover : widget.rowBg,
             border: widget.isFirst
                 ? null
                 : const Border(

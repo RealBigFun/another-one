@@ -125,7 +125,7 @@ class _ScriptPanel extends ConsumerStatefulWidget {
 class _ScriptPanelState extends ConsumerState<_ScriptPanel> {
   static const Color _panelBg = Color(0xFF23252A);
   static const Color _editorBg = Color(0xFF191B1F);
-  static const Color _activeBg = Color(0xFF2E5DC2);
+  static const Color _activeBg = Color(0xFF2E67B8);
 
   late final TextEditingController _controller;
   Timer? _debounce;
@@ -298,6 +298,13 @@ class _ScriptPanelState extends ConsumerState<_ScriptPanel> {
                     maxLines: null,
                     expands: true,
                     keyboardType: TextInputType.multiline,
+                    // Multi-line expanded TextFields default to
+                    // vertical-center, which leaves a one-line
+                    // script floating in the middle of an empty
+                    // editor box. Top-anchor the caret + content
+                    // so typing starts at the top-left like every
+                    // code editor.
+                    textAlignVertical: TextAlignVertical.top,
                     style: const TextStyle(
                       fontSize: 12,
                       height: 1.5,
