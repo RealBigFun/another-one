@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use crate::open_in::{command_exists, OpenInAppKind};
+use crate::open_in::{command_exists, command_in_path, OpenInAppKind};
 use crate::process::{RawProcessSample, TrackedProcess};
 
 use super::HeadlessPlatform;
@@ -48,28 +48,77 @@ impl HeadlessPlatform for MacosPlatform {
             OpenInAppKind::VsCode => {
                 macos_app_exists("Visual Studio Code") || command_exists(&["code"])
             }
+            OpenInAppKind::Ghostty => {
+                macos_app_exists("Ghostty") || command_exists(&["ghostty"])
+            }
+            OpenInAppKind::WezTerm => {
+                macos_app_exists("WezTerm") || command_exists(&["wezterm", "wezterm-gui"])
+            }
             OpenInAppKind::FileManager => macos_app_exists("Finder"),
         }
     }
 
     fn command_for_open_in(app: OpenInAppKind, path: &Path) -> Command {
-        let mut command = Command::new("open");
         match app {
-            OpenInAppKind::Cursor => {
-                command.args(["-a", "Cursor"]).arg(path);
-            }
-            OpenInAppKind::Zed => {
-                command.args(["-a", "Zed"]).arg(path);
-            }
-            OpenInAppKind::VsCode => {
-                command.args(["-a", "Visual Studio Code"]).arg(path);
-            }
+            OpenInAppKind::Cursor => open_app_command("Cursor", path),
+            OpenInAppKind::Zed => open_app_command("Zed", path),
+            OpenInAppKind::VsCode => open_app_command("Visual Studio Code", path),
+            OpenInAppKind::Ghostty => ghostty_command(path),
+            OpenInAppKind::WezTerm => wezterm_command(path),
             OpenInAppKind::FileManager => {
+                let mut command = Command::new("open");
                 command.arg(path);
+                command
             }
         }
-        command
     }
+}
+
+fn open_app_command(app_name: &str, path: &Path) -> Command {
+    let mut command = Command::new("open");
+    command.args(["-a", app_name]).arg(path);
+    command
+}
+
+fn ghostty_command(path: &Path) -> Command {
+    let working_directory = format!("--working-directory={}", path.display());
+
+    if let Some(binary) = command_in_path("ghostty") {
+        let mut command = Command::new(binary);
+        command.arg(working_directory);
+        return command;
+    }
+
+    let mut command = Command::new("open");
+    command
+        .args(["-na", "Ghostty", "--args"])
+        .arg(working_directory);
+    command
+}
+
+fn wezterm_command(path: &Path) -> Command {
+    if let Some(binary) = command_in_path("wezterm") {
+        let mut command = Command::new(binary);
+        command
+            .arg("start")
+            .arg("--always-new-process")
+            .arg("--cwd")
+            .arg(path);
+        return command;
+    }
+
+    let mut command = Command::new("open");
+    command
+        .args([
+            "-na",
+            "WezTerm",
+            "--args",
+            "start",
+            "--always-new-process",
+            "--cwd",
+        ])
+        .arg(path);
+    command
 }
 
 fn macos_app_exists(app_name: &str) -> bool {
