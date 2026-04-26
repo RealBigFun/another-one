@@ -145,6 +145,10 @@ enum Control {
     /// Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::PrimaryBranchForProject`.
     PrimaryBranchForProject { project_id: String },
+    /// User's preferred default commit action for a project's root
+    /// repo. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::RepoDefaultCommitAction`.
+    RepoDefaultCommitAction { project_id: String },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -185,6 +189,9 @@ pub enum WorkerReply {
     /// Reply to [`Control::PrimaryBranchForProject`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::PrimaryBranchAck`.
     PrimaryBranchAck { branch: Option<String> },
+    /// Reply to [`Control::RepoDefaultCommitAction`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::RepoDefaultCommitActionAck`.
+    RepoDefaultCommitActionAck { action: Option<String> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -902,6 +909,14 @@ impl IrohSession {
     pub async fn primary_branch_for_project(&self, project_id: String) -> anyhow::Result<u64> {
         let id = self.next_request_id();
         self.send_control(id, Control::PrimaryBranchForProject { project_id })
+            .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::RepoDefaultCommitAction`] for `project_id`.
+    pub async fn repo_default_commit_action(&self, project_id: String) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(id, Control::RepoDefaultCommitAction { project_id })
             .await?;
         Ok(id)
     }

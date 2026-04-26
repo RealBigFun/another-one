@@ -506,6 +506,11 @@ async fn handle_control(
             let reply = WorkerReply::PrimaryBranchAck { branch };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::RepoDefaultCommitAction { project_id } => {
+            let action = registry.repo_default_commit_action(&project_id);
+            let reply = WorkerReply::RepoDefaultCommitActionAck { action };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

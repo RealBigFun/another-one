@@ -331,6 +331,24 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
         .flatten()
     }
+
+    fn repo_default_commit_action(&self, project_id: &str) -> Option<String> {
+        self.with_state(|state| {
+            let project = state.project_store.project(project_id)?;
+            state
+                .project_store
+                .repo_default_commit_action(&project.repo_id)
+                .map(|a| match a {
+                    another_one_core::project_store::RepoDefaultCommitAction::Commit => {
+                        "commit".to_string()
+                    }
+                    another_one_core::project_store::RepoDefaultCommitAction::CommitAndPush => {
+                        "commit-and-push".to_string()
+                    }
+                })
+        })
+        .flatten()
+    }
 }
 
 /// Flatten the bridge's `RegistryState` into the iroh wire's

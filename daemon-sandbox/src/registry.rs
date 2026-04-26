@@ -189,6 +189,13 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     fn primary_branch_for_project(&self, _project_id: &str) -> Option<String> {
         None
     }
+
+    /// User's preferred default commit action for `project_id`'s
+    /// root repo. Returns `"commit"` / `"commit-and-push"` / `None`.
+    /// Sister to `LocalSession::repo_default_commit_action`.
+    fn repo_default_commit_action(&self, _project_id: &str) -> Option<String> {
+        None
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

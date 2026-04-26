@@ -171,6 +171,12 @@ pub enum Control {
     /// Reply is [`WorkerReply::PrimaryBranchAck`] with `None` when
     /// the project has no current branch (fresh repo).
     PrimaryBranchForProject { project_id: String },
+    /// User's preferred default commit action (`"commit"` or
+    /// `"commit-and-push"`) for the active project's root repo.
+    /// Reply is [`WorkerReply::RepoDefaultCommitActionAck`] with
+    /// `None` when no preference has been recorded — UI defaults to
+    /// `"commit"` in that case.
+    RepoDefaultCommitAction { project_id: String },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -287,6 +293,10 @@ pub enum WorkerReply {
     /// Reply to [`Control::PrimaryBranchForProject`]. `None` when
     /// the project has no current branch yet.
     PrimaryBranchAck { branch: Option<String> },
+    /// Reply to [`Control::RepoDefaultCommitAction`]. `action ==
+    /// None` means the user hasn't recorded a preference; UI
+    /// defaults to `"commit"`.
+    RepoDefaultCommitActionAck { action: Option<String> },
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —
