@@ -139,15 +139,33 @@ class _SidebarFooter extends ConsumerWidget {
   }
 
   Future<void> _addProject(BuildContext context, WidgetRef ref) async {
-    final selectedPath = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Add Project Folder',
-    );
+    String? selectedPath;
+    try {
+      selectedPath = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Add Project Folder',
+      );
+    } catch (e) {
+      // file_picker shells out to zenity / kdialog on Linux. Hosts
+      // without either installed throw an opaque "Couldn't find the
+      // executable zenity" — surface that as a toast instead of
+      // letting it bubble up as an uncaught exception.
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not open folder picker: $e'),
+          backgroundColor: AppTokens.errorBg,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+      return;
+    }
     if (selectedPath == null || selectedPath.isEmpty) return;
     if (!context.mounted) return;
+    final path = selectedPath;
     final transport = ref.read(localConnectionProvider);
     final inserted = await runMutation(
       context,
-      () => transport.addProject(selectedPath),
+      () => transport.addProject(path),
       errorPrefix: 'Failed to add project',
     );
     if (inserted == false && context.mounted) {

@@ -432,8 +432,19 @@ class _PopoverIconButtonState extends State<_PopoverIconButton> {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: widget.tooltip,
+    // Bare MouseRegion + GestureDetector — no Tooltip wrapper.
+    // Tooltip uses an internal LayoutBuilder, and this button lives
+    // inside the resource-indicator's OverlayPortal child. The
+    // resource provider repolls every 1.5s, which rebuilds the
+    // overlay subtree; when LayoutBuilder is updated mid-frame from
+    // an OverlayPortal rebuild it trips
+    // `RenderObjectWithLayoutCallbackMixin.scheduleLayoutCallback`'s
+    // `debugNeedsLayout` assertion. The icon is recognizable on its
+    // own; if a hover hint becomes critical, swap in a non-
+    // LayoutBuilder-based hover tip.
+    return Semantics(
+      label: widget.tooltip,
+      button: true,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),
