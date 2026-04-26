@@ -1999,46 +1999,46 @@ impl IrohSession {
     /// `commit_id`.
     pub async fn read_commit_file_changes(
         &self,
+        request_id: u64,
         project_id: String,
         commit_id: String,
-    ) -> anyhow::Result<u64> {
-        let id = self.next_request_id();
+    ) -> anyhow::Result<()> {
         self.send_control(
-            id,
+            request_id,
             Control::ReadCommitFileChanges {
                 project_id,
                 commit_id,
             },
         )
-        .await?;
-        Ok(id)
+        .await
     }
 
     /// Issue [`Control::ReadBranchCompareState`] for `project_id`
     /// against `target_branch`.
     pub async fn read_branch_compare_state(
         &self,
+        request_id: u64,
         project_id: String,
         target_branch: String,
-    ) -> anyhow::Result<u64> {
-        let id = self.next_request_id();
+    ) -> anyhow::Result<()> {
         self.send_control(
-            id,
+            request_id,
             Control::ReadBranchCompareState {
                 project_id,
                 target_branch,
             },
         )
-        .await?;
-        Ok(id)
+        .await
     }
 
     /// Issue [`Control::ReadBranchSettings`] for `project_id`.
-    pub async fn read_branch_settings(&self, project_id: String) -> anyhow::Result<u64> {
-        let id = self.next_request_id();
-        self.send_control(id, Control::ReadBranchSettings { project_id })
-            .await?;
-        Ok(id)
+    pub async fn read_branch_settings(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadBranchSettings { project_id })
+            .await
     }
 
     /// Issue [`Control::SetBranchSetting`] for `project_id`. `field`
@@ -2046,21 +2046,20 @@ impl IrohSession {
     /// `branch_name == None` clears the override.
     pub async fn set_branch_setting(
         &self,
+        request_id: u64,
         project_id: String,
         field: String,
         branch_name: Option<String>,
-    ) -> anyhow::Result<u64> {
-        let id = self.next_request_id();
+    ) -> anyhow::Result<()> {
         self.send_control(
-            id,
+            request_id,
             Control::SetBranchSetting {
                 project_id,
                 field,
                 branch_name,
             },
         )
-        .await?;
-        Ok(id)
+        .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

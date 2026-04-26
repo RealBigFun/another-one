@@ -871,19 +871,21 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String commitId,
   }) async {
     final reply = await _sendControlAndAwait(
-      () => _session!.readCommitFileChanges(
+      (id) => _session!.readCommitFileChanges(
+        requestId: BigInt.from(id),
         projectId: projectId,
         commitId: commitId,
       ),
     );
-    return reply.maybeWhen(
-      commitFileChangesAck: (files) =>
+    return switch (reply) {
+      WorkerReply_CommitFileChangesAck(:final files) =>
           files?.map(_branchCompareFileWireToDto).toList(growable: false),
-      err: _throwErr,
-      orElse: () => throw StateError(
-        'readCommitFileChanges: unexpected reply variant ${reply.runtimeType}',
-      ),
-    );
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'readCommitFileChanges: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
   }
 
   ls.BranchCompareFileDto _branchCompareFileWireToDto(BranchCompareFileWire f) =>
@@ -901,13 +903,14 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String targetBranch,
   }) async {
     final reply = await _sendControlAndAwait(
-      () => _session!.readBranchCompareState(
+      (id) => _session!.readBranchCompareState(
+        requestId: BigInt.from(id),
         projectId: projectId,
         targetBranch: targetBranch,
       ),
     );
-    return reply.maybeWhen(
-      branchCompareAck: (view) => view == null
+    return switch (reply) {
+      WorkerReply_BranchCompareAck(:final view) => view == null
           ? null
           : ls.BranchCompareView(
               currentBranch: view.currentBranch,
@@ -916,11 +919,12 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
                   .map(_branchCompareFileWireToDto)
                   .toList(growable: false),
             ),
-      err: _throwErr,
-      orElse: () => throw StateError(
-        'readBranchCompareState: unexpected reply variant ${reply.runtimeType}',
-      ),
-    );
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'readBranchCompareState: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
   }
 
   @override
@@ -928,10 +932,13 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     String projectId,
   ) async {
     final reply = await _sendControlAndAwait(
-      () => _session!.readBranchSettings(projectId: projectId),
+      (id) => _session!.readBranchSettings(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      ),
     );
-    return reply.maybeWhen(
-      branchSettingsAck: (settings) => settings == null
+    return switch (reply) {
+      WorkerReply_BranchSettingsAck(:final settings) => settings == null
           ? null
           : ls.ResolvedProjectBranchSettingsDto(
               rootProjectId: settings.rootProjectId,
@@ -943,11 +950,12 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
               effectiveDefaultTargetBranch:
                   settings.effectiveDefaultTargetBranch,
             ),
-      err: _throwErr,
-      orElse: () => throw StateError(
-        'readBranchSettings: unexpected reply variant ${reply.runtimeType}',
-      ),
-    );
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'readBranchSettings: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
   }
 
   @override
@@ -957,19 +965,21 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     String? branchName,
   }) async {
     final reply = await _sendControlAndAwait(
-      () => _session!.setBranchSetting(
+      (id) => _session!.setBranchSetting(
+        requestId: BigInt.from(id),
         projectId: projectId,
         field: field,
         branchName: branchName,
       ),
     );
-    return reply.maybeWhen(
-      setBranchSettingAck: (changed) => changed,
-      err: _throwErr,
-      orElse: () => throw StateError(
-        'setBranchSetting: unexpected reply variant ${reply.runtimeType}',
-      ),
-    );
+    return switch (reply) {
+      WorkerReply_SetBranchSettingAck(:final changed) => changed,
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'setBranchSetting: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
   }
 
   ls.ChangedFileDto _changedFileWireToDto(ChangedFileWire f) =>

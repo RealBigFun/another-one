@@ -214,14 +214,16 @@ abstract class RustLibApi extends BaseApi {
     required BigInt requestId,
   });
 
-  Future<BigInt> crateApiIrohClientIrohSessionReadBranchCompareState({
+  Future<void> crateApiIrohClientIrohSessionReadBranchCompareState({
     required IrohSession that,
+    required BigInt requestId,
     required String projectId,
     required String targetBranch,
   });
 
-  Future<BigInt> crateApiIrohClientIrohSessionReadBranchSettings({
+  Future<void> crateApiIrohClientIrohSessionReadBranchSettings({
     required IrohSession that,
+    required BigInt requestId,
     required String projectId,
   });
 
@@ -231,8 +233,9 @@ abstract class RustLibApi extends BaseApi {
     required String projectId,
   });
 
-  Future<BigInt> crateApiIrohClientIrohSessionReadCommitFileChanges({
+  Future<void> crateApiIrohClientIrohSessionReadCommitFileChanges({
     required IrohSession that,
+    required BigInt requestId,
     required String projectId,
     required String commitId,
   });
@@ -350,8 +353,9 @@ abstract class RustLibApi extends BaseApi {
     required List<int> bytes,
   });
 
-  Future<BigInt> crateApiIrohClientIrohSessionSetBranchSetting({
+  Future<void> crateApiIrohClientIrohSessionSetBranchSetting({
     required IrohSession that,
+    required BigInt requestId,
     required String projectId,
     required String field,
     String? branchName,
@@ -1818,8 +1822,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<BigInt> crateApiIrohClientIrohSessionReadBranchCompareState({
+  Future<void> crateApiIrohClientIrohSessionReadBranchCompareState({
     required IrohSession that,
+    required BigInt requestId,
     required String projectId,
     required String targetBranch,
   }) {
@@ -1831,6 +1836,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
+          sse_encode_u_64(requestId, serializer);
           sse_encode_String(projectId, serializer);
           sse_encode_String(targetBranch, serializer);
           pdeCallFfi(
@@ -1841,12 +1847,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
+          decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta:
             kCrateApiIrohClientIrohSessionReadBranchCompareStateConstMeta,
-        argValues: [that, projectId, targetBranch],
+        argValues: [that, requestId, projectId, targetBranch],
         apiImpl: this,
       ),
     );
@@ -1856,12 +1862,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get kCrateApiIrohClientIrohSessionReadBranchCompareStateConstMeta =>
       const TaskConstMeta(
         debugName: "IrohSession_read_branch_compare_state",
-        argNames: ["that", "projectId", "targetBranch"],
+        argNames: ["that", "requestId", "projectId", "targetBranch"],
       );
 
   @override
-  Future<BigInt> crateApiIrohClientIrohSessionReadBranchSettings({
+  Future<void> crateApiIrohClientIrohSessionReadBranchSettings({
     required IrohSession that,
+    required BigInt requestId,
     required String projectId,
   }) {
     return handler.executeNormal(
@@ -1872,6 +1879,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
+          sse_encode_u_64(requestId, serializer);
           sse_encode_String(projectId, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -1881,11 +1889,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
+          decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiIrohClientIrohSessionReadBranchSettingsConstMeta,
-        argValues: [that, projectId],
+        argValues: [that, requestId, projectId],
         apiImpl: this,
       ),
     );
@@ -1894,7 +1902,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiIrohClientIrohSessionReadBranchSettingsConstMeta =>
       const TaskConstMeta(
         debugName: "IrohSession_read_branch_settings",
-        argNames: ["that", "projectId"],
+        argNames: ["that", "requestId", "projectId"],
       );
 
   @override
@@ -1938,8 +1946,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<BigInt> crateApiIrohClientIrohSessionReadCommitFileChanges({
+  Future<void> crateApiIrohClientIrohSessionReadCommitFileChanges({
     required IrohSession that,
+    required BigInt requestId,
     required String projectId,
     required String commitId,
   }) {
@@ -1951,6 +1960,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
+          sse_encode_u_64(requestId, serializer);
           sse_encode_String(projectId, serializer);
           sse_encode_String(commitId, serializer);
           pdeCallFfi(
@@ -1961,11 +1971,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
+          decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiIrohClientIrohSessionReadCommitFileChangesConstMeta,
-        argValues: [that, projectId, commitId],
+        argValues: [that, requestId, projectId, commitId],
         apiImpl: this,
       ),
     );
@@ -1975,7 +1985,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get kCrateApiIrohClientIrohSessionReadCommitFileChangesConstMeta =>
       const TaskConstMeta(
         debugName: "IrohSession_read_commit_file_changes",
-        argNames: ["that", "projectId", "commitId"],
+        argNames: ["that", "requestId", "projectId", "commitId"],
       );
 
   @override
@@ -2747,8 +2757,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<BigInt> crateApiIrohClientIrohSessionSetBranchSetting({
+  Future<void> crateApiIrohClientIrohSessionSetBranchSetting({
     required IrohSession that,
+    required BigInt requestId,
     required String projectId,
     required String field,
     String? branchName,
@@ -2761,6 +2772,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
+          sse_encode_u_64(requestId, serializer);
           sse_encode_String(projectId, serializer);
           sse_encode_String(field, serializer);
           sse_encode_opt_String(branchName, serializer);
@@ -2772,11 +2784,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
+          decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiIrohClientIrohSessionSetBranchSettingConstMeta,
-        argValues: [that, projectId, field, branchName],
+        argValues: [that, requestId, projectId, field, branchName],
         apiImpl: this,
       ),
     );
@@ -2785,7 +2797,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiIrohClientIrohSessionSetBranchSettingConstMeta =>
       const TaskConstMeta(
         debugName: "IrohSession_set_branch_setting",
-        argNames: ["that", "projectId", "field", "branchName"],
+        argNames: ["that", "requestId", "projectId", "field", "branchName"],
       );
 
   @override
@@ -12468,22 +12480,27 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
 
   /// Issue [`Control::ReadBranchCompareState`] for `project_id`
   /// against `target_branch`.
-  Future<BigInt> readBranchCompareState({
+  Future<void> readBranchCompareState({
+    required BigInt requestId,
     required String projectId,
     required String targetBranch,
   }) =>
       RustLib.instance.api.crateApiIrohClientIrohSessionReadBranchCompareState(
         that: this,
+        requestId: requestId,
         projectId: projectId,
         targetBranch: targetBranch,
       );
 
   /// Issue [`Control::ReadBranchSettings`] for `project_id`.
-  Future<BigInt> readBranchSettings({required String projectId}) =>
-      RustLib.instance.api.crateApiIrohClientIrohSessionReadBranchSettings(
-        that: this,
-        projectId: projectId,
-      );
+  Future<void> readBranchSettings({
+    required BigInt requestId,
+    required String projectId,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionReadBranchSettings(
+    that: this,
+    requestId: requestId,
+    projectId: projectId,
+  );
 
   /// Issue [`Control::ReadChangedFiles`] for `project_id`.
   Future<void> readChangedFiles({
@@ -12497,11 +12514,13 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
 
   /// Issue [`Control::ReadCommitFileChanges`] for `project_id` /
   /// `commit_id`.
-  Future<BigInt> readCommitFileChanges({
+  Future<void> readCommitFileChanges({
+    required BigInt requestId,
     required String projectId,
     required String commitId,
   }) => RustLib.instance.api.crateApiIrohClientIrohSessionReadCommitFileChanges(
     that: this,
+    requestId: requestId,
     projectId: projectId,
     commitId: commitId,
   );
@@ -12693,12 +12712,14 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   /// Issue [`Control::SetBranchSetting`] for `project_id`. `field`
   /// is one of `"default-branch"` / `"default-target-branch"`;
   /// `branch_name == None` clears the override.
-  Future<BigInt> setBranchSetting({
+  Future<void> setBranchSetting({
+    required BigInt requestId,
     required String projectId,
     required String field,
     String? branchName,
   }) => RustLib.instance.api.crateApiIrohClientIrohSessionSetBranchSetting(
     that: this,
+    requestId: requestId,
     projectId: projectId,
     field: field,
     branchName: branchName,

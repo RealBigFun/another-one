@@ -198,13 +198,17 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Issue [`Control::ReadBranchCompareState`] for `project_id`
   /// against `target_branch`.
-  Future<BigInt> readBranchCompareState({
+  Future<void> readBranchCompareState({
+    required BigInt requestId,
     required String projectId,
     required String targetBranch,
   });
 
   /// Issue [`Control::ReadBranchSettings`] for `project_id`.
-  Future<BigInt> readBranchSettings({required String projectId});
+  Future<void> readBranchSettings({
+    required BigInt requestId,
+    required String projectId,
+  });
 
   /// Issue [`Control::ReadChangedFiles`] for `project_id`.
   Future<void> readChangedFiles({
@@ -214,7 +218,8 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Issue [`Control::ReadCommitFileChanges`] for `project_id` /
   /// `commit_id`.
-  Future<BigInt> readCommitFileChanges({
+  Future<void> readCommitFileChanges({
+    required BigInt requestId,
     required String projectId,
     required String commitId,
   });
@@ -327,7 +332,8 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Issue [`Control::SetBranchSetting`] for `project_id`. `field`
   /// is one of `"default-branch"` / `"default-target-branch"`;
   /// `branch_name == None` clears the override.
-  Future<BigInt> setBranchSetting({
+  Future<void> setBranchSetting({
+    required BigInt requestId,
     required String projectId,
     required String field,
     String? branchName,

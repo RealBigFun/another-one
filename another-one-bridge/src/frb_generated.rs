@@ -1383,6 +1383,7 @@ fn wire__crate__api__iroh_client__IrohSession_read_branch_compare_state_impl(
             let api_that = <RustOpaqueMoi<
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
             >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
             let api_project_id = <String>::sse_decode(&mut deserializer);
             let api_target_branch = <String>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -1409,6 +1410,7 @@ fn wire__crate__api__iroh_client__IrohSession_read_branch_compare_state_impl(
                         let output_ok =
                             crate::api::iroh_client::IrohSession::read_branch_compare_state(
                                 &*api_that_guard,
+                                api_request_id,
                                 api_project_id,
                                 api_target_branch,
                             )
@@ -1446,6 +1448,7 @@ fn wire__crate__api__iroh_client__IrohSession_read_branch_settings_impl(
             let api_that = <RustOpaqueMoi<
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
             >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
             let api_project_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
@@ -1470,6 +1473,7 @@ fn wire__crate__api__iroh_client__IrohSession_read_branch_settings_impl(
                         let api_that_guard = api_that_guard.unwrap();
                         let output_ok = crate::api::iroh_client::IrohSession::read_branch_settings(
                             &*api_that_guard,
+                            api_request_id,
                             api_project_id,
                         )
                         .await?;
@@ -1568,6 +1572,7 @@ fn wire__crate__api__iroh_client__IrohSession_read_commit_file_changes_impl(
             let api_that = <RustOpaqueMoi<
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
             >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
             let api_project_id = <String>::sse_decode(&mut deserializer);
             let api_commit_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -1594,6 +1599,7 @@ fn wire__crate__api__iroh_client__IrohSession_read_commit_file_changes_impl(
                         let output_ok =
                             crate::api::iroh_client::IrohSession::read_commit_file_changes(
                                 &*api_that_guard,
+                                api_request_id,
                                 api_project_id,
                                 api_commit_id,
                             )
@@ -2814,6 +2820,7 @@ fn wire__crate__api__iroh_client__IrohSession_set_branch_setting_impl(
             let api_that = <RustOpaqueMoi<
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
             >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
             let api_project_id = <String>::sse_decode(&mut deserializer);
             let api_field = <String>::sse_decode(&mut deserializer);
             let api_branch_name = <Option<String>>::sse_decode(&mut deserializer);
@@ -2840,6 +2847,7 @@ fn wire__crate__api__iroh_client__IrohSession_set_branch_setting_impl(
                         let api_that_guard = api_that_guard.unwrap();
                         let output_ok = crate::api::iroh_client::IrohSession::set_branch_setting(
                             &*api_that_guard,
+                            api_request_id,
                             api_project_id,
                             api_field,
                             api_branch_name,
