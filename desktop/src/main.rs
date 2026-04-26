@@ -41,7 +41,9 @@ mod tokens;
 // desktop (the GPUI/platform-coupled halves) that internally re-export
 // the core-side pure types, so `crate::open_in::OpenInAppKind` still
 // resolves via those local modules.
-pub(crate) use another_one_core::{agents, git_actions, project_store, task_launcher, terminal_launch};
+pub(crate) use another_one_core::{
+    agents, git_actions, project_store, task_launcher, terminal_launch,
+};
 
 use gpui::{
     px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions,
@@ -62,10 +64,9 @@ fn init_logging() {
     // LogTracer is a global state; ignore the "already set" error so
     // a hot-reload-style re-entry (tests, etc.) doesn't panic.
     let _ = tracing_log::LogTracer::init();
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            "another_one=info,another_one_core=info,daemon_sandbox=info,iroh=info,warn".into()
-        });
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        "another_one=info,another_one_core=info,daemon_sandbox=info,iroh=info,warn".into()
+    });
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)

@@ -393,11 +393,7 @@ impl AnotherOneApp {
         }
     }
 
-    fn handle_branch_filter_key_down(
-        &mut self,
-        ev: &KeyDownEvent,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn handle_branch_filter_key_down(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
         let Some(state) = self.new_task_modal.as_mut() else {
             return false;
         };
@@ -982,31 +978,26 @@ impl AnotherOneApp {
                                     .items_center()
                                     .cursor_text()
                                     .tooltip(move |_window, cx| {
-                                        Self::action_tooltip_view(
-                                            "Filter branches by name",
-                                            cx,
-                                        )
+                                        Self::action_tooltip_view("Filter branches by name", cx)
                                     })
                                     .on_mouse_down(
                                         MouseButton::Left,
-                                        cx.listener(
-                                            |this, _ev: &MouseDownEvent, window, cx| {
-                                                this.focus_handle.focus(window);
-                                                if let Some(state) = this.new_task_modal.as_mut() {
-                                                    if state.submitting {
-                                                        return;
-                                                    }
-                                                    state.branch_filter_focused = true;
-                                                    state.branch_filter_cursor =
-                                                        state.branch_filter.len();
-                                                    state.branch_filter_selection_anchor = None;
-                                                    state.task_name_focused = false;
-                                                    state.agent_dropdown_open = false;
+                                        cx.listener(|this, _ev: &MouseDownEvent, window, cx| {
+                                            this.focus_handle.focus(window);
+                                            if let Some(state) = this.new_task_modal.as_mut() {
+                                                if state.submitting {
+                                                    return;
                                                 }
-                                                cx.stop_propagation();
-                                                cx.notify();
-                                            },
-                                        ),
+                                                state.branch_filter_focused = true;
+                                                state.branch_filter_cursor =
+                                                    state.branch_filter.len();
+                                                state.branch_filter_selection_anchor = None;
+                                                state.task_name_focused = false;
+                                                state.agent_dropdown_open = false;
+                                            }
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        }),
                                     )
                                     .child(Self::render_text_input_content(
                                         branch_filter.clone(),
@@ -1978,11 +1969,7 @@ impl AnotherOneApp {
                 } else {
                     div().w(px(0.))
                 })
-                .child(
-                    div()
-                        .text_color(placeholder_col())
-                        .child(placeholder),
-                );
+                .child(div().text_color(placeholder_col()).child(placeholder));
         }
 
         let selected = selection.filter(|range| range.start < range.end);
@@ -1991,9 +1978,7 @@ impl AnotherOneApp {
         let trailing_clipped = visible_range.end < text.len();
         let visible_start = visible_range.start;
         let visible_text = text[visible_range.clone()].to_string();
-        let local_cursor = cursor
-            .saturating_sub(visible_start)
-            .min(visible_text.len());
+        let local_cursor = cursor.saturating_sub(visible_start).min(visible_text.len());
         let visible_selection = selected
             .as_ref()
             .and_then(|range| intersect_byte_ranges(range.clone(), visible_range.clone()))

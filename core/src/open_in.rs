@@ -210,7 +210,11 @@ mod tests {
 
         assert_eq!(
             effective_enabled_open_in_apps(&available, None),
-            vec![OpenInAppKind::Cursor, OpenInAppKind::Ghostty, OpenInAppKind::FileManager]
+            vec![
+                OpenInAppKind::Cursor,
+                OpenInAppKind::Ghostty,
+                OpenInAppKind::FileManager
+            ]
         );
     }
 

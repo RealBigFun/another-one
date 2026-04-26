@@ -90,9 +90,7 @@ fn run_sampler_loop() {
             "LEAKSCOPE t={t}s rss={rss} pty_bytes={pty} pty_chunks={pc} \
              drained_bytes={db} drained_chunks={dc} drains={dr} \
              in_flight={inf} live_tabs={tabs} snapshots={snaps}",
-            rss = rss
-                .map(format_bytes)
-                .unwrap_or_else(|| "?".to_string()),
+            rss = rss.map(format_bytes).unwrap_or_else(|| "?".to_string()),
             pty = format_bytes(pty_bytes),
             pc = pty_chunks,
             db = format_bytes(drained_bytes),
@@ -112,12 +110,7 @@ fn read_rss_bytes() -> Option<u64> {
         let status = std::fs::read_to_string("/proc/self/status").ok()?;
         for line in status.lines() {
             if let Some(rest) = line.strip_prefix("VmRSS:") {
-                let kb = rest
-                    .trim()
-                    .split_whitespace()
-                    .next()?
-                    .parse::<u64>()
-                    .ok()?;
+                let kb = rest.trim().split_whitespace().next()?.parse::<u64>().ok()?;
                 return Some(kb * 1024);
             }
         }

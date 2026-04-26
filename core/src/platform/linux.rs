@@ -370,7 +370,10 @@ mod tests {
             let flatpak_dir = tmp.path().join("flatpak-exports-bin");
             make_exec(&flatpak_dir, "com.mitchellh.ghostty");
             let launcher = find_launcher_in_dirs(OpenInAppKind::Ghostty, &[flatpak_dir]);
-            assert_eq!(launcher, Some(LinuxLauncher::Flatpak("com.mitchellh.ghostty".into())));
+            assert_eq!(
+                launcher,
+                Some(LinuxLauncher::Flatpak("com.mitchellh.ghostty".into()))
+            );
         }
 
         #[test]
@@ -379,7 +382,10 @@ mod tests {
             let bin_dir = tmp.path().join("bin");
             make_exec(&bin_dir, "wezterm-gui");
             let launcher = find_launcher_in_dirs(OpenInAppKind::WezTerm, &[bin_dir.clone()]);
-            assert_eq!(launcher, Some(LinuxLauncher::Binary(bin_dir.join("wezterm-gui"))));
+            assert_eq!(
+                launcher,
+                Some(LinuxLauncher::Binary(bin_dir.join("wezterm-gui")))
+            );
         }
     }
 }

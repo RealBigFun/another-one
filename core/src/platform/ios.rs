@@ -86,7 +86,10 @@ mod tests {
         let result = IosPlatform::open_external_url("https://example.com");
         assert!(result.is_err());
         assert!(
-            result.as_ref().unwrap_err().contains("Dart platform channel"),
+            result
+                .as_ref()
+                .unwrap_err()
+                .contains("Dart platform channel"),
             "expected the error to point at the Dart-side workaround, got: {:?}",
             result.unwrap_err()
         );

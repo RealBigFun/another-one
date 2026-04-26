@@ -44,4 +44,3 @@ fn is_app_available(app: OpenInAppKind) -> bool {
 fn command_for_app(app: OpenInAppKind, path: &Path) -> Command {
     CurrentPlatform::command_for_open_in(app, path)
 }
-

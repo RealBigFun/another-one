@@ -48,9 +48,7 @@ impl HeadlessPlatform for MacosPlatform {
             OpenInAppKind::VsCode => {
                 macos_app_exists("Visual Studio Code") || command_exists(&["code"])
             }
-            OpenInAppKind::Ghostty => {
-                macos_app_exists("Ghostty") || command_exists(&["ghostty"])
-            }
+            OpenInAppKind::Ghostty => macos_app_exists("Ghostty") || command_exists(&["ghostty"]),
             OpenInAppKind::WezTerm => {
                 macos_app_exists("WezTerm") || command_exists(&["wezterm", "wezterm-gui"])
             }
@@ -107,6 +105,16 @@ fn wezterm_command(path: &Path) -> Command {
         return command;
     }
 
+    if let Some(binary) = macos_app_bundle_executable("WezTerm", "wezterm-gui") {
+        let mut command = Command::new(binary);
+        command
+            .arg("start")
+            .arg("--always-new-process")
+            .arg("--cwd")
+            .arg(path);
+        return command;
+    }
+
     let mut command = Command::new("open");
     command
         .args([
@@ -119,6 +127,20 @@ fn wezterm_command(path: &Path) -> Command {
         ])
         .arg(path);
     command
+}
+
+fn macos_app_bundle_executable(app_name: &str, executable_name: &str) -> Option<PathBuf> {
+    macos_app_bundle_executable_from_candidates(macos_app_candidates(app_name), executable_name)
+}
+
+fn macos_app_bundle_executable_from_candidates(
+    candidates: Vec<PathBuf>,
+    executable_name: &str,
+) -> Option<PathBuf> {
+    candidates
+        .into_iter()
+        .map(|bundle| bundle.join("Contents/MacOS").join(executable_name))
+        .find(|path| path.is_file())
 }
 
 fn macos_app_exists(app_name: &str) -> bool {
@@ -409,7 +431,10 @@ mod tests {
     #[test]
     fn total_system_memory_bytes_is_positive() {
         let memory = MacosPlatform::total_system_memory_bytes();
-        assert!(memory.is_some(), "expected sysctlbyname to succeed on macOS");
+        assert!(
+            memory.is_some(),
+            "expected sysctlbyname to succeed on macOS"
+        );
         assert!(
             memory.unwrap() > 0,
             "expected total memory > 0, got {:?}",
@@ -425,6 +450,23 @@ mod tests {
             samples.iter().any(|s| s.pid == pid),
             "expected the process tree walk to include our own pid {}",
             pid
+        );
+    }
+
+    #[test]
+    fn macos_app_bundle_executable_appends_contents_macos_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bundle = temp.path().join("WezTerm.app");
+        let binary = bundle.join("Contents/MacOS/wezterm-gui");
+        std::fs::create_dir_all(binary.parent().expect("binary parent")).expect("mkdirs");
+        std::fs::write(&binary, "#!/bin/sh\n").expect("write binary");
+
+        assert_eq!(
+            macos_app_bundle_executable_from_candidates(
+                vec![bundle.clone(), temp.path().join("Other.app")],
+                "wezterm-gui"
+            ),
+            Some(binary)
         );
     }
 }

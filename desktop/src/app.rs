@@ -6359,14 +6359,6 @@ impl AnotherOneApp {
                     .or_else(|| self.project_store.current_branch_name(&project.id))
                     .unwrap_or(source_branch);
 
-                if branch_name.is_empty() {
-                    self.show_error_toast(
-                        "Could not determine the current branch for the selected project.",
-                        cx,
-                    );
-                    return;
-                }
-
                 let task_name = resolved_task_name(&task_name, &generated_task_name);
                 self.insert_and_open_task(
                     project.id.clone(),
@@ -6381,10 +6373,12 @@ impl AnotherOneApp {
                     cx,
                 );
                 self.new_task_modal = None;
-                self.show_success_toast(
-                    format!("Opened direct task {} on {}.", task_name, branch_name),
-                    cx,
-                );
+                let success_message = if branch_name.is_empty() {
+                    format!("Opened direct task {}.", task_name)
+                } else {
+                    format!("Opened direct task {} on {}.", task_name, branch_name)
+                };
+                self.show_success_toast(success_message, cx);
             }
             TaskLaunchRequest::Worktree {
                 project_id,

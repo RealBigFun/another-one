@@ -305,9 +305,7 @@ impl AnotherOneApp {
             .text_size(px(11.))
             .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(text)
-            .tooltip(|_window, cx| {
-                Self::action_tooltip_view(crate::build_info::tooltip_text(), cx)
-            })
+            .tooltip(|_window, cx| Self::action_tooltip_view(crate::build_info::tooltip_text(), cx))
             .child(label)
             .into_any_element()
     }

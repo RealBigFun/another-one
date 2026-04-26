@@ -102,4 +102,3 @@ impl PlatformServices for MacPlatform {
         true
     }
 }
-
