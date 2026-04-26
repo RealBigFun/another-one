@@ -13,7 +13,7 @@ WebSocket or Iroh QUIC.
   Wire format: binary frames = PTY bytes; text frames = JSON control
   (`{"type":"resize","cols":C,"rows":R}`).
 - `daemon-sandbox/src/transport_iroh.rs` — Iroh endpoint, ALPN
-  `anotherone/pty/0`. Currently raw bytes both directions (no framing —
+  `anotherone/pty/1`. Currently raw bytes both directions (no framing —
   resize control is not yet implemented on this path).
 - `daemon-sandbox/src/bin/iroh-client.rs` — CLI smoke test that dials the
   Iroh endpoint and echoes bytes. Handy for isolating Iroh from mobile.

@@ -40,7 +40,7 @@ library + no client }`. A phone = `{ client only }`.
   is interesting but not on the near-term roadmap.)
 
 - **One protocol, one session-holding surface.** ALPN
-  `anotherone/pty/0`, the `core` crate for sessions, same for every
+  `anotherone/pty/1`, the `core` crate for sessions, same for every
   node. No special path for "local" vs "remote"; the only difference is
   which transport implementation the client picks.
 

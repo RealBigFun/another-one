@@ -83,7 +83,27 @@ pub enum Control {
     /// (or missing) token from an unpaired peer is an
     /// unrecoverable rejection — we never auto-pair without proof
     /// the user scanned the current QR.
-    Hello { pair_token: Option<String> },
+    ///
+    /// `protocol_version` is the wire version the client speaks
+    /// (see [`super::transport_iroh::PROTOCOL_VERSION`]). The daemon
+    /// rejects mismatches with the
+    /// `anotherone/incompatible-version` close reason instead of
+    /// letting serde explode on the first unknown variant. Older
+    /// (v0) daemons / clients on the previous ALPN won't reach this
+    /// frame because iroh refuses the ALPN handshake before any
+    /// stream opens — the in-band field is the belt-and-braces guard
+    /// for any future transport (e.g. an iroh proxy that strips
+    /// ALPN).
+    ///
+    /// `#[serde(default)]` lets a daemon decoding a Hello from an
+    /// older client treat the missing field as `0` and surface the
+    /// version mismatch cleanly rather than failing the decode
+    /// itself.
+    Hello {
+        pair_token: Option<String>,
+        #[serde(default)]
+        protocol_version: u32,
+    },
 }
 
 /// Worker replies (type=2 frames). Payload is JSON. Daemon → client

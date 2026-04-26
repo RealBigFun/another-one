@@ -1,7 +1,7 @@
 //! Iroh client exposed to Dart via flutter_rust_bridge.
 //!
 //! One `IrohSession` represents a live QUIC connection to a daemon that
-//! speaks the `anotherone/pty/0` ALPN. Dart uses:
+//! speaks the `anotherone/pty/1` ALPN. Dart uses:
 //!
 //!   1. `iroh_connect(endpoint_id)` to dial.
 //!   2. `session.send(bytes)` to deliver PTY input.
@@ -44,8 +44,16 @@ fn data_dir_slot() -> &'static std::sync::Mutex<Option<PathBuf>> {
     DATA_DIR.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-/// Must match the daemon's ALPN byte string.
-const ALPN: &[u8] = b"anotherone/pty/0";
+/// Must match the daemon's ALPN byte string. Bumped to `/1` alongside
+/// the introduction of `protocol_version` in `Control::Hello`,
+/// `request_id` correlation, and the uniform `WorkerReply::Err`
+/// frame. Version-suffixed so a future protocol break can run
+/// `/2`-speakers in parallel without a flag day.
+const ALPN: &[u8] = b"anotherone/pty/1";
+
+/// In-band protocol version sent inside the first `Control::Hello`.
+/// Mirror of `daemon_sandbox::transport_iroh::PROTOCOL_VERSION`.
+const PROTOCOL_VERSION: u32 = 1;
 
 // Frame wire format, matching daemon-sandbox/src/frame.rs:
 //   [1 byte type][4 bytes BE length][N bytes payload]
@@ -94,9 +102,15 @@ enum Control {
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
     /// before. `pair_token` is the hex nonce parsed from the
-    /// `pair=<hex>` query param on the pairing URL. Mirror of
+    /// `pair=<hex>` query param on the pairing URL.
+    /// `protocol_version` is the wire version we speak; the daemon
+    /// closes with `anotherone/incompatible-version` on mismatch
+    /// (see [`PROTOCOL_VERSION`]). Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::Hello`.
-    Hello { pair_token: Option<String> },
+    Hello {
+        pair_token: Option<String>,
+        protocol_version: u32,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -548,8 +562,11 @@ async fn iroh_connect_inner(
     // daemon ignores Hello from already-paired peers, so sending it
     // unconditionally is safe. We send via the mpsc so ordering is
     // preserved with whatever the Dart layer sends next.
-    let hello_payload =
-        serde_json::to_vec(&Control::Hello { pair_token }).context("encode hello")?;
+    let hello_payload = serde_json::to_vec(&Control::Hello {
+        pair_token,
+        protocol_version: PROTOCOL_VERSION,
+    })
+    .context("encode hello")?;
     send_tx
         .send((TY_CONTROL, hello_payload))
         .await

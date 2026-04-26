@@ -31,7 +31,22 @@ use crate::registry::{EndpointHandle, PairState, TerminalRegistry};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
 /// breaks can be versioned cleanly (`/1`, `/2`, …).
-pub const ALPN: &[u8] = b"anotherone/pty/0";
+///
+/// `/1` introduced:
+///   - `Control::Hello { protocol_version }` — explicit in-band
+///     version field so a peer that bypasses ALPN (e.g. via a proxy
+///     that strips it) is still rejected with a deterministic close
+///     reason rather than blowing up on the first unknown variant.
+///   - `request_id` correlation on every Control / WorkerReply
+///     envelope.
+///   - `WorkerReply::Err { request_id, kind, message }` for
+///     uniform per-request failure reporting.
+pub const ALPN: &[u8] = b"anotherone/pty/1";
+
+/// In-band protocol version carried in `Control::Hello`. Bumped in
+/// lockstep with the ALPN suffix; mismatches close the connection
+/// with [`CLOSE_REASON_INCOMPATIBLE_VERSION`].
+pub const PROTOCOL_VERSION: u32 = 1;
 
 /// QUIC close reason emitted to unauthorised peers. Short on purpose:
 /// the CONNECTION_CLOSE frame is observable on the wire, so long
@@ -41,6 +56,14 @@ pub const ALPN: &[u8] = b"anotherone/pty/0";
 /// in the UI. Keep in lockstep with the substring match in
 /// `mobile/lib/src/transport_iroh.dart::_statusForError`.
 pub const CLOSE_REASON_UNPAIRED: &[u8] = b"anotherone/unpaired";
+
+/// QUIC close reason for a peer whose `Control::Hello.protocol_version`
+/// disagrees with this daemon's [`PROTOCOL_VERSION`]. Sent before any
+/// other frame is decoded, so a v0 client (or a future v2 client
+/// hitting a v1 daemon) gets a clean shutdown instead of a serde
+/// panic mid-stream. Mirrors the substring match clients perform on
+/// the close reason.
+pub const CLOSE_REASON_INCOMPATIBLE_VERSION: &[u8] = b"anotherone/incompatible-version";
 
 /// Bring up an iroh endpoint backed by `registry`. Returns once the
 /// endpoint is online + the pairing QR has been rendered; the accept
@@ -232,6 +255,28 @@ async fn handle_connection(
             Ok(Some((frame::TY_CONTROL, payload))) => {
                 match serde_json::from_slice::<Control>(&payload) {
                     Ok(ctrl) => {
+                        // Version-check Hello regardless of pairing state.
+                        // A v0 client that somehow squeaks past the ALPN
+                        // gate — or a v2 client speculatively dialling
+                        // a v1 daemon — must be told why the connection
+                        // is closing, not allowed to drift further into
+                        // the protocol where serde would eventually
+                        // panic on an unknown variant.
+                        if let Control::Hello {
+                            protocol_version, ..
+                        } = &ctrl
+                        {
+                            if *protocol_version != PROTOCOL_VERSION {
+                                warn!(
+                                    viewer_id,
+                                    peer_version = *protocol_version,
+                                    daemon_version = PROTOCOL_VERSION,
+                                    "rejecting peer with incompatible protocol version"
+                                );
+                                conn.close(1u8.into(), CLOSE_REASON_INCOMPATIBLE_VERSION);
+                                break;
+                            }
+                        }
                         if matches!(authz, PostAuth::AwaitHello) {
                             match consume_hello(ctrl, viewer_id, &pair_state, paired_peers_path) {
                                 Ok(()) => {
@@ -287,7 +332,7 @@ fn consume_hello(
     pair_state: &Arc<Mutex<PairState>>,
     paired_peers_path: &Path,
 ) -> anyhow::Result<()> {
-    let Control::Hello { pair_token } = ctrl else {
+    let Control::Hello { pair_token, .. } = ctrl else {
         anyhow::bail!("first frame from unpaired peer must be Control::Hello");
     };
     let presented =

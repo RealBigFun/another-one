@@ -5,7 +5,7 @@
 //!
 //!   - WebSocket on `ws://127.0.0.1:5617/pty` — used by the legacy
 //!     Flutter WebSocket transport.
-//!   - Iroh QUIC on ALPN `anotherone/pty/0` — the main path; the
+//!   - Iroh QUIC on ALPN `anotherone/pty/1` — the main path; the
 //!     mobile app and `iroh-client` smoke test both dial it.
 //!
 //! The library crate (`daemon_sandbox::run_endpoint`) powers the

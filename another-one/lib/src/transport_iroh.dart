@@ -2,7 +2,7 @@
 //
 // Wraps the flutter_rust_bridge-generated IrohSession (see rust/api/iroh_client.dart),
 // which in turn wraps an iroh::Endpoint QUIC connection to a daemon speaking
-// the `anotherone/pty/0` ALPN. Data and control (resize) frames share the
+// the `anotherone/pty/1` ALPN. Data and control (resize) frames share the
 // same bidirectional stream via the length-prefixed framing defined in
 // daemon-sandbox/src/frame.rs — resizes are delivered, not dropped.
 
@@ -142,13 +142,21 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// Map an error thrown by the iroh layer to the best-fitting
   /// TransportStatus. The daemon closes the connection with the
   /// ASCII reason `anotherone/unpaired` when the peer isn't in its
-  /// allowlist or fails TOFU validation; iroh surfaces that reason
-  /// inside the close error string, so a substring match is good
-  /// enough. Kept short to avoid leaking UI copy onto the wire.
+  /// allowlist or fails TOFU validation, and `anotherone/incompatible-version`
+  /// when its `Control::Hello.protocol_version` disagrees with the
+  /// daemon's. iroh surfaces those reasons inside the close error
+  /// string, so a substring match is good enough. Kept short to
+  /// avoid leaking UI copy onto the wire.
   TransportStatus _statusForError(Object err) {
     final msg = err.toString();
     if (msg.contains('anotherone/unpaired')) {
       return const TransportStatus.unpaired('pairing expired or cleared');
+    }
+    if (msg.contains('anotherone/incompatible-version')) {
+      return TransportStatus.error(
+        'daemon speaks a different protocol version — please update '
+        'the desktop or mobile app to match',
+      );
     }
     return TransportStatus.error(msg);
   }

@@ -18,7 +18,7 @@ use iroh::{Endpoint, EndpointAddr, EndpointId};
 #[path = "../frame.rs"]
 mod frame;
 
-const ALPN: &[u8] = b"anotherone/pty/0";
+const ALPN: &[u8] = b"anotherone/pty/1";
 
 /// Reads `/tmp/daemon-sandbox.ticket` (written by the daemon on startup)
 /// and returns `(EndpointId, Vec<SocketAddr>)`. Returns `None` if the
