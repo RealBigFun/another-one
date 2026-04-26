@@ -63,6 +63,9 @@ jobs:
     name: Build macOS (${{ matrix.target }})
     needs: identity
     runs-on: macos-14
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -77,10 +80,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Cache cargo
+      - name: Cache cargo crates and build outputs
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: macos-${{ matrix.target }}
+          cache-on-failure: true
+      - name: Set up compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Run macOS packaging script
         env:
           CARGO_VERSION: ${{ needs.identity.outputs.cargo_version }}
@@ -94,6 +100,9 @@ jobs:
         run: |
           mkdir -p "$OUTPUT_DIR"
           ./scripts/package-macos.sh
+      - name: Print compiler cache stats
+        if: always()
+        run: sccache --show-stats
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -106,14 +115,20 @@ jobs:
     name: Build Linux (x86_64)
     needs: identity
     runs-on: ubuntu-22.04
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Cache cargo
+      - name: Cache cargo crates and build outputs
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-x86_64
+          cache-on-failure: true
+      - name: Set up compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Install AppImage runtime deps
         run: |
           sudo apt-get update
@@ -129,6 +144,9 @@ jobs:
         run: |
           mkdir -p "$OUTPUT_DIR"
           ./scripts/package-linux.sh
+      - name: Print compiler cache stats
+        if: always()
+        run: sccache --show-stats
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
