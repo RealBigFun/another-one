@@ -1,7 +1,9 @@
 //! Custom asset source that loads from the project or app bundle at runtime.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::path::Path;
+use std::path::PathBuf;
 
 use gpui::SharedString;
 
