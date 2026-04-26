@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'iroh_client.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `changed_file_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`
+// These functions are ignored because they are not marked as `pub`: `attached_key`, `available_open_in_apps`, `changed_file_to_dto`, `check_to_dto`, `commit_to_dto`, `detach_internal`, `flatten_project_store`, `map_agent_provider_back`, `map_agent_provider`, `map_project_kind`, `open_in_app_to_dto`, `parse_open_in_app_id`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AttachedTab`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Construct a session bound to the desktop's in-process daemon.
 Future<LocalSession> localConnect() =>
@@ -145,6 +145,20 @@ abstract class LocalSession implements RustOpaqueInterface {
   /// build's "look up once at boot" behaviour
   /// (`spawn_github_link_lookup` in `core::git_service`).
   Future<String?> readProjectGithubUrl({required String projectId});
+
+  /// Pull-request CI checks for `project_id`'s current branch.
+  /// Powers the right sidebar's Checks pane. Calls into
+  /// [`another_one_core::git_actions::find_pull_request_checks`]
+  /// (which shells out to `gh pr checks`) inside `spawn_blocking`.
+  ///
+  /// Three-state return:
+  ///   * `Ok(Some(list))` — the PR exists and these are its checks
+  ///     (may be empty when no checks are configured).
+  ///   * `Ok(None)` — no PR for the current branch, or the project
+  ///     id is unknown. UI shows the empty state.
+  ///   * `Err(_)` — gh CLI missing, network failure, or any other
+  ///     hard error. UI surfaces the message.
+  Future<List<CheckDto>?> readPullRequestChecks({required String projectId});
 
   /// Recent commits on `project_id`'s current branch, capped at
   /// `limit` entries. Powers the right sidebar's Commits pane —
@@ -283,6 +297,66 @@ class ChangedFileDto {
           indexStatus == other.indexStatus &&
           worktreeStatus == other.worktreeStatus &&
           untracked == other.untracked;
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::PullRequestCheckBucket`].
+/// Drives the glyph + colour for each check row on the right
+/// sidebar's Checks pane.
+enum CheckBucket { pass, fail, pending, skipping, cancel }
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::PullRequestCheck`]. Mostly raw
+/// — UI maps `bucket` to glyph/colour and `state` is the verbatim
+/// string `gh pr checks` returned ("pass", "in_progress", etc.).
+class CheckDto {
+  /// Check name (e.g. "build / linux", "lint").
+  final String name;
+
+  /// Raw state string from gh CLI; shown as the row subtitle.
+  final String state;
+  final CheckBucket bucket;
+
+  /// Optional human description gh CLI sometimes provides.
+  final String? description;
+
+  /// Link to the check run page on GitHub. UI renders the row
+  /// clickable when set.
+  final String? link;
+
+  /// Pre-formatted "1m 23s"-style duration. None for checks that
+  /// haven't started or completed.
+  final String? durationText;
+
+  const CheckDto({
+    required this.name,
+    required this.state,
+    required this.bucket,
+    this.description,
+    this.link,
+    this.durationText,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      state.hashCode ^
+      bucket.hashCode ^
+      description.hashCode ^
+      link.hashCode ^
+      durationText.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CheckDto &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          state == other.state &&
+          bucket == other.bucket &&
+          description == other.description &&
+          link == other.link &&
+          durationText == other.durationText;
 }
 
 /// FRB-friendly mirror of

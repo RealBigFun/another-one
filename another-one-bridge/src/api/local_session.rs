@@ -564,6 +564,60 @@ impl LocalSession {
         }))
     }
 
+    /// Pull-request CI checks for `project_id`'s current branch.
+    /// Powers the right sidebar's Checks pane. Calls into
+    /// [`another_one_core::git_actions::find_pull_request_checks`]
+    /// (which shells out to `gh pr checks`) inside `spawn_blocking`.
+    ///
+    /// Three-state return:
+    ///   * `Ok(Some(list))` — the PR exists and these are its checks
+    ///     (may be empty when no checks are configured).
+    ///   * `Ok(None)` — no PR for the current branch, or the project
+    ///     id is unknown. UI shows the empty state.
+    ///   * `Err(_)` — gh CLI missing, network failure, or any other
+    ///     hard error. UI surfaces the message.
+    pub async fn read_pull_request_checks(
+        &self,
+        project_id: String,
+    ) -> anyhow::Result<Option<Vec<CheckDto>>> {
+        let registry = local_registry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "read_pull_request_checks: set_local_registry not called"
+            )
+        })?;
+        let project_path = {
+            let state = registry.lock().map_err(|_| {
+                anyhow::anyhow!(
+                    "read_pull_request_checks: RegistryState mutex poisoned"
+                )
+            })?;
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        };
+        let Some(project_path) = project_path else {
+            return Ok(None);
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            another_one_core::git_actions::find_pull_request_checks(
+                &project_path,
+                None,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("read_pull_request_checks join: {e}"))?;
+        match result {
+            Ok(Some(checks)) => {
+                Ok(Some(checks.into_iter().map(check_to_dto).collect()))
+            }
+            Ok(None) => Ok(None),
+            Err(message) => Err(anyhow::anyhow!(message)),
+        }
+    }
+
     /// Resolve the GitHub remote URL for a project by shelling out to
     /// `git remote get-url origin` and normalising the result through
     /// [`another_one_core::git_actions::find_github_repo_url`].
@@ -1043,6 +1097,67 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         AgentProviderKind::Amp => AgentProvider::Amp,
         AgentProviderKind::RovoDev => AgentProvider::RovoDev,
         AgentProviderKind::Forge => AgentProvider::Forge,
+    }
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::PullRequestCheckBucket`].
+/// Drives the glyph + colour for each check row on the right
+/// sidebar's Checks pane.
+#[derive(Debug, Clone, Copy)]
+pub enum CheckBucket {
+    Pass,
+    Fail,
+    Pending,
+    Skipping,
+    Cancel,
+}
+
+/// FRB-friendly mirror of
+/// [`another_one_core::git_actions::PullRequestCheck`]. Mostly raw
+/// — UI maps `bucket` to glyph/colour and `state` is the verbatim
+/// string `gh pr checks` returned ("pass", "in_progress", etc.).
+#[derive(Debug, Clone)]
+pub struct CheckDto {
+    /// Check name (e.g. "build / linux", "lint").
+    pub name: String,
+    /// Raw state string from gh CLI; shown as the row subtitle.
+    pub state: String,
+    pub bucket: CheckBucket,
+    /// Optional human description gh CLI sometimes provides.
+    pub description: Option<String>,
+    /// Link to the check run page on GitHub. UI renders the row
+    /// clickable when set.
+    pub link: Option<String>,
+    /// Pre-formatted "1m 23s"-style duration. None for checks that
+    /// haven't started or completed.
+    pub duration_text: Option<String>,
+}
+
+fn check_to_dto(c: another_one_core::git_actions::PullRequestCheck) -> CheckDto {
+    CheckDto {
+        name: c.name,
+        state: c.state,
+        bucket: match c.bucket {
+            another_one_core::git_actions::PullRequestCheckBucket::Pass => {
+                CheckBucket::Pass
+            }
+            another_one_core::git_actions::PullRequestCheckBucket::Fail => {
+                CheckBucket::Fail
+            }
+            another_one_core::git_actions::PullRequestCheckBucket::Pending => {
+                CheckBucket::Pending
+            }
+            another_one_core::git_actions::PullRequestCheckBucket::Skipping => {
+                CheckBucket::Skipping
+            }
+            another_one_core::git_actions::PullRequestCheckBucket::Cancel => {
+                CheckBucket::Cancel
+            }
+        },
+        description: c.description,
+        link: c.link,
+        duration_text: c.duration_text,
     }
 }
 

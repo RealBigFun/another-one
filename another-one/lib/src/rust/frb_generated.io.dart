@@ -108,6 +108,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChangedFileDto dco_decode_changed_file_dto(dynamic raw);
 
   @protected
+  CheckBucket dco_decode_check_bucket(dynamic raw);
+
+  @protected
+  CheckDto dco_decode_check_dto(dynamic raw);
+
+  @protected
   CommitDto dco_decode_commit_dto(dynamic raw);
 
   @protected
@@ -118,6 +124,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto> dco_decode_list_changed_file_dto(dynamic raw);
+
+  @protected
+  List<CheckDto> dco_decode_list_check_dto(dynamic raw);
 
   @protected
   List<CommitDto> dco_decode_list_commit_dto(dynamic raw);
@@ -165,6 +174,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChangedFileDto>? dco_decode_opt_list_changed_file_dto(dynamic raw);
+
+  @protected
+  List<CheckDto>? dco_decode_opt_list_check_dto(dynamic raw);
 
   @protected
   PairingInfo dco_decode_pairing_info(dynamic raw);
@@ -289,6 +301,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChangedFileDto sse_decode_changed_file_dto(SseDeserializer deserializer);
 
   @protected
+  CheckBucket sse_decode_check_bucket(SseDeserializer deserializer);
+
+  @protected
+  CheckDto sse_decode_check_dto(SseDeserializer deserializer);
+
+  @protected
   CommitDto sse_decode_commit_dto(SseDeserializer deserializer);
 
   @protected
@@ -301,6 +319,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ChangedFileDto> sse_decode_list_changed_file_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<CheckDto> sse_decode_list_check_dto(SseDeserializer deserializer);
 
   @protected
   List<CommitDto> sse_decode_list_commit_dto(SseDeserializer deserializer);
@@ -358,6 +379,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ChangedFileDto>? sse_decode_opt_list_changed_file_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<CheckDto>? sse_decode_opt_list_check_dto(SseDeserializer deserializer);
 
   @protected
   PairingInfo sse_decode_pairing_info(SseDeserializer deserializer);
@@ -503,6 +527,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_check_bucket(CheckBucket self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_check_dto(CheckDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_commit_dto(CommitDto self, SseSerializer serializer);
 
   @protected
@@ -516,6 +546,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     List<ChangedFileDto> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_list_check_dto(List<CheckDto> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_commit_dto(
@@ -589,6 +622,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_list_changed_file_dto(
     List<ChangedFileDto>? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_list_check_dto(
+    List<CheckDto>? self,
     SseSerializer serializer,
   );
 

@@ -280,6 +280,18 @@ class LocalTransport extends DaemonConnection implements TerminalTransport {
     return session.readRecentCommits(projectId: projectId, limit: limit);
   }
 
+  /// Shell out (via the embedded daemon) to `gh pr checks` for the
+  /// current branch's PR. See [`DaemonConnection.readPullRequestChecks`]
+  /// for the three-state return contract.
+  @override
+  Future<List<CheckDto>?> readPullRequestChecks(String projectId) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('readPullRequestChecks: LocalTransport not connected');
+    }
+    return session.readPullRequestChecks(projectId: projectId);
+  }
+
   @override
   Future<void> attachTab({
     required String sectionId,

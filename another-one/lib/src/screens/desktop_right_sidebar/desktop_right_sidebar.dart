@@ -13,8 +13,10 @@
 //     author + relative time) via `read_recent_commits`. The
 //     expandable per-commit file list GPUI paints needs a
 //     `read_commit_file_changes` bridge call.
-//   - Checks: still empty-state placeholder. Needs
-//     `LocalSession.read_pull_request_check_runs`.
+//   - Checks: list of `gh pr checks` rows via
+//     `read_pull_request_checks`. Three-state UI: PR not found,
+//     no checks configured, or an error from gh (CLI missing,
+//     auth failure).
 //
 // This file's purpose is the visual + state shell so those verbs
 // have a place to land without re-laying-out the chrome each time.
@@ -22,9 +24,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../rust/api/local_session.dart' show ChangedFileDto, CommitDto;
+import '../../rust/api/local_session.dart'
+    show ChangedFileDto, CheckBucket, CheckDto, CommitDto;
 import '../../state/active_project_provider.dart';
 import '../../state/changed_files_provider.dart';
+import '../../state/pr_checks_provider.dart';
 import '../../state/recent_commits_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
@@ -356,12 +360,119 @@ class _CommitRow extends StatelessWidget {
   }
 }
 
-class _ChecksPane extends StatelessWidget {
+class _ChecksPane extends ConsumerWidget {
   const _ChecksPane();
 
   @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final projectId = ref.watch(activeProjectIdProvider);
+    if (projectId == null) {
+      return const EmptyState(text: 'No project selected');
+    }
+    final checks = ref.watch(prChecksProvider(projectId));
+    return checks.when(
+      data: (list) {
+        if (list == null) {
+          return const EmptyState(text: 'No pull request for this branch');
+        }
+        if (list.isEmpty) {
+          return const EmptyState(text: 'No checks configured for this PR');
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: AppTokens.space2),
+          itemCount: list.length,
+          itemBuilder: (_, i) => _CheckRow(check: list[i]),
+        );
+      },
+      loading: () => const EmptyState(text: 'Loading PR checks…'),
+      error: (e, _) => EmptyState(text: 'Could not load checks: $e'),
+    );
+  }
+}
+
+/// Single check row — bucket glyph + name + state + duration.
+/// Clickable when `link` is set: opens the check's GitHub page in
+/// the system browser, mirroring GPUI's
+/// `right_sidebar.rs::open_external_url` chevron.
+class _CheckRow extends StatelessWidget {
+  const _CheckRow({required this.check});
+
+  final CheckDto check;
+
+  @override
   Widget build(BuildContext context) {
-    return const EmptyState(text:'No checks to show');
+    final bucket = check.bucket;
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTokens.space3,
+        vertical: AppTokens.space2,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(
+            _bucketIcon(bucket),
+            size: 16,
+            color: _bucketColor(bucket),
+          ),
+          const SizedBox(width: AppTokens.space2),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  check.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: AppTokens.fontBody,
+                    color: AppTokens.textPrimary,
+                  ),
+                ),
+                Text(
+                  check.state,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: AppTokens.fontCaption,
+                    color: AppTokens.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (check.durationText != null) ...[
+            const SizedBox(width: AppTokens.space2),
+            Text(
+              check.durationText!,
+              style: const TextStyle(
+                fontSize: AppTokens.fontCaption,
+                color: AppTokens.textMuted,
+                fontFamily: AppTokens.fontFamilyMono,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  IconData _bucketIcon(CheckBucket bucket) {
+    return switch (bucket) {
+      CheckBucket.pass => Icons.check_circle,
+      CheckBucket.fail => Icons.error,
+      CheckBucket.pending => Icons.pending,
+      CheckBucket.skipping => Icons.remove_circle_outline,
+      CheckBucket.cancel => Icons.cancel,
+    };
+  }
+
+  Color _bucketColor(CheckBucket bucket) {
+    return switch (bucket) {
+      CheckBucket.pass => AppTokens.successIcon,
+      CheckBucket.fail => AppTokens.errorIcon,
+      CheckBucket.pending => AppTokens.warningIcon,
+      CheckBucket.skipping => AppTokens.textMuted,
+      CheckBucket.cancel => AppTokens.textMuted,
+    };
   }
 }
 

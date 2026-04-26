@@ -32,7 +32,7 @@ import 'dart:typed_data';
 
 import 'rust/api/iroh_client.dart';
 import 'rust/api/local_session.dart'
-    show ChangedFileDto, OpenInState, RecentCommitsView;
+    show ChangedFileDto, CheckDto, OpenInState, RecentCommitsView;
 import 'transport.dart';
 
 /// Unified interface for any daemon — local FFI or remote iroh —
@@ -238,6 +238,21 @@ abstract class DaemonConnection {
     throw UnimplementedError(
       'readRecentCommits: requires Control::ReadRecentCommits wire '
       'variant on the iroh transport (not yet implemented).',
+    );
+  }
+
+  /// CI check runs for `projectId`'s current PR. Powers the right
+  /// sidebar's Checks pane.
+  ///
+  /// Three-state contract:
+  ///   * `Some(list)` — the PR exists; these are its checks
+  ///     (possibly empty when no checks are configured).
+  ///   * `null` — no PR for the current branch, or unknown project.
+  ///   * Throw — gh CLI missing, network error, etc.
+  Future<List<CheckDto>?> readPullRequestChecks(String projectId) {
+    throw UnimplementedError(
+      'readPullRequestChecks: requires Control::ReadPullRequestChecks '
+      'wire variant on the iroh transport (not yet implemented).',
     );
   }
 }
