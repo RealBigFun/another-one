@@ -132,6 +132,15 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
 
+  /// Issue [`Control::SetBranchSetting`] for `project_id`. `field`
+  /// is one of `"default-branch"` / `"default-target-branch"`;
+  /// `branch_name == None` clears the override.
+  Future<BigInt> setBranchSetting({
+    required String projectId,
+    required String field,
+    String? branchName,
+  });
+
   /// Issue [`Control::SlugifyBranchName`] for `name`. Pure verb —
   /// no project state involved on the daemon side.
   Future<BigInt> slugifyBranchName({required String name});
@@ -680,6 +689,11 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.branchSettingsAck({
     ResolvedBranchSettingsWire? settings,
   }) = WorkerReply_BranchSettingsAck;
+
+  /// Reply to [`Control::SetBranchSetting`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::SetBranchSettingAck`.
+  const factory WorkerReply.setBranchSettingAck({required bool changed}) =
+      WorkerReply_SetBranchSettingAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

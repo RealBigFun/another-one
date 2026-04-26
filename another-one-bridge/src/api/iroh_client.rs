@@ -238,6 +238,13 @@ enum Control {
     /// Snapshot the resolved branch settings for a project. Mirror
     /// of `daemon-sandbox/src/frame.rs::Control::ReadBranchSettings`.
     ReadBranchSettings { project_id: String },
+    /// Update one branch-setting field. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::SetBranchSetting`.
+    SetBranchSetting {
+        project_id: String,
+        field: String,
+        branch_name: Option<String>,
+    },
     /// `another-one-ojm.5` — stage one changed file. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::StageChangedFile`.
     /// Reply is `WorkerReply::StageChangedFileAck` carrying the
@@ -446,6 +453,9 @@ pub enum WorkerReply {
     BranchSettingsAck {
         settings: Option<ResolvedBranchSettingsWire>,
     },
+    /// Reply to [`Control::SetBranchSetting`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::SetBranchSettingAck`.
+    SetBranchSettingAck { changed: bool },
     /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
     /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::StageChangedFileAck`.
     /// Carries the post-mutation `changed_files` snapshot inline so
@@ -2028,6 +2038,28 @@ impl IrohSession {
         let id = self.next_request_id();
         self.send_control(id, Control::ReadBranchSettings { project_id })
             .await?;
+        Ok(id)
+    }
+
+    /// Issue [`Control::SetBranchSetting`] for `project_id`. `field`
+    /// is one of `"default-branch"` / `"default-target-branch"`;
+    /// `branch_name == None` clears the override.
+    pub async fn set_branch_setting(
+        &self,
+        project_id: String,
+        field: String,
+        branch_name: Option<String>,
+    ) -> anyhow::Result<u64> {
+        let id = self.next_request_id();
+        self.send_control(
+            id,
+            Control::SetBranchSetting {
+                project_id,
+                field,
+                branch_name,
+            },
+        )
+        .await?;
         Ok(id)
     }
 

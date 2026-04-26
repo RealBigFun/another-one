@@ -335,6 +335,22 @@ pub enum Control {
     /// Reply is [`WorkerReply::BranchSettingsAck`] with `None` when
     /// the project is unknown or has no repo metadata.
     ReadBranchSettings { project_id: String },
+    /// Update the configured default branch or default-target branch
+    /// for `project_id`'s root project. `field` must be one of
+    /// `"default-branch"` / `"default-target-branch"`. `branch_name`
+    /// of `None` clears the override. Reply is
+    /// [`WorkerReply::SetBranchSettingAck`] with `changed=true` when
+    /// the persisted store actually changed; bad fields or
+    /// unavailable branches surface as [`WorkerReply::Err`].
+    ///
+    /// Bundled with the read verbs (rather than ojm.5's git
+    /// mutations) because it operates on the same git-config-shaped
+    /// state. Review economy.
+    SetBranchSetting {
+        project_id: String,
+        field: String,
+        branch_name: Option<String>,
+    },
     /// `another-one-ojm.5` — stage one changed file via `git add -A`.
     /// `original_path` is set only on rename/copy entries — git needs
     /// both source and destination to resolve the rename pair. Reply
@@ -728,6 +744,9 @@ pub enum WorkerReply {
     BranchSettingsAck {
         settings: Option<ResolvedBranchSettingsWire>,
     },
+    /// Reply to [`Control::SetBranchSetting`]. `changed=true` iff
+    /// the persisted store actually changed.
+    SetBranchSettingAck { changed: bool },
     /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
     /// Carries the post-mutation `changed_files` snapshot inline so
     /// the issuing client refreshes the right-sidebar Changes pane

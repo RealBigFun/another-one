@@ -854,6 +854,19 @@ async fn handle_control(
             let reply = WorkerReply::BranchSettingsAck { settings };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::SetBranchSetting {
+            project_id,
+            field,
+            branch_name,
+        } => match registry.set_branch_setting(&project_id, &field, branch_name.as_deref()) {
+            Ok(changed) => {
+                let reply = WorkerReply::SetBranchSettingAck { changed };
+                send_worker_reply(outbound_tx, request_id, &reply).await?;
+            }
+            Err(message) => {
+                send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+            }
+        },
         Control::CreateReviewTask {
             project_id,
             pull_request_number,

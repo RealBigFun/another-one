@@ -375,6 +375,19 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         None
     }
 
+    /// Update one branch-setting field. `field` is `"default-branch"`
+    /// or `"default-target-branch"`; `branch_name` of `None` clears
+    /// the override. Returns `Ok(true)` when the persisted store
+    /// changed. Sister to `LocalSession::set_project_branch_setting`.
+    fn set_branch_setting(
+        &self,
+        _project_id: &str,
+        _field: &str,
+        _branch_name: Option<&str>,
+    ) -> Result<bool, String> {
+        Err("set_branch_setting: not supported by this registry".to_string())
+    }
+
     // ── Git mutation (another-one-ojm.5) ──────────────────────────
 
     /// `another-one-ojm.5` — stage one changed file via `git add -A`.

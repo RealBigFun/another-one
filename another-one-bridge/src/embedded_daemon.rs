@@ -727,6 +727,29 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         .flatten()
     }
 
+    fn set_branch_setting(
+        &self,
+        project_id: &str,
+        field: &str,
+        branch_name: Option<&str>,
+    ) -> Result<bool, String> {
+        let result = self.with_state(|state| match field {
+            "default-branch" => state
+                .project_store
+                .update_default_branch(project_id, branch_name.map(|s| s.to_string())),
+            "default-target-branch" => state
+                .project_store
+                .update_default_target_branch(project_id, branch_name.map(|s| s.to_string())),
+            other => Err(format!(
+                "set_branch_setting: unknown field `{other}`"
+            )),
+        });
+        match result {
+            Some(inner) => inner,
+            None => Err("set_branch_setting: registry state unavailable".to_string()),
+        }
+    }
+
     fn stage_changed_file<'a>(
         &'a self,
         project_id: &'a str,
