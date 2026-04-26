@@ -309,7 +309,9 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                               style: const TextStyle(
                                 fontSize: AppTokens.fontBodyLg,
                                 fontWeight: FontWeight.w500,
-                                color: AppTokens.textSecondary,
+                                // GPUI's `branch_row` text_col —
+                                // hsla(0,0,0.80,1) → opaque gray.
+                                color: Color(0xFFCCCCCC),
                               ),
                             ),
                           ),
@@ -319,17 +321,19 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                   // glyph GPUI's `branch_row` shows (we previously
                   // had `git-worktree`, which is a different icon
                   // used for the New-Task modal's worktree toggle).
+                  // Color is GPUI's `muted_col`: hsla(0,0,0.50,1)
+                  // → opaque gray, NOT a translucent white token.
                   const AppIcon(
                     'git-split',
                     size: 11,
-                    color: AppTokens.textMuted,
+                    color: Color(0xFF808080),
                   ),
                   if (task.pinned) ...[
                     const SizedBox(width: 4),
                     const AppIcon(
                       'pin-off',
                       size: 11,
-                      color: AppTokens.textMuted,
+                      color: Color(0xFF808080),
                     ),
                   ],
                   // No trailing `Spacer()` — `Flexible(flex:1)`
@@ -345,6 +349,11 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                   padding: const EdgeInsets.only(top: 2),
                   child: Row(
                     children: [
+                      // GPUI's `muted_col` (hsla(0,0,0.50,1) → opaque
+                      // gray) for the subtitle and the bullet
+                      // separator. The previous translucent-white
+                      // `textPlaceholder` token rendered at white@0.38
+                      // — way more muted than GPUI's 0.50.
                       if (subtitle != null)
                         Flexible(
                           child: Text(
@@ -352,7 +361,7 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: AppTokens.fontCaption,
-                              color: AppTokens.textPlaceholder,
+                              color: Color(0xFF808080),
                             ),
                           ),
                         ),
@@ -363,7 +372,7 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                             '•',
                             style: TextStyle(
                               fontSize: AppTokens.fontCaption,
-                              color: AppTokens.textPlaceholder,
+                              color: Color(0xFF808080),
                             ),
                           ),
                         ),
