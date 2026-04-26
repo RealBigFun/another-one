@@ -10,7 +10,7 @@
 //!
 //! The library crate (`daemon_sandbox::run_endpoint`) powers the
 //! iroh side. The desktop app links the same library and supplies
-//! its *own* `TerminalRegistry` impl — when you're running the real
+//! its *own* `DaemonRegistry` impl — when you're running the real
 //! AnotherOne app, this binary isn't involved.
 
 use std::net::SocketAddr;

@@ -23,7 +23,7 @@
 //!
 //! What does *not* live here (stays in `desktop/src/daemon_host.rs`):
 //!
-//! * The `TerminalRegistry` trait impl itself — its trait + the
+//! * The `DaemonRegistry` trait impl itself — its trait + the
 //!   wire-summary types (`ProjectSummary`, `TabSummary`, etc.) come
 //!   from `daemon-sandbox`, which already depends on
 //!   `another-one-core`; moving the impl here would create a cycle.

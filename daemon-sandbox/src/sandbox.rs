@@ -1,11 +1,11 @@
-//! `TerminalRegistry` impl used only by the standalone
+//! `DaemonRegistry` impl used only by the standalone
 //! `daemon-sandbox` binary. Fakes a single project with one task and
 //! one tab; the first `attach_tab` call spawns a bash PTY, subsequent
 //! attaches return a fresh receiver on the same broadcast. Useful
 //! for smoke-testing the iroh endpoint + mobile UI without running
 //! the full desktop app.
 //!
-//! The desktop crate supplies its *own* `TerminalRegistry` impl that
+//! The desktop crate supplies its *own* `DaemonRegistry` impl that
 //! wraps the running `AnotherOneApp`. This module is not linked into
 //! that path.
 
@@ -17,7 +17,7 @@ use tracing::{debug, warn};
 
 use crate::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
 use crate::pty::PtySession;
-use crate::registry::TerminalRegistry;
+use crate::registry::DaemonRegistry;
 
 const SANDBOX_PROJECT_ID: &str = "sandbox";
 const SANDBOX_TASK_ID: &str = "sandbox-task";
@@ -75,7 +75,7 @@ impl Default for SandboxRegistry {
     }
 }
 
-impl TerminalRegistry for SandboxRegistry {
+impl DaemonRegistry for SandboxRegistry {
     fn list_projects(&self) -> Vec<ProjectSummary> {
         vec![ProjectSummary {
             id: SANDBOX_PROJECT_ID.to_string(),

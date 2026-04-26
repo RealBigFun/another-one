@@ -27,7 +27,7 @@ use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
 use crate::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
-use crate::registry::{EndpointHandle, PairState, TerminalRegistry};
+use crate::registry::{EndpointHandle, PairState, DaemonRegistry};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
 /// breaks can be versioned cleanly (`/1`, `/2`, …).
@@ -70,7 +70,7 @@ pub const CLOSE_REASON_INCOMPATIBLE_VERSION: &[u8] = b"anotherone/incompatible-v
 /// loop runs on a detached task owned by the returned handle (drop
 /// or `abort()` the handle to shut it down).
 pub async fn run_embedded(
-    registry: Arc<dyn TerminalRegistry>,
+    registry: Arc<dyn DaemonRegistry>,
     secret_key_path: PathBuf,
     paired_peers_path: PathBuf,
 ) -> anyhow::Result<EndpointHandle> {
@@ -158,7 +158,7 @@ struct Attached {
 
 async fn handle_incoming(
     incoming: Incoming,
-    registry: Arc<dyn TerminalRegistry>,
+    registry: Arc<dyn DaemonRegistry>,
     paired_peers_path: &Path,
     pair_state: Arc<Mutex<PairState>>,
 ) -> anyhow::Result<()> {
@@ -213,7 +213,7 @@ enum PostAuth {
 
 async fn handle_connection(
     conn: Connection,
-    registry: Arc<dyn TerminalRegistry>,
+    registry: Arc<dyn DaemonRegistry>,
     viewer_id: &str,
     mut authz: PostAuth,
     paired_peers_path: &Path,
@@ -389,7 +389,7 @@ fn consume_hello(
 async fn handle_control(
     request_id: u64,
     ctrl: Control,
-    registry: &Arc<dyn TerminalRegistry>,
+    registry: &Arc<dyn DaemonRegistry>,
     outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
     attached: &mut Option<Attached>,
     viewer_id: &str,

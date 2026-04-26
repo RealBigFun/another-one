@@ -89,9 +89,9 @@ impl Drop for EndpointHandle {
 
 /// The abstraction every daemon handler resolves through. Impls
 /// must be `Send + Sync` (the daemon's tokio tasks hold them across
-/// awaits) and have 'static lifetime (so an `Arc<dyn TerminalRegistry>`
+/// awaits) and have 'static lifetime (so an `Arc<dyn DaemonRegistry>`
 /// can cross thread boundaries).
-pub trait TerminalRegistry: Send + Sync + 'static {
+pub trait DaemonRegistry: Send + Sync + 'static {
     /// Snapshot of projects + tasks + tabs as of now. The daemon
     /// calls this on every `Control::ListProjects`, so cheap.
     fn list_projects(&self) -> Vec<ProjectSummary>;
@@ -141,6 +141,6 @@ pub trait TerminalRegistry: Send + Sync + 'static {
 /// the iroh endpoint + mobile UI without the full desktop app
 /// running; the desktop uses a different impl.
 #[allow(dead_code)]
-pub fn sandbox_registry() -> Arc<dyn TerminalRegistry> {
+pub fn sandbox_registry() -> Arc<dyn DaemonRegistry> {
     Arc::new(crate::sandbox::SandboxRegistry::new())
 }

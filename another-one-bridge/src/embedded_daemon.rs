@@ -42,7 +42,7 @@ use another_one_core::terminal_types::TerminalRuntimeKey;
 use daemon_sandbox::frame::{
     AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
 };
-use daemon_sandbox::{EndpointHandle, TerminalRegistry};
+use daemon_sandbox::{EndpointHandle, DaemonRegistry};
 
 use crate::local_pair::{set_local_pair_info, LocalPairInfo};
 use crate::local_registry::set_local_registry;
@@ -101,7 +101,7 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
 
     let weak = Arc::downgrade(&registry_state);
     drop(registry_state);
-    let registry: Arc<dyn TerminalRegistry> = Arc::new(BridgeTerminalRegistry::new(weak));
+    let registry: Arc<dyn DaemonRegistry> = Arc::new(BridgeTerminalRegistry::new(weak));
 
     let paths = match daemon_paths() {
         Ok(p) => p,
@@ -163,7 +163,7 @@ impl LocalPairInfo for EndpointHandlePairAdapter {
     }
 }
 
-/// `TerminalRegistry` impl that operates directly on the bridge's
+/// `DaemonRegistry` impl that operates directly on the bridge's
 /// `RegistryState`. Mirrors `desktop::DesktopTerminalRegistry` but
 /// without the desktop's project-summary projection logic — that
 /// will return when the Flutter desktop port owns the project tree
@@ -186,7 +186,7 @@ impl BridgeTerminalRegistry {
     }
 }
 
-impl TerminalRegistry for BridgeTerminalRegistry {
+impl DaemonRegistry for BridgeTerminalRegistry {
     fn list_projects(&self) -> Vec<ProjectSummary> {
         // Project flattening mirrors `LocalSession::list_projects`'s
         // `flatten_project_store`. Worktree-kind projects collapse
