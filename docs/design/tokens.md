@@ -1,10 +1,12 @@
 # Palette
 
-All values below are drawn from `desktop/src/tokens.rs` and the GPUI
-source. HSL-A triples are the authoritative form; RGB hex is a
-lossy-rounded reference. Every `hsla(…)` uses hue in turns (0..1), not
-degrees — the channel numbers here mirror the Rust source, so `220./360.`
-means "220° hue."
+All values below are the canonical AnotherOne palette, originally
+captured from the GPUI desktop's `desktop/src/tokens.rs` and now
+maintained in `another-one/lib/src/tokens.dart`. HSL-A triples
+were the authoritative form when GPUI was alive; the Flutter port
+stores sRGB hex directly. The Rust column below is kept as an
+archive of the original values so anyone reaching for an old
+commit's `tokens.rs` recognises the names.
 
 ## Surfaces
 

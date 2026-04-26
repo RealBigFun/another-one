@@ -5,7 +5,7 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
 
 ## Layout
 
-- [[apps/desktop]] · [[apps/daemon-sandbox]] · [[apps/mobile]] · [[apps/another-one-bridge]]
+- [[apps/another-one]] · [[apps/daemon-sandbox]] · [[apps/another-one-bridge]]
   — one doc per workspace member: what it is, how to run, key files.
 - `architecture/` — reusable patterns that have proved out in the codebase.
   Currently: [[architecture/terminal-wrapping-principle]],
@@ -13,11 +13,10 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
   [[architecture/peer-to-peer-nodes]],
   [[architecture/frb-tokio-runtime]],
   [[architecture/git-mv-for-restructures]].
-- `design/` — the cross-platform design system extracted from the
-  desktop app: [[design/README]], [[design/tokens]],
-  [[design/typography]], [[design/spacing]], [[design/components]].
-  Source-of-truth values also live at `desktop/src/tokens.rs` and in
-  `docs/design/tokens.json`.
+- `design/` — the cross-platform design system: [[design/README]],
+  [[design/tokens]], [[design/typography]], [[design/spacing]],
+  [[design/components]]. Source-of-truth values live at
+  `another-one/lib/src/tokens.dart` and in `docs/design/tokens.json`.
 - `postmortems/` — real debugging sagas with root cause and fix.
   Currently:
   - [[postmortems/2026-04-23-iroh-android-hang]] — four stacked causes that

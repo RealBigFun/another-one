@@ -1,32 +1,59 @@
 # AnotherOne
 
 AnotherOne is a greenfield desktop and mobile app built around local agent
-workflows.
+workflows. The desktop client is a Flutter app talking to a Rust bridge
+crate (`another-one-bridge`) that hosts an in-process iroh daemon for
+mobile pairing.
+
+## Layout
+
+```
+another-one/          flutter desktop app (Dart)
+another-one-bridge/   FRB bridge — exposes core to Dart + hosts the embedded daemon
+core/                 headless Rust library (project store, git, mcp, terminal launch)
+daemon-sandbox/       iroh daemon library used by the bridge + standalone test binary
+mcp-shim/             tiny Rust binary the daemon catalog can advertise
+docs/                 architecture notes, postmortems, design docs
+scripts/              dev + packaging scripts
+```
 
 ## Development
 
-Run the desktop app:
+Run the desktop app with hot reload:
 
 ```sh
-cargo run -p desktop
+scripts/dev-watch.sh
+# or, equivalently:
+cd another-one && flutter run -d linux
 ```
 
-The desktop target is macOS and Linux.
+Saves under `another-one/lib/` hot-reload immediately. Rust changes
+under `another-one-bridge/` or `core/` hot-restart automatically once
+`cargo build` finishes.
 
-## Releasing for your own Mac
+To regenerate the FFI bindings after editing the bridge:
 
-On macOS, build a locally signed `.app` bundle and `.dmg` with:
+```sh
+cd another-one
+flutter_rust_bridge_codegen generate
+```
+
+## Releasing for your own machine
+
+Linux AppImage:
+
+```sh
+scripts/package-linux.sh           # builds, lands under target/release/linux/
+scripts/package-linux.sh --open    # builds and launches it
+scripts/package-linux.sh --install # builds and replaces $HOME/Applications/AnotherOne.AppImage
+```
+
+macOS `.app` + `.dmg`:
 
 ```sh
 scripts/package-macos.sh
-```
-
-The package lands under `target/release/macos/`. To open the generated DMG
-when packaging finishes, pass `--open`:
-
-```sh
 scripts/package-macos.sh --open
 ```
 
-This is intended for personal installs on your own Mac. It uses ad-hoc
-codesigning, so it is not a notarized public distribution build.
+Both use ad-hoc codesigning — fine for personal installs on your own
+machine, not a notarized public-distribution build.
