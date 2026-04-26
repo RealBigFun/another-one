@@ -13,8 +13,8 @@ use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
 use crate::frame::{
-    ActiveGitStateWire, AgentProvider, ChangedFileWire, ProjectSummary, RecentCommitsWire,
-    TaskSummary, ToolbarActionOutcome,
+    ActiveGitStateWire, AgentProvider, ChangedFileWire, Check, ProjectPagePullRequest,
+    ProjectSummary, PullRequestStatus, RecentCommitsWire, TaskSummary, ToolbarActionOutcome,
 };
 
 /// Boxed-future return type for `DaemonRegistry` methods that are
@@ -468,6 +468,67 @@ pub trait DaemonRegistry: Send + Sync + 'static {
                 "create_review_task: not supported on this registry"
             ))
         })
+    }
+
+    // ── Pull requests + checks (another-one-ojm.6) ─────────────────
+
+    /// Resolve the latest pull-request status for `project_id`'s
+    /// current branch. `Ok(None)` covers both "project not found"
+    /// and "no PR for the branch"; `Err(_)` is reserved for hard
+    /// failures (gh CLI missing, network) which the daemon then
+    /// surfaces as [`crate::frame::WorkerReply::Err`].
+    ///
+    /// Default impl returns `Ok(None)` so the standalone sandbox
+    /// can keep its in-memory shape (no real git host). The bridge
+    /// override delegates to
+    /// `another_one_core::git_actions::find_latest_pull_request_status`.
+    fn find_pull_request_status(
+        &self,
+        _project_id: &str,
+    ) -> Result<Option<PullRequestStatus>, String> {
+        Ok(None)
+    }
+
+    /// Read CI checks attached to `project_id`'s current PR. Three-
+    /// state return:
+    ///   * `Ok(Some(list))` — PR exists, these are its check rows
+    ///     (list may be empty when no checks are configured).
+    ///   * `Ok(None)` — no PR for the current branch, or unknown
+    ///     project.
+    ///   * `Err(_)` — gh CLI missing, network failure, or any other
+    ///     hard error. The daemon surfaces this as
+    ///     [`crate::frame::WorkerReply::Err`] so the UI can render
+    ///     a toast instead of a silent empty state.
+    ///
+    /// Default impl returns `Ok(None)` so the standalone sandbox's
+    /// in-memory shape stays self-contained. The bridge override
+    /// delegates to `another_one_core::git_actions::find_pull_request_checks`.
+    fn read_pull_request_checks(
+        &self,
+        _project_id: &str,
+    ) -> Result<Option<Vec<Check>>, String> {
+        Ok(None)
+    }
+
+    /// Fetch open pull requests for `project_id` filtered by
+    /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
+    /// 3=draft) plus an optional free-text `query`. `Ok(None)`
+    /// means "unknown project id" so the UI can render its empty
+    /// state; `Err(_)` is reserved for gh CLI / auth / network
+    /// failures (surfaced upstream as
+    /// [`crate::frame::WorkerReply::Err`]).
+    ///
+    /// Default impl returns `Ok(None)` so the sandbox keeps its
+    /// in-memory shape. The bridge override delegates to
+    /// `another_one_core::git_actions::find_project_pull_requests`
+    /// (which shells out to `gh pr list`).
+    fn find_project_pull_requests(
+        &self,
+        _project_id: &str,
+        _filter_index: u32,
+        _query: &str,
+    ) -> Result<Option<Vec<ProjectPagePullRequest>>, String> {
+        Ok(None)
     }
 }
 

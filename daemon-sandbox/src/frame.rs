@@ -350,6 +350,34 @@ pub enum Control {
         head_branch: String,
         agent_provider: Option<AgentProvider>,
     },
+    /// Resolve the latest pull-request status for `project_id`'s
+    /// current branch — drives the titlebar's "Create PR" / "Open PR"
+    /// pill enabledness on every connected client. Reply variant
+    /// is [`WorkerReply::PullRequestStatusAck`]; `status: None`
+    /// covers both "no PR for the branch" and "unknown project".
+    /// Hard failures (gh CLI missing, network error) come back as
+    /// [`WorkerReply::Err`] instead.
+    FindPullRequestStatus { project_id: String },
+    /// Read the CI checks attached to `project_id`'s current PR —
+    /// drives the right-sidebar Checks pane. Reply variant is
+    /// [`WorkerReply::PullRequestChecksAck`] with a three-state
+    /// payload: `Some(list)` = PR exists (list may be empty),
+    /// `None` = no PR or unknown project. gh CLI / network failures
+    /// come back as [`WorkerReply::Err`] so the UI can surface a
+    /// toast rather than rendering a silent empty state.
+    ReadPullRequestChecks { project_id: String },
+    /// Fetch open pull requests for `project_id` filtered by
+    /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
+    /// 3=draft) plus an optional free-text `query` (GitHub search
+    /// syntax). Powers the project page's Open PRs section. Reply
+    /// variant is [`WorkerReply::ProjectPullRequestsAck`]; `prs:
+    /// None` covers the unknown-project case. gh CLI / auth /
+    /// network failures arrive as [`WorkerReply::Err`].
+    FindProjectPullRequests {
+        project_id: String,
+        filter_index: u32,
+        query: String,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -585,6 +613,26 @@ pub enum WorkerReply {
         section_id: String,
         projects: Vec<ProjectSummary>,
     },
+    /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
+    /// when the project has no open PR for its current branch (or
+    /// the project id is unknown). Mutator-snapshot rules don't
+    /// apply — this is a pure read.
+    PullRequestStatusAck {
+        status: Option<PullRequestStatus>,
+    },
+    /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
+    /// payload mirrors the GPUI desktop's
+    /// `core::git_actions::find_pull_request_checks` contract:
+    ///   * `Some(list)` — PR exists, here are its check rows.
+    ///   * `None` — no PR for the branch, or unknown project id.
+    /// gh CLI / network failures come back as [`WorkerReply::Err`].
+    PullRequestChecksAck { checks: Option<Vec<Check>> },
+    /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
+    /// covers the unknown-project case; gh CLI / auth / network
+    /// failures arrive as [`WorkerReply::Err`].
+    ProjectPullRequestsAck {
+        prs: Option<Vec<ProjectPagePullRequest>>,
+    },
 }
 
 /// Wire mirror of the bridge's `ActiveGitStateDto` (FRB-bound) and
@@ -656,6 +704,77 @@ pub struct ToolbarActionOutcome {
     pub toast_message: String,
     pub warning: bool,
     pub refresh_git_state: bool,
+}
+
+/// Lossy wire projection of `core::git_actions::PullRequestStatus`.
+/// One row per project that has an open PR for its current branch;
+/// drives the titlebar's PR pill state across desktop + mobile
+/// (Create vs Open vs Draft, plus the disabled state on the Git
+/// Actions dropdown).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullRequestStatus {
+    pub number: u64,
+    pub url: String,
+    pub state: PullRequestState,
+}
+
+/// Mirror of `core::git_actions::PullRequestState`. Wire-serialised
+/// as lowercase strings — UI maps each to a chip palette + the
+/// titlebar PR pill copy.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestState {
+    Open,
+    Closed,
+    Merged,
+}
+
+/// Lossy wire projection of `core::git_actions::PullRequestCheck`.
+/// One row per CI check on the project's current PR; drives the
+/// right-sidebar Checks pane on every connected client. Bucket is
+/// already classified server-side so mobile doesn't have to
+/// re-derive the colour mapping from the freeform `state` string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Check {
+    pub name: String,
+    pub state: String,
+    pub bucket: CheckBucket,
+    pub description: Option<String>,
+    pub link: Option<String>,
+    pub duration_text: Option<String>,
+}
+
+/// Mirror of `core::git_actions::PullRequestCheckBucket`. Wire form
+/// is snake_case; clients render glyph + colour off this.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckBucket {
+    Pass,
+    Fail,
+    Pending,
+    Skipping,
+    Cancel,
+}
+
+/// Lossy wire projection of `core::git_actions::ProjectPagePullRequest`.
+/// One entry per row in the project page's Open PRs section.
+/// `review_required` / `review_requested_to_me` / `created_by_me`
+/// are pre-derived on the daemon so mobile doesn't need to
+/// re-implement the filter-index logic that gates each row's chip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectPagePullRequest {
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+    pub branch: String,
+    pub author: String,
+    pub lines_added: i32,
+    pub lines_removed: i32,
+    pub draft: bool,
+    pub review_required: bool,
+    pub review_requested_to_me: bool,
+    pub created_by_me: bool,
+    pub state: PullRequestState,
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —
@@ -783,9 +902,80 @@ pub enum ProjectKind {
     Worktree,
 }
 
-// `PullRequestInfo` + `PullRequestState` removed along with the
-// dead `WorkerReply::PullRequestStatus` variant. Reinstate when
-// there's an actual PR-status emission site.
+/// Lossy wire projection of `core::git_actions::PullRequestStatus`.
+/// One row per project that has an open PR for its current branch;
+/// drives the titlebar's PR pill state across desktop + mobile
+/// (Create vs Open vs Draft, plus the disabled state on the Git
+/// Actions dropdown). Encoded inline on
+/// [`WorkerReply::PullRequestStatusAck`] — the desktop bridge fills
+/// it from `core::git_actions::find_latest_pull_request_status`
+/// (which shells out to `gh pr list`); the sandbox always replies
+/// `None`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullRequestStatus {
+    pub number: u64,
+    pub url: String,
+    pub state: PullRequestState,
+}
+
+/// Mirror of `core::git_actions::PullRequestState`. Wire-serialised
+/// as lowercase strings — UI maps each to a chip palette + the
+/// titlebar PR pill copy.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestState {
+    Open,
+    Closed,
+    Merged,
+}
+
+/// Lossy wire projection of `core::git_actions::PullRequestCheck`.
+/// One row per CI check on the project's current PR; drives the
+/// right-sidebar Checks pane on every connected client. Bucket is
+/// already classified server-side so mobile doesn't have to
+/// re-derive the colour mapping from the freeform `state` string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Check {
+    pub name: String,
+    pub state: String,
+    pub bucket: CheckBucket,
+    pub description: Option<String>,
+    pub link: Option<String>,
+    pub duration_text: Option<String>,
+}
+
+/// Mirror of `core::git_actions::PullRequestCheckBucket`. Wire form
+/// is snake_case; clients render glyph + colour off this.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckBucket {
+    Pass,
+    Fail,
+    Pending,
+    Skipping,
+    Cancel,
+}
+
+/// Lossy wire projection of `core::git_actions::ProjectPagePullRequest`.
+/// One entry per row in the project page's Open PRs section.
+/// `review_required` / `review_requested_to_me` / `created_by_me`
+/// are pre-derived on the daemon so mobile doesn't need to
+/// re-implement the filter-index logic that gates each row's chip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectPagePullRequest {
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+    pub branch: String,
+    pub author: String,
+    pub lines_added: i32,
+    pub lines_removed: i32,
+    pub draft: bool,
+    pub review_required: bool,
+    pub review_requested_to_me: bool,
+    pub created_by_me: bool,
+    pub state: PullRequestState,
+}
 
 /// Mirror of `core::agents::AgentProviderKind`. Wire-serialised as
 /// snake_case: `"claude_code"` / `"codex"` / `"cursor_agent"` etc.

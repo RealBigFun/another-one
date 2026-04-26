@@ -4,13 +4,14 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'local_session.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -53,37 +54,34 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
 
-  /// `another-one-ojm.5` — issue a `Control::CreateBranch` frame.
-  Future<void> createBranch({
-    required BigInt requestId,
-    required String projectId,
-    required String branchName,
-    required bool useCurrentTask,
-    required bool migrateChanges,
-  });
-
-  /// `another-one-ojm.5` — issue a `Control::CreateReviewTask` frame.
-  Future<void> createReviewTask({
-    required BigInt requestId,
-    required String projectId,
-    required BigInt pullRequestNumber,
-    required String headBranch,
-    AgentProvider? agentProvider,
-  });
-
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab();
 
-  /// `another-one-ojm.5` — issue a `Control::DiscardChangedFile`
-  /// frame.
-  Future<void> discardChangedFile({
+  /// Issue [`Control::FindProjectPullRequests`] under `request_id`.
+  /// The matching [`WorkerReply::ProjectPullRequestsAck`] (or
+  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`.
+  Future<void> findProjectPullRequests({
     required BigInt requestId,
     required String projectId,
-    required String path,
-    required bool untracked,
-    String? originalPath,
+    required int filterIndex,
+    required String query,
+  });
+
+  /// Issue [`Control::FindPullRequestStatus`] under `request_id`.
+  /// The matching [`WorkerReply::PullRequestStatusAck`] (or
+  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
+  /// keyed by the same id; Dart's `IrohTransport` dispatches it
+  /// against its completer table.
+  ///
+  /// Caller-supplied `request_id` lets the Dart side allocate
+  /// the id via [`Self::next_request_id`] *before* registering
+  /// its completer, eliminating the race where a fast daemon
+  /// reply could arrive before the completer entry exists.
+  Future<void> findPullRequestStatus({
+    required BigInt requestId,
+    required String projectId,
   });
 
   /// Ask the daemon to launch the tab's PTY if it isn't already
@@ -107,42 +105,24 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
+  /// Issue [`Control::ReadPullRequestChecks`] under `request_id`.
+  /// The matching [`WorkerReply::PullRequestChecksAck`] (or
+  /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
+  /// keyed by the same id. Same caller-allocates-id contract as
+  /// [`Self::find_pull_request_status`].
+  Future<void> readPullRequestChecks({
+    required BigInt requestId,
+    required String projectId,
+  });
+
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
   /// variant carries no data the client needs to wait on, so it
   /// uses a fresh request_id but no caller correlates against it.
   Future<void> resize({required int cols, required int rows});
 
-  /// `another-one-ojm.5` — issue a `Control::RunToolbarGitAction`
-  /// frame.
-  Future<void> runToolbarGitAction({
-    required BigInt requestId,
-    required String projectId,
-    required String actionId,
-  });
-
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
-
-  /// `another-one-ojm.5` — issue a `Control::StageAllChanges` frame.
-  Future<void> stageAllChanges({
-    required BigInt requestId,
-    required String projectId,
-  });
-
-  /// `another-one-ojm.5` — issue a `Control::StageChangedFile`
-  /// frame against the daemon. Fire-and-forget at the FRB level:
-  /// the matching `WorkerReply::StageChangedFileAck` arrives on
-  /// `subscribe_worker_replies` keyed to a fresh `request_id` the
-  /// Dart layer allocates via [`Self::next_request_id`]. The Dart
-  /// `IrohTransport` registers a `Completer` against that id
-  /// before calling, so the await-side awaits the ack from there.
-  Future<void> stageChangedFile({
-    required BigInt requestId,
-    required String projectId,
-    required String path,
-    String? originalPath,
-  });
 
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
@@ -162,22 +142,6 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// the daemon when nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
   Future<void> tabResize({required int cols, required int rows});
-
-  /// `another-one-ojm.5` — issue a `Control::UnstageAllChanges`
-  /// frame.
-  Future<void> unstageAllChanges({
-    required BigInt requestId,
-    required String projectId,
-  });
-
-  /// `another-one-ojm.5` — issue a `Control::UnstageChangedFile`
-  /// frame. Same correlation contract as [`Self::stage_changed_file`].
-  Future<void> unstageChangedFile({
-    required BigInt requestId,
-    required String projectId,
-    required String path,
-    String? originalPath,
-  });
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form
@@ -195,63 +159,6 @@ enum AgentProvider {
   rovoDev,
   forge,
   shell,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFile`. Carries the
-/// post-mutation snapshot returned by `StageChangedFileAck` (and
-/// future stage/unstage/discard acks landing in `another-one-ojm.5`).
-/// Same field shape as `ChangedFileDto` on the FRB local-session
-/// surface so the Dart layer can render the right-sidebar Changes
-/// pane without re-projecting per transport.
-class ChangedFile {
-  final String path;
-  final String? originalPath;
-  final int stagedAdditions;
-  final int stagedDeletions;
-  final int unstagedAdditions;
-  final int unstagedDeletions;
-  final String indexStatus;
-  final String worktreeStatus;
-  final bool untracked;
-
-  const ChangedFile({
-    required this.path,
-    this.originalPath,
-    required this.stagedAdditions,
-    required this.stagedDeletions,
-    required this.unstagedAdditions,
-    required this.unstagedDeletions,
-    required this.indexStatus,
-    required this.worktreeStatus,
-    required this.untracked,
-  });
-
-  @override
-  int get hashCode =>
-      path.hashCode ^
-      originalPath.hashCode ^
-      stagedAdditions.hashCode ^
-      stagedDeletions.hashCode ^
-      unstagedAdditions.hashCode ^
-      unstagedDeletions.hashCode ^
-      indexStatus.hashCode ^
-      worktreeStatus.hashCode ^
-      untracked.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ChangedFile &&
-          runtimeType == other.runtimeType &&
-          path == other.path &&
-          originalPath == other.originalPath &&
-          stagedAdditions == other.stagedAdditions &&
-          stagedDeletions == other.stagedDeletions &&
-          unstagedAdditions == other.unstagedAdditions &&
-          unstagedDeletions == other.unstagedDeletions &&
-          indexStatus == other.indexStatus &&
-          worktreeStatus == other.worktreeStatus &&
-          untracked == other.untracked;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -438,39 +345,6 @@ class TaskSummary {
           targetProjectId == other.targetProjectId;
 }
 
-/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
-/// The titlebar surfaces `toast_message` as a snackbar (warning
-/// palette when `warning` is true) and uses `refresh_git_state` to
-/// decide whether to invalidate the active changed-files / git-state
-/// providers after the call returns. Field-for-field compatible with
-/// the FRB-side `ToolbarActionOutcomeDto` so call sites that hand
-/// the outcome to UI code can use either type interchangeably as
-/// migration progresses.
-class ToolbarActionOutcome {
-  final String toastMessage;
-  final bool warning;
-  final bool refreshGitState;
-
-  const ToolbarActionOutcome({
-    required this.toastMessage,
-    required this.warning,
-    required this.refreshGitState,
-  });
-
-  @override
-  int get hashCode =>
-      toastMessage.hashCode ^ warning.hashCode ^ refreshGitState.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ToolbarActionOutcome &&
-          runtimeType == other.runtimeType &&
-          toastMessage == other.toastMessage &&
-          warning == other.warning &&
-          refreshGitState == other.refreshGitState;
-}
-
 @freezed
 sealed class WorkerReply with _$WorkerReply {
   const WorkerReply._();
@@ -492,61 +366,32 @@ sealed class WorkerReply with _$WorkerReply {
     required ErrKind kind,
   }) = WorkerReply_Err;
 
-  /// `another-one-ojm.5` — ack for [`Control::StageChangedFile`].
-  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::StageChangedFileAck`.
-  /// Carries the post-mutation `changed_files` snapshot inline so
-  /// the issuing client refreshes the right-sidebar Changes pane
-  /// without a follow-up `ReadChangedFiles` round-trip.
-  const factory WorkerReply.stageChangedFileAck({
-    required List<ChangedFile> changedFiles,
-  }) = WorkerReply_StageChangedFileAck;
+  /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
+  /// when the project has no PR for its current branch (or the
+  /// project id is unknown). Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestStatusAck`.
+  /// The payload reuses `local_session::PullRequestStatusDto`
+  /// directly — see the comment above on parallel-mirror-avoidance.
+  const factory WorkerReply.pullRequestStatusAck({
+    PullRequestStatusDto? status,
+  }) = WorkerReply_PullRequestStatusAck;
 
-  /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
-  /// Same inline-snapshot semantics as
-  /// [`Self::StageChangedFileAck`].
-  const factory WorkerReply.unstageChangedFileAck({
-    required List<ChangedFile> changedFiles,
-  }) = WorkerReply_UnstageChangedFileAck;
+  /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
+  /// payload: `Some(list)` = PR exists (list may be empty),
+  /// `None` = no PR or unknown project. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestChecksAck`.
+  /// Reuses `local_session::CheckDto` directly so FRB produces a
+  /// single Dart class regardless of transport.
+  const factory WorkerReply.pullRequestChecksAck({List<CheckDto>? checks}) =
+      WorkerReply_PullRequestChecksAck;
 
-  /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
-  const factory WorkerReply.stageAllChangesAck({
-    required List<ChangedFile> changedFiles,
-  }) = WorkerReply_StageAllChangesAck;
-
-  /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
-  const factory WorkerReply.unstageAllChangesAck({
-    required List<ChangedFile> changedFiles,
-  }) = WorkerReply_UnstageAllChangesAck;
-
-  /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
-  const factory WorkerReply.discardChangedFileAck({
-    required List<ChangedFile> changedFiles,
-  }) = WorkerReply_DiscardChangedFileAck;
-
-  /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
-  /// Mirror of
-  /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
-  const factory WorkerReply.toolbarActionOutcomeAck({
-    required ToolbarActionOutcome outcome,
-  }) = WorkerReply_ToolbarActionOutcomeAck;
-
-  /// `another-one-ojm.5` — ack for [`Control::CreateBranch`]. Mirror
-  /// of `daemon-sandbox/src/frame.rs::WorkerReply::CreateBranchAck`.
-  /// Carries the post-mutation `projects` snapshot inline so the
-  /// issuing client repaints the projects drawer without a follow-
-  /// up `ListProjects` round-trip.
-  const factory WorkerReply.createBranchAck({
-    required String sectionId,
-    required List<ProjectSummary> projects,
-  }) = WorkerReply_CreateBranchAck;
-
-  /// `another-one-ojm.5` — ack for [`Control::CreateReviewTask`].
-  /// Same inline-snapshot semantics as
-  /// [`Self::CreateBranchAck`].
-  const factory WorkerReply.createReviewTaskAck({
-    required String sectionId,
-    required List<ProjectSummary> projects,
-  }) = WorkerReply_CreateReviewTaskAck;
+  /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
+  /// covers the unknown-project case. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectPullRequestsAck`.
+  /// Reuses `local_session::ProjectPagePullRequestDto` directly.
+  const factory WorkerReply.projectPullRequestsAck({
+    List<ProjectPagePullRequestDto>? prs,
+  }) = WorkerReply_ProjectPullRequestsAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

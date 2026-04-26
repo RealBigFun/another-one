@@ -40,7 +40,8 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    ActiveGitStateWire, AgentProvider, ChangedFileWire, CommitWire, ProjectKind, ProjectSummary,
+    ActiveGitStateWire, AgentProvider, ChangedFileWire, Check, CheckBucket, CommitWire,
+    ProjectKind, ProjectPagePullRequest, ProjectSummary, PullRequestState, PullRequestStatus,
     RecentCommitsWire, TabSummary, TaskSummary, ToolbarActionOutcome,
 };
 use daemon_sandbox::registry::RegistryFuture;
@@ -1087,6 +1088,108 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 .map_err(|err| anyhow::anyhow!(err.message))
         })
     }
+
+    // ── Pull requests + checks (another-one-ojm.6) ─────────────────
+
+    fn find_pull_request_status(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<PullRequestStatus>, String> {
+        // Mirror `LocalSession::find_pull_request_status`: snapshot
+        // the project's path + current branch under the registry
+        // mutex, then drop the lock before shelling out so the
+        // (slow) gh-CLI roundtrip never holds the daemon's project
+        // store. `Ok(None)` covers both unknown project and "branch
+        // has no PR"; gh-CLI execution failure surfaces upstream as
+        // a WorkerReply::Err.
+        let path_and_branch = self.with_state(|state| {
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .and_then(|project| {
+                    project
+                        .checkout
+                        .current_branch
+                        .clone()
+                        .map(|branch| (project.path.clone(), branch))
+                })
+        });
+        let Some(Some((project_path, head_branch))) = path_and_branch else {
+            return Ok(None);
+        };
+        Ok(another_one_core::git_actions::find_latest_pull_request_status(
+            &project_path,
+            &head_branch,
+        )
+        .map(|status| PullRequestStatus {
+            number: status.number,
+            url: status.url,
+            state: map_pull_request_state(status.state),
+        }))
+    }
+
+    fn read_pull_request_checks(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<Vec<Check>>, String> {
+        // Same shape as `find_pull_request_status`: snapshot the
+        // project path under the registry mutex, drop the lock,
+        // then shell out via core's gh-CLI helper. The three-state
+        // contract (`Some(list)` / `None` / `Err(_)`) maps onto
+        // `WorkerReply::PullRequestChecksAck` / `WorkerReply::Err`
+        // upstream. Mirrors `LocalSession::read_pull_request_checks`.
+        let project_path = self.with_state(|state| {
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        });
+        let Some(Some(project_path)) = project_path else {
+            return Ok(None);
+        };
+        match another_one_core::git_actions::find_pull_request_checks(&project_path, None) {
+            Ok(Some(checks)) => Ok(Some(checks.into_iter().map(map_check).collect())),
+            Ok(None) => Ok(None),
+            Err(message) => Err(message),
+        }
+    }
+
+    fn find_project_pull_requests(
+        &self,
+        project_id: &str,
+        filter_index: u32,
+        query: &str,
+    ) -> Result<Option<Vec<ProjectPagePullRequest>>, String> {
+        // Mirrors `LocalSession::find_project_pull_requests`:
+        // snapshot the project path under the registry mutex, drop
+        // the lock, then shell out (`gh pr list`). `Ok(None)`
+        // covers unknown-project so the UI can render its empty
+        // state; gh CLI / auth / network errors propagate as Err
+        // and surface upstream as WorkerReply::Err.
+        let project_path = self.with_state(|state| {
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        });
+        let Some(Some(project_path)) = project_path else {
+            return Ok(None);
+        };
+        let trimmed = query.trim();
+        let q = if trimmed.is_empty() { None } else { Some(trimmed) };
+        let prs = another_one_core::git_actions::find_project_pull_requests(
+            &project_path,
+            filter_index as usize,
+            q,
+        )?;
+        Ok(Some(prs.into_iter().map(map_project_page_pr).collect()))
+    }
 }
 
 impl BridgeDaemonRegistry {
@@ -1125,6 +1228,58 @@ fn map_agent_provider_back(kind: AgentProvider) -> AgentProviderKind {
         AgentProvider::RovoDev => AgentProviderKind::RovoDev,
         AgentProvider::Forge => AgentProviderKind::Forge,
         AgentProvider::Shell => AgentProviderKind::ClaudeCode,
+    }
+}
+
+fn map_pull_request_state(
+    state: another_one_core::git_actions::PullRequestState,
+) -> PullRequestState {
+    match state {
+        another_one_core::git_actions::PullRequestState::Open => PullRequestState::Open,
+        another_one_core::git_actions::PullRequestState::Closed => PullRequestState::Closed,
+        another_one_core::git_actions::PullRequestState::Merged => PullRequestState::Merged,
+    }
+}
+
+fn map_check(check: another_one_core::git_actions::PullRequestCheck) -> Check {
+    Check {
+        name: check.name,
+        state: check.state,
+        bucket: map_check_bucket(check.bucket),
+        description: check.description,
+        link: check.link,
+        duration_text: check.duration_text,
+    }
+}
+
+fn map_check_bucket(
+    bucket: another_one_core::git_actions::PullRequestCheckBucket,
+) -> CheckBucket {
+    match bucket {
+        another_one_core::git_actions::PullRequestCheckBucket::Pass => CheckBucket::Pass,
+        another_one_core::git_actions::PullRequestCheckBucket::Fail => CheckBucket::Fail,
+        another_one_core::git_actions::PullRequestCheckBucket::Pending => CheckBucket::Pending,
+        another_one_core::git_actions::PullRequestCheckBucket::Skipping => CheckBucket::Skipping,
+        another_one_core::git_actions::PullRequestCheckBucket::Cancel => CheckBucket::Cancel,
+    }
+}
+
+fn map_project_page_pr(
+    pr: another_one_core::git_actions::ProjectPagePullRequest,
+) -> ProjectPagePullRequest {
+    ProjectPagePullRequest {
+        number: pr.number,
+        url: pr.url,
+        title: pr.title,
+        branch: pr.branch,
+        author: pr.author,
+        lines_added: pr.lines_added,
+        lines_removed: pr.lines_removed,
+        draft: pr.draft,
+        review_required: pr.review_required,
+        review_requested_to_me: pr.review_requested_to_me,
+        created_by_me: pr.created_by_me,
+        state: map_pull_request_state(pr.state),
     }
 }
 

@@ -964,12 +964,22 @@ class ChangedFileDto {
 /// [`another_one_core::git_actions::PullRequestCheckBucket`].
 /// Drives the glyph + colour for each check row on the right
 /// sidebar's Checks pane.
+///
+/// Wire form mirrors `daemon-sandbox/src/frame.rs::CheckBucket`
+/// — snake_case strings — so the iroh wire and the LocalSession
+/// path produce the same Dart enum value.
 enum CheckBucket { pass, fail, pending, skipping, cancel }
 
 /// FRB-friendly mirror of
 /// [`another_one_core::git_actions::PullRequestCheck`]. Mostly raw
 /// — UI maps `bucket` to glyph/colour and `state` is the verbatim
 /// string `gh pr checks` returned ("pass", "in_progress", etc.).
+///
+/// `Serialize`/`Deserialize` are derived so the iroh wire's
+/// `WorkerReply::PullRequestChecksAck` payload can reuse this
+/// struct directly (instead of carrying a parallel mirror in
+/// `crate::api::iroh_client`). Same parity-via-single-source-of-
+/// truth move as `PullRequestStatusDto` above.
 class CheckDto {
   /// Check name (e.g. "build / linux", "lint").
   final String name;
@@ -1459,6 +1469,11 @@ enum ProjectActionScopeDto { project, global }
 /// FRB-friendly mirror of
 /// [`another_one_core::git_actions::ProjectPagePullRequest`]. One
 /// entry per row in the project page's Open PRs section.
+///
+/// `Serialize`/`Deserialize` are derived so the iroh wire's
+/// `WorkerReply::ProjectPullRequestsAck` payload can reuse this
+/// struct directly. Same parity-via-single-source-of-truth move as
+/// `PullRequestStatusDto` / `CheckDto`.
 class ProjectPagePullRequestDto {
   final BigInt number;
   final String url;
@@ -1532,12 +1547,24 @@ class ProjectPagePullRequestDto {
 /// [`another_one_core::git_actions::PullRequestState`]. Drives the
 /// chip + chrome on each PR row: open vs merged vs closed shapes
 /// the badge palette and the row-level affordances.
+///
+/// Wire form mirrors `daemon-sandbox/src/frame.rs::PullRequestState`
+/// — lowercase strings — so the iroh wire and the LocalSession
+/// path produce the same Dart enum value.
 enum PullRequestStateDto { open, closed, merged }
 
 /// FRB-friendly mirror of
 /// [`another_one_core::git_actions::PullRequestStatus`]. Drives
 /// the titlebar dropdown's Create PR / Draft PR enabledness — when
 /// a PR already exists for the branch, those rows are disabled.
+///
+/// `Serialize`/`Deserialize` are derived so the iroh wire's
+/// `WorkerReply::PullRequestStatusAck` payload can reuse this
+/// struct directly (instead of carrying a parallel mirror in
+/// `crate::api::iroh_client`). FRB generates a single Dart class
+/// for both transports — `LocalTransport.findPullRequestStatus`
+/// and `IrohTransport.findPullRequestStatus` produce identical
+/// `PullRequestStatusDto` values on the Dart side.
 class PullRequestStatusDto {
   final BigInt number;
   final String url;

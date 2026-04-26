@@ -315,12 +315,13 @@ abstract class DaemonConnection {
   /// Latest pull-request status for `projectId`'s current branch.
   /// Returns `null` when the project has no open PR. Drives the
   /// Create PR / Draft PR enabledness in the titlebar dropdown.
-  Future<PullRequestStatusDto?> findPullRequestStatus(String projectId) {
-    throw UnimplementedError(
-      'findPullRequestStatus: requires Control::FindPullRequestStatus '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  /// Both transports implement this against their respective code
+  /// paths: `LocalTransport` calls
+  /// `LocalSession::find_pull_request_status` directly; `IrohTransport`
+  /// issues `Control::FindPullRequestStatus` and dispatches the
+  /// `WorkerReply::PullRequestStatusAck` reply through its
+  /// completer table (see `another-one-ojm.6`).
+  Future<PullRequestStatusDto?> findPullRequestStatus(String projectId);
 
   /// Run a toolbar git action against `projectId`. `actionId` is one
   /// of `"commit"`, `"commit-and-push"`, `"undo-last-commit"`,
@@ -366,16 +367,18 @@ abstract class DaemonConnection {
   /// plus an optional free-text `query` (GitHub search syntax).
   /// Returns `null` for unknown project ids; throws when gh CLI
   /// fails (CLI missing, auth, network).
+  ///
+  /// Both transports implement this against their respective code
+  /// paths: `LocalTransport` calls
+  /// `LocalSession::find_project_pull_requests` directly;
+  /// `IrohTransport` issues `Control::FindProjectPullRequests` and
+  /// dispatches the `WorkerReply::ProjectPullRequestsAck` reply
+  /// through its completer table (`another-one-ojm.6`).
   Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
     required String projectId,
     required int filterIndex,
     required String query,
-  }) {
-    throw UnimplementedError(
-      'findProjectPullRequests: requires Control::FindProjectPullRequests '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Spawn a review task targeting a specific PR. Clones the PR's
   /// head branch into a worktree, prepares the project, inserts the
@@ -414,12 +417,14 @@ abstract class DaemonConnection {
   ///     (possibly empty when no checks are configured).
   ///   * `null` — no PR for the current branch, or unknown project.
   ///   * Throw — gh CLI missing, network error, etc.
-  Future<List<CheckDto>?> readPullRequestChecks(String projectId) {
-    throw UnimplementedError(
-      'readPullRequestChecks: requires Control::ReadPullRequestChecks '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  ///
+  /// Both transports implement this against their respective code
+  /// paths: `LocalTransport` calls
+  /// `LocalSession::read_pull_request_checks` directly;
+  /// `IrohTransport` issues `Control::ReadPullRequestChecks` and
+  /// dispatches the `WorkerReply::PullRequestChecksAck` reply
+  /// through its completer table (`another-one-ojm.6`).
+  Future<List<CheckDto>?> readPullRequestChecks(String projectId);
 
   /// Stage one changed file via `git add`. `originalPath` is set
   /// only on rename/copy entries — git needs both source and

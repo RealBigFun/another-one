@@ -269,6 +269,103 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     await session.launchTab(sectionId: sectionId, tabId: tabId);
   }
 
+  /// Resolve the latest pull-request status for `projectId`'s
+  /// current branch over the iroh wire. Returns `null` for unknown
+  /// projects or branches without an open PR; throws when the
+  /// daemon emits a `WorkerReply::Err` (gh CLI missing, network,
+  /// etc.) so the UI can surface the message verbatim.
+  ///
+  /// Routes through [_sendControlAndAwait] so the matching
+  /// `PullRequestStatusAck` reply is dispatched against this
+  /// session's completer table — order-independent with respect
+  /// to other in-flight verbs.
+  @override
+  Future<PullRequestStatusDto?> findPullRequestStatus(String projectId) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.findPullRequestStatus(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_PullRequestStatusAck(:final status) => status,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+        'unexpected WorkerReply for findPullRequestStatus: $reply',
+      ),
+    };
+  }
+
+  /// CI checks attached to `projectId`'s current PR. Three-state
+  /// return mirrors the daemon contract:
+  ///   * `Some(list)` — PR exists, here are its rows.
+  ///   * `null` — no PR for the current branch, or unknown project.
+  ///   * Throws — gh CLI / network failure (`WorkerReply::Err`).
+  ///
+  /// Routes through [_sendControlAndAwait] so the matching
+  /// `PullRequestChecksAck` reply is dispatched against this
+  /// session's completer table.
+  @override
+  Future<List<CheckDto>?> readPullRequestChecks(String projectId) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.readPullRequestChecks(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_PullRequestChecksAck(:final checks) => checks,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+        'unexpected WorkerReply for readPullRequestChecks: $reply',
+      ),
+    };
+  }
+
+  /// Open pull requests for `projectId` filtered by `filterIndex`
+  /// (0=all, 1=needs my review, 2=author:@me, 3=draft) plus an
+  /// optional free-text `query`. Returns `null` for unknown
+  /// projects; throws on `WorkerReply::Err` (gh CLI / auth /
+  /// network).
+  ///
+  /// Routes through [_sendControlAndAwait] so the matching
+  /// `ProjectPullRequestsAck` reply is dispatched against this
+  /// session's completer table.
+  @override
+  Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  }) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.findProjectPullRequests(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+        filterIndex: filterIndex,
+        query: query,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_ProjectPullRequestsAck(:final prs) => prs,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+        'unexpected WorkerReply for findProjectPullRequests: $reply',
+      ),
+    };
+  }
+
   @override
   void sendBytes(List<int> bytes) {
     final session = _session;
@@ -978,6 +1075,72 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
           'createReviewTask: unexpected reply variant $reply',
         );
     }
+  }
+
+  // ── PR + checks read verbs (`another-one-ojm.6`) ───────────────
+
+  /// Resolve the latest pull-request status for `projectId`'s
+  /// current branch over the iroh wire. Returns `null` for unknown
+  /// projects or branches without an open PR; throws when the
+  /// daemon emits a `WorkerReply::Err`.
+  @override
+  Future<ls.PullRequestStatusDto?> findPullRequestStatus(String projectId) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      await _session!.findPullRequestStatus(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_PullRequestStatusAck(:final status) => status,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'unexpected WorkerReply for findPullRequestStatus: $reply',
+        ),
+    };
+  }
+
+  /// CI checks attached to `projectId`'s current PR.
+  @override
+  Future<List<ls.CheckDto>?> readPullRequestChecks(String projectId) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      await _session!.readPullRequestChecks(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_PullRequestChecksAck(:final checks) => checks,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'unexpected WorkerReply for readPullRequestChecks: $reply',
+        ),
+    };
+  }
+
+  /// Open pull requests for `projectId` filtered by `filterIndex`
+  /// plus an optional free-text `query`.
+  @override
+  Future<List<ls.ProjectPagePullRequestDto>?> findProjectPullRequests({
+    required String projectId,
+    required int filterIndex,
+    required String query,
+  }) async {
+    final reply = await _sendControlAndAwait((requestId) async {
+      await _session!.findProjectPullRequests(
+        requestId: BigInt.from(requestId),
+        projectId: projectId,
+        filterIndex: filterIndex,
+        query: query,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_ProjectPullRequestsAck(:final prs) => prs,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'unexpected WorkerReply for findProjectPullRequests: $reply',
+        ),
+    };
   }
 }
 

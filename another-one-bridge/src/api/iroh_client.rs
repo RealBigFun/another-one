@@ -244,6 +244,24 @@ enum Control {
         head_branch: String,
         agent_provider: Option<AgentProvider>,
     },
+    /// Resolve the latest pull-request status for `project_id`'s
+    /// current branch. Reply variant is
+    /// [`WorkerReply::PullRequestStatusAck`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::FindPullRequestStatus`.
+    FindPullRequestStatus { project_id: String },
+    /// Read CI checks attached to `project_id`'s current PR. Reply
+    /// variant is [`WorkerReply::PullRequestChecksAck`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadPullRequestChecks`.
+    ReadPullRequestChecks { project_id: String },
+    /// Fetch open pull requests for `project_id` filtered by
+    /// `filter_index` plus an optional free-text `query`. Reply
+    /// variant is [`WorkerReply::ProjectPullRequestsAck`]. Mirror
+    /// of `daemon-sandbox/src/frame.rs::Control::FindProjectPullRequests`.
+    FindProjectPullRequests {
+        project_id: String,
+        filter_index: u32,
+        query: String,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -380,6 +398,32 @@ pub enum WorkerReply {
     CreateReviewTaskAck {
         section_id: String,
         projects: Vec<ProjectSummary>,
+    },
+    /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
+    /// when the project has no PR for its current branch (or the
+    /// project id is unknown). Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestStatusAck`.
+    /// The payload reuses `local_session::PullRequestStatusDto`
+    /// directly so FRB produces a single Dart class regardless of
+    /// transport.
+    PullRequestStatusAck {
+        status: Option<crate::api::local_session::PullRequestStatusDto>,
+    },
+    /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
+    /// payload: `Some(list)` = PR exists (list may be empty),
+    /// `None` = no PR or unknown project. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::PullRequestChecksAck`.
+    /// Reuses `local_session::CheckDto` directly so FRB produces a
+    /// single Dart class regardless of transport.
+    PullRequestChecksAck {
+        checks: Option<Vec<crate::api::local_session::CheckDto>>,
+    },
+    /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
+    /// covers the unknown-project case. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectPullRequestsAck`.
+    /// Reuses `local_session::ProjectPagePullRequestDto` directly.
+    ProjectPullRequestsAck {
+        prs: Option<Vec<crate::api::local_session::ProjectPagePullRequestDto>>,
     },
 }
 
@@ -565,8 +609,12 @@ pub enum AgentProvider {
     Shell,
 }
 
-// `PullRequestInfo` + `PullRequestState` removed with the dead
-// `WorkerReply::PullRequestStatus` variant on the daemon side.
+// `PullRequestStatusDto` and `PullRequestStateDto` are reused from
+// `crate::api::local_session` directly — they already have
+// `Serialize`/`Deserialize` derived (added alongside this verb)
+// and produce the same Dart class on the FRB boundary regardless
+// of which transport asks for them. Avoiding a parallel mirror
+// here keeps a single source of truth for the PR-status shape.
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
 /// The titlebar surfaces `toast_message` as a snackbar (warning
@@ -1487,6 +1535,50 @@ impl IrohSession {
                 pull_request_number,
                 head_branch,
                 agent_provider,
+            },
+        )
+        .await
+    }
+
+    // ── PR + checks read verbs (`another-one-ojm.6`) ───────────────
+
+    /// Issue [`Control::FindPullRequestStatus`] under `request_id`.
+    /// The matching [`WorkerReply::PullRequestStatusAck`] (or
+    /// [`WorkerReply::Err`]) arrives on `subscribe_worker_replies`
+    /// keyed by the same id.
+    pub async fn find_pull_request_status(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::FindPullRequestStatus { project_id })
+            .await
+    }
+
+    /// Issue [`Control::ReadPullRequestChecks`] under `request_id`.
+    pub async fn read_pull_request_checks(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadPullRequestChecks { project_id })
+            .await
+    }
+
+    /// Issue [`Control::FindProjectPullRequests`] under `request_id`.
+    pub async fn find_project_pull_requests(
+        &self,
+        request_id: u64,
+        project_id: String,
+        filter_index: u32,
+        query: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::FindProjectPullRequests {
+                project_id,
+                filter_index,
+                query,
             },
         )
         .await

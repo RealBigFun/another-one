@@ -807,6 +807,56 @@ async fn handle_control(
                 }
             }
         }
+        Control::FindPullRequestStatus { project_id } => {
+            // Pure read: route into the registry, marshal Ok(None) /
+            // Ok(Some(_)) into PullRequestStatusAck, and convert any
+            // hard failure into WorkerReply::Err so the channel
+            // stays open for other in-flight requests on this
+            // session.
+            let reply = match registry.find_pull_request_status(&project_id) {
+                Ok(status) => WorkerReply::PullRequestStatusAck { status },
+                Err(message) => WorkerReply::Err {
+                    message,
+                    kind: ErrKind::Internal,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadPullRequestChecks { project_id } => {
+            // Same shape as FindPullRequestStatus — Ok(Some/None) →
+            // PullRequestChecksAck, Err → WorkerReply::Err. The
+            // three-state contract is documented on
+            // `DaemonRegistry::read_pull_request_checks`.
+            let reply = match registry.read_pull_request_checks(&project_id) {
+                Ok(checks) => WorkerReply::PullRequestChecksAck { checks },
+                Err(message) => WorkerReply::Err {
+                    message,
+                    kind: ErrKind::Internal,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::FindProjectPullRequests {
+            project_id,
+            filter_index,
+            query,
+        } => {
+            // Same Ok/Err split as the sibling PR readers above.
+            // `Ok(None)` covers unknown-project; gh CLI / auth /
+            // network errors land as WorkerReply::Err.
+            let reply = match registry.find_project_pull_requests(
+                &project_id,
+                filter_index,
+                &query,
+            ) {
+                Ok(prs) => WorkerReply::ProjectPullRequestsAck { prs },
+                Err(message) => WorkerReply::Err {
+                    message,
+                    kind: ErrKind::Internal,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }
