@@ -30,6 +30,7 @@ import 'screens/pair_mobile/pair_mobile_modal.dart';
 import 'state/active_project_page_provider.dart';
 import 'state/local_connection_provider.dart';
 import 'state/settings_provider.dart';
+import 'throughput_benchmark_page.dart';
 import 'tokens.dart';
 
 /// Build-time env flag — `--dart-define=ANOTHER_ONE_SURFACE=foo`.
@@ -67,6 +68,7 @@ Widget? surfaceFor(String name) {
       const _SettingsLauncher(section: SettingsSection.keybindings),
     'settings-mcp' =>
       const _SettingsLauncher(section: SettingsSection.mcp),
+    'throughput-benchmark' => const ThroughputBenchmarkPage(),
     _ => _UnknownSurface(name: name),
   };
 }
