@@ -56,6 +56,8 @@ impl HeadlessPlatform for WindowsPlatform {
             OpenInAppKind::Cursor => command_exists(&["cursor"]),
             OpenInAppKind::Zed => command_exists(&["zed"]),
             OpenInAppKind::VsCode => command_exists(&["code"]),
+            OpenInAppKind::Ghostty => false,
+            OpenInAppKind::WezTerm => command_exists(&["wezterm", "wezterm-gui"]),
             OpenInAppKind::FileManager => true,
         }
     }
@@ -65,6 +67,15 @@ impl HeadlessPlatform for WindowsPlatform {
             OpenInAppKind::Cursor => Command::new("cursor"),
             OpenInAppKind::Zed => Command::new("zed"),
             OpenInAppKind::VsCode => Command::new("code"),
+            OpenInAppKind::Ghostty => Command::new("ghostty"),
+            OpenInAppKind::WezTerm => {
+                let mut command = Command::new("wezterm");
+                command
+                    .arg("start")
+                    .arg("--always-new-process")
+                    .arg("--cwd");
+                command
+            }
             OpenInAppKind::FileManager => Command::new("explorer"),
         };
         command.arg(path);

@@ -50,17 +50,18 @@ impl HeadlessPlatform for LinuxPlatform {
             command.arg(path);
             return command;
         }
+
         let launcher = find_launcher_on_host(app);
         let mut command = match launcher {
             Some(LinuxLauncher::Binary(bin)) => Command::new(bin),
             Some(LinuxLauncher::Flatpak(app_id)) => {
-                let mut c = Command::new("flatpak");
-                c.args(["run", app_id.as_str()]);
-                c
+                let mut command = Command::new("flatpak");
+                command.args(["run", app_id.as_str()]);
+                command
             }
             None => Command::new(default_binary_name(app)),
         };
-        command.arg(path);
+        apply_open_in_args(&mut command, app, path);
         command
     }
 }
@@ -76,6 +77,8 @@ fn default_binary_name(app: OpenInAppKind) -> &'static str {
         OpenInAppKind::Cursor => "cursor",
         OpenInAppKind::Zed => "zed",
         OpenInAppKind::VsCode => "code",
+        OpenInAppKind::Ghostty => "ghostty",
+        OpenInAppKind::WezTerm => "wezterm",
         OpenInAppKind::FileManager => "xdg-open",
     }
 }
@@ -85,6 +88,8 @@ fn binary_candidates(app: OpenInAppKind) -> &'static [&'static str] {
         OpenInAppKind::Cursor => &["cursor"],
         OpenInAppKind::Zed => &["zed", "zeditor"],
         OpenInAppKind::VsCode => &["code", "code-insiders"],
+        OpenInAppKind::Ghostty => &["ghostty"],
+        OpenInAppKind::WezTerm => &["wezterm", "wezterm-gui"],
         OpenInAppKind::FileManager => &["xdg-open"],
     }
 }
@@ -94,7 +99,32 @@ fn flatpak_candidates(app: OpenInAppKind) -> &'static [&'static str] {
         OpenInAppKind::Cursor => &[],
         OpenInAppKind::Zed => &["dev.zed.Zed"],
         OpenInAppKind::VsCode => &["com.visualstudio.code"],
+        OpenInAppKind::Ghostty => &["com.mitchellh.ghostty"],
+        OpenInAppKind::WezTerm => &["org.wezfurlong.wezterm"],
         OpenInAppKind::FileManager => &[],
+    }
+}
+
+fn apply_open_in_args(command: &mut Command, app: OpenInAppKind, path: &Path) {
+    match app {
+        OpenInAppKind::Cursor | OpenInAppKind::Zed | OpenInAppKind::VsCode => {
+            command.arg(path);
+        }
+        OpenInAppKind::Ghostty => {
+            command
+                .arg("+new-window")
+                .arg(format!("--working-directory={}", path.display()));
+        }
+        OpenInAppKind::WezTerm => {
+            command
+                .arg("start")
+                .arg("--always-new-process")
+                .arg("--cwd")
+                .arg(path);
+        }
+        OpenInAppKind::FileManager => {
+            command.arg(path);
+        }
     }
 }
 
@@ -332,6 +362,24 @@ mod tests {
             let empty = tmp.path().join("empty");
             fs::create_dir_all(&empty).unwrap();
             assert!(find_launcher_in_dirs(OpenInAppKind::Cursor, &[empty]).is_none());
+        }
+
+        #[test]
+        fn finds_ghostty_flatpak_wrapper_by_app_id() {
+            let tmp = tempfile::tempdir().unwrap();
+            let flatpak_dir = tmp.path().join("flatpak-exports-bin");
+            make_exec(&flatpak_dir, "com.mitchellh.ghostty");
+            let launcher = find_launcher_in_dirs(OpenInAppKind::Ghostty, &[flatpak_dir]);
+            assert_eq!(launcher, Some(LinuxLauncher::Flatpak("com.mitchellh.ghostty".into())));
+        }
+
+        #[test]
+        fn finds_wezterm_binary_by_gui_name() {
+            let tmp = tempfile::tempdir().unwrap();
+            let bin_dir = tmp.path().join("bin");
+            make_exec(&bin_dir, "wezterm-gui");
+            let launcher = find_launcher_in_dirs(OpenInAppKind::WezTerm, &[bin_dir.clone()]);
+            assert_eq!(launcher, Some(LinuxLauncher::Binary(bin_dir.join("wezterm-gui"))));
         }
     }
 }

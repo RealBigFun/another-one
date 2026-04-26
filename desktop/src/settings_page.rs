@@ -1754,7 +1754,7 @@ impl AnotherOneApp {
                                 .line_height(rems(18. / 16.))
                                 .text_color(TEXT_SECONDARY())
                                 .child(
-                                    "Install Cursor, Zed, VS Code, or use your system file manager, then restart the app to refresh the menu.",
+                                    "Install Cursor, Zed, VS Code, Ghostty, WezTerm, or use your system file manager, then restart the app to refresh the menu.",
                                 ),
                         ),
                 )
