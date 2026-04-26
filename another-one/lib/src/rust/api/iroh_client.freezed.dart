@@ -55,13 +55,14 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
 return err(_that);case WorkerReply_StageChangedFileAck() when stageChangedFileAck != null:
-return stageChangedFileAck(_that);case _:
+return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck() when unstageChangedFileAck != null:
+return unstageChangedFileAck(_that);case _:
   return orElse();
 
 }
@@ -79,13 +80,14 @@ return stageChangedFileAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,required TResult Function( WorkerReply_UnstageChangedFileAck value)  unstageChangedFileAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that);case WorkerReply_Err():
 return err(_that);case WorkerReply_StageChangedFileAck():
-return stageChangedFileAck(_that);}
+return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck():
+return unstageChangedFileAck(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -99,13 +101,14 @@ return stageChangedFileAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult? Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that);case WorkerReply_Err() when err != null:
 return err(_that);case WorkerReply_StageChangedFileAck() when stageChangedFileAck != null:
-return stageChangedFileAck(_that);case _:
+return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck() when unstageChangedFileAck != null:
+return unstageChangedFileAck(_that);case _:
   return null;
 
 }
@@ -122,12 +125,13 @@ return stageChangedFileAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( String message,  ErrKind kind)?  err,TResult Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
 return err(_that.message,_that.kind);case WorkerReply_StageChangedFileAck() when stageChangedFileAck != null:
-return stageChangedFileAck(_that.changedFiles);case _:
+return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFileAck() when unstageChangedFileAck != null:
+return unstageChangedFileAck(_that.changedFiles);case _:
   return orElse();
 
 }
@@ -145,12 +149,13 @@ return stageChangedFileAck(_that.changedFiles);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( List<ChangedFile> changedFiles)  stageChangedFileAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( List<ChangedFile> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFile> changedFiles)  unstageChangedFileAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_Err():
 return err(_that.message,_that.kind);case WorkerReply_StageChangedFileAck():
-return stageChangedFileAck(_that.changedFiles);}
+return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFileAck():
+return unstageChangedFileAck(_that.changedFiles);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -164,12 +169,13 @@ return stageChangedFileAck(_that.changedFiles);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( List<ChangedFile> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFile> changedFiles)?  unstageChangedFileAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_Err() when err != null:
 return err(_that.message,_that.kind);case WorkerReply_StageChangedFileAck() when stageChangedFileAck != null:
-return stageChangedFileAck(_that.changedFiles);case _:
+return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFileAck() when unstageChangedFileAck != null:
+return unstageChangedFileAck(_that.changedFiles);case _:
   return null;
 
 }
@@ -381,6 +387,78 @@ class _$WorkerReply_StageChangedFileAckCopyWithImpl<$Res>
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
   return _then(WorkerReply_StageChangedFileAck(
+changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
+as List<ChangedFile>,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_UnstageChangedFileAck extends WorkerReply {
+  const WorkerReply_UnstageChangedFileAck({required final  List<ChangedFile> changedFiles}): _changedFiles = changedFiles,super._();
+  
+
+ final  List<ChangedFile> _changedFiles;
+ List<ChangedFile> get changedFiles {
+  if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_changedFiles);
+}
+
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_UnstageChangedFileAckCopyWith<WorkerReply_UnstageChangedFileAck> get copyWith => _$WorkerReply_UnstageChangedFileAckCopyWithImpl<WorkerReply_UnstageChangedFileAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_UnstageChangedFileAck&&const DeepCollectionEquality().equals(other._changedFiles, _changedFiles));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_changedFiles));
+
+@override
+String toString() {
+  return 'WorkerReply.unstageChangedFileAck(changedFiles: $changedFiles)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_UnstageChangedFileAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_UnstageChangedFileAckCopyWith(WorkerReply_UnstageChangedFileAck value, $Res Function(WorkerReply_UnstageChangedFileAck) _then) = _$WorkerReply_UnstageChangedFileAckCopyWithImpl;
+@useResult
+$Res call({
+ List<ChangedFile> changedFiles
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_UnstageChangedFileAckCopyWithImpl<$Res>
+    implements $WorkerReply_UnstageChangedFileAckCopyWith<$Res> {
+  _$WorkerReply_UnstageChangedFileAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_UnstageChangedFileAck _self;
+  final $Res Function(WorkerReply_UnstageChangedFileAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
+  return _then(WorkerReply_UnstageChangedFileAck(
 changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
 as List<ChangedFile>,
   ));

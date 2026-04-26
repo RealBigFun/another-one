@@ -144,6 +144,13 @@ enum Control {
         path: String,
         original_path: Option<String>,
     },
+    /// `another-one-ojm.5` — unstage one changed file. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::UnstageChangedFile`.
+    UnstageChangedFile {
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -181,6 +188,10 @@ pub enum WorkerReply {
     /// the issuing client refreshes the right-sidebar Changes pane
     /// without a follow-up `ReadChangedFiles` round-trip.
     StageChangedFileAck { changed_files: Vec<ChangedFile> },
+    /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
+    /// Same inline-snapshot semantics as
+    /// [`Self::StageChangedFileAck`].
+    UnstageChangedFileAck { changed_files: Vec<ChangedFile> },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -904,6 +915,26 @@ impl IrohSession {
         self.send_control(
             request_id,
             Control::StageChangedFile {
+                project_id,
+                path,
+                original_path,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::UnstageChangedFile`
+    /// frame. Same correlation contract as [`Self::stage_changed_file`].
+    pub async fn unstage_changed_file(
+        &self,
+        request_id: u64,
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::UnstageChangedFile {
                 project_id,
                 path,
                 original_path,

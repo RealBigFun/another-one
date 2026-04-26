@@ -120,6 +120,15 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// the daemon when nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
   Future<void> tabResize({required int cols, required int rows});
+
+  /// `another-one-ojm.5` — issue a `Control::UnstageChangedFile`
+  /// frame. Same correlation contract as [`Self::stage_changed_file`].
+  Future<void> unstageChangedFile({
+    required BigInt requestId,
+    required String projectId,
+    required String path,
+    String? originalPath,
+  });
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form
@@ -409,6 +418,13 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.stageChangedFileAck({
     required List<ChangedFile> changedFiles,
   }) = WorkerReply_StageChangedFileAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
+  /// Same inline-snapshot semantics as
+  /// [`Self::StageChangedFileAck`].
+  const factory WorkerReply.unstageChangedFileAck({
+    required List<ChangedFile> changedFiles,
+  }) = WorkerReply_UnstageChangedFileAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

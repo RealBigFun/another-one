@@ -407,6 +407,35 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         );
     }
   }
+
+  /// `another-one-ojm.5` — unstage one changed file. Same shape as
+  /// [`stageChangedFile`] but `Control::UnstageChangedFile` →
+  /// `WorkerReply::UnstageChangedFileAck`.
+  @override
+  Future<void> unstageChangedFile({
+    required String projectId,
+    required String path,
+    String? originalPath,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.unstageChangedFile(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        path: path,
+        originalPath: originalPath,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_UnstageChangedFileAck():
+        return;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'unstageChangedFile: unexpected reply variant $reply',
+        );
+    }
+  }
 }
 
 /// Exception thrown by `IrohTransport` mutator overrides when the

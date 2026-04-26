@@ -169,6 +169,16 @@ pub enum Control {
         path: String,
         original_path: Option<String>,
     },
+    /// `another-one-ojm.5` — unstage one changed file via
+    /// `git restore --staged` (with `git reset HEAD` fallback for
+    /// pre-2.23 git, mirroring `core::unstage_changed_file`). Same
+    /// rename-pair contract as [`Self::StageChangedFile`]. Reply is
+    /// [`WorkerReply::UnstageChangedFileAck`].
+    UnstageChangedFile {
+        project_id: String,
+        path: String,
+        original_path: Option<String>,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -287,6 +297,11 @@ pub enum WorkerReply {
     /// staged entries are still reported by `git status` so this is
     /// rare in practice).
     StageChangedFileAck {
+        changed_files: Vec<ChangedFile>,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
+    /// Same inline-snapshot semantics as [`Self::StageChangedFileAck`].
+    UnstageChangedFileAck {
         changed_files: Vec<ChangedFile>,
     },
 }

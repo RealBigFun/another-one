@@ -517,6 +517,28 @@ async fn handle_control(
                 }
             }
         }
+        Control::UnstageChangedFile {
+            project_id,
+            path,
+            original_path,
+        } => {
+            let outcome = registry
+                .unstage_changed_file(&project_id, &path, original_path.as_deref())
+                .await;
+            match outcome {
+                Ok(changed_files) => {
+                    let reply = WorkerReply::UnstageChangedFileAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
     }
     Ok(())
 }

@@ -323,40 +323,96 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let path_arg = path.to_string();
         let original_path = original_path.map(str::to_string);
         Box::pin(async move {
-            let project_path = resolve_project_path(&inner, &project_id)
-                .ok_or_else(|| anyhow::anyhow!("stage_changed_file: unknown project_id `{project_id}`"))?;
-            let project_path_for_blocking = project_path.clone();
-            tokio::task::spawn_blocking(move || {
-                let mut changed = another_one_core::project_store::ChangedFile::default();
-                changed.path = path_arg;
-                changed.original_path = original_path;
-                another_one_core::project_store::stage_changed_file(
-                    &project_path_for_blocking,
-                    &changed,
-                )
-            })
+            run_changed_file_mutation(
+                &inner,
+                "stage_changed_file",
+                &project_id,
+                move |project_path| {
+                    let mut changed = another_one_core::project_store::ChangedFile::default();
+                    changed.path = path_arg;
+                    changed.original_path = original_path;
+                    another_one_core::project_store::stage_changed_file(
+                        &project_path,
+                        &changed,
+                    )
+                },
+            )
             .await
-            .map_err(|e| anyhow::anyhow!("stage_changed_file join: {e}"))?
-            .map_err(|e| anyhow::anyhow!(e))?;
-            // Re-read the post-mutation changed files so the ack
-            // carries the inline snapshot. Same `read_project_git_state`
-            // path the FRB-side `read_changed_files` uses.
-            let project_path_for_read = project_path.clone();
-            let git_state = tokio::task::spawn_blocking(move || {
-                another_one_core::project_store::read_project_git_state(
-                    &project_path_for_read,
-                    false,
-                )
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("stage_changed_file post-read join: {e}"))?;
-            Ok(git_state
-                .changed_files
-                .into_iter()
-                .map(core_changed_file_to_wire)
-                .collect())
         })
     }
+
+    fn unstage_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        original_path: Option<&'a str>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
+    > {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let path_arg = path.to_string();
+        let original_path = original_path.map(str::to_string);
+        Box::pin(async move {
+            run_changed_file_mutation(
+                &inner,
+                "unstage_changed_file",
+                &project_id,
+                move |project_path| {
+                    let mut changed = another_one_core::project_store::ChangedFile::default();
+                    changed.path = path_arg;
+                    changed.original_path = original_path;
+                    another_one_core::project_store::unstage_changed_file(
+                        &project_path,
+                        &changed,
+                    )
+                },
+            )
+            .await
+        })
+    }
+}
+
+/// Common scaffolding for the stage / unstage / discard / stage-all /
+/// unstage-all `DaemonRegistry` mutators: resolve `project_id` to a
+/// path, spawn-blocking the git invocation, then re-read
+/// `read_project_git_state` so the caller's ack carries the inline
+/// post-mutation `changed_files` snapshot per the foundation's
+/// inline-snapshot contract. Mirrors `LocalSession`'s
+/// `run_changed_file_action` helper but returns the snapshot rather
+/// than `()` (the iroh wire wants the snapshot to ride the ack
+/// frame, not a separate `read_changed_files` round-trip).
+async fn run_changed_file_mutation<F>(
+    inner: &Weak<Mutex<another_one_core::daemon_embed::RegistryState>>,
+    verb_label: &'static str,
+    project_id: &str,
+    mutate: F,
+) -> anyhow::Result<Vec<ChangedFile>>
+where
+    F: FnOnce(std::path::PathBuf) -> Result<(), String> + Send + 'static,
+{
+    let project_path = resolve_project_path(inner, project_id).ok_or_else(|| {
+        anyhow::anyhow!("{verb_label}: unknown project_id `{project_id}`")
+    })?;
+    let project_path_for_mutate = project_path.clone();
+    tokio::task::spawn_blocking(move || mutate(project_path_for_mutate))
+        .await
+        .map_err(|e| anyhow::anyhow!("{verb_label} join: {e}"))?
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let project_path_for_read = project_path.clone();
+    let git_state = tokio::task::spawn_blocking(move || {
+        another_one_core::project_store::read_project_git_state(
+            &project_path_for_read,
+            false,
+        )
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("{verb_label} post-read join: {e}"))?;
+    Ok(git_state
+        .changed_files
+        .into_iter()
+        .map(core_changed_file_to_wire)
+        .collect())
 }
 
 /// Resolve a `project_id` to its absolute path on disk by reading

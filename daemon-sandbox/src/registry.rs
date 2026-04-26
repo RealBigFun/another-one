@@ -182,6 +182,23 @@ pub trait DaemonRegistry: Send + Sync + 'static {
             ))
         })
     }
+
+    /// `another-one-ojm.5` — unstage one changed file. Same
+    /// inline-snapshot return shape as [`Self::stage_changed_file`].
+    fn unstage_changed_file<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _path: &'a str,
+        _original_path: Option<&'a str>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Vec<ChangedFile>>> + Send + 'a>,
+    > {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "unstage_changed_file: not implemented on this DaemonRegistry"
+            ))
+        })
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

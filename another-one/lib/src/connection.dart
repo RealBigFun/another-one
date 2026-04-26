@@ -460,12 +460,7 @@ abstract class DaemonConnection {
     required String projectId,
     required String path,
     String? originalPath,
-  }) {
-    throw UnimplementedError(
-      'unstageChangedFile: requires Control::UnstageChangedFile wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// `git add -A` on the project root — stage every change.
   Future<void> stageAllChanges(String projectId) {
