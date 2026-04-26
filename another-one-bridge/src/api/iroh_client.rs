@@ -171,6 +171,14 @@ enum Control {
         project_id: String,
         action_id: String,
     },
+    /// `another-one-ojm.5` — create a branch from HEAD on `project_id`.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::CreateBranch`.
+    CreateBranch {
+        project_id: String,
+        branch_name: String,
+        use_current_task: bool,
+        migrate_changes: bool,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -222,6 +230,15 @@ pub enum WorkerReply {
     /// Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
     ToolbarActionOutcomeAck { outcome: ToolbarActionOutcome },
+    /// `another-one-ojm.5` — ack for [`Control::CreateBranch`]. Mirror
+    /// of `daemon-sandbox/src/frame.rs::WorkerReply::CreateBranchAck`.
+    /// Carries the post-mutation `projects` snapshot inline so the
+    /// issuing client repaints the projects drawer without a follow-
+    /// up `ListProjects` round-trip.
+    CreateBranchAck {
+        section_id: String,
+        projects: Vec<ProjectSummary>,
+    },
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -1044,6 +1061,27 @@ impl IrohSession {
             Control::RunToolbarGitAction {
                 project_id,
                 action_id,
+            },
+        )
+        .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::CreateBranch` frame.
+    pub async fn create_branch(
+        &self,
+        request_id: u64,
+        project_id: String,
+        branch_name: String,
+        use_current_task: bool,
+        migrate_changes: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::CreateBranch {
+                project_id,
+                branch_name,
+                use_current_task,
+                migrate_changes,
             },
         )
         .await

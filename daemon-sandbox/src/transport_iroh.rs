@@ -615,6 +615,32 @@ async fn handle_control(
                 }
             }
         }
+        Control::CreateBranch {
+            project_id,
+            branch_name,
+            use_current_task,
+            migrate_changes,
+        } => {
+            let outcome = registry
+                .create_branch(&project_id, &branch_name, use_current_task, migrate_changes)
+                .await;
+            match outcome {
+                Ok((section_id, projects)) => {
+                    let reply = WorkerReply::CreateBranchAck {
+                        section_id,
+                        projects,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
     }
     Ok(())
 }

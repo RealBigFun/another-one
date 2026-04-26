@@ -213,6 +213,20 @@ pub enum Control {
         project_id: String,
         action_id: String,
     },
+    /// `another-one-ojm.5` — create a branch from HEAD on
+    /// `project_id`. `use_current_task = true` swaps the current
+    /// checkout in place; `false` cuts a fresh worktree (with
+    /// `migrate_changes` controlling whether uncommitted changes
+    /// move to it). Reply is [`WorkerReply::CreateBranchAck`]
+    /// carrying the new task's `section_id` for the worktree case
+    /// (empty string in current-task mode — the caller's UI just
+    /// dismisses the modal).
+    CreateBranch {
+        project_id: String,
+        branch_name: String,
+        use_current_task: bool,
+        migrate_changes: bool,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -357,6 +371,17 @@ pub enum WorkerReply {
     /// invalidate the active git-state / changed-files providers.
     ToolbarActionOutcomeAck {
         outcome: ToolbarActionOutcome,
+    },
+    /// `another-one-ojm.5` — ack for [`Control::CreateBranch`].
+    /// `section_id` is the new worktree task's section id (empty
+    /// string for the current-task branch-swap case) so the issuing
+    /// client navigates to it directly. The post-mutation project
+    /// tree refresh rides along as `projects` per the inline-snapshot
+    /// contract — the mobile UI repaints the projects drawer
+    /// without a follow-up `ListProjects` round-trip.
+    CreateBranchAck {
+        section_id: String,
+        projects: Vec<ProjectSummary>,
     },
 }
 

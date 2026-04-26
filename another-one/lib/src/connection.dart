@@ -283,12 +283,7 @@ abstract class DaemonConnection {
     required String branchName,
     required bool useCurrentTask,
     required bool migrateChanges,
-  }) {
-    throw UnimplementedError(
-      'createBranch: requires Control::CreateBranch wire variant on '
-      'the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Compute the canonical branch slug for a free-text input.
   /// Powers the Create Branch modal's live `Branch: …` preview.

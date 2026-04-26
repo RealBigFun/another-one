@@ -543,6 +543,48 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         );
     }
   }
+
+  /// `another-one-ojm.5` — create a branch from HEAD over the iroh
+  /// wire. Returns the new worktree task's `sectionId` (empty string
+  /// in current-task mode) so the caller can navigate to it. The
+  /// ack also carries the post-mutation `projects` snapshot, which
+  /// today the transport discards; consuming it in-band (e.g.
+  /// pushing into [workerReplies]) is a follow-up hook.
+  @override
+  Future<String> createBranch({
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      await _session!.createBranch(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        branchName: branchName,
+        useCurrentTask: useCurrentTask,
+        migrateChanges: migrateChanges,
+      );
+    });
+    switch (reply) {
+      case WorkerReply_CreateBranchAck(:final sectionId, :final projects):
+        // Re-broadcast the post-mutation project snapshot so any
+        // listener on `workerReplies` (the projects drawer's
+        // FRB-side consumer) repaints in the same round-trip the
+        // ack carried. Mirrors LocalSession::create_branch which
+        // calls `self.list_projects()` after the mutation.
+        if (!_workerReplies.isClosed) {
+          _workerReplies.add(WorkerReply.projectList(projects: projects));
+        }
+        return sectionId;
+      case WorkerReply_Err(:final message, :final kind):
+        _throwForErr(WorkerReply_Err(message: message, kind: kind));
+      default:
+        throw StateError(
+          'createBranch: unexpected reply variant $reply',
+        );
+    }
+  }
 }
 
 /// Exception thrown by `IrohTransport` mutator overrides when the

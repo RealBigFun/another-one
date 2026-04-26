@@ -53,6 +53,15 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
 
+  /// `another-one-ojm.5` — issue a `Control::CreateBranch` frame.
+  Future<void> createBranch({
+    required BigInt requestId,
+    required String projectId,
+    required String branchName,
+    required bool useCurrentTask,
+    required bool migrateChanges,
+  });
+
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
@@ -511,6 +520,16 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.toolbarActionOutcomeAck({
     required ToolbarActionOutcome outcome,
   }) = WorkerReply_ToolbarActionOutcomeAck;
+
+  /// `another-one-ojm.5` — ack for [`Control::CreateBranch`]. Mirror
+  /// of `daemon-sandbox/src/frame.rs::WorkerReply::CreateBranchAck`.
+  /// Carries the post-mutation `projects` snapshot inline so the
+  /// issuing client repaints the projects drawer without a follow-
+  /// up `ListProjects` round-trip.
+  const factory WorkerReply.createBranchAck({
+    required String sectionId,
+    required List<ProjectSummary> projects,
+  }) = WorkerReply_CreateBranchAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

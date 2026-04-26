@@ -265,6 +265,30 @@ pub trait DaemonRegistry: Send + Sync + 'static {
             ))
         })
     }
+
+    /// `another-one-ojm.5` — create a branch from HEAD. Returns the
+    /// new task's `section_id` (or empty string for the current-task
+    /// case) plus the post-mutation `projects` snapshot for the
+    /// caller's inline-snapshot ack.
+    fn create_branch<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _branch_name: &'a str,
+        _use_current_task: bool,
+        _migrate_changes: bool,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = anyhow::Result<(String, Vec<ProjectSummary>)>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "create_branch: not implemented on this DaemonRegistry"
+            ))
+        })
+    }
 }
 
 /// A registry implementation suitable for the standalone sandbox

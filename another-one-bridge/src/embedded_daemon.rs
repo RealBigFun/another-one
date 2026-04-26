@@ -453,6 +453,153 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
     }
 
+    fn create_branch<'a>(
+        &'a self,
+        project_id: &'a str,
+        branch_name: &'a str,
+        use_current_task: bool,
+        migrate_changes: bool,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = anyhow::Result<(String, Vec<ProjectSummary>)>>
+                + Send
+                + 'a,
+        >,
+    > {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let branch_name = branch_name.to_string();
+        Box::pin(async move {
+            // Phase 1: snapshot the project lookup (path + names)
+            // outside the mutation worker. Mirrors LocalSession's
+            // create_branch which does the same lookup-then-spawn split.
+            let (project_path, target_project_id) = {
+                let arc = inner
+                    .upgrade()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_branch: registry vanished before lookup"
+                        )
+                    })?;
+                let state = arc
+                    .lock()
+                    .map_err(|_| {
+                        anyhow::anyhow!("create_branch: RegistryState mutex poisoned")
+                    })?;
+                let project = state
+                    .project_store
+                    .project(&project_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_branch: unknown project_id `{project_id}`"
+                        )
+                    })?;
+                (project.path.clone(), project.id.clone())
+            };
+
+            // Phase 2: kick off the worker thread that does the actual
+            // git work. Same `spawn_branch_creation` LocalSession uses.
+            let mut rx = another_one_core::project_service::spawn_branch_creation(
+                target_project_id.clone(),
+                project_path,
+                branch_name,
+                use_current_task,
+                migrate_changes,
+            );
+            let reply = rx
+                .recv()
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!("branch creation worker dropped before reply")
+                })?;
+            let success = reply
+                .result
+                .map_err(|f| anyhow::anyhow!("create branch: {}", f.message))?;
+
+            // Phase 3: insert the new project + task back into the
+            // registry, capture the section_id, then re-flatten for
+            // the inline-snapshot ack. Skipped for the current-task
+            // mode where there's no new project, only a branch swap
+            // on the existing checkout.
+            let section_id = if let Some(prepared) = success.project {
+                let arc = inner
+                    .upgrade()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("create_branch: registry vanished mid-flight")
+                    })?;
+                let mut state = arc
+                    .lock()
+                    .map_err(|_| {
+                        anyhow::anyhow!("create_branch: registry mutex poisoned")
+                    })?;
+                let inserted_worktree = state
+                    .project_store
+                    .insert_prepared_project(prepared.clone());
+                let worktree_project_id = if inserted_worktree {
+                    prepared.project.id.clone()
+                } else {
+                    state
+                        .project_store
+                        .projects
+                        .iter()
+                        .find(|p| p.path == prepared.project.path)
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| prepared.project.id.clone())
+                };
+                let task_id = uuid::Uuid::new_v4().to_string();
+                let section = another_one_core::section::SectionId::for_task(
+                    &worktree_project_id,
+                    &success.branch_name,
+                    &task_id,
+                );
+                let section_key = section.store_key();
+                state
+                    .project_store
+                    .insert_task(another_one_core::project_store::Task {
+                        id: task_id,
+                        name: success.task_name,
+                        kind: another_one_core::project_store::TaskKind::Worktree,
+                        root_project_id: target_project_id,
+                        target_project_id: worktree_project_id.clone(),
+                        branch_name: success.branch_name,
+                        section_id: section_key.clone(),
+                        worktree_project_id: Some(worktree_project_id),
+                        tabs: Vec::new(),
+                        active_tab_id: String::new(),
+                        next_tab_id: 0,
+                        cwd: None,
+                    });
+                state.project_store.save();
+                section_key
+            } else {
+                // Current-task mode: no new project. The daemon's
+                // checkout has already been swapped by
+                // create_branch_from_head; nothing to insert.
+                String::new()
+            };
+
+            // Phase 4: re-flatten the registry into the wire
+            // ProjectSummary list so the ack carries the post-
+            // mutation snapshot inline.
+            let projects = {
+                let arc = inner
+                    .upgrade()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_branch: registry vanished during snapshot read"
+                        )
+                    })?;
+                let state = arc
+                    .lock()
+                    .map_err(|_| {
+                        anyhow::anyhow!("create_branch: registry mutex poisoned")
+                    })?;
+                flatten_state_to_frame(&state)
+            };
+            Ok((section_id, projects))
+        })
+    }
+
     fn run_toolbar_git_action<'a>(
         &'a self,
         project_id: &'a str,
