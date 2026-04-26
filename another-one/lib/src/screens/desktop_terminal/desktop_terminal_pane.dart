@@ -139,7 +139,37 @@ class _AttachedTerminalState extends State<_AttachedTerminal> {
       _attachRetry?.cancel();
       _attachRetry = null;
       _clearSpinner();
-      _terminal.write(utf8.decode(bytes, allowMalformed: true));
+      _terminal.write(_patchExtendedUnderlineSgr(
+          utf8.decode(bytes, allowMalformed: true)));
+    });
+  }
+
+  /// xterm.dart 4.0's CSI parser silently drops the `:` between SGR
+  /// sub-parameters: `ESC[4:0m` (extended "no underline" — emitted by
+  /// modern apps including Claude Code's status bar) parses as SGR
+  /// 40 (set bg black) because the digits collapse to "40". Once
+  /// `ESC[4m` turns underline on, the `:0` sequence never clears it,
+  /// so EOL-clears inherit the underline flag and every cell on the
+  /// remainder of the screen renders with an underline beneath it.
+  ///
+  /// Surgical fix: rewrite `4:0` → `24` (canonical "underline off")
+  /// and any other `4:N` (curly / dotted / dashed / double) → `4`
+  /// (single underline — xterm.dart's painter only knows one style).
+  /// Leaves every other escape untouched, including `38:` / `48:` /
+  /// `58:` true-color sequences (those parse to unknown-SGR no-ops in
+  /// xterm.dart either way, so the bug doesn't bite there).
+  static final _sgrPattern = RegExp(r'\x1b\[([0-9:;]*?)m');
+  static final _underlineStylePattern = RegExp(r'^4:[1-9]\d*$');
+  String _patchExtendedUnderlineSgr(String input) {
+    return input.replaceAllMapped(_sgrPattern, (m) {
+      final raw = m.group(1) ?? '';
+      if (!raw.contains(':')) return m.group(0)!;
+      final patched = raw.split(';').map((p) {
+        if (p == '4:0') return '24';
+        if (_underlineStylePattern.hasMatch(p)) return '4';
+        return p;
+      }).join(';');
+      return '\x1b[${patched}m';
     });
   }
 
