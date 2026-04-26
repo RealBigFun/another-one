@@ -80,10 +80,16 @@ class AppTokens {
   static const Color chevron = Color(0xFF8C8C8C);
 
   // ── Typography ─────────────────────────────────────────────────────
-  /// Desktop uses "Lilex NerdFont Mono". On mobile we fall back to
-  /// platform monospace — Flutter's generic 'monospace' family resolves
-  /// to Menlo / Roboto Mono / Courier depending on the OS.
-  static const String fontFamilyMono = 'monospace';
+  /// Primary app font. GPUI desktop bundled Lilex NerdFont Mono and
+  /// used it for every label + glyph + modal — we mirror that
+  /// (registered as `Lilex` in pubspec.yaml fonts section). Mobile
+  /// falls back gracefully when the bundled TTFs aren't shipped.
+  static const String fontFamily = 'Lilex';
+
+  /// Backwards-compatible alias for callers that explicitly want a
+  /// monospace font. Same family as the primary one — Lilex IS
+  /// monospace; the desktop has no proportional secondary.
+  static const String fontFamilyMono = 'Lilex';
 
   static const double fontCaption = 10;
   static const double fontSmall = 11;
@@ -179,11 +185,17 @@ class AppTokens {
   ];
 
   /// Deterministic project-avatar colour. Matches
-  /// `desktop/src/theme.rs::project_color` (byte-wise FNV-ish hash).
+  /// `desktop/src/theme.rs::project_color` (byte-wise FNV-ish hash
+  /// with u32 wrapping arithmetic). Mask is `0xFFFFFFFF`, NOT
+  /// `0x7fffffff` — GPUI's hash uses `u32::wrapping_mul/wrapping_add`
+  /// which wraps mod 2^32; the prior 31-bit mask diverged for any
+  /// project id long enough that an intermediate hash overflowed
+  /// 31 bits (e.g. `aws-vpn-client` rendered purple here vs the
+  /// rose tone GPUI showed).
   static Color projectColor(String id) {
     var hash = 0;
     for (final b in id.codeUnits) {
-      hash = ((hash * 31) + b) & 0x7fffffff;
+      hash = ((hash * 31) + b) & 0xFFFFFFFF;
     }
     return projectColors[hash % projectColors.length];
   }

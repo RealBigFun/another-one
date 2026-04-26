@@ -281,7 +281,13 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
             children: [
               Row(
                 children: [
-                  Expanded(
+                  // Title shrinks to fit; the worktree + pinned
+                  // glyphs render INLINE right after the title
+                  // (matches GPUI's `branch_row` layout, where
+                  // `flex_1 + min_w(0)` lets the truncating Text
+                  // give up width to its inline siblings instead
+                  // of pushing them to the row's right edge).
+                  Flexible(
                     child: ref.watch(renameTargetTaskIdProvider) == task.id
                         ? _TaskRenameField(
                             task: task,
@@ -309,22 +315,29 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                           ),
                   ),
                   const SizedBox(width: 4),
-                  // Worktree marker — every task in AnotherOne is a
-                  // worktree today, so this glyph is always shown
-                  // (mirrors GPUI's git-worktree icon).
+                  // Worktree marker — `git-split.svg` matches the
+                  // glyph GPUI's `branch_row` shows (we previously
+                  // had `git-worktree`, which is a different icon
+                  // used for the New-Task modal's worktree toggle).
                   const AppIcon(
-                    'git-worktree',
+                    'git-split',
                     size: 11,
-                    color: AppTokens.textPlaceholder,
+                    color: AppTokens.textMuted,
                   ),
                   if (task.pinned) ...[
                     const SizedBox(width: 4),
                     const AppIcon(
                       'pin-off',
                       size: 11,
-                      color: AppTokens.accent,
+                      color: AppTokens.textMuted,
                     ),
                   ],
+                  // Spacer so the inline-icons cluster keeps its
+                  // tight spacing on the left and the row's right
+                  // edge is empty (GPUI keeps right-side controls
+                  // — delete button — in a separate hover-only
+                  // group; nothing to render here).
+                  const Spacer(),
                 ],
               ),
               if (subtitle != null || _hasDiff(task))

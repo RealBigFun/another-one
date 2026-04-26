@@ -34,6 +34,10 @@ ThemeData buildAppTheme() {
     canvasColor: AppTokens.chromeBg,
     dividerColor: AppTokens.divider,
     hintColor: AppTokens.textMuted,
+    // GPUI desktop is monospace-only — Lilex Nerd Font Mono for
+    // every label. Wire it on the root ThemeData so every Text /
+    // Material widget inherits without per-callsite fontFamily.
+    fontFamily: AppTokens.fontFamily,
   );
 
   return base.copyWith(
