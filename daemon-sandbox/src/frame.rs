@@ -28,9 +28,62 @@ pub const TY_WORKER_REPLY: u8 = 0x02;
 /// paired peer can make the daemon allocate per frame.
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
+/// Top-level envelope for every type=1 control frame. Carries a
+/// `request_id` so the client can correlate the daemon's reply
+/// against the originating call without relying on stream ordering
+/// — once `ojm.2..8` land 20+ verbs flying in parallel, ordering
+/// alone won't disambiguate.
+///
+/// Why an envelope rather than a `request_id` field on every
+/// `Control` variant:
+///   - `Control` already uses `#[serde(tag = "type")]` for its
+///     variant discriminator. A separate envelope keeps the
+///     correlation field out of the per-variant struct shape, so
+///     adding a new domain variant in a sibling task is a one-line
+///     change and serde's tag-flatten rules don't have to be
+///     re-checked per variant.
+///   - The wire cost is one extra `"request_id":N,` JSON pair per
+///     frame — negligible against the 1-byte type + 4-byte length
+///     header that already precedes the JSON.
+///
+/// `request_id == 0` is reserved for **push frames** the daemon
+/// emits unsolicited (PTY bytes for an attached tab, future
+/// project-tree refresh broadcasts, etc.). Clients MUST NOT use 0
+/// as a request id when issuing calls — the dispatch table in the
+/// Dart layer treats id 0 as "this is not a reply to anyone."
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlEnvelope {
+    pub request_id: u64,
+    #[serde(flatten)]
+    pub control: Control,
+}
+
+/// Top-level envelope for every type=2 worker-reply frame. Mirrors
+/// [`ControlEnvelope`]: `request_id` matches the
+/// `ControlEnvelope.request_id` of the call this is replying to,
+/// or `0` for daemon-pushed frames that nobody asked for.
+///
+/// `#[serde(flatten)]` on `reply` keeps the on-wire JSON shape flat
+/// — `{"request_id": 17, "kind": "project_list", "projects": [...]}`
+/// — so the existing `serde(tag = "kind")` discriminator on
+/// `WorkerReply` still works without nesting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerReplyEnvelope {
+    pub request_id: u64,
+    #[serde(flatten)]
+    pub reply: WorkerReply,
+}
+
+/// Sentinel `request_id` value reserved for daemon-pushed
+/// (unsolicited) frames. Clients filter on this rather than
+/// matching against the request_id ↦ Completer table.
+#[allow(dead_code)] // used by callers; the smoke-test bin compiles frame.rs in isolation
+pub const PUSH_REQUEST_ID: u64 = 0;
+
 /// Client → daemon session-control messages (type=1 frames). Payload
-/// is JSON. Server → client control is not currently used (the daemon
-/// pushes data via `0x00` and worker replies via `0x02`).
+/// is JSON, wrapped in a [`ControlEnvelope`] that carries the
+/// `request_id`. Server → client control is not currently used (the
+/// daemon pushes data via `0x00` and worker replies via `0x02`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {

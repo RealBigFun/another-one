@@ -8,9 +8,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -64,11 +64,25 @@ abstract class IrohSession implements RustOpaqueInterface {
   Future<void> launchTab({required String sectionId, required String tabId});
 
   /// Ask the daemon to send back its current project list as a
-  /// [`WorkerReply::ProjectList`] frame.
+  /// [`WorkerReply::ProjectList`] frame. The reply arrives on
+  /// `subscribe_worker_replies` with a matching `request_id`;
+  /// today the Dart wrapper still consumes by stream order, so the
+  /// id round-trips but isn't dispatched-on yet — domain tasks
+  /// (`another-one-ojm.2..8`) are responsible for migrating each
+  /// verb to the completer-table model.
   Future<void> listProjects();
 
+  /// Allocate the next per-session request id. Dart calls this
+  /// before issuing a control verb so it can register a `Completer`
+  /// in its dispatch map keyed by the same id. Strictly-monotonic
+  /// across the session; never returns 0 (reserved for push
+  /// frames — see [`PUSH_REQUEST_ID`]).
+  Future<BigInt> nextRequestId();
+
   /// Request a PTY resize on the daemon's end. Goes through the same
-  /// stream as data, multiplexed by frame type.
+  /// stream as data, multiplexed by frame type. The legacy `Resize`
+  /// variant carries no data the client needs to wait on, so it
+  /// uses a fresh request_id but no caller correlates against it.
   Future<void> resize({required int cols, required int rows});
 
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
@@ -80,8 +94,13 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Start pushing decoded worker replies into the given Dart StreamSink.
   /// Same one-shot subscription shape as [`subscribe`]; the second call
-  /// returns an error. Replies arrive in the order the daemon sent them.
-  Stream<WorkerReply> subscribeWorkerReplies();
+  /// returns an error. Each item is a [`WorkerReplyMessage`] carrying
+  /// the originating `request_id` (or [`PUSH_REQUEST_ID`] = `0` for
+  /// daemon-pushed frames) plus the decoded variant. Replies arrive
+  /// in the order the daemon sent them; the Dart layer dispatches
+  /// against its `Map<int, Completer<WorkerReply>>` rather than
+  /// relying on ordering.
+  Stream<WorkerReplyMessage> subscribeWorkerReplies();
 
   /// Resize the currently-attached tab's PTY. Silently no-ops on
   /// the daemon when nothing is attached. Mirror of
@@ -296,4 +315,33 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.projectList({
     required List<ProjectSummary> projects,
   }) = WorkerReply_ProjectList;
+}
+
+/// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`
+/// over the `subscribe_worker_replies` stream. Splitting the
+/// request_id out lets the Dart side maintain a
+/// `Map<int, Completer<WorkerReply>>` keyed by request_id and complete
+/// the matching future when the reply arrives, instead of relying on
+/// stream-ordering for correlation.
+///
+/// `request_id == 0` (i.e. [`PUSH_REQUEST_ID`]) marks an unsolicited
+/// daemon push that no caller is waiting on — the Dart layer routes
+/// those to a separate broadcast subscription rather than the
+/// completer table.
+class WorkerReplyMessage {
+  final BigInt requestId;
+  final WorkerReply reply;
+
+  const WorkerReplyMessage({required this.requestId, required this.reply});
+
+  @override
+  int get hashCode => requestId.hashCode ^ reply.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is WorkerReplyMessage &&
+          runtimeType == other.runtimeType &&
+          requestId == other.requestId &&
+          reply == other.reply;
 }

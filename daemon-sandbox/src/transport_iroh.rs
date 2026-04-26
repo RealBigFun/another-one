@@ -26,7 +26,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, WorkerReply};
+use crate::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
 use crate::registry::{EndpointHandle, PairState, TerminalRegistry};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
@@ -253,8 +253,12 @@ async fn handle_connection(
                 // going out and the first reply coming back.
             }
             Ok(Some((frame::TY_CONTROL, payload))) => {
-                match serde_json::from_slice::<Control>(&payload) {
-                    Ok(ctrl) => {
+                match serde_json::from_slice::<ControlEnvelope>(&payload) {
+                    Ok(envelope) => {
+                        let ControlEnvelope {
+                            request_id,
+                            control: ctrl,
+                        } = envelope;
                         // Version-check Hello regardless of pairing state.
                         // A v0 client that somehow squeaks past the ALPN
                         // gate — or a v2 client speculatively dialling
@@ -291,11 +295,18 @@ async fn handle_connection(
                                 }
                             }
                         }
-                        handle_control(ctrl, &registry, &outbound_tx, &mut attached, viewer_id)
-                            .await
-                            .unwrap_or_else(|e| {
-                                warn!(error = %e, "control dispatch failed");
-                            });
+                        handle_control(
+                            request_id,
+                            ctrl,
+                            &registry,
+                            &outbound_tx,
+                            &mut attached,
+                            viewer_id,
+                        )
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!(error = %e, "control dispatch failed");
+                        });
                     }
                     Err(e) => warn!(error = %e, "bad iroh control frame"),
                 }
@@ -376,6 +387,7 @@ fn consume_hello(
 }
 
 async fn handle_control(
+    request_id: u64,
     ctrl: Control,
     registry: &Arc<dyn TerminalRegistry>,
     outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
@@ -391,7 +403,7 @@ async fn handle_control(
         Control::ListProjects => {
             let projects = registry.list_projects();
             let wire = WorkerReply::ProjectList { projects };
-            send_worker_reply(outbound_tx, &wire).await?;
+            send_worker_reply(outbound_tx, request_id, &wire).await?;
         }
         Control::AttachTab { section_id, tab_id } => {
             // Drop any prior attachment on this connection.
@@ -483,11 +495,22 @@ async fn handle_control(
     Ok(())
 }
 
+/// Serialise a [`WorkerReply`] inside a [`WorkerReplyEnvelope`] tagged
+/// with `request_id` and push it to the outbound writer task. Use
+/// [`frame::PUSH_REQUEST_ID`] (= `0`) for daemon-originated frames
+/// that aren't replying to a specific call (e.g. PTY data — though
+/// data frames bypass this entirely via `TY_DATA`, the same id-0
+/// rule applies if/when we add push variants of `WorkerReply`).
 async fn send_worker_reply(
     outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    request_id: u64,
     reply: &WorkerReply,
 ) -> anyhow::Result<()> {
-    let payload = serde_json::to_vec(reply).context("serialize worker reply")?;
+    let envelope = WorkerReplyEnvelope {
+        request_id,
+        reply: reply.clone(),
+    };
+    let payload = serde_json::to_vec(&envelope).context("serialize worker reply")?;
     outbound_tx
         .send((frame::TY_WORKER_REPLY, payload))
         .await

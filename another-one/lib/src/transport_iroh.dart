@@ -52,12 +52,38 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   // rate, so they get their own broadcast stream rather than being
   // union'd into [incoming]. Null WorkerReply sentinel never flows —
   // the Rust side guarantees every `add` carries a real variant.
+  //
+  // Two paths feed this controller:
+  //   * Daemon-pushed frames (request_id == 0) — broadcast as-is to
+  //     anyone listening on [workerReplies].
+  //   * Replies to outbound calls (request_id > 0) — also broadcast,
+  //     AND dispatched into [_pending] so a caller awaiting a
+  //     specific request_id can receive its result via the completer
+  //     map without filtering the broadcast stream itself.
+  //
+  // The dual path is deliberate: existing code that listens to
+  // `workerReplies` keeps working unchanged, and per-call code can
+  // adopt the completer model incrementally as `another-one-ojm.2..8`
+  // migrate each verb.
   final StreamController<WorkerReply> _workerReplies =
       StreamController<WorkerReply>.broadcast();
 
+  /// Outstanding `Future<WorkerReply>`s keyed by the `request_id` we
+  /// allocated when issuing the call. Populated by [sendControlAndAwait]
+  /// before the wire frame goes out; drained as `WorkerReplyMessage`s
+  /// flow back from the daemon. A request_id is reserved for push
+  /// frames (`0`) and never appears in this map.
+  ///
+  /// Per the foundation task `another-one-ojm.1` this map is wired
+  /// up but not yet consumed — the existing `listProjects` / etc.
+  /// methods still rely on the broadcast stream. Domain children
+  /// (`another-one-ojm.2..8`) will route their new verbs through
+  /// [sendControlAndAwait] and complete their futures here.
+  final Map<int, Completer<WorkerReply>> _pending = {};
+
   IrohSession? _session;
   StreamSubscription<Uint8List>? _incomingSub;
-  StreamSubscription<WorkerReply>? _workerRepliesSub;
+  StreamSubscription<WorkerReplyMessage>? _workerRepliesSub;
   TransportStatus _current = const TransportStatus.disconnected();
   bool _closed = false;
 
@@ -129,8 +155,11 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       );
       // Errors here don't tear down the transport — worker-reply
       // delivery is best-effort relative to the core PTY path.
+      // Each WorkerReplyMessage is fanned out two ways: completer
+      // dispatch (when request_id matches an outstanding call) and
+      // the broadcast stream (always). See [_pending].
       _workerRepliesSub = session.subscribeWorkerReplies().listen(
-        _workerReplies.add,
+        _dispatchWorkerReplyMessage,
         onError: (_) {},
       );
       _publish(const TransportStatus.connected());
@@ -248,6 +277,18 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     _incomingSub = null;
     await _workerRepliesSub?.cancel();
     _workerRepliesSub = null;
+    // Wake every outstanding caller with an error so they don't
+    // hang forever after the session closes mid-flight. Use a
+    // close-specific exception so call sites can distinguish "session
+    // dropped" from "daemon returned an Err frame" once that lands.
+    for (final completer in _pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          StateError('IrohTransport closed before reply arrived'),
+        );
+      }
+    }
+    _pending.clear();
     final s = _session;
     _session = null;
     if (s != null) {
@@ -262,5 +303,71 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   void _publish(TransportStatus s) {
     _current = s;
     if (!_status.isClosed) _status.add(s);
+  }
+
+  /// Route a `WorkerReplyMessage` to its waiting completer (if any)
+  /// AND broadcast the unwrapped `WorkerReply` so existing listeners
+  /// on [workerReplies] keep receiving frames. Push frames
+  /// (`requestId == 0`) skip the completer table.
+  ///
+  /// Implementation note: BigInt → int conversion is safe because
+  /// request_ids start at 1 and increment monotonically; saturating
+  /// the JS-safe-int range (2^53) takes 285 years at 1 GHz issuance.
+  /// We could keep the map keyed on BigInt but `int` is the natural
+  /// Dart key type and matches every other id in the codebase.
+  void _dispatchWorkerReplyMessage(WorkerReplyMessage message) {
+    if (!_workerReplies.isClosed) {
+      _workerReplies.add(message.reply);
+    }
+    final id = message.requestId.toInt();
+    if (id == 0) return; // daemon push — no caller is waiting
+    final completer = _pending.remove(id);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(message.reply);
+    }
+    // No completer found is fine: callers that don't await a reply
+    // (fire-and-forget like `attachTab`) leave the id unregistered
+    // even though the daemon may still emit a reply. Drop silently
+    // rather than logging — this is the steady-state for
+    // launch-style verbs.
+  }
+
+  /// Issue a control frame keyed by a freshly-allocated request_id
+  /// and return a future that completes with the matching daemon
+  /// reply. Domain verbs landing in `another-one-ojm.2..8` will use
+  /// this in place of the existing fire-and-forget `session.foo()`
+  /// pattern.
+  ///
+  /// `send` is the caller-supplied closure that performs the actual
+  /// FRB call once the request_id has been registered in the
+  /// dispatch map — taking it as a closure means each verb decides
+  /// which `Control::*` variant + arguments to encode without this
+  /// helper having to know about every variant. Callers receive the
+  /// `request_id` so they can pass it to a Rust-side `send_control`
+  /// equivalent (added per-verb in domain tasks).
+  ///
+  /// Currently unused: the existing `listProjects` / `attachTab`
+  /// helpers keep the fire-and-forget shape because the contemporary
+  /// daemon doesn't yet emit replies the UI awaits per-call. Once
+  /// the wire grows verbs that DO reply (e.g. `addProject`), each
+  /// such verb routes through here.
+  // ignore: unused_element
+  Future<WorkerReply> _sendControlAndAwait(
+    Future<void> Function(int requestId) send,
+  ) async {
+    final session = _session;
+    if (session == null) {
+      throw StateError('IrohTransport not connected');
+    }
+    final id = (await session.nextRequestId()).toInt();
+    final completer = Completer<WorkerReply>();
+    _pending[id] = completer;
+    try {
+      await send(id);
+    } catch (e) {
+      _pending.remove(id);
+      rethrow;
+    }
+    return completer.future;
   }
 }

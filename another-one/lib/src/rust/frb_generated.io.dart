@@ -81,6 +81,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RustStreamSink<WorkerReplyMessage>
+  dco_decode_StreamSink_worker_reply_message_Sse(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
@@ -423,6 +427,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   WorkerReply dco_decode_worker_reply(dynamic raw);
 
   @protected
+  WorkerReplyMessage dco_decode_worker_reply_message(dynamic raw);
+
+  @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
@@ -470,6 +477,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustStreamSink<WorkerReply> sse_decode_StreamSink_worker_reply_Sse(
     SseDeserializer deserializer,
   );
+
+  @protected
+  RustStreamSink<WorkerReplyMessage>
+  sse_decode_StreamSink_worker_reply_message_Sse(SseDeserializer deserializer);
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
@@ -904,6 +915,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   WorkerReply sse_decode_worker_reply(SseDeserializer deserializer);
 
   @protected
+  WorkerReplyMessage sse_decode_worker_reply_message(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
     SseSerializer serializer,
@@ -960,6 +976,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_StreamSink_worker_reply_Sse(
     RustStreamSink<WorkerReply> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_StreamSink_worker_reply_message_Sse(
+    RustStreamSink<WorkerReplyMessage> self,
     SseSerializer serializer,
   );
 
@@ -1490,6 +1512,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_worker_reply(WorkerReply self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_worker_reply_message(
+    WorkerReplyMessage self,
+    SseSerializer serializer,
+  );
 }
 
 // Section: wire_class

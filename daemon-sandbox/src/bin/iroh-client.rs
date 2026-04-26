@@ -82,11 +82,25 @@ async fn main() -> anyhow::Result<()> {
 
     let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
 
+    // Per-call request ids — bump for each Control envelope so any
+    // matching WorkerReply can be correlated. The smoke test only
+    // ever fires one `ListProjects`-shaped call so this is mostly
+    // demonstration; real clients (Dart) will keep a Completer map.
+    let mut next_request_id: u64 = 1;
+    let mut next_id = || {
+        let id = next_request_id;
+        next_request_id += 1;
+        id
+    };
+
     // Send a resize control frame first (type 1, JSON payload) so the
     // daemon's PTY is appropriately sized before anything else.
-    let resize = serde_json::to_vec(&frame::Control::Resize {
-        cols: 100,
-        rows: 30,
+    let resize = serde_json::to_vec(&frame::ControlEnvelope {
+        request_id: next_id(),
+        control: frame::Control::Resize {
+            cols: 100,
+            rows: 30,
+        },
     })?;
     frame::write_frame(&mut send, frame::TY_CONTROL, &resize)
         .await
@@ -102,8 +116,11 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::current_dir().ok())
         .map(|p| p.to_string_lossy().into_owned());
     if let Some(project_path) = project_path {
-        let hello = serde_json::to_vec(&frame::Control::WatchProject {
-            project_path: project_path.clone(),
+        let hello = serde_json::to_vec(&frame::ControlEnvelope {
+            request_id: next_id(),
+            control: frame::Control::WatchProject {
+                project_path: project_path.clone(),
+            },
         })?;
         frame::write_frame(&mut send, frame::TY_CONTROL, &hello)
             .await
@@ -134,8 +151,11 @@ async fn main() -> anyhow::Result<()> {
                     eprintln!("[server→client {}B] {:?}", payload.len(), text);
                 }
                 Ok(Some((frame::TY_WORKER_REPLY, payload))) => {
-                    match serde_json::from_slice::<frame::WorkerReply>(&payload) {
-                        Ok(reply) => eprintln!("[server→client worker_reply] {:?}", reply),
+                    match serde_json::from_slice::<frame::WorkerReplyEnvelope>(&payload) {
+                        Ok(envelope) => eprintln!(
+                            "[server→client worker_reply request_id={}] {:?}",
+                            envelope.request_id, envelope.reply
+                        ),
                         Err(e) => eprintln!(
                             "[server→client worker_reply {}B — decode failed] {e}",
                             payload.len()

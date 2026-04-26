@@ -15,6 +15,7 @@
 //! without this indirection `Endpoint::bind()` hangs forever on Android.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use anyhow::Context;
@@ -63,6 +64,29 @@ const TY_WORKER_REPLY: u8 = 0x02;
 /// See `daemon-sandbox/src/frame.rs::MAX_FRAME_BYTES` for the rationale;
 /// keep this value in lockstep with the daemon's cap.
 const MAX_FRAME_BYTES: usize = 64 * 1024;
+
+/// Top-level envelope for every type=1 control frame. Carries
+/// `request_id` so the daemon's reply can be correlated against the
+/// originating call from a `Map<u64, Completer<WorkerReply>>` on the
+/// Dart side. Mirror of `daemon-sandbox/src/frame.rs::ControlEnvelope`.
+#[derive(Debug, Clone, serde::Serialize)]
+struct ControlEnvelope {
+    request_id: u64,
+    #[serde(flatten)]
+    control: Control,
+}
+
+// Note: we deliberately don't define a `WorkerReplyEnvelope` mirror
+// here. The recv loop decodes via `serde_json::Value` first so it can
+// peek at the discriminator for forwards-compat (unknown variants
+// from a newer daemon get logged-and-dropped). That two-stage decode
+// already extracts `request_id` and `kind` separately, so a
+// `#[serde(flatten)]` envelope struct would be unused weight.
+
+/// Reserved `request_id` for unsolicited daemon → client frames
+/// (PTY bytes, future project-tree refresh broadcasts, etc.).
+/// Clients must not use `0` as a real request id when issuing calls.
+pub(crate) const PUSH_REQUEST_ID: u64 = 0;
 
 /// Messages that can be sent via a type=1 control frame. Extend in lock-step
 /// with `daemon-sandbox/src/frame.rs::Control`.
@@ -122,8 +146,9 @@ enum Control {
 /// That lets the daemon evolve its internal types freely and makes
 /// the public wire schema a deliberate artifact.
 ///
-/// FRB-exposed: passed to Dart as a tagged union via the
-/// `subscribe_worker_replies` stream on [`IrohSession`].
+/// FRB-exposed: passed to Dart as a tagged union inside
+/// [`WorkerReplyMessage`] via the `subscribe_worker_replies` stream
+/// on [`IrohSession`].
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkerReply {
@@ -131,6 +156,23 @@ pub enum WorkerReply {
     /// desktop sidebar. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectList`.
     ProjectList { projects: Vec<ProjectSummary> },
+}
+
+/// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`
+/// over the `subscribe_worker_replies` stream. Splitting the
+/// request_id out lets the Dart side maintain a
+/// `Map<int, Completer<WorkerReply>>` keyed by request_id and complete
+/// the matching future when the reply arrives, instead of relying on
+/// stream-ordering for correlation.
+///
+/// `request_id == 0` (i.e. [`PUSH_REQUEST_ID`]) marks an unsolicited
+/// daemon push that no caller is waiting on — the Dart layer routes
+/// those to a separate broadcast subscription rather than the
+/// completer table.
+#[derive(Debug, Clone)]
+pub struct WorkerReplyMessage {
+    pub request_id: u64,
+    pub reply: WorkerReply,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ProjectSummary`. Contains
@@ -417,9 +459,15 @@ pub struct IrohSession {
     /// Dart `StreamSink`. Taken once and moved into the forwarding task.
     incoming_rx: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
     /// Holds decoded worker replies (from `TY_WORKER_REPLY` frames) until
-    /// `subscribe_worker_replies()` wires it to a Dart sink. Same
-    /// one-shot-take semantics as `incoming_rx`.
-    worker_replies_rx: Mutex<Option<mpsc::Receiver<WorkerReply>>>,
+    /// `subscribe_worker_replies()` wires it to a Dart sink. Each item is
+    /// a `(request_id, reply)` pair so the Dart layer can dispatch via
+    /// its `Map<int, Completer<WorkerReply>>` rather than stream order.
+    worker_replies_rx: Mutex<Option<mpsc::Receiver<WorkerReplyMessage>>>,
+    /// Monotonic per-session request id allocator. Starts at 1 because
+    /// `0` is reserved for daemon-pushed (unsolicited) frames — see
+    /// [`PUSH_REQUEST_ID`]. Wraps at u64::MAX which is effectively
+    /// never; even at 1 GHz issuance the wrap takes 500 years.
+    next_request_id: AtomicU64,
     /// Closes the underlying connection when invoked.
     closer: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
@@ -562,9 +610,20 @@ async fn iroh_connect_inner(
     // daemon ignores Hello from already-paired peers, so sending it
     // unconditionally is safe. We send via the mpsc so ordering is
     // preserved with whatever the Dart layer sends next.
-    let hello_payload = serde_json::to_vec(&Control::Hello {
-        pair_token,
-        protocol_version: PROTOCOL_VERSION,
+    //
+    // Hello uses `request_id == PUSH_REQUEST_ID` (= 0) because no
+    // caller is waiting on a reply — the daemon either accepts and
+    // stays silent or closes the connection with
+    // `anotherone/incompatible-version` / `anotherone/unpaired`.
+    // Reserving 0 for "no reply expected" lets the Dart layer treat
+    // any worker_reply with id 0 as a daemon push rather than a
+    // dispatch-to-completer event.
+    let hello_payload = serde_json::to_vec(&ControlEnvelope {
+        request_id: PUSH_REQUEST_ID,
+        control: Control::Hello {
+            pair_token,
+            protocol_version: PROTOCOL_VERSION,
+        },
     })
     .context("encode hello")?;
     send_tx
@@ -587,7 +646,7 @@ async fn iroh_connect_inner(
     // reserved for future use. Unknown types are logged and dropped so older
     // clients stay forwards-compatible as the daemon adds variants.
     let (incoming_tx, incoming_rx) = mpsc::channel::<Vec<u8>>(128);
-    let (worker_replies_tx, worker_replies_rx) = mpsc::channel::<WorkerReply>(64);
+    let (worker_replies_tx, worker_replies_rx) = mpsc::channel::<WorkerReplyMessage>(64);
     let (close_tx, mut close_rx) = tokio::sync::oneshot::channel::<()>();
     let conn_for_close = conn.clone();
     tokio_rt().spawn(async move {
@@ -608,8 +667,19 @@ async fn iroh_connect_inner(
                         // the strict decode; otherwise log + drop so
                         // a future daemon variant (TaskStateChanged
                         // etc.) doesn't blow up an older client.
+                        //
+                        // The envelope is `#[serde(flatten)]`-ed onto
+                        // `WorkerReply`, so the on-wire shape is one
+                        // flat object: `{"request_id": N, "kind": "...", ...}`.
+                        // We pluck `request_id` from the generic
+                        // `Value` first (default 0 = push frame) then
+                        // try the strict variant decode.
                         match serde_json::from_slice::<serde_json::Value>(&payload) {
                             Ok(value) => {
+                                let request_id = value
+                                    .get("request_id")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(PUSH_REQUEST_ID);
                                 // Clone the discriminator before the
                                 // strict decode moves `value` —
                                 // otherwise we'd have no way to log
@@ -621,6 +691,7 @@ async fn iroh_connect_inner(
                                     .to_string();
                                 match serde_json::from_value::<WorkerReply>(value) {
                                     Ok(reply) => {
+                                        let message = WorkerReplyMessage { request_id, reply };
                                         // try_send, not send().await — this
                                         // recv task also drives the PTY
                                         // stream which *does* want
@@ -628,7 +699,7 @@ async fn iroh_connect_inner(
                                         // stuck worker_replies consumer
                                         // stall PTY bytes.
                                         use tokio::sync::mpsc::error::TrySendError;
-                                        match worker_replies_tx.try_send(reply) {
+                                        match worker_replies_tx.try_send(message) {
                                             Ok(()) => {}
                                             Err(TrySendError::Full(_)) => {
                                                 tracing::debug!("worker_replies channel full; dropping frame");
@@ -641,6 +712,7 @@ async fn iroh_connect_inner(
                                     Err(e) => {
                                         tracing::debug!(
                                             kind,
+                                            request_id,
                                             error = %e,
                                             "unknown/unsupported worker_reply variant; dropping (daemon is newer than client?)"
                                         );
@@ -675,6 +747,10 @@ async fn iroh_connect_inner(
         send_tx: Mutex::new(Some(send_tx)),
         incoming_rx: Mutex::new(Some(incoming_rx)),
         worker_replies_rx: Mutex::new(Some(worker_replies_rx)),
+        // Start at 1: id 0 is reserved for daemon-pushed frames so
+        // the Dart layer can distinguish "reply to my call" from
+        // "unsolicited update" without inspecting variant kinds.
+        next_request_id: AtomicU64::new(1),
         closer: Mutex::new(Some(close_tx)),
     })
 }
@@ -685,19 +761,34 @@ impl IrohSession {
         self.send_frame(TY_DATA, bytes).await
     }
 
+    /// Allocate the next per-session request id. Dart calls this
+    /// before issuing a control verb so it can register a `Completer`
+    /// in its dispatch map keyed by the same id. Strictly-monotonic
+    /// across the session; never returns 0 (reserved for push
+    /// frames — see [`PUSH_REQUEST_ID`]).
+    pub fn next_request_id(&self) -> u64 {
+        self.next_request_id.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Request a PTY resize on the daemon's end. Goes through the same
-    /// stream as data, multiplexed by frame type.
+    /// stream as data, multiplexed by frame type. The legacy `Resize`
+    /// variant carries no data the client needs to wait on, so it
+    /// uses a fresh request_id but no caller correlates against it.
     pub async fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
-        let payload =
-            serde_json::to_vec(&Control::Resize { cols, rows }).context("encode resize")?;
-        self.send_frame(TY_CONTROL, payload).await
+        self.send_control(self.next_request_id(), Control::Resize { cols, rows })
+            .await
     }
 
     /// Ask the daemon to send back its current project list as a
-    /// [`WorkerReply::ProjectList`] frame.
+    /// [`WorkerReply::ProjectList`] frame. The reply arrives on
+    /// `subscribe_worker_replies` with a matching `request_id`;
+    /// today the Dart wrapper still consumes by stream order, so the
+    /// id round-trips but isn't dispatched-on yet — domain tasks
+    /// (`another-one-ojm.2..8`) are responsible for migrating each
+    /// verb to the completer-table model.
     pub async fn list_projects(&self) -> anyhow::Result<()> {
-        let payload = serde_json::to_vec(&Control::ListProjects).context("encode list_projects")?;
-        self.send_frame(TY_CONTROL, payload).await
+        self.send_control(self.next_request_id(), Control::ListProjects)
+            .await
     }
 
     /// Subscribe this session to the live PTY byte stream for
@@ -707,34 +798,50 @@ impl IrohSession {
     /// the previous one. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::AttachTab`.
     pub async fn attach_tab(&self, section_id: String, tab_id: String) -> anyhow::Result<()> {
-        let payload = serde_json::to_vec(&Control::AttachTab { section_id, tab_id })
-            .context("encode attach_tab")?;
-        self.send_frame(TY_CONTROL, payload).await
+        self.send_control(
+            self.next_request_id(),
+            Control::AttachTab { section_id, tab_id },
+        )
+        .await
     }
 
     /// Stop forwarding PTY bytes for the currently-attached tab.
     /// Idempotent if nothing is attached. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
     pub async fn detach_tab(&self) -> anyhow::Result<()> {
-        let payload = serde_json::to_vec(&Control::DetachTab).context("encode detach_tab")?;
-        self.send_frame(TY_CONTROL, payload).await
+        self.send_control(self.next_request_id(), Control::DetachTab)
+            .await
     }
 
     /// Resize the currently-attached tab's PTY. Silently no-ops on
     /// the daemon when nothing is attached. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
     pub async fn tab_resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
-        let payload =
-            serde_json::to_vec(&Control::TabResize { cols, rows }).context("encode tab_resize")?;
-        self.send_frame(TY_CONTROL, payload).await
+        self.send_control(self.next_request_id(), Control::TabResize { cols, rows })
+            .await
     }
 
     /// Ask the daemon to launch the tab's PTY if it isn't already
     /// live. No-op on the daemon side if the tab is already running.
     /// After this, a subsequent `attach_tab` will receive bytes.
     pub async fn launch_tab(&self, section_id: String, tab_id: String) -> anyhow::Result<()> {
-        let payload = serde_json::to_vec(&Control::LaunchTab { section_id, tab_id })
-            .context("encode launch_tab")?;
+        self.send_control(
+            self.next_request_id(),
+            Control::LaunchTab { section_id, tab_id },
+        )
+        .await
+    }
+
+    /// Wrap a `Control` in the `request_id`-tagged envelope and push
+    /// it to the writer task. Internal to the existing per-verb
+    /// helpers above; future per-verb additions in `ojm.2..8` can
+    /// also reuse this rather than re-implementing the wrap.
+    async fn send_control(&self, request_id: u64, control: Control) -> anyhow::Result<()> {
+        let payload = serde_json::to_vec(&ControlEnvelope {
+            request_id,
+            control,
+        })
+        .context("encode control envelope")?;
         self.send_frame(TY_CONTROL, payload).await
     }
 
@@ -770,10 +877,15 @@ impl IrohSession {
 
     /// Start pushing decoded worker replies into the given Dart StreamSink.
     /// Same one-shot subscription shape as [`subscribe`]; the second call
-    /// returns an error. Replies arrive in the order the daemon sent them.
+    /// returns an error. Each item is a [`WorkerReplyMessage`] carrying
+    /// the originating `request_id` (or [`PUSH_REQUEST_ID`] = `0` for
+    /// daemon-pushed frames) plus the decoded variant. Replies arrive
+    /// in the order the daemon sent them; the Dart layer dispatches
+    /// against its `Map<int, Completer<WorkerReply>>` rather than
+    /// relying on ordering.
     pub async fn subscribe_worker_replies(
         &self,
-        sink: StreamSink<WorkerReply>,
+        sink: StreamSink<WorkerReplyMessage>,
     ) -> anyhow::Result<()> {
         let mut guard = self.worker_replies_rx.lock().await;
         let mut rx = guard
@@ -782,8 +894,8 @@ impl IrohSession {
         drop(guard);
 
         tokio_rt().spawn(async move {
-            while let Some(reply) = rx.recv().await {
-                if sink.add(reply).is_err() {
+            while let Some(message) = rx.recv().await {
+                if sink.add(message).is_err() {
                     break;
                 }
             }
