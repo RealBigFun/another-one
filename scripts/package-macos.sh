@@ -102,7 +102,7 @@ if [[ ! -f "$ICON_PATH" ]]; then
 fi
 
 SHIM_NAME="another-one-mcp-shim"
-SHIM_BINARY_PATH="$ROOT_DIR/target/release/$SHIM_NAME"
+SHIM_BINARY_PATH="$RELEASE_DIR/$SHIM_NAME"
 
 echo "Building $PACKAGE_NAME + $SHIM_NAME for release..."
 build_args=(build -p "$PACKAGE_NAME" -p "$SHIM_NAME" --release)
