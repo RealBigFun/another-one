@@ -14,6 +14,8 @@
 // actions, custom actions) lands here when the bridge surface for
 // each grows.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -21,7 +23,16 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../rust/api/local_session.dart'
-    show OpenInAppDto, OpenInState, PullRequestStateDto;
+    show
+        OpenInAppDto,
+        OpenInState,
+        ProjectActionDto,
+        ProjectActionIconDto,
+        ProjectActionKindDto,
+        ProjectActionKindDto_Agent,
+        ProjectActionKindDto_Shell,
+        ProjectActionScopeDto,
+        PullRequestStateDto;
 import '../../state/active_git_action_provider.dart';
 import '../../state/active_git_state_provider.dart';
 import '../../state/active_project_provider.dart';
@@ -31,10 +42,12 @@ import '../../state/github_url_provider.dart';
 import '../../state/left_sidebar_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/open_in_provider.dart';
+import '../../state/project_actions_provider.dart';
 import '../../state/pull_request_status_provider.dart';
 import '../../state/repo_default_commit_action_provider.dart';
 import '../../state/resource_sample_provider.dart';
 import '../../state/right_sidebar_provider.dart';
+import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/hover_icon_button.dart';
@@ -42,6 +55,7 @@ import '../../widgets/toolbar_spinner.dart';
 import '../create_branch/create_branch_modal.dart';
 import '../pair_mobile/pair_mobile_modal.dart';
 
+part 'custom_actions_button.dart';
 part 'git_actions_button.dart';
 part 'open_in_button.dart';
 
@@ -80,9 +94,7 @@ class DesktopTitlebar extends ConsumerWidget {
           // stable until then.
           const Spacer(),
           const _BuildChip(),
-          // Custom Actions button — port pending custom-actions
-          // module (another-one-29i). Slot is intentionally absent
-          // until that lands.
+          const _CustomActionsButton(),
           const _OpenInButton(),
           const _ActiveProjectGithubButton(),
           const _PullRequestButton(),
