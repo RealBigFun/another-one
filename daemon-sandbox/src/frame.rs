@@ -219,6 +219,55 @@ pub enum Control {
         project_id: String,
         task_id: String,
     },
+    /// Compute the canonical branch slug for a free-text input.
+    /// Powers the Create Branch modal's live `Branch: …` preview.
+    /// Pure function — no project state involved. Reply is
+    /// [`WorkerReply::SlugifyBranchNameAck`] with the slug.
+    SlugifyBranchName { name: String },
+    /// Branch names available on `project_id`'s git repo. Powers the
+    /// new-task modal's source-branch dropdown. Reply is
+    /// [`WorkerReply::ProjectBranchesAck`] with an empty list when
+    /// the project id is unknown.
+    ReadProjectBranches { project_id: String },
+    /// Default branch the new-task modal seeds for `project_id`.
+    /// Reply is [`WorkerReply::PrimaryBranchAck`] with `None` when
+    /// the project has no current branch (fresh repo).
+    PrimaryBranchForProject { project_id: String },
+    /// User's preferred default commit action (`"commit"` or
+    /// `"commit-and-push"`) for the active project's root repo.
+    /// Reply is [`WorkerReply::RepoDefaultCommitActionAck`] with
+    /// `None` when no preference has been recorded — UI defaults to
+    /// `"commit"` in that case.
+    RepoDefaultCommitAction { project_id: String },
+    /// Snapshot the active project's branch metadata: current branch
+    /// name + ahead / behind counts. Powers the titlebar git-actions
+    /// split-button's primary-action selection (Push when ahead, Pull
+    /// when behind, Fetch otherwise — Commit comes from the
+    /// changes-vs-clean side via `ReadChangedFiles`).
+    ///
+    /// Sister verb to `LocalSession::read_active_git_state`. Reads
+    /// through `core::project_store::read_project_git_state` with
+    /// `include_metadata=true` on the daemon's project root path.
+    /// Reply is [`WorkerReply::ActiveGitStateAck`] with a `None`
+    /// payload when the project id is unknown.
+    ReadActiveGitState { project_id: String },
+    /// Working-tree changes for `project_id`. Powers the right
+    /// sidebar's Changes pane. Sister to
+    /// `LocalSession::read_changed_files`. Reply is
+    /// [`WorkerReply::ChangedFilesAck`] with a `None` payload when
+    /// the project id is unknown.
+    ReadChangedFiles { project_id: String },
+    /// Resolve `project_id`'s GitHub remote URL via
+    /// [`another_one_core::git_actions::find_github_repo_url`]. Reply
+    /// is [`WorkerReply::ProjectGithubUrlAck`] with `None` when the
+    /// project id is unknown, has no `origin`, or `origin` isn't
+    /// github.com.
+    ReadProjectGithubUrl { project_id: String },
+    /// Recent commits on `project_id`'s current branch, capped at
+    /// `limit` entries. Powers the right sidebar's Commits pane.
+    /// Reply is [`WorkerReply::RecentCommitsAck`] with `None` when
+    /// the project id is unknown.
+    ReadRecentCommits { project_id: String, limit: u32 },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -372,6 +421,95 @@ pub enum WorkerReply {
         task_id: String,
         removed: bool,
     },
+    /// Reply to [`Control::SlugifyBranchName`].
+    SlugifyBranchNameAck { slug: String },
+    /// Reply to [`Control::ReadProjectBranches`]. Empty list for
+    /// unknown projects.
+    ProjectBranchesAck { branches: Vec<String> },
+    /// Reply to [`Control::PrimaryBranchForProject`]. `None` when
+    /// the project has no current branch yet.
+    PrimaryBranchAck { branch: Option<String> },
+    /// Reply to [`Control::RepoDefaultCommitAction`]. `action ==
+    /// None` means the user hasn't recorded a preference; UI
+    /// defaults to `"commit"`.
+    RepoDefaultCommitActionAck { action: Option<String> },
+    /// Reply to [`Control::ReadActiveGitState`]. `state == None`
+    /// when the project id is unknown — UI shows the empty state
+    /// rather than surfacing an error.
+    ActiveGitStateAck {
+        state: Option<ActiveGitStateWire>,
+    },
+    /// Reply to [`Control::ReadChangedFiles`]. `files == None` when
+    /// the project id is unknown.
+    ChangedFilesAck {
+        files: Option<Vec<ChangedFileWire>>,
+    },
+    /// Reply to [`Control::ReadProjectGithubUrl`]. `url == None`
+    /// when the project is untracked, has no `origin`, or `origin`
+    /// isn't a github.com URL.
+    ProjectGithubUrlAck { url: Option<String> },
+    /// Reply to [`Control::ReadRecentCommits`]. `view == None` when
+    /// the project id is unknown. Errors propagate as
+    /// [`WorkerReply::Err`].
+    RecentCommitsAck { view: Option<RecentCommitsWire> },
+}
+
+/// Wire mirror of the bridge's `ActiveGitStateDto` (FRB-bound) and
+/// the underlying `core::project_store::ProjectGitState`. Carries the
+/// metadata the titlebar's idle-primary-action selection needs.
+///
+/// Defined as a wire-side mirror rather than reusing the FRB DTO
+/// because daemon-sandbox can't depend on the bridge crate (cycle —
+/// the bridge embeds daemon-sandbox). The bridge's `embedded_daemon`
+/// converts between this shape and the FRB DTO; the field set
+/// matches one-for-one so the conversion is mechanical.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveGitStateWire {
+    pub current_branch: Option<String>,
+    pub ahead_count: u32,
+    pub behind_count: u32,
+}
+
+/// Wire mirror of the bridge's `CommitDto` (FRB-bound). Carries
+/// pre-computed display strings — the daemon does the rendering work
+/// (chrono is already a dep there) so the UI doesn't need a
+/// humanise-duration package on the client side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitWire {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+    pub author_name: String,
+    pub authored_relative: String,
+}
+
+/// Wire mirror of the bridge's `RecentCommitsView` (FRB-bound).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentCommitsWire {
+    pub current_branch: Option<String>,
+    pub has_more: bool,
+    pub commits: Vec<CommitWire>,
+}
+
+/// Wire mirror of the bridge's `ChangedFileDto` (FRB-bound). Carries
+/// the raw `git status` chars + diff counts; UI maps them to glyphs
+/// per the desktop's existing `changed_file_status_*` tables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangedFileWire {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub staged_additions: i32,
+    pub staged_deletions: i32,
+    pub unstaged_additions: i32,
+    pub unstaged_deletions: i32,
+    /// Single-char index status, encoded as a 1-char `String` so
+    /// JSON wire and FRB conversion are uniform (FRB doesn't expose
+    /// `char` directly).
+    pub index_status: String,
+    /// Single-char worktree status, same encoding as
+    /// `index_status`.
+    pub worktree_status: String,
+    pub untracked: bool,
 }
 
 /// Coarse classification of a daemon-side failure. Keep small —

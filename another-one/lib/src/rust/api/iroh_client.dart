@@ -10,7 +10,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Record the application data directory Dart has chosen for us.
 /// Must be called before `iroh_connect` so the secret key can be
@@ -42,21 +42,6 @@ Future<IrohSession> irohConnect({
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
 abstract class IrohSession implements RustOpaqueInterface {
-  /// Issue a [`Control::AddProject`] under a Dart-allocated
-  /// `request_id` so the Dart layer can register a `Completer`
-  /// keyed by the same id before the frame goes out. Mirror of
-  /// `daemon-sandbox/src/frame.rs::Control::AddProject`.
-  ///
-  /// Unlike the legacy fire-and-forget verbs above, mutator verbs
-  /// reply with an inline snapshot the issuer needs (see
-  /// `WorkerReply::ProjectAdded`), so the request id has to be
-  /// known *before* `send` runs — the Dart caller calls
-  /// [`next_request_id`] first, registers its completer, then
-  /// invokes this method with the id it allocated. That ordering
-  /// guarantees the reply can never beat the completer-table
-  /// insertion.
-  Future<void> addProject({required BigInt requestId, required String path});
-
   /// Subscribe this session to the live PTY byte stream for
   /// `(section_id, tab_id)`. The daemon will forward the attached
   /// tab's output as [`TY_DATA`] frames on the existing `subscribe`
@@ -67,20 +52,6 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
-
-  /// Issue a [`Control::CreateWorktreeTask`] under `request_id`.
-  /// The Dart side allocates the id (via [`next_request_id`]) and
-  /// registers a completer keyed by the same id before calling
-  /// here, so the matching `WorkerReply::TaskCreated` (or `Err`)
-  /// is dispatched into the awaiting future. Mirror of
-  /// `LocalSession::create_worktree_task`.
-  Future<void> createWorktreeTask({
-    required BigInt requestId,
-    required String projectId,
-    required String taskName,
-    required String sourceBranch,
-    AgentProvider? agentProvider,
-  });
 
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
@@ -108,29 +79,32 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
-  /// Issue a [`Control::RemoveProject`] under a Dart-allocated
-  /// `request_id`. Same allocation contract as [`add_project`].
-  /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveProject`.
-  Future<void> removeProject({
-    required BigInt requestId,
+  /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
+  Future<BigInt> primaryBranchForProject({required String projectId});
+
+  /// Issue [`Control::ReadActiveGitState`] for `project_id`. Returns
+  /// the allocated `request_id` so the Dart caller can correlate
+  /// the daemon's reply.
+  Future<BigInt> readActiveGitState({required String projectId});
+
+  /// Issue [`Control::ReadChangedFiles`] for `project_id`.
+  Future<BigInt> readChangedFiles({required String projectId});
+
+  /// Issue [`Control::ReadProjectBranches`] for `project_id`.
+  Future<BigInt> readProjectBranches({required String projectId});
+
+  /// Issue [`Control::ReadProjectGithubUrl`] for `project_id`.
+  Future<BigInt> readProjectGithubUrl({required String projectId});
+
+  /// Issue [`Control::ReadRecentCommits`] for `project_id` capped
+  /// at `limit` entries.
+  Future<BigInt> readRecentCommits({
     required String projectId,
+    required int limit,
   });
 
-  /// Issue a [`Control::RemoveTask`] under `request_id`. Mirror of
-  /// `LocalSession::remove_task`.
-  Future<void> removeTask({
-    required BigInt requestId,
-    required String projectId,
-    required String taskId,
-  });
-
-  /// Issue a [`Control::RenameTask`] under `request_id`. Mirror of
-  /// `LocalSession::rename_task`.
-  Future<void> renameTask({
-    required BigInt requestId,
-    required String taskId,
-    required String newName,
-  });
+  /// Issue [`Control::RepoDefaultCommitAction`] for `project_id`.
+  Future<BigInt> repoDefaultCommitAction({required String projectId});
 
   /// Request a PTY resize on the daemon's end. Goes through the same
   /// stream as data, multiplexed by frame type. The legacy `Resize`
@@ -141,13 +115,9 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
 
-  /// Issue a [`Control::SetTaskPinned`] under `request_id`. Mirror
-  /// of `LocalSession::set_task_pinned`.
-  Future<void> setTaskPinned({
-    required BigInt requestId,
-    required String taskId,
-    required bool pinned,
-  });
+  /// Issue [`Control::SlugifyBranchName`] for `name`. Pure verb —
+  /// no project state involved on the daemon side.
+  Future<BigInt> slugifyBranchName({required String name});
 
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
@@ -169,15 +139,37 @@ abstract class IrohSession implements RustOpaqueInterface {
   Future<void> tabResize({required int cols, required int rows});
 }
 
+/// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
+/// FRB-exposed via the `WorkerReply::ActiveGitStateAck` variant.
+class ActiveGitStateWire {
+  final String? currentBranch;
+  final int aheadCount;
+  final int behindCount;
+
+  const ActiveGitStateWire({
+    this.currentBranch,
+    required this.aheadCount,
+    required this.behindCount,
+  });
+
+  @override
+  int get hashCode =>
+      currentBranch.hashCode ^ aheadCount.hashCode ^ behindCount.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ActiveGitStateWire &&
+          runtimeType == other.runtimeType &&
+          currentBranch == other.currentBranch &&
+          aheadCount == other.aheadCount &&
+          behindCount == other.behindCount;
+}
+
 /// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form
 /// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
 /// `Shell` is the catch-all for plain-PTY tabs with no agent
 /// provider set.
-///
-/// Both `Serialize` and `Deserialize` are required because the
-/// type appears on both sides of the wire — daemon → client in
-/// `WorkerReply::ProjectList` (Deserialize) and client → daemon in
-/// `Control::CreateWorktreeTask` (Serialize).
 enum AgentProvider {
   claudeCode,
   cursorAgent,
@@ -189,6 +181,94 @@ enum AgentProvider {
   rovoDev,
   forge,
   shell,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFileWire`.
+class ChangedFileWire {
+  final String path;
+  final String? originalPath;
+  final int stagedAdditions;
+  final int stagedDeletions;
+  final int unstagedAdditions;
+  final int unstagedDeletions;
+  final String indexStatus;
+  final String worktreeStatus;
+  final bool untracked;
+
+  const ChangedFileWire({
+    required this.path,
+    this.originalPath,
+    required this.stagedAdditions,
+    required this.stagedDeletions,
+    required this.unstagedAdditions,
+    required this.unstagedDeletions,
+    required this.indexStatus,
+    required this.worktreeStatus,
+    required this.untracked,
+  });
+
+  @override
+  int get hashCode =>
+      path.hashCode ^
+      originalPath.hashCode ^
+      stagedAdditions.hashCode ^
+      stagedDeletions.hashCode ^
+      unstagedAdditions.hashCode ^
+      unstagedDeletions.hashCode ^
+      indexStatus.hashCode ^
+      worktreeStatus.hashCode ^
+      untracked.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChangedFileWire &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          originalPath == other.originalPath &&
+          stagedAdditions == other.stagedAdditions &&
+          stagedDeletions == other.stagedDeletions &&
+          unstagedAdditions == other.unstagedAdditions &&
+          unstagedDeletions == other.unstagedDeletions &&
+          indexStatus == other.indexStatus &&
+          worktreeStatus == other.worktreeStatus &&
+          untracked == other.untracked;
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
+class CommitWire {
+  final String id;
+  final String shortId;
+  final String subject;
+  final String authorName;
+  final String authoredRelative;
+
+  const CommitWire({
+    required this.id,
+    required this.shortId,
+    required this.subject,
+    required this.authorName,
+    required this.authoredRelative,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      shortId.hashCode ^
+      subject.hashCode ^
+      authorName.hashCode ^
+      authoredRelative.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CommitWire &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          shortId == other.shortId &&
+          subject == other.subject &&
+          authorName == other.authorName &&
+          authoredRelative == other.authoredRelative;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -239,6 +319,32 @@ class ProjectSummary {
           kind == other.kind &&
           currentBranch == other.currentBranch &&
           tasks == other.tasks;
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::RecentCommitsWire`.
+class RecentCommitsWire {
+  final String? currentBranch;
+  final bool hasMore;
+  final List<CommitWire> commits;
+
+  const RecentCommitsWire({
+    this.currentBranch,
+    required this.hasMore,
+    required this.commits,
+  });
+
+  @override
+  int get hashCode =>
+      currentBranch.hashCode ^ hasMore.hashCode ^ commits.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RecentCommitsWire &&
+          runtimeType == other.runtimeType &&
+          currentBranch == other.currentBranch &&
+          hasMore == other.hasMore &&
+          commits == other.commits;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
@@ -386,16 +492,6 @@ sealed class WorkerReply with _$WorkerReply {
     required List<ProjectSummary> projects,
   }) = WorkerReply_ProjectList;
 
-  /// Inline-snapshot reply to [`Control::AddProject`]. Mirror of
-  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectAdded`.
-  const factory WorkerReply.projectAdded({required ProjectSummary project}) =
-      WorkerReply_ProjectAdded;
-
-  /// Inline echo of [`Control::RemoveProject`]. Mirror of
-  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectRemoved`.
-  const factory WorkerReply.projectRemoved({required String projectId}) =
-      WorkerReply_ProjectRemoved;
-
   /// Uniform per-request failure frame. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
   /// callers in `ojm.2..8` map this to a Dart-level exception
@@ -406,34 +502,47 @@ sealed class WorkerReply with _$WorkerReply {
     required ErrKind kind,
   }) = WorkerReply_Err;
 
-  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskCreated`.
-  /// Reply to [`Control::CreateWorktreeTask`].
-  const factory WorkerReply.taskCreated({
-    required String projectId,
-    required TaskSummary task,
-  }) = WorkerReply_TaskCreated;
+  /// Reply to [`Control::SlugifyBranchName`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::SlugifyBranchNameAck`.
+  const factory WorkerReply.slugifyBranchNameAck({required String slug}) =
+      WorkerReply_SlugifyBranchNameAck;
 
-  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRenamed`.
-  /// Reply to [`Control::RenameTask`].
-  const factory WorkerReply.taskRenamed({
-    required bool changed,
-    TaskSummary? task,
-  }) = WorkerReply_TaskRenamed;
+  /// Reply to [`Control::ReadProjectBranches`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectBranchesAck`.
+  const factory WorkerReply.projectBranchesAck({
+    required List<String> branches,
+  }) = WorkerReply_ProjectBranchesAck;
 
-  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskPinned`.
-  /// Reply to [`Control::SetTaskPinned`].
-  const factory WorkerReply.taskPinned({
-    required bool changed,
-    TaskSummary? task,
-  }) = WorkerReply_TaskPinned;
+  /// Reply to [`Control::PrimaryBranchForProject`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::PrimaryBranchAck`.
+  const factory WorkerReply.primaryBranchAck({String? branch}) =
+      WorkerReply_PrimaryBranchAck;
 
-  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRemoved`.
-  /// Reply to [`Control::RemoveTask`].
-  const factory WorkerReply.taskRemoved({
-    required String projectId,
-    required String taskId,
-    required bool removed,
-  }) = WorkerReply_TaskRemoved;
+  /// Reply to [`Control::RepoDefaultCommitAction`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::RepoDefaultCommitActionAck`.
+  const factory WorkerReply.repoDefaultCommitActionAck({String? action}) =
+      WorkerReply_RepoDefaultCommitActionAck;
+
+  /// Reply to [`Control::ReadActiveGitState`]. `state == None`
+  /// when the project id is unknown. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ActiveGitStateAck`.
+  const factory WorkerReply.activeGitStateAck({ActiveGitStateWire? state}) =
+      WorkerReply_ActiveGitStateAck;
+
+  /// Reply to [`Control::ReadChangedFiles`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ChangedFilesAck`.
+  const factory WorkerReply.changedFilesAck({List<ChangedFileWire>? files}) =
+      WorkerReply_ChangedFilesAck;
+
+  /// Reply to [`Control::ReadProjectGithubUrl`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectGithubUrlAck`.
+  const factory WorkerReply.projectGithubUrlAck({String? url}) =
+      WorkerReply_ProjectGithubUrlAck;
+
+  /// Reply to [`Control::ReadRecentCommits`]. Mirror of
+  /// `daemon-sandbox/src/frame.rs::WorkerReply::RecentCommitsAck`.
+  const factory WorkerReply.recentCommitsAck({RecentCommitsWire? view}) =
+      WorkerReply_RecentCommitsAck;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

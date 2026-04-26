@@ -165,6 +165,33 @@ enum Control {
         project_id: String,
         task_id: String,
     },
+    /// Compute the canonical branch slug for free-text input.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SlugifyBranchName`.
+    SlugifyBranchName { name: String },
+    /// Branch names available on a project's repo. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadProjectBranches`.
+    ReadProjectBranches { project_id: String },
+    /// Default branch the new-task modal seeds for a project.
+    /// Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::PrimaryBranchForProject`.
+    PrimaryBranchForProject { project_id: String },
+    /// User's preferred default commit action for a project's root
+    /// repo. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::RepoDefaultCommitAction`.
+    RepoDefaultCommitAction { project_id: String },
+    /// Snapshot the active project's branch metadata — current
+    /// branch + ahead/behind counts. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadActiveGitState`.
+    ReadActiveGitState { project_id: String },
+    /// Working-tree changes for a project. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadChangedFiles`.
+    ReadChangedFiles { project_id: String },
+    /// Resolve a project's GitHub remote URL. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadProjectGithubUrl`.
+    ReadProjectGithubUrl { project_id: String },
+    /// Recent commits on a project's current branch. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadRecentCommits`.
+    ReadRecentCommits { project_id: String, limit: u32 },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -227,6 +254,76 @@ pub enum WorkerReply {
         task_id: String,
         removed: bool,
     },
+    /// Reply to [`Control::SlugifyBranchName`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::SlugifyBranchNameAck`.
+    SlugifyBranchNameAck { slug: String },
+    /// Reply to [`Control::ReadProjectBranches`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectBranchesAck`.
+    ProjectBranchesAck { branches: Vec<String> },
+    /// Reply to [`Control::PrimaryBranchForProject`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::PrimaryBranchAck`.
+    PrimaryBranchAck { branch: Option<String> },
+    /// Reply to [`Control::RepoDefaultCommitAction`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::RepoDefaultCommitActionAck`.
+    RepoDefaultCommitActionAck { action: Option<String> },
+    /// Reply to [`Control::ReadActiveGitState`]. `state == None`
+    /// when the project id is unknown. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ActiveGitStateAck`.
+    ActiveGitStateAck {
+        state: Option<ActiveGitStateWire>,
+    },
+    /// Reply to [`Control::ReadChangedFiles`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ChangedFilesAck`.
+    ChangedFilesAck {
+        files: Option<Vec<ChangedFileWire>>,
+    },
+    /// Reply to [`Control::ReadProjectGithubUrl`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectGithubUrlAck`.
+    ProjectGithubUrlAck { url: Option<String> },
+    /// Reply to [`Control::ReadRecentCommits`]. Mirror of
+    /// `daemon-sandbox/src/frame.rs::WorkerReply::RecentCommitsAck`.
+    RecentCommitsAck { view: Option<RecentCommitsWire> },
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
+/// FRB-exposed via the `WorkerReply::ActiveGitStateAck` variant.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ActiveGitStateWire {
+    pub current_branch: Option<String>,
+    pub ahead_count: u32,
+    pub behind_count: u32,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CommitWire {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+    pub author_name: String,
+    pub authored_relative: String,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::RecentCommitsWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RecentCommitsWire {
+    pub current_branch: Option<String>,
+    pub has_more: bool,
+    pub commits: Vec<CommitWire>,
+}
+
+/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFileWire`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChangedFileWire {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub staged_additions: i32,
+    pub staged_deletions: i32,
+    pub unstaged_additions: i32,
+    pub unstaged_deletions: i32,
+    pub index_status: String,
+    pub worktree_status: String,
+    pub untracked: bool,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -1015,6 +1112,93 @@ impl IrohSession {
             },
         )
         .await
+    }
+
+    // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
+    //
+    // Each method takes a Dart-allocated `request_id` and sends the
+    // matching `Control::*` frame. The Dart caller registers a
+    // completer keyed on `request_id` before the call returns; the
+    // daemon's reply is dispatched into that completer via the
+    // `subscribe_worker_replies` stream.
+
+    /// Issue [`Control::SlugifyBranchName`] for `name`. Pure verb —
+    /// no project state involved on the daemon side.
+    pub async fn slugify_branch_name(&self, request_id: u64, name: String) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SlugifyBranchName { name })
+            .await
+    }
+
+    /// Issue [`Control::ReadProjectBranches`] for `project_id`.
+    pub async fn read_project_branches(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadProjectBranches { project_id })
+            .await
+    }
+
+    /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
+    pub async fn primary_branch_for_project(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::PrimaryBranchForProject { project_id })
+            .await
+    }
+
+    /// Issue [`Control::RepoDefaultCommitAction`] for `project_id`.
+    pub async fn repo_default_commit_action(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::RepoDefaultCommitAction { project_id })
+            .await
+    }
+
+    /// Issue [`Control::ReadActiveGitState`] for `project_id`.
+    pub async fn read_active_git_state(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadActiveGitState { project_id })
+            .await
+    }
+
+    /// Issue [`Control::ReadChangedFiles`] for `project_id`.
+    pub async fn read_changed_files(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadChangedFiles { project_id })
+            .await
+    }
+
+    /// Issue [`Control::ReadProjectGithubUrl`] for `project_id`.
+    pub async fn read_project_github_url(
+        &self,
+        request_id: u64,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadProjectGithubUrl { project_id })
+            .await
+    }
+
+    /// Issue [`Control::ReadRecentCommits`] for `project_id` capped
+    /// at `limit` entries.
+    pub async fn read_recent_commits(
+        &self,
+        request_id: u64,
+        project_id: String,
+        limit: u32,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadRecentCommits { project_id, limit })
+            .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push

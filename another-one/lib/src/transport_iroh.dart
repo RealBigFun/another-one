@@ -11,7 +11,25 @@ import 'dart:typed_data';
 
 import 'connection.dart';
 import 'rust/api/iroh_client.dart';
+import 'rust/api/local_session.dart' as ls;
 import 'transport.dart';
+
+/// Dart surface for a `WorkerReply::Err` frame returned by the
+/// daemon over the iroh wire. Carries the message string the daemon
+/// emitted plus the `ErrKind` classification so call sites can
+/// branch on `kind` without parsing `message`. Today the git-state
+/// verbs in `another-one-ojm.4` throw this on the Err arm; the
+/// `IrohTransport` overrides do not catch it, so it propagates to
+/// the Riverpod async value as the error state.
+class IrohWireException implements Exception {
+  final String message;
+  final ErrKind kind;
+
+  const IrohWireException({required this.message, required this.kind});
+
+  @override
+  String toString() => 'IrohWireException(${kind.name}): $message';
+}
 
 // Extends `DaemonConnection` (not `implements`) so the abstract
 // class's default mutation impls — which throw with a wire-variant-
@@ -347,7 +365,12 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// equivalent (added per-verb in domain tasks).
   ///
   /// Each domain verb landing in `another-one-ojm.2..8` routes its
-  /// reply through this helper.
+  /// reply through this helper. First adopters: the git-state read
+  /// verbs landed in `another-one-ojm.4`. Each Rust-side helper on
+  /// `IrohSession` (e.g. `slugifyBranchName`) returns the freshly-
+  /// allocated `request_id`; the Dart layer registers a completer
+  /// keyed on it after the FRB call resolves and the recv loop
+  /// dispatches the matching reply via [_dispatchWorkerReplyMessage].
   Future<WorkerReply> _sendControlAndAwait(
     Future<void> Function(int requestId) send,
   ) async {
@@ -517,4 +540,196 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         ),
     };
   }
+
+  // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
+  //
+  // Each method allocates a request_id Rust-side, registers a Dart
+  // completer keyed on it, and awaits the matching reply via the
+  // shared `_dispatchWorkerReplyMessage` path. On the Err frame
+  // shape (`WorkerReply.err`), we throw an [IrohWireException] —
+  // same surface the FRB-bound `LocalSession` exposes for its
+  // anyhow errors — so caller code can `try/catch` and route to a
+  // toast without inspecting variant kinds.
+
+  @override
+  Future<String> slugifyBranchName(String name) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.slugifyBranchName(
+        requestId: BigInt.from(id),
+        name: name,
+      ),
+    );
+    return switch (reply) {
+      WorkerReply_SlugifyBranchNameAck(:final slug) => slug,
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'slugifyBranchName: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<List<String>> readProjectBranches(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.readProjectBranches(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      ),
+    );
+    return switch (reply) {
+      WorkerReply_ProjectBranchesAck(:final branches) => branches,
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'readProjectBranches: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<String?> primaryBranchForProject(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.primaryBranchForProject(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      ),
+    );
+    return switch (reply) {
+      WorkerReply_PrimaryBranchAck(:final branch) => branch,
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'primaryBranchForProject: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<String?> repoDefaultCommitAction(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.repoDefaultCommitAction(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      ),
+    );
+    return switch (reply) {
+      WorkerReply_RepoDefaultCommitActionAck(:final action) => action,
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'repoDefaultCommitAction: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<ls.ActiveGitStateDto?> readActiveGitState(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.readActiveGitState(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      ),
+    );
+    return switch (reply) {
+      WorkerReply_ActiveGitStateAck(:final state) => state == null
+          ? null
+          : ls.ActiveGitStateDto(
+              currentBranch: state.currentBranch,
+              aheadCount: state.aheadCount,
+              behindCount: state.behindCount,
+            ),
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'readActiveGitState: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<List<ls.ChangedFileDto>?> readChangedFiles(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.readChangedFiles(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      ),
+    );
+    return switch (reply) {
+      WorkerReply_ChangedFilesAck(:final files) =>
+        files?.map(_changedFileWireToDto).toList(growable: false),
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'readChangedFiles: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<String?> readProjectGithubUrl(String projectId) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.readProjectGithubUrl(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+      ),
+    );
+    return switch (reply) {
+      WorkerReply_ProjectGithubUrlAck(:final url) => url,
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'readProjectGithubUrl: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<ls.RecentCommitsView?> readRecentCommits({
+    required String projectId,
+    required int limit,
+  }) async {
+    final reply = await _sendControlAndAwait(
+      (id) => _session!.readRecentCommits(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        limit: limit,
+      ),
+    );
+    return switch (reply) {
+      WorkerReply_RecentCommitsAck(:final view) => view == null
+          ? null
+          : ls.RecentCommitsView(
+              currentBranch: view.currentBranch,
+              hasMore: view.hasMore,
+              commits: view.commits.map(_commitWireToDto).toList(growable: false),
+            ),
+      WorkerReply_Err(:final message, :final kind) =>
+        throw IrohWireException(message: message, kind: kind),
+      _ => throw StateError(
+          'readRecentCommits: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  ls.CommitDto _commitWireToDto(CommitWire c) => ls.CommitDto(
+        id: c.id,
+        shortId: c.shortId,
+        subject: c.subject,
+        authorName: c.authorName,
+        authoredRelative: c.authoredRelative,
+      );
+
+  ls.ChangedFileDto _changedFileWireToDto(ChangedFileWire f) =>
+      ls.ChangedFileDto(
+        path: f.path,
+        originalPath: f.originalPath,
+        stagedAdditions: f.stagedAdditions,
+        stagedDeletions: f.stagedDeletions,
+        unstagedAdditions: f.unstagedAdditions,
+        unstagedDeletions: f.unstagedDeletions,
+        indexStatus: f.indexStatus,
+        worktreeStatus: f.worktreeStatus,
+        untracked: f.untracked,
+      );
 }

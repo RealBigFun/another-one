@@ -12,7 +12,10 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{AgentProvider, ProjectSummary, TaskSummary};
+use crate::frame::{
+    ActiveGitStateWire, AgentProvider, ChangedFileWire, ProjectSummary, RecentCommitsWire,
+    TaskSummary,
+};
 
 /// Boxed-future return type for `DaemonRegistry` methods that are
 /// async on the embedder side (spawn a worker thread + await its
@@ -261,6 +264,84 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// returns `false`.
     fn remove_task(&self, _project_id: &str, _task_id: &str) -> bool {
         false
+    }
+
+    // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
+    //
+    // Sister methods to the per-verb signatures in
+    // `another-one-bridge::api::local_session::LocalSession::*`. Each
+    // returns the same shape (ignoring FRB-vs-wire DTO differences)
+    // and follows the same `Ok(None) ⇒ unknown project` contract.
+    //
+    // Default impls forward to plumbing that doesn't need a real
+    // project store (slugify) or return empty for sandbox registries
+    // that can't answer. The bridge's `BridgeDaemonRegistry` overrides
+    // each method with a real delegation as the verbs land.
+
+    /// Compute the canonical branch slug for a free-text input.
+    /// Pure — no project state involved. Default impl forwards to
+    /// [`another_one_core::project_store::slugify_branch_name`].
+    fn slugify_branch_name(&self, name: &str) -> String {
+        another_one_core::project_store::slugify_branch_name(name)
+    }
+
+    /// Branch names available on `project_id`'s git repo. Empty
+    /// list for unknown projects. Sister to
+    /// `LocalSession::read_project_branches`.
+    fn read_project_branches(&self, _project_id: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Default branch the new-task modal seeds for `project_id`.
+    /// Returns `None` when the project has no current branch yet
+    /// (fresh repo). Sister to
+    /// `LocalSession::primary_branch_for_project`.
+    fn primary_branch_for_project(&self, _project_id: &str) -> Option<String> {
+        None
+    }
+
+    /// User's preferred default commit action for `project_id`'s
+    /// root repo. Returns `"commit"` / `"commit-and-push"` / `None`.
+    /// Sister to `LocalSession::repo_default_commit_action`.
+    fn repo_default_commit_action(&self, _project_id: &str) -> Option<String> {
+        None
+    }
+
+    /// Snapshot the active project's branch metadata — current
+    /// branch name + ahead / behind counts. Sister to
+    /// `LocalSession::read_active_git_state`. May shell out to git;
+    /// implementations should arrange for `block_in_place` or
+    /// `spawn_blocking` so the daemon's tokio worker isn't held
+    /// across the syscalls.
+    fn read_active_git_state(&self, _project_id: &str) -> Option<ActiveGitStateWire> {
+        None
+    }
+
+    /// Working-tree changes for `project_id`. Sister to
+    /// `LocalSession::read_changed_files`. Returns `None` for
+    /// unknown project ids.
+    fn read_changed_files(&self, _project_id: &str) -> Option<Vec<ChangedFileWire>> {
+        None
+    }
+
+    /// Resolve `project_id`'s GitHub remote URL. Returns `None` for
+    /// unknown projects, projects without an `origin`, or non-
+    /// github.com remotes. Sister to
+    /// `LocalSession::read_project_github_url`.
+    fn read_project_github_url(&self, _project_id: &str) -> Option<String> {
+        None
+    }
+
+    /// Recent commits on `project_id`'s current branch, capped at
+    /// `limit`. Returns `None` for unknown project ids; `Err` for
+    /// git failures (commit pruned, etc.). Sister to
+    /// `LocalSession::read_recent_commits`. May shell out to git.
+    fn read_recent_commits(
+        &self,
+        _project_id: &str,
+        _limit: usize,
+    ) -> Result<Option<RecentCommitsWire>, String> {
+        Ok(None)
     }
 }
 

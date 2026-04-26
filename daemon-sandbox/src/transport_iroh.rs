@@ -27,7 +27,7 @@ use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
 use crate::frame::{self, Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope};
-use crate::registry::{EndpointHandle, PairState, DaemonRegistry};
+use crate::registry::{DaemonRegistry, EndpointHandle, PairState};
 
 /// ALPN advertised by the daemon. Version-suffixed so future protocol
 /// breaks can be versioned cleanly (`/1`, `/2`, …).
@@ -580,6 +580,52 @@ async fn handle_control(
             };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::SlugifyBranchName { name } => {
+            let slug = registry.slugify_branch_name(&name);
+            let reply = WorkerReply::SlugifyBranchNameAck { slug };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadProjectBranches { project_id } => {
+            let branches = registry.read_project_branches(&project_id);
+            let reply = WorkerReply::ProjectBranchesAck { branches };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::PrimaryBranchForProject { project_id } => {
+            let branch = registry.primary_branch_for_project(&project_id);
+            let reply = WorkerReply::PrimaryBranchAck { branch };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::RepoDefaultCommitAction { project_id } => {
+            let action = registry.repo_default_commit_action(&project_id);
+            let reply = WorkerReply::RepoDefaultCommitActionAck { action };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadActiveGitState { project_id } => {
+            let state = registry.read_active_git_state(&project_id);
+            let reply = WorkerReply::ActiveGitStateAck { state };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadChangedFiles { project_id } => {
+            let files = registry.read_changed_files(&project_id);
+            let reply = WorkerReply::ChangedFilesAck { files };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadProjectGithubUrl { project_id } => {
+            let url = registry.read_project_github_url(&project_id);
+            let reply = WorkerReply::ProjectGithubUrlAck { url };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadRecentCommits { project_id, limit } => {
+            match registry.read_recent_commits(&project_id, limit as usize) {
+                Ok(view) => {
+                    let reply = WorkerReply::RecentCommitsAck { view };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(message) => {
+                    send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -604,6 +650,21 @@ async fn send_worker_reply(
         .send((frame::TY_WORKER_REPLY, payload))
         .await
         .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))
+}
+
+/// Convenience wrapper around [`send_worker_reply`] for the
+/// `Err`-frame failure mode used by the git-state read verbs in
+/// `another-one-ojm.4`. Verbs that return `Result<_, String>` from
+/// the registry route the `Err` arm through here so the connection
+/// stays open for other in-flight requests on the same session.
+async fn send_err(
+    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    request_id: u64,
+    kind: ErrKind,
+    message: String,
+) -> anyhow::Result<()> {
+    let reply = WorkerReply::Err { message, kind };
+    send_worker_reply(outbound_tx, request_id, &reply).await
 }
 
 // ---- pairing / identity plumbing -------------------------------

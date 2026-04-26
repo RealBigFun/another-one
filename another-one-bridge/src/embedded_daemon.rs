@@ -40,10 +40,11 @@ use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
-    AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    ActiveGitStateWire, AgentProvider, ChangedFileWire, CommitWire, ProjectKind, ProjectSummary,
+    RecentCommitsWire, TabSummary, TaskSummary,
 };
 use daemon_sandbox::registry::RegistryFuture;
-use daemon_sandbox::{EndpointHandle, DaemonRegistry};
+use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
 use crate::local_pair::{set_local_pair_info, LocalPairInfo};
 use crate::local_registry::set_local_registry;
@@ -551,6 +552,121 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         guard.project_store.remove_project(project_id);
         Ok(())
     }
+
+    // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
+    //
+    // Mirror of `LocalSession::read_*`/`*_branch_*` methods in
+    // `api/local_session.rs`. The shapes are intentionally
+    // field-for-field identical — keep them in sync when the FRB DTO
+    // is extended.
+
+    fn read_project_branches(&self, project_id: &str) -> Vec<String> {
+        self.with_state(|state| state.project_store.branch_names(project_id))
+            .unwrap_or_default()
+    }
+
+    fn primary_branch_for_project(&self, project_id: &str) -> Option<String> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .primary_branch_for_project(project_id, true)
+                .map(|branch| branch.name)
+        })
+        .flatten()
+    }
+
+    fn repo_default_commit_action(&self, project_id: &str) -> Option<String> {
+        self.with_state(|state| {
+            let project = state.project_store.project(project_id)?;
+            state
+                .project_store
+                .repo_default_commit_action(&project.repo_id)
+                .map(|a| match a {
+                    another_one_core::project_store::RepoDefaultCommitAction::Commit => {
+                        "commit".to_string()
+                    }
+                    another_one_core::project_store::RepoDefaultCommitAction::CommitAndPush => {
+                        "commit-and-push".to_string()
+                    }
+                })
+        })
+        .flatten()
+    }
+
+    fn read_active_git_state(&self, project_id: &str) -> Option<ActiveGitStateWire> {
+        let project_path = self.project_path(project_id)?;
+        // The git invocation can shell out — wrap in `block_in_place`
+        // so the daemon's tokio worker isn't held across the syscall.
+        let state = tokio::task::block_in_place(|| {
+            another_one_core::project_store::read_project_git_state(&project_path, true)
+        });
+        Some(ActiveGitStateWire {
+            current_branch: state.current_branch,
+            ahead_count: state.ahead_count as u32,
+            behind_count: state.behind_count as u32,
+        })
+    }
+
+    fn read_changed_files(&self, project_id: &str) -> Option<Vec<ChangedFileWire>> {
+        let project_path = self.project_path(project_id)?;
+        let git_state = tokio::task::block_in_place(|| {
+            another_one_core::project_store::read_project_git_state(&project_path, false)
+        });
+        Some(
+            git_state
+                .changed_files
+                .into_iter()
+                .map(changed_file_to_wire)
+                .collect(),
+        )
+    }
+
+    fn read_project_github_url(&self, project_id: &str) -> Option<String> {
+        let project_path = self.project_path(project_id)?;
+        tokio::task::block_in_place(|| {
+            another_one_core::git_actions::find_github_repo_url(&project_path)
+        })
+    }
+
+    fn read_recent_commits(
+        &self,
+        project_id: &str,
+        limit: usize,
+    ) -> Result<Option<RecentCommitsWire>, String> {
+        let Some(project_path) = self.project_path(project_id) else {
+            return Ok(None);
+        };
+        let result = tokio::task::block_in_place(|| {
+            another_one_core::project_store::read_project_branch_commit_state(
+                &project_path,
+                limit,
+            )
+        })?;
+        Ok(Some(RecentCommitsWire {
+            current_branch: result.current_branch,
+            has_more: result.has_more,
+            commits: result.commits.into_iter().map(commit_to_wire).collect(),
+        }))
+    }
+}
+
+impl BridgeDaemonRegistry {
+    /// Resolve a project id to its on-disk path by snapshot of the
+    /// in-memory store. Used by every git-state read verb that shells
+    /// out — the caller drops the registry lock before the (blocking)
+    /// git work, so a hung `git status` doesn't block every other
+    /// registry method for the duration.
+    fn project_path(&self, project_id: &str) -> Option<std::path::PathBuf> {
+        self.with_state(|state| {
+            state
+                .project_store
+                .projects
+                .iter()
+                .find(|project| project.id == project_id)
+                .map(|project| project.path.clone())
+        })
+        .flatten()
+    }
 }
 
 /// Wire `frame::AgentProvider` → core `AgentProviderKind`. Mirror of
@@ -696,5 +812,29 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         // `.map(map_agent_provider)`, so a `None` core provider
         // stays `None` on the wire (mobile renders it as Shell on
         // its end). No core `Shell` variant exists, intentionally.
+    }
+}
+
+fn changed_file_to_wire(f: another_one_core::project_store::ChangedFile) -> ChangedFileWire {
+    ChangedFileWire {
+        path: f.path,
+        original_path: f.original_path,
+        staged_additions: f.staged_additions,
+        staged_deletions: f.staged_deletions,
+        unstaged_additions: f.unstaged_additions,
+        unstaged_deletions: f.unstaged_deletions,
+        index_status: f.index_status.to_string(),
+        worktree_status: f.worktree_status.to_string(),
+        untracked: f.untracked,
+    }
+}
+
+fn commit_to_wire(c: another_one_core::project_store::BranchCommit) -> CommitWire {
+    CommitWire {
+        id: c.id,
+        short_id: c.short_id,
+        subject: c.subject,
+        author_name: c.author_name,
+        authored_relative: c.authored_relative,
     }
 }
