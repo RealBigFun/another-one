@@ -34,7 +34,6 @@ use another_one_core::agents::AgentProviderKind;
 use another_one_core::daemon_embed::{
     daemon_paths, key_from_wire, RegistryState, TabLaunchRequest,
 };
-use another_one_core::project_store::Project as CoreProject;
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
 use another_one_core::project_store::ProjectStore;
 use another_one_core::section::SectionId;
@@ -312,6 +311,187 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         });
     }
 
+    // ── Task mutation (another-one-ojm.3) ─────────────────────────
+    //
+    // Mirror of `LocalSession::{create_worktree_task, rename_task,
+    // set_task_pinned, remove_task}` in `api/local_session.rs`. The
+    // delegating shape is intentional: same registry-locking pattern,
+    // same core-service spawn, same persistence rules — both transports
+    // converge on identical store mutations.
+
+    fn create_worktree_task(
+        &self,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_provider: Option<AgentProvider>,
+    ) -> RegistryFuture<'_, anyhow::Result<TaskSummary>> {
+        let weak = self.inner.clone();
+        Box::pin(async move {
+            // Resolve project metadata up front so we can fail clearly
+            // before spawning the worker thread.
+            let (project_path, project_name, target_project_id) = {
+                let arc = weak.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("create_worktree_task: registry state dropped")
+                })?;
+                let state = arc.lock().map_err(|_| {
+                    anyhow::anyhow!("create_worktree_task: RegistryState mutex poisoned")
+                })?;
+                let project = state
+                    .project_store
+                    .project(&project_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "create_worktree_task: unknown project_id `{project_id}`"
+                        )
+                    })?;
+                (
+                    project.path.clone(),
+                    project.name.clone(),
+                    project.id.clone(),
+                )
+            };
+
+            let trimmed = task_name.trim().to_string();
+            if trimmed.is_empty() {
+                anyhow::bail!("create_worktree_task: task_name must not be blank");
+            }
+            let generated = trimmed.clone();
+
+            let launch_config = match agent_provider.map(map_agent_provider_back) {
+                Some(provider) => {
+                    another_one_core::agents::TerminalLaunchConfig::for_provider(provider)
+                }
+                None => another_one_core::agents::TerminalLaunchConfig::default(),
+            };
+            let branch_mode =
+                another_one_core::project_store::TaskWorktreeBranchMode::NewBranchFrom {
+                    source_branch,
+                };
+
+            let mut rx = another_one_core::project_service::spawn_task_creation(
+                target_project_id.clone(),
+                project_path,
+                project_name,
+                trimmed,
+                generated,
+                branch_mode,
+                launch_config,
+            );
+            let reply = rx
+                .recv()
+                .await
+                .map_err(|_| anyhow::anyhow!("task creation worker dropped"))?;
+            let success = reply
+                .result
+                .map_err(|f| anyhow::anyhow!("create task: {}", f.message))?;
+
+            // Insert the prepared worktree project + the task under one
+            // lock so the inline-snapshot reply observes both.
+            let summary = {
+                let arc = weak.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("create_worktree_task: registry state dropped after worker")
+                })?;
+                let mut state = arc.lock().map_err(|_| {
+                    anyhow::anyhow!("create_worktree_task: registry mutex poisoned")
+                })?;
+                let inserted_worktree = state
+                    .project_store
+                    .insert_prepared_project(success.project.clone());
+                let worktree_project_id = if inserted_worktree {
+                    success.project.project.id.clone()
+                } else {
+                    state
+                        .project_store
+                        .projects
+                        .iter()
+                        .find(|p| p.path == success.project.project.path)
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| success.project.project.id.clone())
+                };
+                let task_id = uuid::Uuid::new_v4().to_string();
+                let section = another_one_core::section::SectionId::for_task(
+                    &worktree_project_id,
+                    &success.branch_name,
+                    &task_id,
+                );
+                let section_key = section.store_key();
+                state
+                    .project_store
+                    .insert_task(another_one_core::project_store::Task {
+                        id: task_id.clone(),
+                        name: success.task_name,
+                        kind: another_one_core::project_store::TaskKind::Worktree,
+                        root_project_id: target_project_id,
+                        target_project_id: worktree_project_id.clone(),
+                        branch_name: success.branch_name,
+                        section_id: section_key,
+                        worktree_project_id: Some(worktree_project_id),
+                        tabs: Vec::new(),
+                        active_tab_id: String::new(),
+                        next_tab_id: 0,
+                        cwd: None,
+                    });
+                state.project_store.save();
+                lookup_task_summary(&state, &task_id).ok_or_else(|| {
+                    anyhow::anyhow!("create_worktree_task: task vanished after insert")
+                })?
+            };
+            Ok(summary)
+        })
+    }
+
+    fn rename_task(&self, task_id: &str, new_name: &str) -> (bool, Option<TaskSummary>) {
+        let trimmed = new_name.trim().to_string();
+        if trimmed.is_empty() {
+            // Reject blank renames daemon-side, same as LocalSession.
+            // Return the existing snapshot so the issuer can render
+            // the old name in its UI without a follow-up read.
+            return self
+                .with_state(|state| (false, lookup_task_summary(state, task_id)))
+                .unwrap_or((false, None));
+        }
+        self.with_state(|state| {
+            let Some(task) = state.project_store.task_mut(task_id) else {
+                return (false, None);
+            };
+            let changed = if task.name == trimmed {
+                false
+            } else {
+                task.name = trimmed;
+                true
+            };
+            if changed {
+                state.project_store.save();
+            }
+            (changed, lookup_task_summary(state, task_id))
+        })
+        .unwrap_or((false, None))
+    }
+
+    fn set_task_pinned(&self, task_id: &str, pinned: bool) -> (bool, Option<TaskSummary>) {
+        self.with_state(|state| {
+            let changed = state.project_store.set_task_pinned(task_id, pinned);
+            if changed {
+                state.project_store.save();
+            }
+            (changed, lookup_task_summary(state, task_id))
+        })
+        .unwrap_or((false, None))
+    }
+
+    fn remove_task(&self, project_id: &str, task_id: &str) -> bool {
+        self.with_state(|state| {
+            state
+                .project_store
+                .remove_task(project_id, task_id)
+                .is_some()
+        })
+        .unwrap_or(false)
+    }
+
+    // ── Project mutation (another-one-ojm.2) ──────────────────────
+
     /// Mirror of `LocalSession::add_project`: run `prepare_project`
     /// on a background thread (via `spawn_project_add`), then take
     /// the registry lock, insert, and project the post-mutation
@@ -322,9 +502,6 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         path: String,
     ) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
         Box::pin(async move {
-            // Heavy disk + git work happens off the iroh writer
-            // task — `spawn_project_add` returns a one-shot
-            // broadcast receiver, same shape `LocalSession` uses.
             let mut rx = another_one_core::project_service::spawn_project_add(
                 std::path::PathBuf::from(path),
             );
@@ -335,9 +512,6 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             let prepared = reply
                 .result
                 .map_err(|e| anyhow::anyhow!("prepare project: {e}"))?;
-            // Capture the new project id before moving `prepared`
-                // into `insert_prepared_project` (which mutates its
-                // `repo_id` field but leaves `id` untouched).
             let new_project_id = prepared.project.id.clone();
 
             let arc = self
@@ -349,13 +523,6 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 .map_err(|_| anyhow::anyhow!("add_project: RegistryState mutex poisoned"))?;
             let inserted = guard.project_store.insert_prepared_project(prepared);
             if !inserted {
-                // Same-path duplicate. The bridge's `LocalSession`
-                // returns `Ok(false)` here; over the wire we surface
-                // it as an error so the issuer doesn't have to
-                // distinguish "added a new one" from "no-op" by
-                // diffing trees. The Dart caller maps this back to
-                // `false` for backward compat with the old
-                // `Future<bool>` signature.
                 anyhow::bail!("project at this path already exists");
             }
             let project = guard
@@ -386,6 +553,26 @@ impl DaemonRegistry for BridgeDaemonRegistry {
     }
 }
 
+/// Wire `frame::AgentProvider` → core `AgentProviderKind`. Mirror of
+/// the same-named helper in `api/local_session.rs`; the wire enum's
+/// `Shell` variant has no core counterpart (it represents "no agent,
+/// just a shell" — the caller treats `Some(Shell)` like `None`
+/// upstream of this fn, but the match is exhaustive).
+fn map_agent_provider_back(kind: AgentProvider) -> AgentProviderKind {
+    match kind {
+        AgentProvider::ClaudeCode => AgentProviderKind::ClaudeCode,
+        AgentProvider::CursorAgent => AgentProviderKind::CursorAgent,
+        AgentProvider::Codex => AgentProviderKind::Codex,
+        AgentProvider::Pi => AgentProviderKind::Pi,
+        AgentProvider::Gemini => AgentProviderKind::Gemini,
+        AgentProvider::OpenCode => AgentProviderKind::OpenCode,
+        AgentProvider::Amp => AgentProviderKind::Amp,
+        AgentProvider::RovoDev => AgentProviderKind::RovoDev,
+        AgentProvider::Forge => AgentProviderKind::Forge,
+        AgentProvider::Shell => AgentProviderKind::ClaudeCode,
+    }
+}
+
 /// Flatten the bridge's `RegistryState` into the iroh wire's
 /// `frame::ProjectSummary` shape. Mirrors `flatten_project_store`
 /// in `api/local_session.rs` (which produces the FRB-side
@@ -394,85 +581,96 @@ impl DaemonRegistry for BridgeDaemonRegistry {
 /// `Task::target_project_id`, so mobile peers see the same tree
 /// the desktop sidebar paints.
 fn flatten_state_to_frame(state: &RegistryState) -> Vec<ProjectSummary> {
-    state
-        .project_store
+    let store = &state.project_store;
+    store
         .projects
         .iter()
         .filter(|project| matches!(project.kind, CoreProjectKind::Root))
-        .map(|project| project_to_frame(state, project))
+        .map(|project| {
+            let tasks = store
+                .tasks
+                .get(&project.id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|task| task_to_summary(state, task))
+                .collect();
+            ProjectSummary {
+                id: project.id.clone(),
+                name: project.name.clone(),
+                path: project.path.to_string_lossy().into_owned(),
+                kind: map_project_kind(project.kind),
+                current_branch: project.checkout.current_branch.clone(),
+                tasks,
+            }
+        })
         .collect()
 }
 
-/// Project a single `core::project_store::Project` to its wire
-/// `frame::ProjectSummary`. Extracted from `flatten_state_to_frame`
-/// so the mutator paths (`add_project`, future `ojm.5`
-/// `BranchCreated`) can build the inline-snapshot reply for one
-/// project without re-flattening the whole store.
-fn project_to_frame(state: &RegistryState, project: &CoreProject) -> ProjectSummary {
+/// Project a single owned `core::project_store::Task` into the iroh
+/// wire's [`TaskSummary`]. Same contract as the inline conversion
+/// in [`flatten_state_to_frame`]; lifted into its own helper so the
+/// task-mutation reply paths (`TaskCreated`, `TaskRenamed`, etc.)
+/// can build inline snapshots without re-flattening the whole
+/// project tree.
+fn task_to_summary(
+    state: &RegistryState,
+    task: another_one_core::project_store::Task,
+) -> TaskSummary {
     let store = &state.project_store;
-    let tasks = store
-        .tasks
-        .get(&project.id)
-        .cloned()
-        .unwrap_or_default()
+    let section_key = task.section_id.clone();
+    let parsed_section = SectionId::from_store_key(&section_key);
+    let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
+    let tabs = task
+        .tabs
         .into_iter()
-        .map(|task| {
-            let section_key = task.section_id.clone();
-            let parsed_section = SectionId::from_store_key(&section_key);
-            let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
-            let tabs = task
-                .tabs
-                .into_iter()
-                .map(|tab| {
-                    let running = parsed_section
-                        .as_ref()
-                        .map(|section| TerminalRuntimeKey {
-                            section_id: section.clone(),
-                            tab_id: tab.id.clone(),
-                        })
-                        .map(|key| state.broadcasts.contains_key(&key))
-                        .unwrap_or(false);
-                    TabSummary {
-                        id: tab.id,
-                        title: tab.title,
-                        provider: tab.provider.map(map_agent_provider),
-                        running,
-                        pinned: tab.pinned,
-                        fixed_title: tab.fixed_title,
-                    }
-                })
-                .collect();
-            let branch_view = store.branch_view(&task.target_project_id, &task.branch_name);
-            let last_commit_relative = branch_view
+        .map(|tab| {
+            let running = parsed_section
                 .as_ref()
-                .map(|branch| branch.last_commit_relative.clone())
-                .unwrap_or_default();
-            let (lines_added, lines_removed) = branch_view
-                .map(|branch| (branch.lines_added, branch.lines_removed))
-                .unwrap_or((0, 0));
-            TaskSummary {
-                id: task.id,
-                name: task.name,
-                section_id: section_key,
-                branch_name: task.branch_name,
-                active_tab_id: task.active_tab_id,
-                tabs,
-                pinned: task_pinned,
-                last_commit_relative,
-                lines_added,
-                lines_removed,
-                target_project_id: task.target_project_id,
+                .map(|section| TerminalRuntimeKey {
+                    section_id: section.clone(),
+                    tab_id: tab.id.clone(),
+                })
+                .map(|key| state.broadcasts.contains_key(&key))
+                .unwrap_or(false);
+            TabSummary {
+                id: tab.id,
+                title: tab.title,
+                provider: tab.provider.map(map_agent_provider),
+                running,
+                pinned: tab.pinned,
+                fixed_title: tab.fixed_title,
             }
         })
         .collect();
-    ProjectSummary {
-        id: project.id.clone(),
-        name: project.name.clone(),
-        path: project.path.to_string_lossy().into_owned(),
-        kind: map_project_kind(project.kind),
-        current_branch: project.checkout.current_branch.clone(),
-        tasks,
+    let branch_view = store.branch_view(&task.target_project_id, &task.branch_name);
+    let last_commit_relative = branch_view
+        .as_ref()
+        .map(|branch| branch.last_commit_relative.clone())
+        .unwrap_or_default();
+    let (lines_added, lines_removed) = branch_view
+        .map(|branch| (branch.lines_added, branch.lines_removed))
+        .unwrap_or((0, 0));
+    TaskSummary {
+        id: task.id,
+        name: task.name,
+        section_id: section_key,
+        branch_name: task.branch_name,
+        active_tab_id: task.active_tab_id,
+        tabs,
+        pinned: task_pinned,
+        last_commit_relative,
+        lines_added,
+        lines_removed,
+        target_project_id: task.target_project_id,
     }
+}
+
+/// Look up a task by id in the registry's project store and project
+/// it as a [`TaskSummary`]. Returns `None` for an unknown id.
+fn lookup_task_summary(state: &RegistryState, task_id: &str) -> Option<TaskSummary> {
+    let task = state.project_store.task(task_id)?.clone();
+    Some(task_to_summary(state, task))
 }
 
 fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {

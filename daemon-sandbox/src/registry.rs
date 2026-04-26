@@ -12,21 +12,23 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::ProjectSummary;
+use crate::frame::{AgentProvider, ProjectSummary, TaskSummary};
 
-/// Boxed-future return type for async methods on [`DaemonRegistry`].
+/// Boxed-future return type for `DaemonRegistry` methods that are
+/// async on the embedder side (spawn a worker thread + await its
+/// reply, etc.).
 ///
 /// `DaemonRegistry` is a trait object (callers hold
-/// `Arc<dyn DaemonRegistry>`), so methods can't be `async fn` directly
-/// — that desugars to a per-impl `impl Future`, which isn't object-safe
-/// before the dyn-async-fn-in-trait stabilisation lands and we'd need
-/// stricter MSRV bumps anyway. Instead, async methods return a
-/// `RegistryFuture<'_, T>` and the per-impl body wraps its work in
-/// `Box::pin(async move { … })`.
+/// `Arc<dyn DaemonRegistry>`), so methods can't be `async fn`
+/// directly — that desugars to a per-impl `impl Future` which isn't
+/// object-safe ahead of the dyn-async-fn-in-trait stabilisation.
+/// Pinned + boxed futures keep the trait dyn-compatible without an
+/// `async-trait`-style hidden allocation pattern.
 ///
-/// Used today by [`DaemonRegistry::add_project`]; future async verbs
-/// (e.g. `ojm.5`'s git mutators) reuse this alias rather than
-/// re-typing the boxed-future shape per method.
+/// `'a` is the borrow of `&self` the method took when it produced
+/// the future. Most embedder impls clone `Arc`s or upgrade `Weak`s
+/// and own the result (no borrow across the await); `'a` is there
+/// so an impl CAN borrow if it wants to.
 pub type RegistryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
@@ -173,6 +175,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
 
+    // ── Project mutation (another-one-ojm.2) ──────────────────────
+
     /// Add an on-disk project at `path` to the daemon's store.
     /// Returns the freshly-inserted project's wire summary on
     /// success (so the iroh handler can emit it inline per the
@@ -204,6 +208,59 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         Err(anyhow::anyhow!(
             "remove_project: not supported on this registry"
         ))
+    }
+
+    // ── Task mutation (another-one-ojm.3) ─────────────────────────
+    //
+    // Mirror of `LocalSession`'s task mutation methods. Heavy ones
+    // return `RegistryFuture` so the embedder can spawn worker
+    // threads and `.await` them; the lightweight ones (`rename`,
+    // `set_pinned`, `remove`) are sync because the FRB caller's
+    // implementations are also sync after the registry lock is
+    // taken.
+
+    /// Create a worktree task on `project_id`. Returns the inserted
+    /// task's [`TaskSummary`] — the caller wraps it in
+    /// [`crate::frame::WorkerReply::TaskCreated`]. The future runs
+    /// the heavy `core::project_service::spawn_task_creation` worker
+    /// thread under the hood; clients can expect tens of seconds
+    /// before resolution. Default impl returns an `unsupported`
+    /// error so a sandbox / test registry doesn't have to stub
+    /// every domain method.
+    fn create_worktree_task(
+        &self,
+        _project_id: String,
+        _task_name: String,
+        _source_branch: String,
+        _agent_provider: Option<AgentProvider>,
+    ) -> RegistryFuture<'_, anyhow::Result<TaskSummary>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "create_worktree_task: registry impl does not support task creation"
+            ))
+        })
+    }
+
+    /// Rename a task. Returns `(changed, task)`: `changed` is `false`
+    /// for an unknown id or a no-op rename; `task` is the post-
+    /// rename snapshot when the task exists, `None` for an unknown
+    /// id. Default returns `(false, None)`.
+    fn rename_task(&self, _task_id: &str, _new_name: &str) -> (bool, Option<TaskSummary>) {
+        (false, None)
+    }
+
+    /// Pin or unpin a task. Returns `(changed, task)`: `changed` is
+    /// `false` for an idempotent re-set, `task` is the post-
+    /// mutation snapshot. Default returns `(false, None)`.
+    fn set_task_pinned(&self, _task_id: &str, _pinned: bool) -> (bool, Option<TaskSummary>) {
+        (false, None)
+    }
+
+    /// Remove a task and its sections. Returns whether anything was
+    /// actually removed (idempotent for unknown ids). Default
+    /// returns `false`.
+    fn remove_task(&self, _project_id: &str, _task_id: &str) -> bool {
+        false
     }
 }
 

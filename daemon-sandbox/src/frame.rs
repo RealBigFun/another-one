@@ -179,6 +179,46 @@ pub enum Control {
         #[serde(default)]
         protocol_version: u32,
     },
+    /// Create a worktree task on `project_id`. Spawns a fresh git
+    /// worktree from `source_branch` (the new branch is named after
+    /// the slugified `task_name`), prepares the project, and inserts
+    /// both the worktree project and the task into the daemon's
+    /// store. Reply is [`WorkerReply::TaskCreated`] carrying the
+    /// inline post-mutation [`TaskSummary`] so the issuer can update
+    /// its tree without a `ListProjects` follow-up.
+    ///
+    /// `agent_provider == None` launches a plain shell on the new
+    /// task's first tab; any concrete provider selects the
+    /// corresponding agent CLI.
+    ///
+    /// Heavy filesystem work (git worktree + prepare_project) runs
+    /// on a worker thread inside the daemon — clients can expect
+    /// tens of seconds before the reply arrives.
+    CreateWorktreeTask {
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_provider: Option<AgentProvider>,
+    },
+    /// Rename a task. Empty / whitespace-only names are rejected
+    /// daemon-side. Reply is [`WorkerReply::TaskRenamed`] with the
+    /// post-rename inline `TaskSummary` and a `changed` flag — an
+    /// unknown id or no-op rename returns `changed = false`.
+    RenameTask { task_id: String, new_name: String },
+    /// Pin or unpin a task. Pinned tasks float to the top of their
+    /// project's task list. Reply is [`WorkerReply::TaskPinned`]
+    /// with the inline `TaskSummary` and a `changed` flag (idempotent
+    /// re-set returns `false`).
+    SetTaskPinned { task_id: String, pinned: bool },
+    /// Remove a task (and its terminal sections) from the daemon's
+    /// store. The on-disk worktree branch is left untouched — same
+    /// semantics as the desktop side. Reply is
+    /// [`WorkerReply::TaskRemoved`] with `removed = true` if a task
+    /// was deleted, `false` for an unknown id (idempotent).
+    RemoveTask {
+        project_id: String,
+        task_id: String,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -300,6 +340,37 @@ pub enum WorkerReply {
         message: String,
         #[serde(rename = "err_kind")]
         kind: ErrKind,
+    },
+    /// Reply to [`Control::CreateWorktreeTask`]. Carries the inline
+    /// post-mutation [`TaskSummary`] plus the `project_id` it was
+    /// inserted under so the issuer can locate the task in its
+    /// project tree without a follow-up `ListProjects`.
+    TaskCreated {
+        project_id: String,
+        task: TaskSummary,
+    },
+    /// Reply to [`Control::RenameTask`]. `changed` is `false` for an
+    /// unknown id or a no-op rename — in that case `task` is the
+    /// pre-existing snapshot (or absent if the id was unknown).
+    TaskRenamed {
+        changed: bool,
+        task: Option<TaskSummary>,
+    },
+    /// Reply to [`Control::SetTaskPinned`]. `changed` is `false` for
+    /// an idempotent re-set of the same value, or an unknown id.
+    /// `task` is the post-mutation snapshot when the task exists.
+    TaskPinned {
+        changed: bool,
+        task: Option<TaskSummary>,
+    },
+    /// Reply to [`Control::RemoveTask`]. `removed` is `false` for an
+    /// unknown id (idempotent). `project_id` echoes the request so
+    /// the issuer can prune the right project subtree without
+    /// re-deriving it.
+    TaskRemoved {
+        project_id: String,
+        task_id: String,
+        removed: bool,
     },
 }
 

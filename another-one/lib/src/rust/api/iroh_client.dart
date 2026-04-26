@@ -42,21 +42,6 @@ Future<IrohSession> irohConnect({
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
 abstract class IrohSession implements RustOpaqueInterface {
-  /// Issue a [`Control::AddProject`] under a Dart-allocated
-  /// `request_id` so the Dart layer can register a `Completer`
-  /// keyed by the same id before the frame goes out. Mirror of
-  /// `daemon-sandbox/src/frame.rs::Control::AddProject`.
-  ///
-  /// Unlike the legacy fire-and-forget verbs above, mutator verbs
-  /// reply with an inline snapshot the issuer needs (see
-  /// `WorkerReply::ProjectAdded`), so the request id has to be
-  /// known *before* `send` runs — the Dart caller calls
-  /// [`next_request_id`] first, registers its completer, then
-  /// invokes this method with the id it allocated. That ordering
-  /// guarantees the reply can never beat the completer-table
-  /// insertion.
-  Future<void> addProject({required BigInt requestId, required String path});
-
   /// Subscribe this session to the live PTY byte stream for
   /// `(section_id, tab_id)`. The daemon will forward the attached
   /// tab's output as [`TY_DATA`] frames on the existing `subscribe`
@@ -67,6 +52,20 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
+
+  /// Issue a [`Control::CreateWorktreeTask`] under `request_id`.
+  /// The Dart side allocates the id (via [`next_request_id`]) and
+  /// registers a completer keyed by the same id before calling
+  /// here, so the matching `WorkerReply::TaskCreated` (or `Err`)
+  /// is dispatched into the awaiting future. Mirror of
+  /// `LocalSession::create_worktree_task`.
+  Future<void> createWorktreeTask({
+    required BigInt requestId,
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    AgentProvider? agentProvider,
+  });
 
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
@@ -94,12 +93,20 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// frames — see [`PUSH_REQUEST_ID`]).
   Future<BigInt> nextRequestId();
 
-  /// Issue a [`Control::RemoveProject`] under a Dart-allocated
-  /// `request_id`. Same allocation contract as [`add_project`].
-  /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveProject`.
-  Future<void> removeProject({
+  /// Issue a [`Control::RemoveTask`] under `request_id`. Mirror of
+  /// `LocalSession::remove_task`.
+  Future<void> removeTask({
     required BigInt requestId,
     required String projectId,
+    required String taskId,
+  });
+
+  /// Issue a [`Control::RenameTask`] under `request_id`. Mirror of
+  /// `LocalSession::rename_task`.
+  Future<void> renameTask({
+    required BigInt requestId,
+    required String taskId,
+    required String newName,
   });
 
   /// Request a PTY resize on the daemon's end. Goes through the same
@@ -110,6 +117,14 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
+
+  /// Issue a [`Control::SetTaskPinned`] under `request_id`. Mirror
+  /// of `LocalSession::set_task_pinned`.
+  Future<void> setTaskPinned({
+    required BigInt requestId,
+    required String taskId,
+    required bool pinned,
+  });
 
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
@@ -135,6 +150,11 @@ abstract class IrohSession implements RustOpaqueInterface {
 /// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
 /// `Shell` is the catch-all for plain-PTY tabs with no agent
 /// provider set.
+///
+/// Both `Serialize` and `Deserialize` are required because the
+/// type appears on both sides of the wire — daemon → client in
+/// `WorkerReply::ProjectList` (Deserialize) and client → daemon in
+/// `Control::CreateWorktreeTask` (Serialize).
 enum AgentProvider {
   claudeCode,
   cursorAgent,
@@ -343,16 +363,6 @@ sealed class WorkerReply with _$WorkerReply {
     required List<ProjectSummary> projects,
   }) = WorkerReply_ProjectList;
 
-  /// Inline-snapshot reply to [`Control::AddProject`]. Mirror of
-  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectAdded`.
-  const factory WorkerReply.projectAdded({required ProjectSummary project}) =
-      WorkerReply_ProjectAdded;
-
-  /// Inline echo of [`Control::RemoveProject`]. Mirror of
-  /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectRemoved`.
-  const factory WorkerReply.projectRemoved({required String projectId}) =
-      WorkerReply_ProjectRemoved;
-
   /// Uniform per-request failure frame. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::Err`. Domain
   /// callers in `ojm.2..8` map this to a Dart-level exception
@@ -362,6 +372,35 @@ sealed class WorkerReply with _$WorkerReply {
     required String message,
     required ErrKind kind,
   }) = WorkerReply_Err;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskCreated`.
+  /// Reply to [`Control::CreateWorktreeTask`].
+  const factory WorkerReply.taskCreated({
+    required String projectId,
+    required TaskSummary task,
+  }) = WorkerReply_TaskCreated;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRenamed`.
+  /// Reply to [`Control::RenameTask`].
+  const factory WorkerReply.taskRenamed({
+    required bool changed,
+    TaskSummary? task,
+  }) = WorkerReply_TaskRenamed;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskPinned`.
+  /// Reply to [`Control::SetTaskPinned`].
+  const factory WorkerReply.taskPinned({
+    required bool changed,
+    TaskSummary? task,
+  }) = WorkerReply_TaskPinned;
+
+  /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRemoved`.
+  /// Reply to [`Control::RemoveTask`].
+  const factory WorkerReply.taskRemoved({
+    required String projectId,
+    required String taskId,
+    required bool removed,
+  }) = WorkerReply_TaskRemoved;
 }
 
 /// Pair of `(request_id, reply)` delivered to the Dart `IrohTransport`

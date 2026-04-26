@@ -151,44 +151,42 @@ abstract class DaemonConnection {
   }
 
   /// Create a worktree task on `projectId`. Returns the new task's
-  /// `sectionId` so callers can navigate to it.
+  /// `sectionId` so callers can navigate to it. Heavy on the daemon
+  /// — the worktree git operations + project preparation can take
+  /// tens of seconds; callers should disable the trigger UI until
+  /// the future resolves rather than offer a cancel button (the
+  /// daemon worker has no cancellation channel today).
+  ///
+  /// Implemented on both transports (another-one-ojm.3): LocalTransport
+  /// goes straight through `LocalSession::create_worktree_task`,
+  /// IrohTransport routes through `Control::CreateWorktreeTask` +
+  /// `WorkerReply::TaskCreated`.
   Future<String> createWorktreeTask({
     required String projectId,
     required String taskName,
     required String sourceBranch,
     AgentProvider? agentProvider,
-  }) {
-    throw UnimplementedError(
-      'createWorktreeTask: requires Control::CreateTask wire variant '
-      'on the iroh transport (not yet implemented).',
-    );
-  }
+  });
 
   /// Rename a task. Returns whether the on-disk store actually
-  /// changed (false on unknown id or no-op rename).
-  Future<bool> renameTask(String taskId, String newName) {
-    throw UnimplementedError(
-      'renameTask: requires Control::RenameTask wire variant on the '
-      'iroh transport (not yet implemented).',
-    );
-  }
+  /// changed (false on unknown id or no-op rename). Implemented on
+  /// both transports (another-one-ojm.3) — IrohTransport routes
+  /// through `Control::RenameTask` + `WorkerReply::TaskRenamed`.
+  Future<bool> renameTask(String taskId, String newName);
 
-  /// Pin or unpin a task. Returns whether state changed.
-  Future<bool> setTaskPinned(String taskId, bool pinned) {
-    throw UnimplementedError(
-      'setTaskPinned: requires Control::SetTaskPinned wire variant '
-      'on the iroh transport (not yet implemented).',
-    );
-  }
+  /// Pin or unpin a task. Returns whether state changed (false on
+  /// idempotent re-set or unknown id). Implemented on both
+  /// transports (another-one-ojm.3) — IrohTransport routes through
+  /// `Control::SetTaskPinned` + `WorkerReply::TaskPinned`.
+  Future<bool> setTaskPinned(String taskId, bool pinned);
 
   /// Remove a task from the daemon's store. The on-disk worktree
-  /// branch is left untouched.
-  Future<bool> removeTask(String projectId, String taskId) {
-    throw UnimplementedError(
-      'removeTask: requires Control::DeleteTask wire variant on the '
-      'iroh transport (not yet implemented).',
-    );
-  }
+  /// branch is left untouched. Returns whether anything was
+  /// actually removed (false on unknown id — idempotent).
+  /// Implemented on both transports (another-one-ojm.3) —
+  /// IrohTransport routes through `Control::RemoveTask` +
+  /// `WorkerReply::TaskRemoved`.
+  Future<bool> removeTask(String projectId, String taskId);
 
   /// Resolve a project's GitHub remote URL (`git remote get-url
   /// origin`, normalised). Returns `null` when not a github.com

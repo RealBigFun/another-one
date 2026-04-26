@@ -526,6 +526,60 @@ async fn handle_control(
             // drop it rather than error.
             debug!("stray Control::Hello from already-paired peer; ignored");
         }
+        Control::CreateWorktreeTask {
+            project_id,
+            task_name,
+            source_branch,
+            agent_provider,
+        } => {
+            // The registry future may take tens of seconds (worker
+            // thread spawns + git worktree creation + prepare_project).
+            // We `await` it inline rather than detaching so a
+            // `WorkerReply::Err` lands on the same connection if the
+            // worker fails — preserves request_id correlation.
+            let project_id_for_reply = project_id.clone();
+            let result = registry
+                .create_worktree_task(project_id, task_name, source_branch, agent_provider)
+                .await;
+            match result {
+                Ok(task) => {
+                    let reply = WorkerReply::TaskCreated {
+                        project_id: project_id_for_reply,
+                        task,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: crate::frame::ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::RenameTask { task_id, new_name } => {
+            let (changed, task) = registry.rename_task(&task_id, &new_name);
+            let reply = WorkerReply::TaskRenamed { changed, task };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::SetTaskPinned { task_id, pinned } => {
+            let (changed, task) = registry.set_task_pinned(&task_id, pinned);
+            let reply = WorkerReply::TaskPinned { changed, task };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::RemoveTask {
+            project_id,
+            task_id,
+        } => {
+            let removed = registry.remove_task(&project_id, &task_id);
+            let reply = WorkerReply::TaskRemoved {
+                project_id,
+                task_id,
+                removed,
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
     }
     Ok(())
 }

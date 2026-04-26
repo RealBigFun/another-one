@@ -343,8 +343,11 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// dispatch map — taking it as a closure means each verb decides
   /// which `Control::*` variant + arguments to encode without this
   /// helper having to know about every variant. Callers receive the
-  /// `request_id` so they can pass it to the Rust-side per-verb
-  /// `send_control` equivalent (added per-verb in domain tasks).
+  /// `request_id` so they can pass it to a Rust-side `send_control`
+  /// equivalent (added per-verb in domain tasks).
+  ///
+  /// Each domain verb landing in `another-one-ojm.2..8` routes its
+  /// reply through this helper.
   Future<WorkerReply> _sendControlAndAwait(
     Future<void> Function(int requestId) send,
   ) async {
@@ -364,61 +367,35 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     return completer.future;
   }
 
-  /// Add an on-disk project at `path` to the daemon's project store
-  /// over the iroh wire. Routes through `Control::AddProject` and
-  /// awaits the matching `WorkerReply::ProjectAdded` (or
+  // ── Project mutation (another-one-ojm.2) ────────────────────────
+
+  /// Add an on-disk project at `path`. Routes through
+  /// `Control::AddProject` + awaits `WorkerReply::ProjectAdded` (or
   /// `WorkerReply::Err`) via the per-session request-id dispatch
-  /// table.
-  ///
-  /// Returns `true` on a fresh insert, `false` on the duplicate-
-  /// path case (matches `LocalSession::addProject`'s contract). The
-  /// daemon side surfaces "already exists" as `WorkerReply::Err`
-  /// rather than a fake-success Ack — the Dart layer translates
-  /// that specific failure back into `false` so existing call
-  /// sites keep their boolean shape, and lets every other `Err`
-  /// throw a `StateError` for the UI's toast surface to render.
-  ///
-  /// Note: a future variant of this could route the duplicate
-  /// case via a typed `ErrKind` rather than message-substring
-  /// matching, but introducing a new `ErrKind` per soft-error
-  /// shape gates each variant on its own UI commitment (see the
-  /// `ErrKind` doc) — message matching keeps the wire stable
-  /// while the UX for "you already added this directory" is still
-  /// in flux.
+  /// table. Returns `true` on a fresh insert, `false` on the
+  /// duplicate-path case (matches `LocalSession::addProject`).
+  /// Daemon-side "already exists" surfaces as `WorkerReply::Err`
+  /// — translated back to `false` here for boolean parity; every
+  /// other `Err` throws a `StateError` for the UI toast.
   @override
   Future<bool> addProject(String path) async {
     final reply = await _sendControlAndAwait(
       (id) => _session!.addProject(requestId: BigInt.from(id), path: path),
     );
-    return reply.when(
-      projectList: (_) => throw StateError(
-        'addProject: unexpected projectList reply from daemon',
-      ),
-      projectAdded: (_) => true,
-      projectRemoved: (_) => throw StateError(
-        'addProject: unexpected projectRemoved reply from daemon',
-      ),
-      err: (message, kind) {
-        // Soft-error: the user added the same directory twice. The
-        // daemon's bridge impl bails with this message; we pattern-
-        // match the prefix to keep the boolean Future<bool>
-        // contract. Any other Err is escalated.
-        if (message.contains('project at this path already exists')) {
-          return false;
-        }
-        throw StateError('addProject failed (${kind.name}): $message');
-      },
-    );
+    return switch (reply) {
+      WorkerReply_ProjectAdded() => true,
+      WorkerReply_Err(:final message) =>
+        message.contains('project at this path already exists')
+            ? false
+            : throw StateError('addProject failed: $message'),
+      _ => throw StateError(
+          'addProject: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
   }
 
-  /// Remove a project from the daemon's store by id over the iroh
-  /// wire. Routes through `Control::RemoveProject` and awaits the
-  /// matching `WorkerReply::ProjectRemoved` (or `WorkerReply::Err`)
-  /// via the per-session request-id dispatch table.
-  ///
-  /// Returns `Future<void>` matching `LocalSession::removeProject`.
-  /// Idempotent on unknown ids — the daemon replies with
-  /// `ProjectRemoved` even for ids that weren't in its store.
+  /// Remove a project from the daemon's store by id. Idempotent —
+  /// unknown ids reply with `ProjectRemoved`, no error.
   @override
   Future<void> removeProject(String projectId) async {
     final reply = await _sendControlAndAwait(
@@ -427,16 +404,117 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         projectId: projectId,
       ),
     );
-    reply.when(
-      projectList: (_) => throw StateError(
-        'removeProject: unexpected projectList reply from daemon',
-      ),
-      projectAdded: (_) => throw StateError(
-        'removeProject: unexpected projectAdded reply from daemon',
-      ),
-      projectRemoved: (_) {},
-      err: (message, kind) =>
-          throw StateError('removeProject failed (${kind.name}): $message'),
-    );
+    switch (reply) {
+      case WorkerReply_ProjectRemoved():
+        return;
+      case WorkerReply_Err(:final message):
+        throw StateError('removeProject failed: $message');
+      default:
+        throw StateError(
+          'removeProject: unexpected daemon reply ${reply.runtimeType}',
+        );
+    }
+  }
+
+  // ── Task mutation (another-one-ojm.3) ───────────────────────────
+  //
+  // Each verb allocates a request_id via [_sendControlAndAwait],
+  // issues the matching `Control::*` frame on the live session,
+  // unwraps the `WorkerReply::*Ack`, and surfaces `WorkerReply::Err`
+  // as a `StateError(message)` for the UI toast.
+
+  @override
+  Future<String> createWorktreeTask({
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    AgentProvider? agentProvider,
+  }) async {
+    final reply = await _sendControlAndAwait((id) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.createWorktreeTask(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        taskName: taskName,
+        sourceBranch: sourceBranch,
+        agentProvider: agentProvider,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_TaskCreated(:final task) => task.sectionId,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'createWorktreeTask: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<bool> renameTask(String taskId, String newName) async {
+    final reply = await _sendControlAndAwait((id) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.renameTask(
+        requestId: BigInt.from(id),
+        taskId: taskId,
+        newName: newName,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_TaskRenamed(:final changed) => changed,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'renameTask: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<bool> setTaskPinned(String taskId, bool pinned) async {
+    final reply = await _sendControlAndAwait((id) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.setTaskPinned(
+        requestId: BigInt.from(id),
+        taskId: taskId,
+        pinned: pinned,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_TaskPinned(:final changed) => changed,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'setTaskPinned: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
+  }
+
+  @override
+  Future<bool> removeTask(String projectId, String taskId) async {
+    final reply = await _sendControlAndAwait((id) async {
+      final session = _session;
+      if (session == null) {
+        throw StateError('IrohTransport not connected');
+      }
+      await session.removeTask(
+        requestId: BigInt.from(id),
+        projectId: projectId,
+        taskId: taskId,
+      );
+    });
+    return switch (reply) {
+      WorkerReply_TaskRemoved(:final removed) => removed,
+      WorkerReply_Err(:final message) => throw StateError(message),
+      _ => throw StateError(
+          'removeTask: unexpected daemon reply ${reply.runtimeType}',
+        ),
+    };
   }
 }

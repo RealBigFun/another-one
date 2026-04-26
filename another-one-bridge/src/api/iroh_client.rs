@@ -146,6 +146,25 @@ enum Control {
         pair_token: Option<String>,
         protocol_version: u32,
     },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::CreateWorktreeTask`.
+    /// Heavy: the daemon spawns a worker thread for the actual git
+    /// worktree creation + project preparation, so the matching
+    /// `WorkerReply::TaskCreated` may arrive tens of seconds later.
+    CreateWorktreeTask {
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_provider: Option<AgentProvider>,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::RenameTask`.
+    RenameTask { task_id: String, new_name: String },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetTaskPinned`.
+    SetTaskPinned { task_id: String, pinned: bool },
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveTask`.
+    RemoveTask {
+        project_id: String,
+        task_id: String,
+    },
 }
 
 /// Daemon → client worker replies (type=2 frame payload, JSON). Mirror
@@ -182,6 +201,31 @@ pub enum WorkerReply {
         message: String,
         #[serde(rename = "err_kind")]
         kind: ErrKind,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskCreated`.
+    /// Reply to [`Control::CreateWorktreeTask`].
+    TaskCreated {
+        project_id: String,
+        task: TaskSummary,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRenamed`.
+    /// Reply to [`Control::RenameTask`].
+    TaskRenamed {
+        changed: bool,
+        task: Option<TaskSummary>,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskPinned`.
+    /// Reply to [`Control::SetTaskPinned`].
+    TaskPinned {
+        changed: bool,
+        task: Option<TaskSummary>,
+    },
+    /// Mirror of `daemon-sandbox/src/frame.rs::WorkerReply::TaskRemoved`.
+    /// Reply to [`Control::RemoveTask`].
+    TaskRemoved {
+        project_id: String,
+        task_id: String,
+        removed: bool,
     },
 }
 
@@ -297,7 +341,12 @@ pub enum ProjectKind {
 /// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
 /// `Shell` is the catch-all for plain-PTY tabs with no agent
 /// provider set.
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
+///
+/// Both `Serialize` and `Deserialize` are required because the
+/// type appears on both sides of the wire — daemon → client in
+/// `WorkerReply::ProjectList` (Deserialize) and client → daemon in
+/// `Control::CreateWorktreeTask` (Serialize).
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentProvider {
     ClaudeCode,
@@ -870,6 +919,8 @@ impl IrohSession {
         .await
     }
 
+    // ── Project mutation (another-one-ojm.2) ──────────────────────
+
     /// Issue a [`Control::AddProject`] under a Dart-allocated
     /// `request_id` so the Dart layer can register a `Completer`
     /// keyed by the same id before the frame goes out. Mirror of
@@ -894,6 +945,76 @@ impl IrohSession {
     pub async fn remove_project(&self, request_id: u64, project_id: String) -> anyhow::Result<()> {
         self.send_control(request_id, Control::RemoveProject { project_id })
             .await
+    }
+
+    // ── Task mutation (another-one-ojm.3) ─────────────────────────
+
+    /// Issue a [`Control::CreateWorktreeTask`] under `request_id`.
+    /// The Dart side allocates the id (via [`next_request_id`]) and
+    /// registers a completer keyed by the same id before calling
+    /// here, so the matching `WorkerReply::TaskCreated` (or `Err`)
+    /// is dispatched into the awaiting future. Mirror of
+    /// `LocalSession::create_worktree_task`.
+    pub async fn create_worktree_task(
+        &self,
+        request_id: u64,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_provider: Option<AgentProvider>,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::CreateWorktreeTask {
+                project_id,
+                task_name,
+                source_branch,
+                agent_provider,
+            },
+        )
+        .await
+    }
+
+    /// Issue a [`Control::RenameTask`] under `request_id`. Mirror of
+    /// `LocalSession::rename_task`.
+    pub async fn rename_task(
+        &self,
+        request_id: u64,
+        task_id: String,
+        new_name: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::RenameTask { task_id, new_name })
+            .await
+    }
+
+    /// Issue a [`Control::SetTaskPinned`] under `request_id`. Mirror
+    /// of `LocalSession::set_task_pinned`.
+    pub async fn set_task_pinned(
+        &self,
+        request_id: u64,
+        task_id: String,
+        pinned: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetTaskPinned { task_id, pinned })
+            .await
+    }
+
+    /// Issue a [`Control::RemoveTask`] under `request_id`. Mirror of
+    /// `LocalSession::remove_task`.
+    pub async fn remove_task(
+        &self,
+        request_id: u64,
+        project_id: String,
+        task_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::RemoveTask {
+                project_id,
+                task_id,
+            },
+        )
+        .await
     }
 
     /// Wrap a `Control` in the `request_id`-tagged envelope and push
