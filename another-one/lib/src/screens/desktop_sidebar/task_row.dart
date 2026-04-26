@@ -244,7 +244,17 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
         onTap: _selectTask,
         onSecondaryTapDown: (details) => _showTaskMenu(details.globalPosition),
         child: Container(
-          height: AppTokens.taskRowHeight,
+          // GPUI's `BRANCH_ROW_H` is 44px, but Flutter's text
+          // line-heights for the title (13px) + subtitle (10px) +
+          // 2px gap come in just over the 32px content budget
+          // when both lines are present. Use a min-constraint
+          // instead of a hard height so a row with the diff stats
+          // and a long subtitle can grow by the missing few pixels
+          // — keeps GPUI's normal-case visual at 44px while
+          // avoiding the runtime overflow assertion.
+          constraints: const BoxConstraints(
+            minHeight: AppTokens.taskRowHeight,
+          ),
           margin: const EdgeInsets.symmetric(
             vertical: AppTokens.sidebarListGap / 2,
           ),
