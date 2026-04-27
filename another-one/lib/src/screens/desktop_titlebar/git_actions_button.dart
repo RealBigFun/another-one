@@ -129,14 +129,23 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
 
   static const Color _dangerText = Color(0xFFEB7B7B);
 
+  void _syncMenuVisibility(bool visible) {
+    if (visible == _menu.isShowing) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || visible == _menu.isShowing) return;
+      setState(visible ? _menu.show : _menu.hide);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final projectId = ref.watch(activeProjectIdProvider);
     if (projectId == null) return const SizedBox.shrink();
     final files = ref.watch(changedFilesProvider(projectId)).valueOrNull;
     final gitState = ref.watch(activeGitStateProvider(projectId)).valueOrNull;
-    final commitPreference =
-        ref.watch(repoDefaultCommitActionProvider(projectId)).valueOrNull;
+    final commitPreference = ref
+        .watch(repoDefaultCommitActionProvider(projectId))
+        .valueOrNull;
     final activeAction = ref.watch(activeGitActionProvider(projectId));
     final hasChanges = (files?.isNotEmpty) ?? false;
     final aheadCount = gitState?.aheadCount ?? 0;
@@ -149,7 +158,10 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
     );
 
     final running = activeAction != null;
-    final menuOpen = _menu.isShowing;
+    final menuOpen =
+        ref.watch(_activeTitlebarDropdownProvider) ==
+        _TitlebarDropdown.gitActions;
+    _syncMenuVisibility(menuOpen);
     final containerBg = menuOpen
         ? const Color(0x1AFFFFFF) // white @ 0.10
         : const Color(0x0DFFFFFF); // white @ 0.05
@@ -181,7 +193,11 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                   primary,
                   activeAction: activeAction,
                 ),
-                _buildChevronHalf(projectId, running: running),
+                _buildChevronHalf(
+                  projectId,
+                  running: running,
+                  menuOpen: menuOpen,
+                ),
               ],
             ),
           ),
@@ -200,10 +216,8 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
     final presentation = _activeActionPresentation(activeAction);
     final danger = presentation?.danger ?? false;
     final label = presentation?.label ?? primary.label;
-    final iconColor =
-        danger ? _dangerText : const Color(0xEBFFFFFF); // 0.92
-    final textColor =
-        danger ? _dangerText : const Color(0xDBFFFFFF); // 0.86
+    final iconColor = danger ? _dangerText : const Color(0xEBFFFFFF); // 0.92
+    final textColor = danger ? _dangerText : const Color(0xDBFFFFFF); // 0.86
     return Expanded(
       child: MouseRegion(
         cursor: interactive
@@ -219,9 +233,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
               color: interactive && _bodyHover
                   ? AppTokens.overlayHoverStrong
                   : Colors.transparent,
-              border: const Border(
-                right: BorderSide(color: AppTokens.divider),
-              ),
+              border: const Border(right: BorderSide(color: AppTokens.divider)),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 9),
             alignment: Alignment.centerLeft,
@@ -252,20 +264,23 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
     );
   }
 
-  Widget _buildChevronHalf(String projectId, {required bool running}) {
+  Widget _buildChevronHalf(
+    String projectId, {
+    required bool running,
+    required bool menuOpen,
+  }) {
     final interactive = !running;
     return MouseRegion(
-      cursor: interactive
-          ? SystemMouseCursors.click
-          : SystemMouseCursors.basic,
+      cursor: interactive ? SystemMouseCursors.click : SystemMouseCursors.basic,
       onEnter: interactive ? (_) => setState(() => _chevronHover = true) : null,
       onExit: interactive ? (_) => setState(() => _chevronHover = false) : null,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: interactive
             ? () {
-                setState(_menu.toggle);
-                if (_menu.isShowing) {
+                final opening = !menuOpen;
+                _toggleTitlebarDropdown(ref, _TitlebarDropdown.gitActions);
+                if (opening) {
                   // Refresh PR lookup on dropdown open — mirrors
                   // GPUI's refresh_active_project_pull_request_lookup.
                   ref.invalidate(pullRequestStatusProvider(projectId));
@@ -310,7 +325,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: () => setState(_menu.hide),
+            onTap: () => _dismissTitlebarDropdowns(ref),
           ),
         ),
         CompositedTransformFollower(
@@ -350,7 +365,8 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                   _GitActionRow(
                     icon: 'cloud-upload',
                     label: 'Commit & Push',
-                    tooltip: 'Commit changes and push, staging all files '
+                    tooltip:
+                        'Commit changes and push, staging all files '
                         'first if needed',
                     enabled: hasChanges && !running,
                     onTap: () => _run(projectId, _GitActionId.commitAndPush),
@@ -397,7 +413,8 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
                   _GitActionRow(
                     icon: 'cloud-upload',
                     label: 'Force Push',
-                    tooltip: 'Force-push with lease to overwrite the remote '
+                    tooltip:
+                        'Force-push with lease to overwrite the remote '
                         'branch if needed',
                     enabled: !running,
                     danger: true,
@@ -437,14 +454,13 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
   }
 
   void _openCreateBranch(String projectId) {
-    setState(_menu.hide);
+    _dismissTitlebarDropdowns(ref);
     showCreateBranchModal(context: context, projectId: projectId);
   }
 
   Future<void> _run(String projectId, _GitActionId action) async {
-    setState(_menu.hide);
-    final notifier =
-        ref.read(activeGitActionProvider(projectId).notifier);
+    _dismissTitlebarDropdowns(ref);
+    final notifier = ref.read(activeGitActionProvider(projectId).notifier);
     notifier.start(action.wireId);
     final connection = ref.read(localConnectionProvider);
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -517,8 +533,9 @@ class _GitActionRowState extends State<_GitActionRow> {
   @override
   Widget build(BuildContext context) {
     final hoverBg = widget.danger ? _dangerHover : AppTokens.overlayHover;
-    final textColor =
-        widget.danger ? _dangerText : const Color(0xEBFFFFFF); // 0.92
+    final textColor = widget.danger
+        ? _dangerText
+        : const Color(0xEBFFFFFF); // 0.92
     final iconColor = textColor;
     final row = Opacity(
       opacity: widget.enabled ? 1.0 : 0.55,

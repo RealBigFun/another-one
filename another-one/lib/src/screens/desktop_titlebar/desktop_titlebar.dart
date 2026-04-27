@@ -34,10 +34,7 @@ import '../../rust/api/local_session.dart'
         ProjectActionScopeDto,
         PullRequestStateDto;
 import '../../rust/api/resources.dart'
-    show
-        ResourceUsageProjectDto,
-        ResourceUsageSessionDto,
-        ResourceUsageTaskDto;
+    show ResourceUsageProjectDto, ResourceUsageSessionDto, ResourceUsageTaskDto;
 import '../../state/active_git_action_provider.dart';
 import '../../state/active_git_state_provider.dart';
 import '../../state/active_project_provider.dart';
@@ -52,9 +49,11 @@ import '../../state/pull_request_status_provider.dart';
 import '../../state/repo_default_commit_action_provider.dart';
 import '../../state/resource_sample_provider.dart';
 import '../../state/right_sidebar_provider.dart';
+import '../../state/settings_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/hover_icon_button.dart';
 import '../../widgets/toolbar_spinner.dart';
 import '../create_branch/create_branch_modal.dart';
@@ -65,6 +64,21 @@ part 'chrome_button.dart';
 part 'custom_actions_button.dart';
 part 'git_actions_button.dart';
 part 'open_in_button.dart';
+
+enum _TitlebarDropdown { customActions, openIn, gitActions }
+
+final _activeTitlebarDropdownProvider = StateProvider<_TitlebarDropdown?>(
+  (ref) => null,
+);
+
+void _dismissTitlebarDropdowns(WidgetRef ref) {
+  ref.read(_activeTitlebarDropdownProvider.notifier).state = null;
+}
+
+void _toggleTitlebarDropdown(WidgetRef ref, _TitlebarDropdown dropdown) {
+  final notifier = ref.read(_activeTitlebarDropdownProvider.notifier);
+  notifier.state = notifier.state == dropdown ? null : dropdown;
+}
 
 class DesktopTitlebar extends ConsumerWidget {
   const DesktopTitlebar({super.key});
@@ -85,14 +99,21 @@ class DesktopTitlebar extends ConsumerWidget {
           _TitlebarChromeButton(
             assetPath: 'assets/icons/icons__sidebar-toggle.svg',
             tooltip: 'Show or hide the projects sidebar',
-            onPressed: () =>
-                ref.read(leftSidebarOpenProvider.notifier).toggle(),
+            onPressed: () {
+              _dismissTitlebarDropdowns(ref);
+              ref.read(leftSidebarOpenProvider.notifier).toggle();
+            },
           ),
-          // Draggable region — Flutter doesn't expose a native
-          // window-drag handle on Linux without `bitsdojo_window`,
-          // which lands in Phase 4. Empty Spacer keeps the layout
-          // stable until then.
-          const Spacer(),
+          // Placeholder for the future drag region. Until native
+          // drag/maximize wiring lands, the blank titlebar space still
+          // serves as the shared "dismiss open dropdowns" target.
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _dismissTitlebarDropdowns(ref),
+              child: const SizedBox.expand(),
+            ),
+          ),
           const _BuildChip(),
           const _CustomActionsButton(),
           const _OpenInButton(),
@@ -109,8 +130,10 @@ class DesktopTitlebar extends ConsumerWidget {
           _TitlebarChromeButton(
             assetPath: 'assets/icons/icons__right-sidebar-toggle.svg',
             tooltip: 'Show or hide the changed files sidebar',
-            onPressed: () =>
-                ref.read(rightSidebarOpenProvider.notifier).toggle(),
+            onPressed: () {
+              _dismissTitlebarDropdowns(ref);
+              ref.read(rightSidebarOpenProvider.notifier).toggle();
+            },
           ),
         ],
       ),
@@ -127,23 +150,24 @@ class DesktopTitlebar extends ConsumerWidget {
 ///   * Right cluster: 46w cpu_label, `|` separator (white@0.36), 74w
 ///     mem_label. Both labels right-aligned, 12px / w500 / white@0.78.
 ///
-/// Em-dashes show until the second sample arrives (CPU% needs a
-/// delta). Click target reserved for the future popover toggle —
-/// no-op today; the provider polls every 1.5s on its own.
+/// Em-dashes show until the first shared resource snapshot arrives.
+/// Clicking toggles the popover and bumps the sampling cadence from
+/// the idle 5s loop to the open-state 1s loop.
 class _ResourceIndicator extends ConsumerStatefulWidget {
   const _ResourceIndicator();
 
   @override
-  ConsumerState<_ResourceIndicator> createState() =>
-      _ResourceIndicatorState();
+  ConsumerState<_ResourceIndicator> createState() => _ResourceIndicatorState();
 }
 
 /// Build-time flag — `--dart-define=ANOTHER_ONE_AUTO_OPEN=resource-popover`
 /// auto-opens the resource indicator popover after the first frame.
 /// Used by screenshot tooling to capture the popover without driving
 /// the cursor through synthetic input.
-const String _kAutoOpen =
-    String.fromEnvironment('ANOTHER_ONE_AUTO_OPEN', defaultValue: '');
+const String _kAutoOpen = String.fromEnvironment(
+  'ANOTHER_ONE_AUTO_OPEN',
+  defaultValue: '',
+);
 
 class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
   bool _hover = false;
@@ -162,10 +186,25 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
       // open instead of the empty-state pill.
       Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted && !_popover.isShowing) {
-          setState(_popover.show);
+          _setPopoverVisible(true);
         }
       });
     }
+  }
+
+  void _setPopoverVisible(bool visible) {
+    setState(() {
+      if (visible) {
+        _popover.show();
+      } else {
+        _popover.hide();
+      }
+    });
+    ref.read(resourceUsagePopoverOpenProvider.notifier).state = visible;
+  }
+
+  void _togglePopover() {
+    _setPopoverVisible(!_popover.isShowing);
   }
 
   @override
@@ -174,7 +213,9 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
     final cpuLabel = usage?.cpuPercent != null
         ? '${usage!.cpuPercent!.toStringAsFixed(1)}%'
         : '— %';
-    final memLabel = usage != null && usage.memoryMib > 0
+    final memLabel = usage?.snapshot != null
+        ? _formatMemory(usage!.snapshot!.appMemoryBytes)
+        : usage != null && usage.memoryMib > 0
         ? '${usage.memoryMib.toStringAsFixed(1)} MB'
         : '— MB';
     final open = _popover.isShowing;
@@ -194,7 +235,7 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
               message: 'Show resource usage',
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () => setState(_popover.toggle),
+                onTap: _togglePopover,
                 child: Container(
                   width: 176,
                   height: 28,
@@ -203,8 +244,8 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
                     color: open
                         ? AppTokens.overlayActive
                         : (_hover
-                            ? AppTokens.overlayHoverStrong
-                            : AppTokens.overlayRest),
+                              ? AppTokens.overlayHoverStrong
+                              : AppTokens.overlayRest),
                     borderRadius: BorderRadius.circular(11),
                     border: Border.all(color: AppTokens.border),
                   ),
@@ -296,7 +337,7 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: () => setState(_popover.hide),
+            onTap: () => _setPopoverVisible(false),
           ),
         ),
         CompositedTransformFollower(
@@ -344,14 +385,9 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
                         _PopoverIconButton(
                           asset: 'assets/icons/icons__refresh.svg',
                           tooltip: 'Refresh resource usage',
-                          onTap: () {
-                            // Tap-fire a manual refresh: the
-                            // notifier polls every 1.5s anyway,
-                            // but a click signals "reset cadence
-                            // now" — invalidate forces a fresh
-                            // snapshot.
-                            ref.invalidate(resourceUsageProvider);
-                          },
+                          onTap: () => ref
+                              .read(resourceUsageProvider.notifier)
+                              .refreshNow(),
                         ),
                       ],
                     ),
@@ -375,17 +411,11 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: _StatCard(
-                            title: 'APP CPU',
-                            value: cpuLabel,
-                          ),
+                          child: _StatCard(title: 'APP CPU', value: cpuLabel),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: _StatCard(
-                            title: 'APP MEM',
-                            value: memLabel,
-                          ),
+                          child: _StatCard(title: 'APP MEM', value: memLabel),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -410,9 +440,27 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
                     ),
                   ),
                   Padding(
-                    padding:
-                        const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                    child: projects.isEmpty
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    child: snapshot == null
+                        ? Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0x14000000),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Text(
+                              'Loading resource usage...',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0x94FFFFFF),
+                              ),
+                            ),
+                          )
+                        : projects.isEmpty
                         ? Container(
                             width: double.infinity,
                             padding: const EdgeInsets.symmetric(
@@ -438,8 +486,9 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
                               for (final project in projects)
                                 _ProjectGroup(
                                   project: project,
-                                  collapsed: _collapsedNodes
-                                      .contains(project.key),
+                                  collapsed: _collapsedNodes.contains(
+                                    project.key,
+                                  ),
                                   collapsedNodes: _collapsedNodes,
                                   onToggle: (key) => setState(() {
                                     if (!_collapsedNodes.add(key)) {
@@ -482,9 +531,9 @@ class _PopoverIconButtonState extends State<_PopoverIconButton> {
     // Bare MouseRegion + GestureDetector — no Tooltip wrapper.
     // Tooltip uses an internal LayoutBuilder, and this button lives
     // inside the resource-indicator's OverlayPortal child. The
-    // resource provider repolls every 1.5s, which rebuilds the
-    // overlay subtree; when LayoutBuilder is updated mid-frame from
-    // an OverlayPortal rebuild it trips
+    // resource provider rebuilds this overlay on every refresh tick;
+    // when LayoutBuilder is updated mid-frame from an OverlayPortal
+    // rebuild it trips
     // `RenderObjectWithLayoutCallbackMixin.scheduleLayoutCallback`'s
     // `debugNeedsLayout` assertion. The icon is recognizable on its
     // own; if a hover hint becomes critical, swap in a non-
@@ -816,22 +865,25 @@ class _BuildChip extends ConsumerWidget {
     if (info == null) {
       return const SizedBox.shrink();
     }
-    final (Color bg, Color border, Color text) = switch ((info.isDev, info.isDirty)) {
+    final (Color bg, Color border, Color text) = switch ((
+      info.isDev,
+      info.isDirty,
+    )) {
       (true, true) => (
-          const Color(0x8CB23232),
-          const Color(0xD9F25656),
-          const Color(0xFFF7F7F7),
-        ),
+        const Color(0x8CB23232),
+        const Color(0xD9F25656),
+        const Color(0xFFF7F7F7),
+      ),
       (true, false) => (
-          const Color(0x73E68A1F),
-          const Color(0xBFFFB347),
-          const Color(0xFFFAF0E6),
-        ),
+        const Color(0x73E68A1F),
+        const Color(0xBFFFB347),
+        const Color(0xFFFAF0E6),
+      ),
       _ => (
-          const Color(0x14FFFFFF),
-          const Color(0x29FFFFFF),
-          const Color(0x8CFFFFFF),
-        ),
+        const Color(0x14FFFFFF),
+        const Color(0x29FFFFFF),
+        const Color(0x8CFFFFFF),
+      ),
     };
     return Padding(
       padding: const EdgeInsets.only(right: 6),
@@ -872,8 +924,7 @@ class _ActiveProjectGithubButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final projectId = ref.watch(activeProjectIdProvider);
     if (projectId == null) return const SizedBox.shrink();
-    final url =
-        ref.watch(projectGithubUrlProvider(projectId)).valueOrNull;
+    final url = ref.watch(projectGithubUrlProvider(projectId)).valueOrNull;
     if (url == null || url.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(right: 6),
@@ -925,8 +976,7 @@ class _PullRequestButton extends ConsumerStatefulWidget {
   const _PullRequestButton();
 
   @override
-  ConsumerState<_PullRequestButton> createState() =>
-      _PullRequestButtonState();
+  ConsumerState<_PullRequestButton> createState() => _PullRequestButtonState();
 }
 
 class _PullRequestButtonState extends ConsumerState<_PullRequestButton> {
@@ -941,16 +991,16 @@ class _PullRequestButtonState extends ConsumerState<_PullRequestButton> {
   bool _hover = false;
 
   Color _stateColor(PullRequestStateDto state) => switch (state) {
-        PullRequestStateDto.open => _openColor,
-        PullRequestStateDto.closed => _closedColor,
-        PullRequestStateDto.merged => _mergedColor,
-      };
+    PullRequestStateDto.open => _openColor,
+    PullRequestStateDto.closed => _closedColor,
+    PullRequestStateDto.merged => _mergedColor,
+  };
 
   String _tooltip(PullRequestStateDto state) => switch (state) {
-        PullRequestStateDto.open => 'Open pull request in GitHub',
-        PullRequestStateDto.closed => 'Open closed pull request in GitHub',
-        PullRequestStateDto.merged => 'Open merged pull request in GitHub',
-      };
+    PullRequestStateDto.open => 'Open pull request in GitHub',
+    PullRequestStateDto.closed => 'Open closed pull request in GitHub',
+    PullRequestStateDto.merged => 'Open merged pull request in GitHub',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -986,11 +1036,7 @@ class _PullRequestButtonState extends ConsumerState<_PullRequestButton> {
                 borderRadius: BorderRadius.circular(11),
                 border: Border.all(color: color.withValues(alpha: 0.46)),
               ),
-              child: AppIcon(
-                'pull-request',
-                size: 13,
-                color: color,
-              ),
+              child: AppIcon('pull-request', size: 13, color: color),
             ),
           ),
         ),

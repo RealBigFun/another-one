@@ -27,8 +27,7 @@ class _CustomActionsButton extends ConsumerStatefulWidget {
       _CustomActionsButtonState();
 }
 
-class _CustomActionsButtonState
-    extends ConsumerState<_CustomActionsButton> {
+class _CustomActionsButtonState extends ConsumerState<_CustomActionsButton> {
   // Pulled from `desktop/src/titlebar.rs` constants so visual
   // metrics stay anchored to the GPUI source.
   static const double _buttonW = 148;
@@ -46,16 +45,29 @@ class _CustomActionsButtonState
   bool _bodyHover = false;
   bool _chevronHover = false;
 
+  void _syncMenuVisibility(bool visible) {
+    if (visible == _menu.isShowing) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || visible == _menu.isShowing) return;
+      setState(visible ? _menu.show : _menu.hide);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final projectId = ref.watch(activeProjectIdProvider);
     if (projectId == null) return const SizedBox.shrink();
-    final actions = ref.watch(projectActionsProvider(projectId)).valueOrNull
-        ?? const <ProjectActionDto>[];
+    final actions =
+        ref.watch(projectActionsProvider(projectId)).valueOrNull ??
+        const <ProjectActionDto>[];
     final selected = _selectedAction(ref, actions);
-    final menuOpen = _menu.isShowing;
-    final containerBg =
-        menuOpen ? AppTokens.overlayActive : AppTokens.overlayRest;
+    final menuOpen =
+        ref.watch(_activeTitlebarDropdownProvider) ==
+        _TitlebarDropdown.customActions;
+    _syncMenuVisibility(menuOpen);
+    final containerBg = menuOpen
+        ? AppTokens.overlayActive
+        : AppTokens.overlayRest;
     final iconPath = selected != null
         ? _actionIconPath(selected.icon)
         : 'assets/icons/icons__tool-bolt.svg';
@@ -105,6 +117,7 @@ class _CustomActionsButtonState
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () {
+            _dismissTitlebarDropdowns(ref);
             if (selected != null) {
               unawaited(_runAction(projectId, selected));
             } else {
@@ -116,9 +129,7 @@ class _CustomActionsButtonState
               color: _bodyHover
                   ? AppTokens.overlayHoverStrong
                   : Colors.transparent,
-              border: const Border(
-                right: BorderSide(color: AppTokens.divider),
-              ),
+              border: const Border(right: BorderSide(color: AppTokens.divider)),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 9),
             child: Row(
@@ -152,10 +163,7 @@ class _CustomActionsButtonState
     );
   }
 
-  Widget _buildChevronHalf(
-    String projectId,
-    List<ProjectActionDto> actions,
-  ) {
+  Widget _buildChevronHalf(String projectId, List<ProjectActionDto> actions) {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _chevronHover = true),
@@ -166,10 +174,11 @@ class _CustomActionsButtonState
           if (actions.isEmpty) {
             // Mirrors GPUI's "if no actions exist, jump straight to
             // the modal instead of opening an empty dropdown".
+            _dismissTitlebarDropdowns(ref);
             _openModal(null);
             return;
           }
-          setState(_menu.toggle);
+          _toggleTitlebarDropdown(ref, _TitlebarDropdown.customActions);
         },
         child: Container(
           width: _chevronW,
@@ -208,7 +217,7 @@ class _CustomActionsButtonState
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: () => setState(_menu.hide),
+            onTap: () => _dismissTitlebarDropdowns(ref),
           ),
         ),
         CompositedTransformFollower(
@@ -240,11 +249,11 @@ class _CustomActionsButtonState
                     _CustomActionMenuRow(
                       action: action,
                       onRun: () {
-                        setState(_menu.hide);
+                        _dismissTitlebarDropdowns(ref);
                         unawaited(_runAction(projectId, action));
                       },
                       onEdit: () {
-                        setState(_menu.hide);
+                        _dismissTitlebarDropdowns(ref);
                         _openModal(action);
                       },
                     ),
@@ -255,7 +264,7 @@ class _CustomActionsButtonState
                   ),
                   _CustomActionAddRow(
                     onTap: () {
-                      setState(_menu.hide);
+                      _dismissTitlebarDropdowns(ref);
                       _openModal(null);
                     },
                   ),
@@ -285,10 +294,7 @@ class _CustomActionsButtonState
     return actions.first;
   }
 
-  Future<void> _runAction(
-    String projectId,
-    ProjectActionDto action,
-  ) async {
+  Future<void> _runAction(String projectId, ProjectActionDto action) async {
     final selection = ref.read(selectedTabProvider);
     if (selection == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -306,9 +312,7 @@ class _CustomActionsButtonState
         sectionId: selection.sectionId,
         actionId: action.id,
       );
-      ref
-          .read(lastUsedCustomActionIdProvider.notifier)
-          .state = action.id;
+      ref.read(lastUsedCustomActionIdProvider.notifier).state = action.id;
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -348,8 +352,7 @@ class _CustomActionMenuRow extends StatefulWidget {
   final VoidCallback onEdit;
 
   @override
-  State<_CustomActionMenuRow> createState() =>
-      _CustomActionMenuRowState();
+  State<_CustomActionMenuRow> createState() => _CustomActionMenuRowState();
 }
 
 class _CustomActionMenuRowState extends State<_CustomActionMenuRow> {
@@ -439,8 +442,7 @@ class _SettingsGlyphButton extends StatefulWidget {
   final VoidCallback onTap;
 
   @override
-  State<_SettingsGlyphButton> createState() =>
-      _SettingsGlyphButtonState();
+  State<_SettingsGlyphButton> createState() => _SettingsGlyphButtonState();
 }
 
 class _SettingsGlyphButtonState extends State<_SettingsGlyphButton> {

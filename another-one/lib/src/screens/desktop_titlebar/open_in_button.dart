@@ -12,8 +12,9 @@ part of 'desktop_titlebar.dart';
 /// version paints them as two top-level chrome elements; here they
 /// fuse into one widget via `OverlayPortal`).
 ///
-/// Hidden when there's no active project, or when no Open-In apps
-/// are enabled — same gate GPUI applies.
+/// Hidden only when there's no active project. With zero enabled
+/// apps, the control stays visible and routes to Settings -> Open In
+/// so the user still has an in-context recovery path.
 class _OpenInButton extends ConsumerStatefulWidget {
   const _OpenInButton();
 
@@ -33,17 +34,29 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
   bool _bodyHover = false;
   bool _chevronHover = false;
 
+  void _syncMenuVisibility(bool visible) {
+    if (visible == _menu.isShowing) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || visible == _menu.isShowing) return;
+      setState(visible ? _menu.show : _menu.hide);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final projectId = ref.watch(activeProjectIdProvider);
     final state = ref.watch(openInStateProvider).valueOrNull;
-    if (projectId == null || state == null || state.enabledApps.isEmpty) {
+    if (projectId == null || state == null) {
       return const SizedBox.shrink();
     }
 
     final preferredIconPath = _resolvePreferredIcon(state);
-    final menuOpen = _menu.isShowing;
-    final containerBg = menuOpen ? AppTokens.overlayActive : AppTokens.overlayRest;
+    final menuOpen =
+        ref.watch(_activeTitlebarDropdownProvider) == _TitlebarDropdown.openIn;
+    _syncMenuVisibility(menuOpen);
+    final containerBg = menuOpen
+        ? AppTokens.overlayActive
+        : AppTokens.overlayRest;
 
     return Padding(
       padding: const EdgeInsets.only(right: 6),
@@ -51,7 +64,8 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
         link: _link,
         child: OverlayPortal(
           controller: _menu,
-          overlayChildBuilder: (context) => _buildMenu(context, projectId, state),
+          overlayChildBuilder: (context) =>
+              _buildMenu(context, projectId, state),
           child: Container(
             width: _buttonW,
             height: _buttonH,
@@ -87,10 +101,10 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
           onTap: () => _openPreferred(projectId, state),
           child: Container(
             decoration: BoxDecoration(
-              color: _bodyHover ? AppTokens.overlayHoverStrong : Colors.transparent,
-              border: const Border(
-                right: BorderSide(color: AppTokens.divider),
-              ),
+              color: _bodyHover
+                  ? AppTokens.overlayHoverStrong
+                  : Colors.transparent,
+              border: const Border(right: BorderSide(color: AppTokens.divider)),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 9),
             alignment: Alignment.centerLeft,
@@ -138,7 +152,9 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
       onExit: (_) => setState(() => _chevronHover = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => setState(_menu.toggle),
+        onTap: state.enabledApps.isEmpty
+            ? _openSettings
+            : () => _toggleTitlebarDropdown(ref, _TitlebarDropdown.openIn),
         child: Container(
           width: _chevronW,
           height: _buttonH,
@@ -166,11 +182,7 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
     );
   }
 
-  Widget _buildMenu(
-    BuildContext context,
-    String projectId,
-    OpenInState state,
-  ) {
+  Widget _buildMenu(BuildContext context, String projectId, OpenInState state) {
     return Stack(
       children: [
         // Outside-tap dismisser. Sits behind the menu so taps on the
@@ -178,7 +190,7 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: () => setState(_menu.hide),
+            onTap: () => _dismissTitlebarDropdowns(ref),
           ),
         ),
         CompositedTransformFollower(
@@ -236,13 +248,16 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
   Future<void> _openPreferred(String projectId, OpenInState state) async {
     final preferredId = state.preferredAppId;
     if (preferredId == null) {
-      // GPUI navigates to the Open-In settings section here. The
-      // settings page hasn't been ported yet (#3 in the plan), so
-      // for now no-op — the chevron dropdown still gets the user
-      // there in one click.
+      _openSettings();
       return;
     }
     await _openIn(projectId, _appById(state, preferredId));
+  }
+
+  void _openSettings() {
+    _dismissTitlebarDropdowns(ref);
+    ref.read(settingsSectionProvider.notifier).state = SettingsSection.openIn;
+    ref.read(settingsOpenProvider.notifier).state = true;
   }
 
   OpenInAppDto _appById(OpenInState state, String id) {
@@ -250,18 +265,13 @@ class _OpenInButtonState extends ConsumerState<_OpenInButton> {
   }
 
   Future<void> _openIn(String projectId, OpenInAppDto app) async {
-    setState(_menu.hide);
+    _dismissTitlebarDropdowns(ref);
     final connection = ref.read(localConnectionProvider);
     try {
       await connection.openProjectInApp(projectId: projectId, appId: app.id);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not open in ${app.label}: $e'),
-          backgroundColor: AppTokens.errorBg,
-        ),
-      );
+      showAppToast(context, message: 'Could not open in ${app.label}: $e');
       return;
     }
     // Refetch so the primary-icon flips to the just-picked app.
