@@ -16,9 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
-use another_one_core::terminal_engine::{
-    self as core_engine, InputEvent, TerminalEngine,
-};
+use another_one_core::terminal_engine::{self as core_engine, InputEvent, TerminalEngine};
 
 type EngineMap = HashMap<EngineKey, Arc<Mutex<Box<dyn TerminalEngine>>>>;
 
@@ -45,12 +43,7 @@ fn lookup(section_id: &str, tab_id: &str) -> Option<Arc<Mutex<Box<dyn TerminalEn
 /// Allocate a terminal engine for `(section_id, tab_id)`. Idempotent:
 /// reopening with new dimensions resizes the existing engine rather
 /// than dropping its grid state.
-pub fn engine_open(
-    section_id: String,
-    tab_id: String,
-    cols: u16,
-    rows: u16,
-) -> anyhow::Result<()> {
+pub fn engine_open(section_id: String, tab_id: String, cols: u16, rows: u16) -> anyhow::Result<()> {
     let key = EngineKey { section_id, tab_id };
     let mut map = registry()
         .lock()
@@ -66,11 +59,7 @@ pub fn engine_open(
     Ok(())
 }
 
-pub fn engine_write_pty(
-    section_id: String,
-    tab_id: String,
-    bytes: Vec<u8>,
-) -> anyhow::Result<()> {
+pub fn engine_write_pty(section_id: String, tab_id: String, bytes: Vec<u8>) -> anyhow::Result<()> {
     let Some(handle) = lookup(&section_id, &tab_id) else {
         return Err(anyhow::anyhow!(
             "engine_write_pty: no engine for section={section_id} tab={tab_id}"
@@ -131,10 +120,7 @@ pub struct CellDto {
 /// skip the full `engine_snapshot` (Vec<CellDto> serialise across
 /// FRB) when the cell grid is unchanged. Without this fast path an
 /// idle terminal burns ~2 cores at 60 Hz on a typical 80×24 grid.
-pub fn engine_revision(
-    section_id: String,
-    tab_id: String,
-) -> anyhow::Result<u64> {
+pub fn engine_revision(section_id: String, tab_id: String) -> anyhow::Result<u64> {
     let Some(handle) = lookup(&section_id, &tab_id) else {
         return Err(anyhow::anyhow!(
             "engine_revision: no engine for section={section_id} tab={tab_id}"

@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use anyhow::Context;
 use flutter_rust_bridge::frb;
 use tokio::runtime::Runtime;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
@@ -1008,7 +1008,7 @@ pub fn init_app() {
 /// Android, and to stderr elsewhere. Default filter is modest; override with
 /// `RUST_LOG` when debugging (e.g. `RUST_LOG=iroh=debug`).
 fn setup_tracing() {
-    use tracing_subscriber::{EnvFilter, prelude::*};
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("warn,another_one_bridge=info,iroh=warn"));

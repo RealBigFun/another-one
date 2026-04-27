@@ -24,16 +24,17 @@
 //! today. Phase 6 of the migration will move MCP wiring into core
 //! and fold it back in.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::path::PathBuf;
+use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use std::thread;
 
 use tokio::sync::broadcast;
 
 use another_one_core::agents::{AgentProviderKind, TerminalLaunchConfig};
 use another_one_core::daemon_embed::{
-    RegistryState, TabLaunchRequest, daemon_paths, key_from_wire,
+    daemon_paths, key_from_wire, RegistryState, TabLaunchRequest,
 };
 use another_one_core::open_in::OpenInAppKind;
 use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
@@ -44,6 +45,8 @@ use another_one_core::project_store::{
     ProjectActionIcon, ProjectActionKind, ProjectActionScope,
 };
 use another_one_core::section::SectionId;
+use another_one_core::terminal_launch::{spawn_warm_terminal_launch, WarmTerminalLaunchReply};
+use another_one_core::terminal_types::TerminalGridSize;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
@@ -60,7 +63,7 @@ use daemon_sandbox::frame::{
 use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
-use crate::local_pair::{LocalPairInfo, set_local_pair_info};
+use crate::local_pair::{set_local_pair_info, LocalPairInfo};
 use crate::local_registry::set_local_registry;
 
 /// Tracks whether the embedded daemon has been booted in this
@@ -72,6 +75,120 @@ static BOOTED: OnceLock<()> = OnceLock::new();
 /// `mcp_last_sync_errors` state so the Flutter MCP settings can tint
 /// the affected provider chips red until the next successful sync.
 static MCP_LAST_SYNC_ERRORS: OnceLock<Mutex<HashSet<AgentProviderKind>>> = OnceLock::new();
+
+#[derive(Clone, Debug)]
+pub(crate) struct AddAgentPrewarmLaunch {
+    pub cwd: PathBuf,
+    pub launch_config: TerminalLaunchConfig,
+    pub attached_tab: Option<TerminalRuntimeKey>,
+}
+
+#[derive(Default)]
+struct AddAgentPrewarmState {
+    active_launch_id: Option<u64>,
+    next_launch_id: u64,
+    launches: HashMap<u64, AddAgentPrewarmLaunch>,
+    canceled_launch_ids: HashSet<u64>,
+}
+
+static ADD_AGENT_PREWARM_STATE: OnceLock<Mutex<AddAgentPrewarmState>> = OnceLock::new();
+static ADD_AGENT_PREWARM_SENDER: OnceLock<mpsc::SyncSender<WarmTerminalLaunchReply>> =
+    OnceLock::new();
+
+fn with_add_agent_prewarm_state<R>(f: impl FnOnce(&mut AddAgentPrewarmState) -> R) -> R {
+    let state = ADD_AGENT_PREWARM_STATE.get_or_init(|| {
+        Mutex::new(AddAgentPrewarmState {
+            active_launch_id: None,
+            next_launch_id: 1,
+            launches: HashMap::new(),
+            canceled_launch_ids: HashSet::new(),
+        })
+    });
+    let mut guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f(&mut guard)
+}
+
+pub(crate) fn set_add_agent_prewarm_sender(sender: mpsc::SyncSender<WarmTerminalLaunchReply>) {
+    let _ = ADD_AGENT_PREWARM_SENDER.set(sender);
+}
+
+fn add_agent_prewarm_sender() -> Option<mpsc::SyncSender<WarmTerminalLaunchReply>> {
+    ADD_AGENT_PREWARM_SENDER.get().cloned()
+}
+
+fn same_add_agent_prewarm_launch_config(
+    left: &TerminalLaunchConfig,
+    right: &TerminalLaunchConfig,
+) -> bool {
+    left.mode == right.mode
+        && left.provider == right.provider
+        && left.home_override == right.home_override
+        && left.extra_args == right.extra_args
+        && left.use_agent_launch_args == right.use_agent_launch_args
+}
+
+fn cancel_add_agent_prewarm_launch(state: &mut AddAgentPrewarmState, launch_id: u64) {
+    state.launches.remove(&launch_id);
+    state.canceled_launch_ids.insert(launch_id);
+    if state.active_launch_id == Some(launch_id) {
+        state.active_launch_id = None;
+    }
+}
+
+pub(crate) fn add_agent_prewarm_launch(launch_id: u64) -> Option<AddAgentPrewarmLaunch> {
+    with_add_agent_prewarm_state(|state| state.launches.get(&launch_id).cloned())
+}
+
+pub(crate) fn add_agent_prewarm_attached_tabs() -> Vec<(u64, TerminalRuntimeKey)> {
+    with_add_agent_prewarm_state(|state| {
+        state
+            .launches
+            .iter()
+            .filter_map(|(launch_id, launch)| {
+                launch
+                    .attached_tab
+                    .clone()
+                    .map(|attached_tab| (*launch_id, attached_tab))
+            })
+            .collect()
+    })
+}
+
+pub(crate) fn update_add_agent_prewarm_launch_config(
+    launch_id: u64,
+    launch_config: TerminalLaunchConfig,
+) -> Option<TerminalRuntimeKey> {
+    with_add_agent_prewarm_state(|state| {
+        let launch = state.launches.get_mut(&launch_id)?;
+        launch.launch_config = launch_config;
+        launch.attached_tab.clone()
+    })
+}
+
+pub(crate) fn take_canceled_add_agent_prewarm_launch_ids() -> Vec<u64> {
+    with_add_agent_prewarm_state(|state| state.canceled_launch_ids.drain().collect())
+}
+
+pub(crate) fn complete_add_agent_prewarm_launch(launch_id: u64) {
+    with_add_agent_prewarm_state(|state| {
+        state.launches.remove(&launch_id);
+        state.canceled_launch_ids.remove(&launch_id);
+        if state.active_launch_id == Some(launch_id) {
+            state.active_launch_id = None;
+        }
+    });
+}
+
+pub(crate) fn is_add_agent_prewarm_attached_to_tab(key: &TerminalRuntimeKey) -> bool {
+    with_add_agent_prewarm_state(|state| {
+        state
+            .launches
+            .values()
+            .any(|launch| launch.attached_tab.as_ref() == Some(key))
+    })
+}
 
 fn with_mcp_last_sync_errors<R>(f: impl FnOnce(&mut HashSet<AgentProviderKind>) -> R) -> R {
     let errors = MCP_LAST_SYNC_ERRORS.get_or_init(|| Mutex::new(HashSet::new()));
@@ -115,6 +232,127 @@ fn record_mcp_sync_errors(
     } else {
         Err(failures.join("; "))
     }
+}
+
+fn cwd_for_section(state: &RegistryState, section: &SectionId) -> Option<PathBuf> {
+    let section_key = section.store_key();
+    let section_state = state.project_store.terminal_sections.get(&section_key);
+    let project = state.project_store.project(&section.project_id)?;
+    Some(
+        section_state
+            .and_then(|persisted| persisted.cwd.clone())
+            .unwrap_or_else(|| project.path.clone()),
+    )
+}
+
+fn agent_launch_args_for_config(
+    store: &ProjectStore,
+    launch_config: &TerminalLaunchConfig,
+) -> Vec<String> {
+    if !launch_config.use_agent_launch_args {
+        return Vec::new();
+    }
+    launch_config
+        .provider
+        .and_then(another_one_core::agents::agent_id_for_provider)
+        .map(|agent_id| store.agent_launch_args(agent_id).to_vec())
+        .unwrap_or_default()
+}
+
+pub(crate) fn attach_active_add_agent_prewarm(
+    key: &TerminalRuntimeKey,
+    cwd: &PathBuf,
+    launch_config: &TerminalLaunchConfig,
+) -> bool {
+    with_add_agent_prewarm_state(|state| {
+        let Some(launch_id) = state.active_launch_id else {
+            return false;
+        };
+        let Some(launch) = state.launches.get_mut(&launch_id) else {
+            state.active_launch_id = None;
+            return false;
+        };
+        if launch.cwd != *cwd
+            || !same_add_agent_prewarm_launch_config(&launch.launch_config, launch_config)
+        {
+            return false;
+        }
+        launch.attached_tab = Some(key.clone());
+        state.active_launch_id = None;
+        true
+    })
+}
+
+pub(crate) fn sync_add_agent_modal_prewarm(
+    section_id: &str,
+    selected_agent_id: Option<&str>,
+) -> Result<(), String> {
+    let section = SectionId::from_store_key(section_id).ok_or_else(|| {
+        format!(
+            "sync_add_agent_modal_prewarm: malformed section_id `{section_id}` — \
+             expected SectionId::store_key()"
+        )
+    })?;
+    let launch_config = launch_config_for_add_agent(selected_agent_id.unwrap_or(""))?;
+    let registry = crate::local_registry::local_registry()
+        .ok_or_else(|| "sync_add_agent_modal_prewarm: registry not initialized".to_string())?;
+    let (cwd, agent_launch_args) = {
+        let state = registry
+            .lock()
+            .map_err(|_| "sync_add_agent_modal_prewarm: registry mutex poisoned".to_string())?;
+        let cwd = cwd_for_section(&state, &section).ok_or_else(|| {
+            format!("sync_add_agent_modal_prewarm: unknown section_id `{section_id}`")
+        })?;
+        let agent_launch_args = agent_launch_args_for_config(&state.project_store, &launch_config);
+        (cwd, agent_launch_args)
+    };
+    let sender = add_agent_prewarm_sender()
+        .ok_or_else(|| "sync_add_agent_modal_prewarm: prewarm drain not initialized".to_string())?;
+    let request = with_add_agent_prewarm_state(|state| {
+        if let Some(active_launch_id) = state.active_launch_id {
+            if let Some(existing) = state.launches.get(&active_launch_id) {
+                if existing.cwd == cwd
+                    && same_add_agent_prewarm_launch_config(&existing.launch_config, &launch_config)
+                {
+                    return None;
+                }
+            }
+            cancel_add_agent_prewarm_launch(state, active_launch_id);
+        }
+
+        let launch_id = state.next_launch_id.max(1);
+        state.next_launch_id = launch_id + 1;
+        state.active_launch_id = Some(launch_id);
+        state.launches.insert(
+            launch_id,
+            AddAgentPrewarmLaunch {
+                cwd: cwd.clone(),
+                launch_config: launch_config.clone(),
+                attached_tab: None,
+            },
+        );
+        Some((launch_id, cwd.clone(), launch_config.clone()))
+    });
+    let Some((launch_id, launch_cwd, launch_config)) = request else {
+        return Ok(());
+    };
+    spawn_warm_terminal_launch(
+        sender,
+        launch_id,
+        Some(launch_cwd),
+        launch_config,
+        agent_launch_args,
+        TerminalGridSize::default(),
+    );
+    Ok(())
+}
+
+pub(crate) fn cancel_active_add_agent_prewarm() {
+    with_add_agent_prewarm_state(|state| {
+        if let Some(launch_id) = state.active_launch_id.take() {
+            cancel_add_agent_prewarm_launch(state, launch_id);
+        }
+    });
 }
 
 /// Build, register, and boot the embedded daemon. Idempotent: a
@@ -397,6 +635,9 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let Some(key) = key_from_wire(section_id, tab_id) else {
             return;
         };
+        if is_add_agent_prewarm_attached_to_tab(&key) {
+            return;
+        }
         self.with_state(|state| {
             if state.broadcasts.contains_key(&key) {
                 return;
@@ -1595,17 +1836,32 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                     .ok_or_else(|| {
                         format!("add_agent_to_section: unknown section_id `{section_id}`")
                     })?;
-                let (tab_id, tab) = build_terminal_tab(launch_config, None);
+                let cwd = section_state
+                    .cwd
+                    .clone()
+                    .or_else(|| {
+                        state
+                            .project_store
+                            .project(&section.project_id)
+                            .map(|project| project.path.clone())
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "add_agent_to_section: could not resolve cwd for section `{section_id}`"
+                        )
+                    })?;
+                let (tab_id, tab) = build_terminal_tab(launch_config.clone(), None);
                 append_tab_to_section(&mut section_state, tab);
                 state
                     .project_store
                     .set_section_state(section_id.to_string(), section_state);
-                state.pending_tab_launches.push(TabLaunchRequest {
-                    key: TerminalRuntimeKey {
-                        section_id: section,
-                        tab_id: tab_id.clone(),
-                    },
-                });
+                let key = TerminalRuntimeKey {
+                    section_id: section.clone(),
+                    tab_id: tab_id.clone(),
+                };
+                if !attach_active_add_agent_prewarm(&key, &cwd, &launch_config) {
+                    state.pending_tab_launches.push(TabLaunchRequest { key });
+                }
                 Ok::<_, String>(tab_id)
             })
             .ok_or_else(|| "add_agent_to_section: registry state dropped".to_string())??;

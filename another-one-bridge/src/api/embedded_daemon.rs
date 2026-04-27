@@ -23,6 +23,25 @@ pub fn boot_embedded_daemon() -> Result<(), String> {
     embedded_daemon::boot()
 }
 
+/// Keep the Add Agent modal's hidden prewarmed launch aligned with
+/// the current section + selected agent. Desktop-only optimisation:
+/// the loopback iroh transport still owns the real tab mutation, but
+/// this direct bridge call lets the embedded daemon reuse the already
+/// launched PTY when the user presses Create.
+pub fn sync_add_agent_modal_prewarm(
+    section_id: String,
+    selected_agent_id: Option<String>,
+) -> Result<(), String> {
+    embedded_daemon::sync_add_agent_modal_prewarm(&section_id, selected_agent_id.as_deref())
+}
+
+/// Cancel the Add Agent modal's currently reserved hidden launch, if
+/// any. Called when the modal dismisses without creating a tab so the
+/// background PTY does not linger.
+pub fn cancel_active_add_agent_prewarm() {
+    embedded_daemon::cancel_active_add_agent_prewarm();
+}
+
 /// Hex-encoded `EndpointId` + direct socket addresses + relay URLs
 /// of the running embedded daemon. Drives the desktop's loopback
 /// bootstrap: the UI's `DaemonConnection` is an `IrohTransport`
@@ -59,9 +78,7 @@ pub fn loopback_session_addr() -> Option<LoopbackSessionAddr> {
 ///     same observable: timeout. The bind error is logged; surfacing
 ///     it across this FFI would couple the bridge to the
 ///     `daemon-sandbox` error type.
-pub async fn await_loopback_session_addr(
-    timeout_ms: u32,
-) -> Result<LoopbackSessionAddr, String> {
+pub async fn await_loopback_session_addr(timeout_ms: u32) -> Result<LoopbackSessionAddr, String> {
     use std::time::Duration;
     use std::time::Instant;
 

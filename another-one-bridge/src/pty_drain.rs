@@ -32,16 +32,18 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, Weak, mpsc};
+use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
 
 use another_one_core::agents::{
-    AGENTS, AgentProviderKind, TerminalLaunchConfig, agent_id_for_provider,
+    agent_id_for_provider, AgentProviderKind, TerminalLaunchConfig, AGENTS,
 };
 use another_one_core::daemon_embed::{RegistryState, TabLaunchRequest};
 use another_one_core::process::TrackedProcess;
-use another_one_core::terminal_launch::{TerminalLaunchReply, spawn_terminal_launch};
+use another_one_core::terminal_launch::{
+    spawn_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
+};
 use another_one_core::terminal_types::{
     PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey,
 };
@@ -61,6 +63,12 @@ struct LiveTab {
     _runtime_handle: PreparedTerminalRuntime,
 }
 
+struct HiddenWarmLaunch {
+    runtime: PreparedTerminalRuntime,
+    launch_config: TerminalLaunchConfig,
+    process_id: Option<u32>,
+}
+
 /// Spawn the drain thread. Returns immediately. The thread runs
 /// for the lifetime of the process and exits cleanly when the
 /// `Weak<RegistryState>` upgrades to `None` (the daemon's
@@ -75,7 +83,11 @@ pub fn spawn_drain(registry: Arc<Mutex<RegistryState>>) {
 
 fn run(weak: Weak<Mutex<RegistryState>>) {
     let (tx, rx) = mpsc::sync_channel::<TerminalLaunchReply>(1024);
+    let (warm_tx, warm_rx) = mpsc::sync_channel::<WarmTerminalLaunchReply>(1024);
+    crate::embedded_daemon::set_add_agent_prewarm_sender(warm_tx);
     let mut live: HashMap<TerminalRuntimeKey, LiveTab> = HashMap::new();
+    let mut hidden_warm_launches: HashMap<u64, HiddenWarmLaunch> = HashMap::new();
+    let mut attached_warm_launches: HashMap<u64, TerminalRuntimeKey> = HashMap::new();
     loop {
         let Some(registry) = weak.upgrade() else {
             return;
@@ -140,6 +152,86 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
                 Err(mpsc::TryRecvError::Disconnected) => return,
             }
         }
+        loop {
+            match warm_rx.try_recv() {
+                Ok(WarmTerminalLaunchReply::Launched {
+                    launch_id,
+                    runtime,
+                    launch_config,
+                    process_id,
+                }) => {
+                    let hidden = HiddenWarmLaunch {
+                        runtime,
+                        launch_config,
+                        process_id,
+                    };
+                    if let Some(prewarm) =
+                        crate::embedded_daemon::add_agent_prewarm_launch(launch_id)
+                    {
+                        if let Some(key) = prewarm.attached_tab {
+                            if promote_hidden_warm_launch(
+                                &registry,
+                                &mut live,
+                                &mut attached_warm_launches,
+                                launch_id,
+                                key,
+                                hidden,
+                            ) {
+                                crate::embedded_daemon::complete_add_agent_prewarm_launch(
+                                    launch_id,
+                                );
+                            }
+                        } else {
+                            hidden_warm_launches.insert(launch_id, hidden);
+                        }
+                    }
+                }
+                Ok(WarmTerminalLaunchReply::Output { .. }) => {}
+                Ok(WarmTerminalLaunchReply::SessionDiscovered { launch_id, session }) => {
+                    if let Some(hidden) = hidden_warm_launches.get_mut(&launch_id) {
+                        hidden.launch_config = hidden
+                            .launch_config
+                            .clone()
+                            .with_session(Some(session.clone()));
+                        let _ = crate::embedded_daemon::update_add_agent_prewarm_launch_config(
+                            launch_id,
+                            hidden.launch_config.clone(),
+                        );
+                    } else if let Some(key) = attached_warm_launches.get(&launch_id).cloned() {
+                        set_tab_session(&registry, &key, session);
+                    }
+                }
+                Ok(WarmTerminalLaunchReply::Exited { launch_id, .. })
+                | Ok(WarmTerminalLaunchReply::Failed { launch_id, .. }) => {
+                    hidden_warm_launches.remove(&launch_id);
+                    if let Some(key) = attached_warm_launches.remove(&launch_id) {
+                        handle_terminated(&registry, &mut live, &key);
+                    }
+                    crate::embedded_daemon::complete_add_agent_prewarm_launch(launch_id);
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return,
+            }
+        }
+        for launch_id in crate::embedded_daemon::take_canceled_add_agent_prewarm_launch_ids() {
+            hidden_warm_launches.remove(&launch_id);
+            attached_warm_launches.remove(&launch_id);
+        }
+        for (launch_id, key) in crate::embedded_daemon::add_agent_prewarm_attached_tabs() {
+            let Some(hidden) = hidden_warm_launches.remove(&launch_id) else {
+                continue;
+            };
+            if promote_hidden_warm_launch(
+                &registry,
+                &mut live,
+                &mut attached_warm_launches,
+                launch_id,
+                key,
+                hidden,
+            ) {
+                crate::embedded_daemon::complete_add_agent_prewarm_launch(launch_id);
+            }
+        }
         let pending_terminations = {
             let mut state = match registry.lock() {
                 Ok(s) => s,
@@ -149,6 +241,7 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
         };
         for key in pending_terminations {
             handle_terminated(&registry, &mut live, &key);
+            attached_warm_launches.retain(|_, attached_key| attached_key != &key);
         }
         drop(registry);
         thread::sleep(Duration::from_millis(50));
@@ -231,11 +324,11 @@ fn handle_launched(
     mut runtime: PreparedTerminalRuntime,
     launch_config: TerminalLaunchConfig,
     process_id: Option<u32>,
-) {
+) -> bool {
     let tab_still_exists = {
         let state = match registry.lock() {
             Ok(s) => s,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let section_key = key.section_id.store_key();
         state
@@ -250,7 +343,7 @@ fn handle_launched(
             state.pending_post_launch_input.remove(&key);
             state.tracked_processes.remove(&key);
         }
-        return;
+        return false;
     }
 
     // Take writer + broadcast out of the runtime struct without
@@ -269,7 +362,7 @@ fn handle_launched(
     let pending_input = {
         let mut state = match registry.lock() {
             Ok(s) => s,
-            Err(_) => return,
+            Err(_) => return false,
         };
         state.broadcasts.insert(key.clone(), output_broadcast);
         state.writers.insert(key.clone(), writer_arc.clone());
@@ -286,6 +379,7 @@ fn handle_launched(
             let _ = writer.flush();
         }
     }
+    true
 }
 
 /// Build the per-tab `TrackedProcess` row the resource sampler
@@ -391,4 +485,44 @@ fn handle_terminated(
     state
         .viewer_focus
         .retain(|_, focused_key| focused_key != key);
+}
+
+fn promote_hidden_warm_launch(
+    registry: &Arc<Mutex<RegistryState>>,
+    live: &mut HashMap<TerminalRuntimeKey, LiveTab>,
+    attached_warm_launches: &mut HashMap<u64, TerminalRuntimeKey>,
+    launch_id: u64,
+    key: TerminalRuntimeKey,
+    hidden: HiddenWarmLaunch,
+) -> bool {
+    let session = hidden.launch_config.session.clone();
+    let launched = handle_launched(
+        registry,
+        live,
+        key.clone(),
+        hidden.runtime,
+        hidden.launch_config,
+        hidden.process_id,
+    );
+    if !launched {
+        return false;
+    }
+    if let Some(session) = session {
+        set_tab_session(registry, &key, session);
+    }
+    attached_warm_launches.insert(launch_id, key);
+    true
+}
+
+fn set_tab_session(
+    registry: &Arc<Mutex<RegistryState>>,
+    key: &TerminalRuntimeKey,
+    session: another_one_core::agents::TerminalSessionRef,
+) {
+    if let Ok(mut state) = registry.lock() {
+        let section_key = key.section_id.store_key();
+        state
+            .project_store
+            .set_tab_session(&section_key, &key.tab_id, session);
+    }
 }

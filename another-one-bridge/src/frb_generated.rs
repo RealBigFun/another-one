@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 416376882;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -119167186;
 
 // Section: executor
 
@@ -4407,6 +4407,40 @@ fn wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
         },
     )
 }
+fn wire__crate__api__embedded_daemon__cancel_active_add_agent_prewarm_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cancel_active_add_agent_prewarm",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok({
+                        crate::api::embedded_daemon::cancel_active_add_agent_prewarm();
+                    })?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__terminal_engine__engine_close_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -4998,6 +5032,43 @@ fn wire__crate__api__iroh_client__set_data_dir_impl(
                     let output_ok = Result::<_, ()>::Ok({
                         crate::api::iroh_client::set_data_dir(api_path);
                     })?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__embedded_daemon__sync_add_agent_modal_prewarm_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_add_agent_modal_prewarm",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_section_id = <String>::sse_decode(&mut deserializer);
+            let api_selected_agent_id = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::embedded_daemon::sync_add_agent_modal_prewarm(
+                        api_section_id,
+                        api_selected_agent_id,
+                    )?;
                     Ok(output_ok)
                 })())
             }
@@ -7342,65 +7413,77 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        71 => {
+        71 => wire__crate__api__embedded_daemon__cancel_active_add_agent_prewarm_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        72 => {
             wire__crate__api__terminal_engine__engine_close_impl(port, ptr, rust_vec_len, data_len)
         }
-        72 => wire__crate__api__terminal_engine__engine_encode_input_impl(
+        73 => wire__crate__api__terminal_engine__engine_encode_input_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => {
+        74 => {
             wire__crate__api__terminal_engine__engine_open_impl(port, ptr, rust_vec_len, data_len)
         }
-        74 => {
+        75 => {
             wire__crate__api__terminal_engine__engine_resize_impl(port, ptr, rust_vec_len, data_len)
         }
-        75 => wire__crate__api__terminal_engine__engine_revision_impl(
+        76 => wire__crate__api__terminal_engine__engine_revision_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__terminal_engine__engine_snapshot_impl(
+        77 => wire__crate__api__terminal_engine__engine_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => wire__crate__api__terminal_engine__engine_write_pty_impl(
+        78 => wire__crate__api__terminal_engine__engine_write_pty_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        78 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__embedded_daemon__loopback_session_addr_impl(
+        79 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__embedded_daemon__loopback_session_addr_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
-        82 => wire__crate__api__resources__read_app_resource_sample_impl(
+        82 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__resources__read_app_resource_sample_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        83 => wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
+        84 => wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        85 => {
+        86 => {
             wire__crate__api__pair__regenerate_local_pairing_impl(port, ptr, rust_vec_len, data_len)
         }
-        86 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        87 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__embedded_daemon__sync_add_agent_modal_prewarm_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
         _ => unreachable!(),
     }
 }
