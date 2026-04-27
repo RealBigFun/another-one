@@ -315,16 +315,8 @@ class _SettingsKeybindingsSectionState
     }
 
     final modifiers = <String>[];
-    if (HardwareKeyboard.instance.isMetaPressed) {
-      modifiers.add(
-        defaultTargetPlatform == TargetPlatform.macOS ? 'cmd' : 'super',
-      );
-    }
-    if (HardwareKeyboard.instance.isControlPressed) {
-      modifiers.add(
-        defaultTargetPlatform == TargetPlatform.macOS ? 'control' : 'cmd',
-      ); // GPUI uses cmd for control on macOS
-    }
+    if (HardwareKeyboard.instance.isMetaPressed) modifiers.add('cmd');
+    if (HardwareKeyboard.instance.isControlPressed) modifiers.add('control');
     if (HardwareKeyboard.instance.isAltPressed) modifiers.add('alt');
     if (HardwareKeyboard.instance.isShiftPressed || normalized.impliedShift) {
       modifiers.add('shift');
@@ -632,7 +624,7 @@ class _BindingPills extends StatelessWidget {
 
   String _displayKey(String part) {
     final normalized = part.toLowerCase();
-    if (defaultTargetPlatform == TargetPlatform.macOS) {
+    if (_usesMacModifierGlyphs) {
       return switch (normalized) {
         'cmd' => '⌘',
         'control' => '⌃',
@@ -662,7 +654,8 @@ class _BindingPills extends StatelessWidget {
       };
     }
     return switch (normalized) {
-      'cmd' || 'control' || 'ctrl' => 'Ctrl',
+      'cmd' => _platformPrimaryModifierLabel,
+      'control' || 'ctrl' => 'Ctrl',
       'alt' || 'option' => 'Alt',
       'shift' => 'Shift',
       'function' => 'Fn',
@@ -684,6 +677,19 @@ class _BindingPills extends StatelessWidget {
       'super' => 'Super',
       _ when normalized.length == 1 => normalized.toUpperCase(),
       _ => normalized,
+    };
+  }
+
+  bool get _usesMacModifierGlyphs =>
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  String get _platformPrimaryModifierLabel {
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.macOS || TargetPlatform.iOS => 'Cmd',
+      TargetPlatform.windows => 'Win',
+      TargetPlatform.android => 'Ctrl',
+      _ => 'Super',
     };
   }
 }
