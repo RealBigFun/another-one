@@ -17,27 +17,30 @@ bool get _supportsWindowChrome {
 }
 
 Future<void> startNativeWindowDrag(Offset globalPosition) async {
-  if (!_supportsWindowChrome) {
-    return;
-  }
-  try {
-    await _windowChromeChannel.invokeMethod<void>('startWindowDrag', {
-      'x': globalPosition.dx.round(),
-      'y': globalPosition.dy.round(),
-    });
-  } on MissingPluginException {
-    // Desktop-only best-effort affordance.
-  } on PlatformException {
-    // Desktop-only best-effort affordance.
-  }
+  return _invokeWindowChrome('startWindowDrag', {
+    'x': globalPosition.dx.round(),
+    'y': globalPosition.dy.round(),
+  });
 }
 
 Future<void> toggleNativeWindowMaximize() async {
+  return _invokeWindowChrome('toggleMaximize');
+}
+
+Future<void> minimizeNativeWindow() async {
+  return _invokeWindowChrome('minimizeWindow');
+}
+
+Future<void> closeNativeWindow() async {
+  return _invokeWindowChrome('closeWindow');
+}
+
+Future<void> _invokeWindowChrome(String method, [Object? arguments]) async {
   if (!_supportsWindowChrome) {
     return;
   }
   try {
-    await _windowChromeChannel.invokeMethod<void>('toggleMaximize');
+    await _windowChromeChannel.invokeMethod<void>(method, arguments);
   } on MissingPluginException {
     // Desktop-only best-effort affordance.
   } on PlatformException {

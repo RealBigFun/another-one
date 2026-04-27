@@ -65,6 +65,26 @@ static FlMethodResponse* handle_toggle_maximize(MyApplication* self) {
   return success_response();
 }
 
+static FlMethodResponse* handle_minimize_window(MyApplication* self) {
+  if (self->window == nullptr) {
+    return FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "NO_WINDOW", "Window not ready for minimize handling.", nullptr));
+  }
+
+  gtk_window_iconify(self->window);
+  return success_response();
+}
+
+static FlMethodResponse* handle_close_window(MyApplication* self) {
+  if (self->window == nullptr) {
+    return FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "NO_WINDOW", "Window not ready for close handling.", nullptr));
+  }
+
+  gtk_window_close(self->window);
+  return success_response();
+}
+
 static void window_chrome_method_call_cb(FlMethodChannel* channel,
                                          FlMethodCall* method_call,
                                          gpointer user_data) {
@@ -76,6 +96,10 @@ static void window_chrome_method_call_cb(FlMethodChannel* channel,
     response = handle_start_window_drag(self, method_call);
   } else if (strcmp(method, "toggleMaximize") == 0) {
     response = handle_toggle_maximize(self);
+  } else if (strcmp(method, "minimizeWindow") == 0) {
+    response = handle_minimize_window(self);
+  } else if (strcmp(method, "closeWindow") == 0) {
+    response = handle_close_window(self);
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }

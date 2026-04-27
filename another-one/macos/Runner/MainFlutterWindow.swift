@@ -46,6 +46,12 @@ class MainFlutterWindow: NSWindow {
       case "toggleMaximize":
         self.zoom(nil)
         result(nil)
+      case "minimizeWindow":
+        self.miniaturize(nil)
+        result(nil)
+      case "closeWindow":
+        self.performClose(nil)
+        result(nil)
       default:
         result(FlutterMethodNotImplemented)
       }

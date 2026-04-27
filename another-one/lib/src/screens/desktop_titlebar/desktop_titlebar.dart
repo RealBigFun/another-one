@@ -16,6 +16,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -65,6 +66,7 @@ part 'chrome_button.dart';
 part 'custom_actions_button.dart';
 part 'git_actions_button.dart';
 part 'open_in_button.dart';
+part 'window_controls.dart';
 
 enum _TitlebarDropdown { customActions, openIn, gitActions }
 
@@ -80,6 +82,9 @@ void _toggleTitlebarDropdown(WidgetRef ref, _TitlebarDropdown dropdown) {
   final notifier = ref.read(_activeTitlebarDropdownProvider.notifier);
   notifier.state = notifier.state == dropdown ? null : dropdown;
 }
+
+bool get _showLinuxWindowControls =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
 
 class DesktopTitlebar extends ConsumerWidget {
   const DesktopTitlebar({super.key});
@@ -127,6 +132,7 @@ class DesktopTitlebar extends ConsumerWidget {
               ref.read(rightSidebarOpenProvider.notifier).toggle();
             },
           ),
+          if (_showLinuxWindowControls) const _LinuxWindowControls(),
         ],
       ),
     );
