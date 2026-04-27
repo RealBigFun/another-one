@@ -35,8 +35,16 @@ final _mcpSettingsProvider = FutureProvider.autoDispose<McpSettingsView?>((
   }
 });
 
-class SettingsMcpSection extends ConsumerWidget {
+class SettingsMcpSection extends ConsumerStatefulWidget {
   const SettingsMcpSection({super.key});
+
+  @override
+  ConsumerState<SettingsMcpSection> createState() => _SettingsMcpSectionState();
+}
+
+class _SettingsMcpSectionState extends ConsumerState<SettingsMcpSection> {
+  McpSettingsView? _providerView;
+  McpSettingsView? _currentView;
 
   static const Color _panelBg = Color(0xFF23252A);
   static const Color _rowBg = Color(0xFF1F2125);
@@ -53,8 +61,100 @@ class SettingsMcpSection extends ConsumerWidget {
     (id: 'amp', short: 'Amp'),
   ];
 
+  void _syncFromProvider(McpSettingsView view) {
+    if (identical(_providerView, view)) {
+      return;
+    }
+    _providerView = view;
+    _currentView = view;
+  }
+
+  void _updateView(McpSettingsView Function(McpSettingsView current) update) {
+    final current = _currentView;
+    if (current == null) {
+      return;
+    }
+    setState(() {
+      _currentView = update(current);
+    });
+  }
+
+  McpTransportKindDto _catalogTransportKind(String catalogId) {
+    return switch (catalogId) {
+      'playwright' || 'github' => McpTransportKindDto.stdio,
+      _ => McpTransportKindDto.http,
+    };
+  }
+
+  void _handleCatalogAdded(McpCatalogEntryDto entry) {
+    _updateView(
+      (current) => McpSettingsView(
+        catalogEntries: current.catalogEntries,
+        registryEntries: [
+          ...current.registryEntries,
+          McpServerDto(
+            id: entry.id,
+            label: entry.label,
+            source: McpSourceDto.catalog,
+            transportKind: _catalogTransportKind(entry.id),
+            enabledFor: const [],
+          ),
+        ],
+        syncErrorProviderIds: current.syncErrorProviderIds,
+      ),
+    );
+  }
+
+  void _handleToggle({
+    required String entryId,
+    required String providerId,
+    required bool enabled,
+  }) {
+    _updateView((current) {
+      final nextEntries = current.registryEntries
+          .map((entry) {
+            if (entry.id != entryId) {
+              return entry;
+            }
+            final enabledFor = [...entry.enabledFor];
+            if (enabled) {
+              if (!enabledFor.contains(providerId)) {
+                enabledFor.add(providerId);
+              }
+            } else {
+              enabledFor.remove(providerId);
+            }
+            return McpServerDto(
+              id: entry.id,
+              label: entry.label,
+              source: entry.source,
+              transportKind: entry.transportKind,
+              enabledFor: enabledFor,
+            );
+          })
+          .toList(growable: false);
+      return McpSettingsView(
+        catalogEntries: current.catalogEntries,
+        registryEntries: nextEntries,
+        syncErrorProviderIds: const [],
+      );
+    });
+  }
+
+  void _handleRemoved(String entryId) {
+    _updateView(
+      (current) => McpSettingsView(
+        catalogEntries: current.catalogEntries,
+        registryEntries: current.registryEntries
+            .where((entry) => entry.id != entryId)
+            .toList(growable: false),
+        syncErrorProviderIds: const [],
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final viewAsync = ref.watch(_mcpSettingsProvider);
     final body = viewAsync.when<Widget>(
       data: (view) {
@@ -79,7 +179,13 @@ class SettingsMcpSection extends ConsumerWidget {
             clipBehavior: Clip.antiAlias,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [..._buildRows(view, ref), const _FooterNote()],
+              children: [
+                ...() {
+                  _syncFromProvider(view);
+                  return _buildRows(_currentView!);
+                }(),
+                const _FooterNote(),
+              ],
             ),
           ),
         );
@@ -124,7 +230,7 @@ class SettingsMcpSection extends ConsumerWidget {
     );
   }
 
-  List<Widget> _buildRows(McpSettingsView view, WidgetRef ref) {
+  List<Widget> _buildRows(McpSettingsView view) {
     final rows = <Widget>[];
     rows.add(const _HeaderRow());
     final registryById = {
@@ -143,7 +249,13 @@ class SettingsMcpSection extends ConsumerWidget {
             rowBg: _rowBg,
             activeBg: _activeBg,
             danger: _danger,
-            onChanged: () => ref.invalidate(_mcpSettingsProvider),
+            onToggled: (providerId, enabled) => _handleToggle(
+              entryId: inRegistry.id,
+              providerId: providerId,
+              enabled: enabled,
+            ),
+            onRemoved: () => _handleRemoved(inRegistry.id),
+            onReload: () => ref.invalidate(_mcpSettingsProvider),
           ),
         );
       } else {
@@ -152,7 +264,7 @@ class SettingsMcpSection extends ConsumerWidget {
             entry: catalog,
             isFirst: index == 0,
             rowBg: _rowBg,
-            onAdded: () => ref.invalidate(_mcpSettingsProvider),
+            onAdded: () => _handleCatalogAdded(catalog),
           ),
         );
       }
@@ -171,7 +283,13 @@ class SettingsMcpSection extends ConsumerWidget {
           rowBg: _rowBg,
           activeBg: _activeBg,
           danger: _danger,
-          onChanged: () => ref.invalidate(_mcpSettingsProvider),
+          onToggled: (providerId, enabled) => _handleToggle(
+            entryId: custom.id,
+            providerId: providerId,
+            enabled: enabled,
+          ),
+          onRemoved: () => _handleRemoved(custom.id),
+          onReload: () => ref.invalidate(_mcpSettingsProvider),
         ),
       );
       index++;
@@ -309,7 +427,9 @@ class _RegistryRow extends ConsumerStatefulWidget {
     required this.rowBg,
     required this.activeBg,
     required this.danger,
-    required this.onChanged,
+    required this.onToggled,
+    required this.onRemoved,
+    required this.onReload,
   });
 
   final McpServerDto server;
@@ -319,7 +439,9 @@ class _RegistryRow extends ConsumerStatefulWidget {
   final Color rowBg;
   final Color activeBg;
   final Color danger;
-  final VoidCallback onChanged;
+  final void Function(String providerId, bool enabled) onToggled;
+  final VoidCallback onRemoved;
+  final VoidCallback onReload;
 
   @override
   ConsumerState<_RegistryRow> createState() => _RegistryRowState();
@@ -339,10 +461,10 @@ class _RegistryRowState extends ConsumerState<_RegistryRow> {
             providerId: providerId,
             enabled: enabled,
           );
-      widget.onChanged();
+      widget.onToggled(providerId, enabled);
     } catch (e) {
       if (!mounted) return;
-      widget.onChanged();
+      widget.onReload();
       showAppToast(context, message: 'Could not toggle: $e');
     }
     if (mounted) setState(() => _busy = false);
@@ -353,10 +475,10 @@ class _RegistryRowState extends ConsumerState<_RegistryRow> {
     setState(() => _busy = true);
     try {
       await ref.read(localConnectionProvider).mcpRemove(widget.server.id);
-      widget.onChanged();
+      widget.onRemoved();
     } catch (e) {
       if (!mounted) return;
-      widget.onChanged();
+      widget.onReload();
       showAppToast(context, message: 'Could not remove: $e');
     }
     if (mounted) setState(() => _busy = false);
