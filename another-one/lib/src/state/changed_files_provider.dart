@@ -2,28 +2,55 @@
 //
 // `changedFilesProvider(projectId)` snapshots the working-tree
 // state of a project — the list of files with index/worktree
-// status + diff counts. Calls into the active connection's
-// `readChangedFiles`, which goes through `read_project_git_state`
-// on the daemon side (spawn_blocking under the hood, so the FRB
-// caller's tokio runtime stays free).
-//
-// One-shot, not streaming: a future commit can wire up periodic
-// refresh or a daemon push, but for now the UI invalidates the
-// provider after a known-mutation (commit, branch switch) and on
-// pane-show.
+// status + diff counts. It still supports invalidation-driven
+// refetches, but it can also accept the daemon's inline mutation
+// snapshots directly so stage/unstage/discard actions do not need an
+// immediate second `readChangedFiles()` round trip.
+
+import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../connection.dart';
 import '../rust/api/local_session.dart' show ChangedFileDto;
 import 'local_connection_provider.dart';
 
-final changedFilesProvider =
-    FutureProvider.family<List<ChangedFileDto>, String>((ref, projectId) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    final files = await connection.readChangedFiles(projectId);
-    return files ?? const [];
-  } on UnimplementedError {
-    return const [];
+class _ChangedFilesNotifier
+    extends StateNotifier<AsyncValue<List<ChangedFileDto>>> {
+  _ChangedFilesNotifier(this.ref, this.projectId)
+    : super(const AsyncLoading()) {
+    unawaited(refresh());
   }
-});
+
+  final Ref ref;
+  final String projectId;
+
+  Future<void> refresh() async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      final connection = ref.read(localConnectionProvider);
+      return _readChangedFiles(connection);
+    });
+  }
+
+  void replaceSnapshot(List<ChangedFileDto> files) {
+    state = AsyncData(files);
+  }
+
+  Future<List<ChangedFileDto>> _readChangedFiles(
+    DaemonConnection connection,
+  ) async {
+    try {
+      return await connection.readChangedFiles(projectId) ?? const [];
+    } on UnimplementedError {
+      return const [];
+    }
+  }
+}
+
+final changedFilesProvider =
+    StateNotifierProvider.family<
+      _ChangedFilesNotifier,
+      AsyncValue<List<ChangedFileDto>>,
+      String
+    >((ref, projectId) => _ChangedFilesNotifier(ref, projectId));

@@ -101,6 +101,11 @@ pub struct RegistryState {
     /// different path today for legacy reasons; both produce the same
     /// end state (a live entry in `broadcasts` + `writers`).
     pub pending_tab_launches: Vec<TabLaunchRequest>,
+    /// Tab-termination requests from daemon-side mutators (close-tab,
+    /// future task/section removal cleanup). Drained on the PTY
+    /// thread, where dropping the live runtime safely SIGHUPs the
+    /// child and clears registry bookkeeping for the key.
+    pub pending_tab_terminations: Vec<TerminalRuntimeKey>,
     /// Keys currently mid-spawn. Populated when either path
     /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
     /// kicks off a `spawn_terminal_launch`; cleared on
@@ -138,6 +143,7 @@ impl RegistryState {
             writers: HashMap::new(),
             pending_resizes: Vec::new(),
             pending_tab_launches: Vec::new(),
+            pending_tab_terminations: Vec::new(),
             in_flight_launches: HashSet::new(),
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
@@ -161,10 +167,7 @@ impl RegistryState {
     /// changed since the last effective size, enqueue a resize for
     /// the UI render tick to apply. Returns the effective size so
     /// callers can log / debug — not otherwise used.
-    pub fn recompute_effective_size(
-        &mut self,
-        key: &TerminalRuntimeKey,
-    ) -> Option<(u16, u16)> {
+    pub fn recompute_effective_size(&mut self, key: &TerminalRuntimeKey) -> Option<(u16, u16)> {
         let viewers = self.active_viewers.get(key)?;
         if viewers.is_empty() {
             return None;

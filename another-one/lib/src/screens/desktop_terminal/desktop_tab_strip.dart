@@ -19,6 +19,7 @@ import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/agent_provider_icon.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/app_toast.dart';
 import '../add_agent_modal/add_agent_modal.dart';
 
 const Color _tabBarBg = Color(0xFF27292E);
@@ -40,10 +41,11 @@ class DesktopTabStrip extends ConsumerWidget {
     );
     final tabs = task?.tabs ?? const <TabSummary>[];
     // Pinned-first sort, mirroring `SectionState::sort_tabs_by_pin`.
-    final sorted = [...tabs]..sort((a, b) {
-      if (a.pinned == b.pinned) return 0;
-      return a.pinned ? -1 : 1;
-    });
+    final sorted = [...tabs]
+      ..sort((a, b) {
+        if (a.pinned == b.pinned) return 0;
+        return a.pinned ? -1 : 1;
+      });
 
     return Container(
       height: AppTokens.tabStripHeight,
@@ -113,12 +115,9 @@ class _TabState extends ConsumerState<_Tab> {
 
   Future<void> _activate() async {
     if (widget.active) return;
-    ref.read(selectedTabProvider.notifier).set(
-          TabSelection(
-            sectionId: widget.sectionId,
-            tabId: widget.tab.id,
-          ),
-        );
+    ref
+        .read(selectedTabProvider.notifier)
+        .set(TabSelection(sectionId: widget.sectionId, tabId: widget.tab.id));
     final connection = ref.read(localConnectionProvider);
     try {
       await connection.activateSectionTab(
@@ -152,22 +151,14 @@ class _TabState extends ConsumerState<_Tab> {
         if (newActive.isEmpty) {
           ref.read(selectedTabProvider.notifier).clear();
         } else {
-          ref.read(selectedTabProvider.notifier).set(
-                TabSelection(
-                  sectionId: widget.sectionId,
-                  tabId: newActive,
-                ),
-              );
+          ref
+              .read(selectedTabProvider.notifier)
+              .set(TabSelection(sectionId: widget.sectionId, tabId: newActive));
         }
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not close tab: $e'),
-          backgroundColor: AppTokens.errorBg,
-        ),
-      );
+      showAppToast(context, message: 'Could not close tab: $e');
     }
   }
 
@@ -181,12 +172,7 @@ class _TabState extends ConsumerState<_Tab> {
       await connection.listProjects();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not toggle pin: $e'),
-          backgroundColor: AppTokens.errorBg,
-        ),
-      );
+      showAppToast(context, message: 'Could not toggle pin: $e');
     }
   }
 
@@ -214,11 +200,7 @@ class _TabState extends ConsumerState<_Tab> {
           onTap: _togglePinned,
           child: Row(
             children: [
-              const AppIcon(
-                'pin-off',
-                size: 15,
-                color: AppTokens.textPrimary,
-              ),
+              const AppIcon('pin-off', size: 15, color: AppTokens.textPrimary),
               const SizedBox(width: 10),
               Text(
                 widget.tab.pinned ? 'Unpin' : 'Pin',
@@ -239,8 +221,9 @@ class _TabState extends ConsumerState<_Tab> {
   Widget build(BuildContext context) {
     final tab = widget.tab;
     final title = tab.fixedTitle ?? tab.title;
-    final displayTitle =
-        widget.indexLabel != null ? '$title ${widget.indexLabel}' : title;
+    final displayTitle = widget.indexLabel != null
+        ? '$title ${widget.indexLabel}'
+        : title;
     final bg = widget.active
         ? _tabBgActive
         : (_hover ? _tabHover : _tabBgInactive);
@@ -264,11 +247,7 @@ class _TabState extends ConsumerState<_Tab> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (tab.pinned) ...[
-                AppIcon(
-                  'pin-off',
-                  size: 12,
-                  color: textColor,
-                ),
+                AppIcon('pin-off', size: 12, color: textColor),
                 const SizedBox(width: 6),
               ],
               AgentProviderIcon(
@@ -282,10 +261,7 @@ class _TabState extends ConsumerState<_Tab> {
                 child: Text(
                   displayTitle,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: textColor,
-                  ),
+                  style: TextStyle(fontSize: 12, color: textColor),
                 ),
               ),
               const SizedBox(width: 8),
@@ -348,12 +324,17 @@ class _AddAgentButtonState extends ConsumerState<_AddAgentButton> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () async {
-              final saved = await showAddAgentModal(
+              final newTabId = await showAddAgentModal(
                 context: context,
                 sectionId: widget.sectionId,
               );
-              if (!mounted || !saved) return;
+              if (!mounted || newTabId == null) return;
               await ref.read(localConnectionProvider).listProjects();
+              ref
+                  .read(selectedTabProvider.notifier)
+                  .set(
+                    TabSelection(sectionId: widget.sectionId, tabId: newTabId),
+                  );
             },
             child: Container(
               width: 28,
@@ -363,11 +344,7 @@ class _AddAgentButtonState extends ConsumerState<_AddAgentButton> {
                 color: _hover ? _tabHover : Colors.transparent,
                 borderRadius: BorderRadius.circular(5),
               ),
-              child: const AppIcon(
-                'plus',
-                size: 14,
-                color: Color(0x80FFFFFF),
-              ),
+              child: const AppIcon('plus', size: 14, color: Color(0x80FFFFFF)),
             ),
           ),
         ),
@@ -432,11 +409,12 @@ Future<bool> _showPinnedTabCloseConfirm(
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 decoration: const BoxDecoration(
-                  border:
-                      Border(top: BorderSide(color: AppTokens.divider)),
+                  border: Border(top: BorderSide(color: AppTokens.divider)),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
@@ -446,12 +424,12 @@ Future<bool> _showPinnedTabCloseConfirm(
                       onTap: () => Navigator.of(ctx).pop(false),
                       child: Container(
                         height: 28,
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          borderRadius:
-                              BorderRadius.circular(AppTokens.radiusMd),
+                          borderRadius: BorderRadius.circular(
+                            AppTokens.radiusMd,
+                          ),
                           border: Border.all(color: AppTokens.border),
                         ),
                         child: const Text(
@@ -470,13 +448,13 @@ Future<bool> _showPinnedTabCloseConfirm(
                       onTap: () => Navigator.of(ctx).pop(true),
                       child: Container(
                         height: 28,
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
                           color: const Color(0xFFEB6F77),
-                          borderRadius:
-                              BorderRadius.circular(AppTokens.radiusMd),
+                          borderRadius: BorderRadius.circular(
+                            AppTokens.radiusMd,
+                          ),
                         ),
                         child: const Text(
                           'Close',

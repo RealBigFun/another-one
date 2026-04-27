@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use anyhow::Context;
 use flutter_rust_bridge::frb;
 use tokio::runtime::Runtime;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
@@ -148,11 +148,47 @@ enum Control {
     /// `WorkerReply::EnabledAgentsAck`. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadEnabledAgents`.
     ReadEnabledAgents,
+    /// Submit the new-task modal over the shared wire. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::SubmitNewTask`.
+    SubmitNewTask {
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_ids: Vec<String>,
+        branch_mode_existing: bool,
+        worktree_mode: bool,
+    },
+    /// Append one agent tab (or plain shell when `agent_id` is
+    /// empty) to an existing section and queue its PTY launch.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::AddAgentToSection`.
+    AddAgentToSection {
+        section_id: String,
+        agent_id: String,
+    },
+    /// Persist the active tab for a section. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ActivateSectionTab`.
+    ActivateSectionTab { section_id: String, tab_id: String },
+    /// Remove one tab from a section and tear down its live PTY if
+    /// present. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::CloseSectionTab`.
+    CloseSectionTab { section_id: String, tab_id: String },
+    /// Flip one section tab's `pinned` flag. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ToggleSectionTabPinned`.
+    ToggleSectionTabPinned { section_id: String, tab_id: String },
     /// Full agent registry (every entry in `core::agents::AGENTS`,
     /// enabled or not) for the Settings → Agents page. Reply:
     /// `WorkerReply::AgentSettingsAck`. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadAgentSettings`.
     ReadAgentSettings,
+    /// Snapshot of Settings → Open In on the daemon host. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::ReadOpenInSettings`.
+    ReadOpenInSettings,
+    /// Toggle one Open-In app's enabled flag. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::SetOpenInAppEnabled`.
+    SetOpenInAppEnabled { app_id: String, enabled: bool },
+    /// Launch a project in a host-local app on the daemon host.
+    /// Mirror of `daemon-sandbox/src/frame.rs::Control::OpenProjectInApp`.
+    OpenProjectInApp { project_id: String, app_id: String },
     /// Run one custom action inside `section_id`'s task — appends a
     /// fresh tab + queues its PTY launch. **Single-shot Ack**: the
     /// reply carries only the new tab id; PTY output flows over
@@ -162,6 +198,28 @@ enum Control {
         project_id: String,
         section_id: String,
         action_id: String,
+    },
+    /// Upsert one custom action. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::SaveProjectAction`.
+    SaveProjectAction {
+        project_id: String,
+        action: crate::api::local_session::ProjectActionDto,
+        save_global_copy: bool,
+    },
+    /// Delete one custom action by id. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::DeleteProjectAction`.
+    DeleteProjectAction {
+        project_id: String,
+        action_id: String,
+    },
+    /// `another-one-ojm.5` — discard a whole snapshot of changed
+    /// files in one round-trip. The caller supplies the current
+    /// `changed_files` list so the daemon can batch reverts and do
+    /// one final git-state reread. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::DiscardAllChanges`.
+    DiscardAllChanges {
+        project_id: String,
+        files: Vec<crate::api::local_session::ChangedFileDto>,
     },
     /// TOFU handshake — sent as the very first control frame after
     /// connect when this client has never paired with this daemon
@@ -190,10 +248,7 @@ enum Control {
     /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetTaskPinned`.
     SetTaskPinned { task_id: String, pinned: bool },
     /// Mirror of `daemon-sandbox/src/frame.rs::Control::RemoveTask`.
-    RemoveTask {
-        project_id: String,
-        task_id: String,
-    },
+    RemoveTask { project_id: String, task_id: String },
     /// Compute the canonical branch slug for free-text input.
     /// Mirror of `daemon-sandbox/src/frame.rs::Control::SlugifyBranchName`.
     SlugifyBranchName { name: String },
@@ -329,10 +384,7 @@ enum Control {
     /// Mirror of `daemon-sandbox/src/frame.rs::Control::ReadShortcutSettings`.
     ReadShortcutSettings,
     /// Mirror of `daemon-sandbox/src/frame.rs::Control::SetShortcutBinding`.
-    SetShortcutBinding {
-        action_id: String,
-        binding: String,
-    },
+    SetShortcutBinding { action_id: String, binding: String },
     /// Mirror of `daemon-sandbox/src/frame.rs::Control::ResetShortcutBinding`.
     ResetShortcutBinding { action_id: String },
     // ── Settings → MCP (`another-one-ojm.8`) ──────────────────────
@@ -485,10 +537,19 @@ pub enum WorkerReply {
     DiscardChangedFileAck {
         changed_files: Vec<crate::api::local_session::ChangedFileDto>,
     },
+    /// `another-one-ojm.5` — ack for [`Control::DiscardAllChanges`].
+    /// Carries the final post-batch snapshot plus any per-path
+    /// failures that occurred while discarding.
+    DiscardAllChangesAck {
+        changed_files: Vec<crate::api::local_session::ChangedFileDto>,
+        failures: Vec<String>,
+    },
     /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
     /// Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
-    ToolbarActionOutcomeAck { outcome: crate::api::local_session::ToolbarActionOutcomeDto },
+    ToolbarActionOutcomeAck {
+        outcome: crate::api::local_session::ToolbarActionOutcomeDto,
+    },
     /// `another-one-ojm.5` — ack for [`Control::CreateBranch`]. Mirror
     /// of `daemon-sandbox/src/frame.rs::WorkerReply::CreateBranchAck`.
     /// Carries the post-mutation `projects` snapshot inline so the
@@ -547,14 +608,42 @@ pub enum WorkerReply {
     EnabledAgentsAck {
         view: crate::api::local_session::EnabledAgentsView,
     },
+    /// Reply to [`Control::SubmitNewTask`]. `section_id` is the task
+    /// section the caller should focus; its initial tab is always
+    /// `"0"`.
+    SubmitNewTaskAck { section_id: String },
+    /// Reply to [`Control::AddAgentToSection`]. `tab_id` is the
+    /// freshly-minted tab that was appended and made active.
+    AddAgentToSectionAck { tab_id: String },
+    /// Reply to [`Control::ActivateSectionTab`].
+    ActivateSectionTabAck,
+    /// Reply to [`Control::CloseSectionTab`]. `active_tab_id` is the
+    /// section's new active tab, or empty when the section is now
+    /// tabless.
+    CloseSectionTabAck { active_tab_id: String },
+    /// Reply to [`Control::ToggleSectionTabPinned`].
+    ToggleSectionTabPinnedAck { pinned: bool },
     /// Reply to [`Control::ReadAgentSettings`]. Reuses
     /// `local_session::AgentSettingsView` directly.
     AgentSettingsAck {
         view: crate::api::local_session::AgentSettingsView,
     },
+    /// Reply to [`Control::ReadOpenInSettings`]. Reuses
+    /// `local_session::OpenInSettingsView` directly.
+    OpenInSettingsAck {
+        view: crate::api::local_session::OpenInSettingsView,
+    },
+    /// Reply to [`Control::SetOpenInAppEnabled`].
+    SetOpenInAppEnabledAck,
+    /// Reply to [`Control::OpenProjectInApp`].
+    OpenProjectInAppAck,
     /// Reply to [`Control::RunProjectAction`]. Single-shot Ack —
     /// `tab_id` is the freshly-minted uuid for the spawned tab.
     RunProjectActionAck { tab_id: String },
+    /// Reply to [`Control::SaveProjectAction`].
+    SaveProjectActionAck,
+    /// Reply to [`Control::DeleteProjectAction`].
+    DeleteProjectActionAck { deleted: bool },
     // ── Settings → Git Actions (`another-one-ojm.8`) ──────────────
     /// Reply to `Control::ReadGitActionScripts`.
     GitActionScriptsAck {
@@ -757,8 +846,8 @@ pub enum AgentProvider {
 // local_session.
 
 pub use crate::api::local_session::{
-    GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView,
-    McpSourceDto, McpTransportKindDto, ShortcutSettingsRow, ShortcutSettingsView,
+    GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView, McpSourceDto,
+    McpTransportKindDto, ShortcutSettingsRow, ShortcutSettingsView,
 };
 
 /// Writes one frame to the Iroh send stream.
@@ -919,7 +1008,7 @@ pub fn init_app() {
 /// Android, and to stderr elsewhere. Default filter is modest; override with
 /// `RUST_LOG` when debugging (e.g. `RUST_LOG=iroh=debug`).
 fn setup_tracing() {
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use tracing_subscriber::{EnvFilter, prelude::*};
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("warn,another_one_bridge=info,iroh=warn"));
@@ -1631,11 +1720,7 @@ impl IrohSession {
     }
 
     /// Send `Control::SetGitPrScript`.
-    pub async fn set_git_pr_script(
-        &self,
-        request_id: u64,
-        script: String,
-    ) -> anyhow::Result<()> {
+    pub async fn set_git_pr_script(&self, request_id: u64, script: String) -> anyhow::Result<()> {
         self.send_control(request_id, Control::SetGitPrScript { script })
             .await
     }
@@ -1682,7 +1767,8 @@ impl IrohSession {
 
     /// Send `Control::ReadMcpSettings`.
     pub async fn read_mcp_settings(&self, request_id: u64) -> anyhow::Result<()> {
-        self.send_control(request_id, Control::ReadMcpSettings).await
+        self.send_control(request_id, Control::ReadMcpSettings)
+            .await
     }
 
     /// Send `Control::McpAddFromCatalog`.
@@ -1715,11 +1801,7 @@ impl IrohSession {
     }
 
     /// Send `Control::McpRemove`.
-    pub async fn mcp_remove(
-        &self,
-        request_id: u64,
-        entry_id: String,
-    ) -> anyhow::Result<()> {
+    pub async fn mcp_remove(&self, request_id: u64, entry_id: String) -> anyhow::Result<()> {
         self.send_control(request_id, Control::McpRemove { entry_id })
             .await
     }
@@ -1785,6 +1867,18 @@ impl IrohSession {
             },
         )
         .await
+    }
+
+    /// `another-one-ojm.5` — issue a `Control::DiscardAllChanges`
+    /// frame.
+    pub async fn discard_all_changes(
+        &self,
+        request_id: u64,
+        project_id: String,
+        files: Vec<crate::api::local_session::ChangedFileDto>,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::DiscardAllChanges { project_id, files })
+            .await
     }
 
     /// `another-one-ojm.5` — issue a `Control::RunToolbarGitAction`
@@ -1910,12 +2004,123 @@ impl IrohSession {
 
     /// Issue [`Control::ReadEnabledAgents`] under `request_id`.
     pub async fn read_enabled_agents(&self, request_id: u64) -> anyhow::Result<()> {
-        self.send_control(request_id, Control::ReadEnabledAgents).await
+        self.send_control(request_id, Control::ReadEnabledAgents)
+            .await
+    }
+
+    /// Issue [`Control::SubmitNewTask`] under `request_id`.
+    pub async fn submit_new_task(
+        &self,
+        request_id: u64,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_ids: Vec<String>,
+        branch_mode_existing: bool,
+        worktree_mode: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::SubmitNewTask {
+                project_id,
+                task_name,
+                source_branch,
+                agent_ids,
+                branch_mode_existing,
+                worktree_mode,
+            },
+        )
+        .await
+    }
+
+    /// Issue [`Control::AddAgentToSection`] under `request_id`.
+    pub async fn add_agent_to_section(
+        &self,
+        request_id: u64,
+        section_id: String,
+        agent_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::AddAgentToSection {
+                section_id,
+                agent_id,
+            },
+        )
+        .await
+    }
+
+    /// Issue [`Control::ActivateSectionTab`] under `request_id`.
+    pub async fn activate_section_tab(
+        &self,
+        request_id: u64,
+        section_id: String,
+        tab_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::ActivateSectionTab { section_id, tab_id },
+        )
+        .await
+    }
+
+    /// Issue [`Control::CloseSectionTab`] under `request_id`.
+    pub async fn close_section_tab(
+        &self,
+        request_id: u64,
+        section_id: String,
+        tab_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::CloseSectionTab { section_id, tab_id })
+            .await
+    }
+
+    /// Issue [`Control::ToggleSectionTabPinned`] under `request_id`.
+    pub async fn toggle_section_tab_pinned(
+        &self,
+        request_id: u64,
+        section_id: String,
+        tab_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::ToggleSectionTabPinned { section_id, tab_id },
+        )
+        .await
     }
 
     /// Issue [`Control::ReadAgentSettings`] under `request_id`.
     pub async fn read_agent_settings(&self, request_id: u64) -> anyhow::Result<()> {
-        self.send_control(request_id, Control::ReadAgentSettings).await
+        self.send_control(request_id, Control::ReadAgentSettings)
+            .await
+    }
+
+    /// Issue [`Control::ReadOpenInSettings`] under `request_id`.
+    pub async fn read_open_in_settings(&self, request_id: u64) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::ReadOpenInSettings)
+            .await
+    }
+
+    /// Issue [`Control::SetOpenInAppEnabled`] under `request_id`.
+    pub async fn set_open_in_app_enabled(
+        &self,
+        request_id: u64,
+        app_id: String,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetOpenInAppEnabled { app_id, enabled })
+            .await
+    }
+
+    /// Issue [`Control::OpenProjectInApp`] under `request_id`.
+    pub async fn open_project_in_app(
+        &self,
+        request_id: u64,
+        project_id: String,
+        app_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::OpenProjectInApp { project_id, app_id })
+            .await
     }
 
     /// Issue [`Control::RunProjectAction`] under `request_id`.
@@ -1931,6 +2136,42 @@ impl IrohSession {
             Control::RunProjectAction {
                 project_id,
                 section_id,
+                action_id,
+            },
+        )
+        .await
+    }
+
+    /// Issue [`Control::SaveProjectAction`] under `request_id`.
+    pub async fn save_project_action(
+        &self,
+        request_id: u64,
+        project_id: String,
+        action: crate::api::local_session::ProjectActionDto,
+        save_global_copy: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::SaveProjectAction {
+                project_id,
+                action,
+                save_global_copy,
+            },
+        )
+        .await
+    }
+
+    /// Issue [`Control::DeleteProjectAction`] under `request_id`.
+    pub async fn delete_project_action(
+        &self,
+        request_id: u64,
+        project_id: String,
+        action_id: String,
+    ) -> anyhow::Result<()> {
+        self.send_control(
+            request_id,
+            Control::DeleteProjectAction {
+                project_id,
                 action_id,
             },
         )

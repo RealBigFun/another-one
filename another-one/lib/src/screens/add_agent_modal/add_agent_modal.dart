@@ -17,21 +17,22 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../../rust/api/local_session.dart' show AgentSummaryDto;
 import '../../state/local_connection_provider.dart';
 import '../../state/new_task_data_provider.dart';
+import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../widgets/app_toast.dart';
 
-Future<bool> showAddAgentModal({
+Future<String?> showAddAgentModal({
   required BuildContext context,
   required String sectionId,
   String? seededAgentId,
 }) async {
-  final result = await showDialog<bool>(
+  final result = await showDialog<String>(
     context: context,
     barrierColor: AppTokens.scrimBg,
     builder: (_) =>
         _AddAgentModal(sectionId: sectionId, seededAgentId: seededAgentId),
   );
-  return result ?? false;
+  return result;
 }
 
 enum _AddAgentFocusKind { trigger, option, create, cancel }
@@ -102,14 +103,17 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
       _submitting = true;
     });
     try {
-      await ref
+      final tabId = await ref
           .read(localConnectionProvider)
           .addAgentToSection(
             sectionId: widget.sectionId,
             agentId: selectedAgentId ?? '',
           );
+      ref
+          .read(selectedTabProvider.notifier)
+          .set(TabSelection(sectionId: widget.sectionId, tabId: tabId));
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(tabId);
     } catch (e) {
       if (!mounted) return;
       setState(() {

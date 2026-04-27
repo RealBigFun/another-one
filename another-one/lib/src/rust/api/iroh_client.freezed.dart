@@ -55,7 +55,7 @@ extension WorkerReplyPatterns on WorkerReply {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_ProjectAdded value)?  projectAdded,TResult Function( WorkerReply_ProjectRemoved value)?  projectRemoved,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_TaskCreated value)?  taskCreated,TResult Function( WorkerReply_TaskRenamed value)?  taskRenamed,TResult Function( WorkerReply_TaskPinned value)?  taskPinned,TResult Function( WorkerReply_TaskRemoved value)?  taskRemoved,TResult Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,TResult Function( WorkerReply_CommitFileChangesAck value)?  commitFileChangesAck,TResult Function( WorkerReply_BranchCompareAck value)?  branchCompareAck,TResult Function( WorkerReply_BranchSettingsAck value)?  branchSettingsAck,TResult Function( WorkerReply_SetBranchSettingAck value)?  setBranchSettingAck,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult Function( WorkerReply_CreateBranchAck value)?  createBranchAck,TResult Function( WorkerReply_CreateReviewTaskAck value)?  createReviewTaskAck,TResult Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,TResult Function( WorkerReply_ProjectPullRequestsAck value)?  projectPullRequestsAck,TResult Function( WorkerReply_OpenInStateAck value)?  openInStateAck,TResult Function( WorkerReply_ProjectActionsAck value)?  projectActionsAck,TResult Function( WorkerReply_EnabledAgentsAck value)?  enabledAgentsAck,TResult Function( WorkerReply_AgentSettingsAck value)?  agentSettingsAck,TResult Function( WorkerReply_RunProjectActionAck value)?  runProjectActionAck,TResult Function( WorkerReply_GitActionScriptsAck value)?  gitActionScriptsAck,TResult Function( WorkerReply_SetGitCommitScriptAck value)?  setGitCommitScriptAck,TResult Function( WorkerReply_ResetGitCommitScriptAck value)?  resetGitCommitScriptAck,TResult Function( WorkerReply_SetGitPrScriptAck value)?  setGitPrScriptAck,TResult Function( WorkerReply_ResetGitPrScriptAck value)?  resetGitPrScriptAck,TResult Function( WorkerReply_ShortcutSettingsAck value)?  shortcutSettingsAck,TResult Function( WorkerReply_SetShortcutBindingAck value)?  setShortcutBindingAck,TResult Function( WorkerReply_ResetShortcutBindingAck value)?  resetShortcutBindingAck,TResult Function( WorkerReply_McpSettingsAck value)?  mcpSettingsAck,TResult Function( WorkerReply_McpAddFromCatalogAck value)?  mcpAddFromCatalogAck,TResult Function( WorkerReply_McpToggleAck value)?  mcpToggleAck,TResult Function( WorkerReply_McpRemoveAck value)?  mcpRemoveAck,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( WorkerReply_ProjectList value)?  projectList,TResult Function( WorkerReply_ProjectAdded value)?  projectAdded,TResult Function( WorkerReply_ProjectRemoved value)?  projectRemoved,TResult Function( WorkerReply_Err value)?  err,TResult Function( WorkerReply_TaskCreated value)?  taskCreated,TResult Function( WorkerReply_TaskRenamed value)?  taskRenamed,TResult Function( WorkerReply_TaskPinned value)?  taskPinned,TResult Function( WorkerReply_TaskRemoved value)?  taskRemoved,TResult Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,TResult Function( WorkerReply_CommitFileChangesAck value)?  commitFileChangesAck,TResult Function( WorkerReply_BranchCompareAck value)?  branchCompareAck,TResult Function( WorkerReply_BranchSettingsAck value)?  branchSettingsAck,TResult Function( WorkerReply_SetBranchSettingAck value)?  setBranchSettingAck,TResult Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult Function( WorkerReply_DiscardAllChangesAck value)?  discardAllChangesAck,TResult Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult Function( WorkerReply_CreateBranchAck value)?  createBranchAck,TResult Function( WorkerReply_CreateReviewTaskAck value)?  createReviewTaskAck,TResult Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,TResult Function( WorkerReply_ProjectPullRequestsAck value)?  projectPullRequestsAck,TResult Function( WorkerReply_OpenInStateAck value)?  openInStateAck,TResult Function( WorkerReply_ProjectActionsAck value)?  projectActionsAck,TResult Function( WorkerReply_EnabledAgentsAck value)?  enabledAgentsAck,TResult Function( WorkerReply_SubmitNewTaskAck value)?  submitNewTaskAck,TResult Function( WorkerReply_AddAgentToSectionAck value)?  addAgentToSectionAck,TResult Function( WorkerReply_ActivateSectionTabAck value)?  activateSectionTabAck,TResult Function( WorkerReply_CloseSectionTabAck value)?  closeSectionTabAck,TResult Function( WorkerReply_ToggleSectionTabPinnedAck value)?  toggleSectionTabPinnedAck,TResult Function( WorkerReply_AgentSettingsAck value)?  agentSettingsAck,TResult Function( WorkerReply_OpenInSettingsAck value)?  openInSettingsAck,TResult Function( WorkerReply_SetOpenInAppEnabledAck value)?  setOpenInAppEnabledAck,TResult Function( WorkerReply_OpenProjectInAppAck value)?  openProjectInAppAck,TResult Function( WorkerReply_RunProjectActionAck value)?  runProjectActionAck,TResult Function( WorkerReply_SaveProjectActionAck value)?  saveProjectActionAck,TResult Function( WorkerReply_DeleteProjectActionAck value)?  deleteProjectActionAck,TResult Function( WorkerReply_GitActionScriptsAck value)?  gitActionScriptsAck,TResult Function( WorkerReply_SetGitCommitScriptAck value)?  setGitCommitScriptAck,TResult Function( WorkerReply_ResetGitCommitScriptAck value)?  resetGitCommitScriptAck,TResult Function( WorkerReply_SetGitPrScriptAck value)?  setGitPrScriptAck,TResult Function( WorkerReply_ResetGitPrScriptAck value)?  resetGitPrScriptAck,TResult Function( WorkerReply_ShortcutSettingsAck value)?  shortcutSettingsAck,TResult Function( WorkerReply_SetShortcutBindingAck value)?  setShortcutBindingAck,TResult Function( WorkerReply_ResetShortcutBindingAck value)?  resetShortcutBindingAck,TResult Function( WorkerReply_McpSettingsAck value)?  mcpSettingsAck,TResult Function( WorkerReply_McpAddFromCatalogAck value)?  mcpAddFromCatalogAck,TResult Function( WorkerReply_McpToggleAck value)?  mcpToggleAck,TResult Function( WorkerReply_McpRemoveAck value)?  mcpRemoveAck,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -83,7 +83,8 @@ return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck() when 
 return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
 return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
-return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return discardChangedFileAck(_that);case WorkerReply_DiscardAllChangesAck() when discardAllChangesAck != null:
+return discardAllChangesAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
 return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck() when createBranchAck != null:
 return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
 return createReviewTaskAck(_that);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
@@ -92,9 +93,19 @@ return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck() whe
 return projectPullRequestsAck(_that);case WorkerReply_OpenInStateAck() when openInStateAck != null:
 return openInStateAck(_that);case WorkerReply_ProjectActionsAck() when projectActionsAck != null:
 return projectActionsAck(_that);case WorkerReply_EnabledAgentsAck() when enabledAgentsAck != null:
-return enabledAgentsAck(_that);case WorkerReply_AgentSettingsAck() when agentSettingsAck != null:
-return agentSettingsAck(_that);case WorkerReply_RunProjectActionAck() when runProjectActionAck != null:
-return runProjectActionAck(_that);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
+return enabledAgentsAck(_that);case WorkerReply_SubmitNewTaskAck() when submitNewTaskAck != null:
+return submitNewTaskAck(_that);case WorkerReply_AddAgentToSectionAck() when addAgentToSectionAck != null:
+return addAgentToSectionAck(_that);case WorkerReply_ActivateSectionTabAck() when activateSectionTabAck != null:
+return activateSectionTabAck(_that);case WorkerReply_CloseSectionTabAck() when closeSectionTabAck != null:
+return closeSectionTabAck(_that);case WorkerReply_ToggleSectionTabPinnedAck() when toggleSectionTabPinnedAck != null:
+return toggleSectionTabPinnedAck(_that);case WorkerReply_AgentSettingsAck() when agentSettingsAck != null:
+return agentSettingsAck(_that);case WorkerReply_OpenInSettingsAck() when openInSettingsAck != null:
+return openInSettingsAck(_that);case WorkerReply_SetOpenInAppEnabledAck() when setOpenInAppEnabledAck != null:
+return setOpenInAppEnabledAck(_that);case WorkerReply_OpenProjectInAppAck() when openProjectInAppAck != null:
+return openProjectInAppAck(_that);case WorkerReply_RunProjectActionAck() when runProjectActionAck != null:
+return runProjectActionAck(_that);case WorkerReply_SaveProjectActionAck() when saveProjectActionAck != null:
+return saveProjectActionAck(_that);case WorkerReply_DeleteProjectActionAck() when deleteProjectActionAck != null:
+return deleteProjectActionAck(_that);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
 return gitActionScriptsAck(_that);case WorkerReply_SetGitCommitScriptAck() when setGitCommitScriptAck != null:
 return setGitCommitScriptAck(_that);case WorkerReply_ResetGitCommitScriptAck() when resetGitCommitScriptAck != null:
 return resetGitCommitScriptAck(_that);case WorkerReply_SetGitPrScriptAck() when setGitPrScriptAck != null:
@@ -124,7 +135,7 @@ return mcpRemoveAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_ProjectAdded value)  projectAdded,required TResult Function( WorkerReply_ProjectRemoved value)  projectRemoved,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_TaskCreated value)  taskCreated,required TResult Function( WorkerReply_TaskRenamed value)  taskRenamed,required TResult Function( WorkerReply_TaskPinned value)  taskPinned,required TResult Function( WorkerReply_TaskRemoved value)  taskRemoved,required TResult Function( WorkerReply_SlugifyBranchNameAck value)  slugifyBranchNameAck,required TResult Function( WorkerReply_ProjectBranchesAck value)  projectBranchesAck,required TResult Function( WorkerReply_PrimaryBranchAck value)  primaryBranchAck,required TResult Function( WorkerReply_RepoDefaultCommitActionAck value)  repoDefaultCommitActionAck,required TResult Function( WorkerReply_ActiveGitStateAck value)  activeGitStateAck,required TResult Function( WorkerReply_ChangedFilesAck value)  changedFilesAck,required TResult Function( WorkerReply_ProjectGithubUrlAck value)  projectGithubUrlAck,required TResult Function( WorkerReply_RecentCommitsAck value)  recentCommitsAck,required TResult Function( WorkerReply_CommitFileChangesAck value)  commitFileChangesAck,required TResult Function( WorkerReply_BranchCompareAck value)  branchCompareAck,required TResult Function( WorkerReply_BranchSettingsAck value)  branchSettingsAck,required TResult Function( WorkerReply_SetBranchSettingAck value)  setBranchSettingAck,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,required TResult Function( WorkerReply_UnstageChangedFileAck value)  unstageChangedFileAck,required TResult Function( WorkerReply_StageAllChangesAck value)  stageAllChangesAck,required TResult Function( WorkerReply_UnstageAllChangesAck value)  unstageAllChangesAck,required TResult Function( WorkerReply_DiscardChangedFileAck value)  discardChangedFileAck,required TResult Function( WorkerReply_ToolbarActionOutcomeAck value)  toolbarActionOutcomeAck,required TResult Function( WorkerReply_CreateBranchAck value)  createBranchAck,required TResult Function( WorkerReply_CreateReviewTaskAck value)  createReviewTaskAck,required TResult Function( WorkerReply_PullRequestStatusAck value)  pullRequestStatusAck,required TResult Function( WorkerReply_PullRequestChecksAck value)  pullRequestChecksAck,required TResult Function( WorkerReply_ProjectPullRequestsAck value)  projectPullRequestsAck,required TResult Function( WorkerReply_OpenInStateAck value)  openInStateAck,required TResult Function( WorkerReply_ProjectActionsAck value)  projectActionsAck,required TResult Function( WorkerReply_EnabledAgentsAck value)  enabledAgentsAck,required TResult Function( WorkerReply_AgentSettingsAck value)  agentSettingsAck,required TResult Function( WorkerReply_RunProjectActionAck value)  runProjectActionAck,required TResult Function( WorkerReply_GitActionScriptsAck value)  gitActionScriptsAck,required TResult Function( WorkerReply_SetGitCommitScriptAck value)  setGitCommitScriptAck,required TResult Function( WorkerReply_ResetGitCommitScriptAck value)  resetGitCommitScriptAck,required TResult Function( WorkerReply_SetGitPrScriptAck value)  setGitPrScriptAck,required TResult Function( WorkerReply_ResetGitPrScriptAck value)  resetGitPrScriptAck,required TResult Function( WorkerReply_ShortcutSettingsAck value)  shortcutSettingsAck,required TResult Function( WorkerReply_SetShortcutBindingAck value)  setShortcutBindingAck,required TResult Function( WorkerReply_ResetShortcutBindingAck value)  resetShortcutBindingAck,required TResult Function( WorkerReply_McpSettingsAck value)  mcpSettingsAck,required TResult Function( WorkerReply_McpAddFromCatalogAck value)  mcpAddFromCatalogAck,required TResult Function( WorkerReply_McpToggleAck value)  mcpToggleAck,required TResult Function( WorkerReply_McpRemoveAck value)  mcpRemoveAck,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( WorkerReply_ProjectList value)  projectList,required TResult Function( WorkerReply_ProjectAdded value)  projectAdded,required TResult Function( WorkerReply_ProjectRemoved value)  projectRemoved,required TResult Function( WorkerReply_Err value)  err,required TResult Function( WorkerReply_TaskCreated value)  taskCreated,required TResult Function( WorkerReply_TaskRenamed value)  taskRenamed,required TResult Function( WorkerReply_TaskPinned value)  taskPinned,required TResult Function( WorkerReply_TaskRemoved value)  taskRemoved,required TResult Function( WorkerReply_SlugifyBranchNameAck value)  slugifyBranchNameAck,required TResult Function( WorkerReply_ProjectBranchesAck value)  projectBranchesAck,required TResult Function( WorkerReply_PrimaryBranchAck value)  primaryBranchAck,required TResult Function( WorkerReply_RepoDefaultCommitActionAck value)  repoDefaultCommitActionAck,required TResult Function( WorkerReply_ActiveGitStateAck value)  activeGitStateAck,required TResult Function( WorkerReply_ChangedFilesAck value)  changedFilesAck,required TResult Function( WorkerReply_ProjectGithubUrlAck value)  projectGithubUrlAck,required TResult Function( WorkerReply_RecentCommitsAck value)  recentCommitsAck,required TResult Function( WorkerReply_CommitFileChangesAck value)  commitFileChangesAck,required TResult Function( WorkerReply_BranchCompareAck value)  branchCompareAck,required TResult Function( WorkerReply_BranchSettingsAck value)  branchSettingsAck,required TResult Function( WorkerReply_SetBranchSettingAck value)  setBranchSettingAck,required TResult Function( WorkerReply_StageChangedFileAck value)  stageChangedFileAck,required TResult Function( WorkerReply_UnstageChangedFileAck value)  unstageChangedFileAck,required TResult Function( WorkerReply_StageAllChangesAck value)  stageAllChangesAck,required TResult Function( WorkerReply_UnstageAllChangesAck value)  unstageAllChangesAck,required TResult Function( WorkerReply_DiscardChangedFileAck value)  discardChangedFileAck,required TResult Function( WorkerReply_DiscardAllChangesAck value)  discardAllChangesAck,required TResult Function( WorkerReply_ToolbarActionOutcomeAck value)  toolbarActionOutcomeAck,required TResult Function( WorkerReply_CreateBranchAck value)  createBranchAck,required TResult Function( WorkerReply_CreateReviewTaskAck value)  createReviewTaskAck,required TResult Function( WorkerReply_PullRequestStatusAck value)  pullRequestStatusAck,required TResult Function( WorkerReply_PullRequestChecksAck value)  pullRequestChecksAck,required TResult Function( WorkerReply_ProjectPullRequestsAck value)  projectPullRequestsAck,required TResult Function( WorkerReply_OpenInStateAck value)  openInStateAck,required TResult Function( WorkerReply_ProjectActionsAck value)  projectActionsAck,required TResult Function( WorkerReply_EnabledAgentsAck value)  enabledAgentsAck,required TResult Function( WorkerReply_SubmitNewTaskAck value)  submitNewTaskAck,required TResult Function( WorkerReply_AddAgentToSectionAck value)  addAgentToSectionAck,required TResult Function( WorkerReply_ActivateSectionTabAck value)  activateSectionTabAck,required TResult Function( WorkerReply_CloseSectionTabAck value)  closeSectionTabAck,required TResult Function( WorkerReply_ToggleSectionTabPinnedAck value)  toggleSectionTabPinnedAck,required TResult Function( WorkerReply_AgentSettingsAck value)  agentSettingsAck,required TResult Function( WorkerReply_OpenInSettingsAck value)  openInSettingsAck,required TResult Function( WorkerReply_SetOpenInAppEnabledAck value)  setOpenInAppEnabledAck,required TResult Function( WorkerReply_OpenProjectInAppAck value)  openProjectInAppAck,required TResult Function( WorkerReply_RunProjectActionAck value)  runProjectActionAck,required TResult Function( WorkerReply_SaveProjectActionAck value)  saveProjectActionAck,required TResult Function( WorkerReply_DeleteProjectActionAck value)  deleteProjectActionAck,required TResult Function( WorkerReply_GitActionScriptsAck value)  gitActionScriptsAck,required TResult Function( WorkerReply_SetGitCommitScriptAck value)  setGitCommitScriptAck,required TResult Function( WorkerReply_ResetGitCommitScriptAck value)  resetGitCommitScriptAck,required TResult Function( WorkerReply_SetGitPrScriptAck value)  setGitPrScriptAck,required TResult Function( WorkerReply_ResetGitPrScriptAck value)  resetGitPrScriptAck,required TResult Function( WorkerReply_ShortcutSettingsAck value)  shortcutSettingsAck,required TResult Function( WorkerReply_SetShortcutBindingAck value)  setShortcutBindingAck,required TResult Function( WorkerReply_ResetShortcutBindingAck value)  resetShortcutBindingAck,required TResult Function( WorkerReply_McpSettingsAck value)  mcpSettingsAck,required TResult Function( WorkerReply_McpAddFromCatalogAck value)  mcpAddFromCatalogAck,required TResult Function( WorkerReply_McpToggleAck value)  mcpToggleAck,required TResult Function( WorkerReply_McpRemoveAck value)  mcpRemoveAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
@@ -152,7 +163,8 @@ return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck():
 return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck():
 return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck():
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck():
-return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck():
+return discardChangedFileAck(_that);case WorkerReply_DiscardAllChangesAck():
+return discardAllChangesAck(_that);case WorkerReply_ToolbarActionOutcomeAck():
 return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck():
 return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck():
 return createReviewTaskAck(_that);case WorkerReply_PullRequestStatusAck():
@@ -161,9 +173,19 @@ return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck():
 return projectPullRequestsAck(_that);case WorkerReply_OpenInStateAck():
 return openInStateAck(_that);case WorkerReply_ProjectActionsAck():
 return projectActionsAck(_that);case WorkerReply_EnabledAgentsAck():
-return enabledAgentsAck(_that);case WorkerReply_AgentSettingsAck():
-return agentSettingsAck(_that);case WorkerReply_RunProjectActionAck():
-return runProjectActionAck(_that);case WorkerReply_GitActionScriptsAck():
+return enabledAgentsAck(_that);case WorkerReply_SubmitNewTaskAck():
+return submitNewTaskAck(_that);case WorkerReply_AddAgentToSectionAck():
+return addAgentToSectionAck(_that);case WorkerReply_ActivateSectionTabAck():
+return activateSectionTabAck(_that);case WorkerReply_CloseSectionTabAck():
+return closeSectionTabAck(_that);case WorkerReply_ToggleSectionTabPinnedAck():
+return toggleSectionTabPinnedAck(_that);case WorkerReply_AgentSettingsAck():
+return agentSettingsAck(_that);case WorkerReply_OpenInSettingsAck():
+return openInSettingsAck(_that);case WorkerReply_SetOpenInAppEnabledAck():
+return setOpenInAppEnabledAck(_that);case WorkerReply_OpenProjectInAppAck():
+return openProjectInAppAck(_that);case WorkerReply_RunProjectActionAck():
+return runProjectActionAck(_that);case WorkerReply_SaveProjectActionAck():
+return saveProjectActionAck(_that);case WorkerReply_DeleteProjectActionAck():
+return deleteProjectActionAck(_that);case WorkerReply_GitActionScriptsAck():
 return gitActionScriptsAck(_that);case WorkerReply_SetGitCommitScriptAck():
 return setGitCommitScriptAck(_that);case WorkerReply_ResetGitCommitScriptAck():
 return resetGitCommitScriptAck(_that);case WorkerReply_SetGitPrScriptAck():
@@ -189,7 +211,7 @@ return mcpRemoveAck(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_ProjectAdded value)?  projectAdded,TResult? Function( WorkerReply_ProjectRemoved value)?  projectRemoved,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_TaskCreated value)?  taskCreated,TResult? Function( WorkerReply_TaskRenamed value)?  taskRenamed,TResult? Function( WorkerReply_TaskPinned value)?  taskPinned,TResult? Function( WorkerReply_TaskRemoved value)?  taskRemoved,TResult? Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult? Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult? Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult? Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult? Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult? Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult? Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult? Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,TResult? Function( WorkerReply_CommitFileChangesAck value)?  commitFileChangesAck,TResult? Function( WorkerReply_BranchCompareAck value)?  branchCompareAck,TResult? Function( WorkerReply_BranchSettingsAck value)?  branchSettingsAck,TResult? Function( WorkerReply_SetBranchSettingAck value)?  setBranchSettingAck,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult? Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult? Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult? Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult? Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult? Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult? Function( WorkerReply_CreateBranchAck value)?  createBranchAck,TResult? Function( WorkerReply_CreateReviewTaskAck value)?  createReviewTaskAck,TResult? Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult? Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,TResult? Function( WorkerReply_ProjectPullRequestsAck value)?  projectPullRequestsAck,TResult? Function( WorkerReply_OpenInStateAck value)?  openInStateAck,TResult? Function( WorkerReply_ProjectActionsAck value)?  projectActionsAck,TResult? Function( WorkerReply_EnabledAgentsAck value)?  enabledAgentsAck,TResult? Function( WorkerReply_AgentSettingsAck value)?  agentSettingsAck,TResult? Function( WorkerReply_RunProjectActionAck value)?  runProjectActionAck,TResult? Function( WorkerReply_GitActionScriptsAck value)?  gitActionScriptsAck,TResult? Function( WorkerReply_SetGitCommitScriptAck value)?  setGitCommitScriptAck,TResult? Function( WorkerReply_ResetGitCommitScriptAck value)?  resetGitCommitScriptAck,TResult? Function( WorkerReply_SetGitPrScriptAck value)?  setGitPrScriptAck,TResult? Function( WorkerReply_ResetGitPrScriptAck value)?  resetGitPrScriptAck,TResult? Function( WorkerReply_ShortcutSettingsAck value)?  shortcutSettingsAck,TResult? Function( WorkerReply_SetShortcutBindingAck value)?  setShortcutBindingAck,TResult? Function( WorkerReply_ResetShortcutBindingAck value)?  resetShortcutBindingAck,TResult? Function( WorkerReply_McpSettingsAck value)?  mcpSettingsAck,TResult? Function( WorkerReply_McpAddFromCatalogAck value)?  mcpAddFromCatalogAck,TResult? Function( WorkerReply_McpToggleAck value)?  mcpToggleAck,TResult? Function( WorkerReply_McpRemoveAck value)?  mcpRemoveAck,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( WorkerReply_ProjectList value)?  projectList,TResult? Function( WorkerReply_ProjectAdded value)?  projectAdded,TResult? Function( WorkerReply_ProjectRemoved value)?  projectRemoved,TResult? Function( WorkerReply_Err value)?  err,TResult? Function( WorkerReply_TaskCreated value)?  taskCreated,TResult? Function( WorkerReply_TaskRenamed value)?  taskRenamed,TResult? Function( WorkerReply_TaskPinned value)?  taskPinned,TResult? Function( WorkerReply_TaskRemoved value)?  taskRemoved,TResult? Function( WorkerReply_SlugifyBranchNameAck value)?  slugifyBranchNameAck,TResult? Function( WorkerReply_ProjectBranchesAck value)?  projectBranchesAck,TResult? Function( WorkerReply_PrimaryBranchAck value)?  primaryBranchAck,TResult? Function( WorkerReply_RepoDefaultCommitActionAck value)?  repoDefaultCommitActionAck,TResult? Function( WorkerReply_ActiveGitStateAck value)?  activeGitStateAck,TResult? Function( WorkerReply_ChangedFilesAck value)?  changedFilesAck,TResult? Function( WorkerReply_ProjectGithubUrlAck value)?  projectGithubUrlAck,TResult? Function( WorkerReply_RecentCommitsAck value)?  recentCommitsAck,TResult? Function( WorkerReply_CommitFileChangesAck value)?  commitFileChangesAck,TResult? Function( WorkerReply_BranchCompareAck value)?  branchCompareAck,TResult? Function( WorkerReply_BranchSettingsAck value)?  branchSettingsAck,TResult? Function( WorkerReply_SetBranchSettingAck value)?  setBranchSettingAck,TResult? Function( WorkerReply_StageChangedFileAck value)?  stageChangedFileAck,TResult? Function( WorkerReply_UnstageChangedFileAck value)?  unstageChangedFileAck,TResult? Function( WorkerReply_StageAllChangesAck value)?  stageAllChangesAck,TResult? Function( WorkerReply_UnstageAllChangesAck value)?  unstageAllChangesAck,TResult? Function( WorkerReply_DiscardChangedFileAck value)?  discardChangedFileAck,TResult? Function( WorkerReply_DiscardAllChangesAck value)?  discardAllChangesAck,TResult? Function( WorkerReply_ToolbarActionOutcomeAck value)?  toolbarActionOutcomeAck,TResult? Function( WorkerReply_CreateBranchAck value)?  createBranchAck,TResult? Function( WorkerReply_CreateReviewTaskAck value)?  createReviewTaskAck,TResult? Function( WorkerReply_PullRequestStatusAck value)?  pullRequestStatusAck,TResult? Function( WorkerReply_PullRequestChecksAck value)?  pullRequestChecksAck,TResult? Function( WorkerReply_ProjectPullRequestsAck value)?  projectPullRequestsAck,TResult? Function( WorkerReply_OpenInStateAck value)?  openInStateAck,TResult? Function( WorkerReply_ProjectActionsAck value)?  projectActionsAck,TResult? Function( WorkerReply_EnabledAgentsAck value)?  enabledAgentsAck,TResult? Function( WorkerReply_SubmitNewTaskAck value)?  submitNewTaskAck,TResult? Function( WorkerReply_AddAgentToSectionAck value)?  addAgentToSectionAck,TResult? Function( WorkerReply_ActivateSectionTabAck value)?  activateSectionTabAck,TResult? Function( WorkerReply_CloseSectionTabAck value)?  closeSectionTabAck,TResult? Function( WorkerReply_ToggleSectionTabPinnedAck value)?  toggleSectionTabPinnedAck,TResult? Function( WorkerReply_AgentSettingsAck value)?  agentSettingsAck,TResult? Function( WorkerReply_OpenInSettingsAck value)?  openInSettingsAck,TResult? Function( WorkerReply_SetOpenInAppEnabledAck value)?  setOpenInAppEnabledAck,TResult? Function( WorkerReply_OpenProjectInAppAck value)?  openProjectInAppAck,TResult? Function( WorkerReply_RunProjectActionAck value)?  runProjectActionAck,TResult? Function( WorkerReply_SaveProjectActionAck value)?  saveProjectActionAck,TResult? Function( WorkerReply_DeleteProjectActionAck value)?  deleteProjectActionAck,TResult? Function( WorkerReply_GitActionScriptsAck value)?  gitActionScriptsAck,TResult? Function( WorkerReply_SetGitCommitScriptAck value)?  setGitCommitScriptAck,TResult? Function( WorkerReply_ResetGitCommitScriptAck value)?  resetGitCommitScriptAck,TResult? Function( WorkerReply_SetGitPrScriptAck value)?  setGitPrScriptAck,TResult? Function( WorkerReply_ResetGitPrScriptAck value)?  resetGitPrScriptAck,TResult? Function( WorkerReply_ShortcutSettingsAck value)?  shortcutSettingsAck,TResult? Function( WorkerReply_SetShortcutBindingAck value)?  setShortcutBindingAck,TResult? Function( WorkerReply_ResetShortcutBindingAck value)?  resetShortcutBindingAck,TResult? Function( WorkerReply_McpSettingsAck value)?  mcpSettingsAck,TResult? Function( WorkerReply_McpAddFromCatalogAck value)?  mcpAddFromCatalogAck,TResult? Function( WorkerReply_McpToggleAck value)?  mcpToggleAck,TResult? Function( WorkerReply_McpRemoveAck value)?  mcpRemoveAck,}){
 final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
@@ -217,7 +239,8 @@ return stageChangedFileAck(_that);case WorkerReply_UnstageChangedFileAck() when 
 return unstageChangedFileAck(_that);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
 return stageAllChangesAck(_that);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
 return unstageAllChangesAck(_that);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
-return discardChangedFileAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return discardChangedFileAck(_that);case WorkerReply_DiscardAllChangesAck() when discardAllChangesAck != null:
+return discardAllChangesAck(_that);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
 return toolbarActionOutcomeAck(_that);case WorkerReply_CreateBranchAck() when createBranchAck != null:
 return createBranchAck(_that);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
 return createReviewTaskAck(_that);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
@@ -226,9 +249,19 @@ return pullRequestChecksAck(_that);case WorkerReply_ProjectPullRequestsAck() whe
 return projectPullRequestsAck(_that);case WorkerReply_OpenInStateAck() when openInStateAck != null:
 return openInStateAck(_that);case WorkerReply_ProjectActionsAck() when projectActionsAck != null:
 return projectActionsAck(_that);case WorkerReply_EnabledAgentsAck() when enabledAgentsAck != null:
-return enabledAgentsAck(_that);case WorkerReply_AgentSettingsAck() when agentSettingsAck != null:
-return agentSettingsAck(_that);case WorkerReply_RunProjectActionAck() when runProjectActionAck != null:
-return runProjectActionAck(_that);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
+return enabledAgentsAck(_that);case WorkerReply_SubmitNewTaskAck() when submitNewTaskAck != null:
+return submitNewTaskAck(_that);case WorkerReply_AddAgentToSectionAck() when addAgentToSectionAck != null:
+return addAgentToSectionAck(_that);case WorkerReply_ActivateSectionTabAck() when activateSectionTabAck != null:
+return activateSectionTabAck(_that);case WorkerReply_CloseSectionTabAck() when closeSectionTabAck != null:
+return closeSectionTabAck(_that);case WorkerReply_ToggleSectionTabPinnedAck() when toggleSectionTabPinnedAck != null:
+return toggleSectionTabPinnedAck(_that);case WorkerReply_AgentSettingsAck() when agentSettingsAck != null:
+return agentSettingsAck(_that);case WorkerReply_OpenInSettingsAck() when openInSettingsAck != null:
+return openInSettingsAck(_that);case WorkerReply_SetOpenInAppEnabledAck() when setOpenInAppEnabledAck != null:
+return setOpenInAppEnabledAck(_that);case WorkerReply_OpenProjectInAppAck() when openProjectInAppAck != null:
+return openProjectInAppAck(_that);case WorkerReply_RunProjectActionAck() when runProjectActionAck != null:
+return runProjectActionAck(_that);case WorkerReply_SaveProjectActionAck() when saveProjectActionAck != null:
+return saveProjectActionAck(_that);case WorkerReply_DeleteProjectActionAck() when deleteProjectActionAck != null:
+return deleteProjectActionAck(_that);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
 return gitActionScriptsAck(_that);case WorkerReply_SetGitCommitScriptAck() when setGitCommitScriptAck != null:
 return setGitCommitScriptAck(_that);case WorkerReply_ResetGitCommitScriptAck() when resetGitCommitScriptAck != null:
 return resetGitCommitScriptAck(_that);case WorkerReply_SetGitPrScriptAck() when setGitPrScriptAck != null:
@@ -257,7 +290,7 @@ return mcpRemoveAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( ProjectSummary project)?  projectAdded,TResult Function( String projectId)?  projectRemoved,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String projectId,  TaskSummary task)?  taskCreated,TResult Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult Function( bool changed,  TaskSummary? task)?  taskPinned,TResult Function( String projectId,  String taskId,  bool removed)?  taskRemoved,TResult Function( String slug)?  slugifyBranchNameAck,TResult Function( List<String> branches)?  projectBranchesAck,TResult Function( String? branch)?  primaryBranchAck,TResult Function( String? action)?  repoDefaultCommitActionAck,TResult Function( ActiveGitStateDto? state)?  activeGitStateAck,TResult Function( List<ChangedFileDto>? files)?  changedFilesAck,TResult Function( String? url)?  projectGithubUrlAck,TResult Function( RecentCommitsView? view)?  recentCommitsAck,TResult Function( List<BranchCompareFileDto>? files)?  commitFileChangesAck,TResult Function( BranchCompareView? view)?  branchCompareAck,TResult Function( ResolvedProjectBranchSettingsDto? settings)?  branchSettingsAck,TResult Function( bool changed)?  setBranchSettingAck,TResult Function( List<ChangedFileDto> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFileDto> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFileDto> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFileDto> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFileDto> changedFiles)?  discardChangedFileAck,TResult Function( ToolbarActionOutcomeDto outcome)?  toolbarActionOutcomeAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,TResult Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,TResult Function( OpenInState state)?  openInStateAck,TResult Function( List<ProjectActionDto> actions)?  projectActionsAck,TResult Function( EnabledAgentsView view)?  enabledAgentsAck,TResult Function( AgentSettingsView view)?  agentSettingsAck,TResult Function( String tabId)?  runProjectActionAck,TResult Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult Function( bool changed)?  setGitCommitScriptAck,TResult Function( bool changed)?  resetGitCommitScriptAck,TResult Function( bool changed)?  setGitPrScriptAck,TResult Function( bool changed)?  resetGitPrScriptAck,TResult Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult Function()?  setShortcutBindingAck,TResult Function()?  resetShortcutBindingAck,TResult Function( McpSettingsView view)?  mcpSettingsAck,TResult Function()?  mcpAddFromCatalogAck,TResult Function()?  mcpToggleAck,TResult Function()?  mcpRemoveAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( ProjectSummary project)?  projectAdded,TResult Function( String projectId)?  projectRemoved,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String projectId,  TaskSummary task)?  taskCreated,TResult Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult Function( bool changed,  TaskSummary? task)?  taskPinned,TResult Function( String projectId,  String taskId,  bool removed)?  taskRemoved,TResult Function( String slug)?  slugifyBranchNameAck,TResult Function( List<String> branches)?  projectBranchesAck,TResult Function( String? branch)?  primaryBranchAck,TResult Function( String? action)?  repoDefaultCommitActionAck,TResult Function( ActiveGitStateDto? state)?  activeGitStateAck,TResult Function( List<ChangedFileDto>? files)?  changedFilesAck,TResult Function( String? url)?  projectGithubUrlAck,TResult Function( RecentCommitsView? view)?  recentCommitsAck,TResult Function( List<BranchCompareFileDto>? files)?  commitFileChangesAck,TResult Function( BranchCompareView? view)?  branchCompareAck,TResult Function( ResolvedProjectBranchSettingsDto? settings)?  branchSettingsAck,TResult Function( bool changed)?  setBranchSettingAck,TResult Function( List<ChangedFileDto> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFileDto> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFileDto> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFileDto> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFileDto> changedFiles)?  discardChangedFileAck,TResult Function( List<ChangedFileDto> changedFiles,  List<String> failures)?  discardAllChangesAck,TResult Function( ToolbarActionOutcomeDto outcome)?  toolbarActionOutcomeAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,TResult Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,TResult Function( OpenInState state)?  openInStateAck,TResult Function( List<ProjectActionDto> actions)?  projectActionsAck,TResult Function( EnabledAgentsView view)?  enabledAgentsAck,TResult Function( String sectionId)?  submitNewTaskAck,TResult Function( String tabId)?  addAgentToSectionAck,TResult Function()?  activateSectionTabAck,TResult Function( String activeTabId)?  closeSectionTabAck,TResult Function( bool pinned)?  toggleSectionTabPinnedAck,TResult Function( AgentSettingsView view)?  agentSettingsAck,TResult Function( OpenInSettingsView view)?  openInSettingsAck,TResult Function()?  setOpenInAppEnabledAck,TResult Function()?  openProjectInAppAck,TResult Function( String tabId)?  runProjectActionAck,TResult Function()?  saveProjectActionAck,TResult Function( bool deleted)?  deleteProjectActionAck,TResult Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult Function( bool changed)?  setGitCommitScriptAck,TResult Function( bool changed)?  resetGitCommitScriptAck,TResult Function( bool changed)?  setGitPrScriptAck,TResult Function( bool changed)?  resetGitPrScriptAck,TResult Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult Function()?  setShortcutBindingAck,TResult Function()?  resetShortcutBindingAck,TResult Function( McpSettingsView view)?  mcpSettingsAck,TResult Function()?  mcpAddFromCatalogAck,TResult Function()?  mcpToggleAck,TResult Function()?  mcpRemoveAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_ProjectAdded() when projectAdded != null:
@@ -284,7 +317,8 @@ return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFi
 return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
 return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
-return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_DiscardAllChangesAck() when discardAllChangesAck != null:
+return discardAllChangesAck(_that.changedFiles,_that.failures);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
 return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck() when createBranchAck != null:
 return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
 return createReviewTaskAck(_that.sectionId,_that.projects);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
@@ -293,9 +327,19 @@ return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAc
 return projectPullRequestsAck(_that.prs);case WorkerReply_OpenInStateAck() when openInStateAck != null:
 return openInStateAck(_that.state);case WorkerReply_ProjectActionsAck() when projectActionsAck != null:
 return projectActionsAck(_that.actions);case WorkerReply_EnabledAgentsAck() when enabledAgentsAck != null:
-return enabledAgentsAck(_that.view);case WorkerReply_AgentSettingsAck() when agentSettingsAck != null:
-return agentSettingsAck(_that.view);case WorkerReply_RunProjectActionAck() when runProjectActionAck != null:
-return runProjectActionAck(_that.tabId);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
+return enabledAgentsAck(_that.view);case WorkerReply_SubmitNewTaskAck() when submitNewTaskAck != null:
+return submitNewTaskAck(_that.sectionId);case WorkerReply_AddAgentToSectionAck() when addAgentToSectionAck != null:
+return addAgentToSectionAck(_that.tabId);case WorkerReply_ActivateSectionTabAck() when activateSectionTabAck != null:
+return activateSectionTabAck();case WorkerReply_CloseSectionTabAck() when closeSectionTabAck != null:
+return closeSectionTabAck(_that.activeTabId);case WorkerReply_ToggleSectionTabPinnedAck() when toggleSectionTabPinnedAck != null:
+return toggleSectionTabPinnedAck(_that.pinned);case WorkerReply_AgentSettingsAck() when agentSettingsAck != null:
+return agentSettingsAck(_that.view);case WorkerReply_OpenInSettingsAck() when openInSettingsAck != null:
+return openInSettingsAck(_that.view);case WorkerReply_SetOpenInAppEnabledAck() when setOpenInAppEnabledAck != null:
+return setOpenInAppEnabledAck();case WorkerReply_OpenProjectInAppAck() when openProjectInAppAck != null:
+return openProjectInAppAck();case WorkerReply_RunProjectActionAck() when runProjectActionAck != null:
+return runProjectActionAck(_that.tabId);case WorkerReply_SaveProjectActionAck() when saveProjectActionAck != null:
+return saveProjectActionAck();case WorkerReply_DeleteProjectActionAck() when deleteProjectActionAck != null:
+return deleteProjectActionAck(_that.deleted);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
 return gitActionScriptsAck(_that.view);case WorkerReply_SetGitCommitScriptAck() when setGitCommitScriptAck != null:
 return setGitCommitScriptAck(_that.changed);case WorkerReply_ResetGitCommitScriptAck() when resetGitCommitScriptAck != null:
 return resetGitCommitScriptAck(_that.changed);case WorkerReply_SetGitPrScriptAck() when setGitPrScriptAck != null:
@@ -325,7 +369,7 @@ return mcpRemoveAck();case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( ProjectSummary project)  projectAdded,required TResult Function( String projectId)  projectRemoved,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String projectId,  TaskSummary task)  taskCreated,required TResult Function( bool changed,  TaskSummary? task)  taskRenamed,required TResult Function( bool changed,  TaskSummary? task)  taskPinned,required TResult Function( String projectId,  String taskId,  bool removed)  taskRemoved,required TResult Function( String slug)  slugifyBranchNameAck,required TResult Function( List<String> branches)  projectBranchesAck,required TResult Function( String? branch)  primaryBranchAck,required TResult Function( String? action)  repoDefaultCommitActionAck,required TResult Function( ActiveGitStateDto? state)  activeGitStateAck,required TResult Function( List<ChangedFileDto>? files)  changedFilesAck,required TResult Function( String? url)  projectGithubUrlAck,required TResult Function( RecentCommitsView? view)  recentCommitsAck,required TResult Function( List<BranchCompareFileDto>? files)  commitFileChangesAck,required TResult Function( BranchCompareView? view)  branchCompareAck,required TResult Function( ResolvedProjectBranchSettingsDto? settings)  branchSettingsAck,required TResult Function( bool changed)  setBranchSettingAck,required TResult Function( List<ChangedFileDto> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFileDto> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFileDto> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFileDto> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFileDto> changedFiles)  discardChangedFileAck,required TResult Function( ToolbarActionOutcomeDto outcome)  toolbarActionOutcomeAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createBranchAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createReviewTaskAck,required TResult Function( PullRequestStatusDto? status)  pullRequestStatusAck,required TResult Function( List<CheckDto>? checks)  pullRequestChecksAck,required TResult Function( List<ProjectPagePullRequestDto>? prs)  projectPullRequestsAck,required TResult Function( OpenInState state)  openInStateAck,required TResult Function( List<ProjectActionDto> actions)  projectActionsAck,required TResult Function( EnabledAgentsView view)  enabledAgentsAck,required TResult Function( AgentSettingsView view)  agentSettingsAck,required TResult Function( String tabId)  runProjectActionAck,required TResult Function( GitActionScriptsView view)  gitActionScriptsAck,required TResult Function( bool changed)  setGitCommitScriptAck,required TResult Function( bool changed)  resetGitCommitScriptAck,required TResult Function( bool changed)  setGitPrScriptAck,required TResult Function( bool changed)  resetGitPrScriptAck,required TResult Function( ShortcutSettingsView view)  shortcutSettingsAck,required TResult Function()  setShortcutBindingAck,required TResult Function()  resetShortcutBindingAck,required TResult Function( McpSettingsView view)  mcpSettingsAck,required TResult Function()  mcpAddFromCatalogAck,required TResult Function()  mcpToggleAck,required TResult Function()  mcpRemoveAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( ProjectSummary project)  projectAdded,required TResult Function( String projectId)  projectRemoved,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String projectId,  TaskSummary task)  taskCreated,required TResult Function( bool changed,  TaskSummary? task)  taskRenamed,required TResult Function( bool changed,  TaskSummary? task)  taskPinned,required TResult Function( String projectId,  String taskId,  bool removed)  taskRemoved,required TResult Function( String slug)  slugifyBranchNameAck,required TResult Function( List<String> branches)  projectBranchesAck,required TResult Function( String? branch)  primaryBranchAck,required TResult Function( String? action)  repoDefaultCommitActionAck,required TResult Function( ActiveGitStateDto? state)  activeGitStateAck,required TResult Function( List<ChangedFileDto>? files)  changedFilesAck,required TResult Function( String? url)  projectGithubUrlAck,required TResult Function( RecentCommitsView? view)  recentCommitsAck,required TResult Function( List<BranchCompareFileDto>? files)  commitFileChangesAck,required TResult Function( BranchCompareView? view)  branchCompareAck,required TResult Function( ResolvedProjectBranchSettingsDto? settings)  branchSettingsAck,required TResult Function( bool changed)  setBranchSettingAck,required TResult Function( List<ChangedFileDto> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFileDto> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFileDto> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFileDto> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFileDto> changedFiles)  discardChangedFileAck,required TResult Function( List<ChangedFileDto> changedFiles,  List<String> failures)  discardAllChangesAck,required TResult Function( ToolbarActionOutcomeDto outcome)  toolbarActionOutcomeAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createBranchAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createReviewTaskAck,required TResult Function( PullRequestStatusDto? status)  pullRequestStatusAck,required TResult Function( List<CheckDto>? checks)  pullRequestChecksAck,required TResult Function( List<ProjectPagePullRequestDto>? prs)  projectPullRequestsAck,required TResult Function( OpenInState state)  openInStateAck,required TResult Function( List<ProjectActionDto> actions)  projectActionsAck,required TResult Function( EnabledAgentsView view)  enabledAgentsAck,required TResult Function( String sectionId)  submitNewTaskAck,required TResult Function( String tabId)  addAgentToSectionAck,required TResult Function()  activateSectionTabAck,required TResult Function( String activeTabId)  closeSectionTabAck,required TResult Function( bool pinned)  toggleSectionTabPinnedAck,required TResult Function( AgentSettingsView view)  agentSettingsAck,required TResult Function( OpenInSettingsView view)  openInSettingsAck,required TResult Function()  setOpenInAppEnabledAck,required TResult Function()  openProjectInAppAck,required TResult Function( String tabId)  runProjectActionAck,required TResult Function()  saveProjectActionAck,required TResult Function( bool deleted)  deleteProjectActionAck,required TResult Function( GitActionScriptsView view)  gitActionScriptsAck,required TResult Function( bool changed)  setGitCommitScriptAck,required TResult Function( bool changed)  resetGitCommitScriptAck,required TResult Function( bool changed)  setGitPrScriptAck,required TResult Function( bool changed)  resetGitPrScriptAck,required TResult Function( ShortcutSettingsView view)  shortcutSettingsAck,required TResult Function()  setShortcutBindingAck,required TResult Function()  resetShortcutBindingAck,required TResult Function( McpSettingsView view)  mcpSettingsAck,required TResult Function()  mcpAddFromCatalogAck,required TResult Function()  mcpToggleAck,required TResult Function()  mcpRemoveAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_ProjectAdded():
@@ -352,7 +396,8 @@ return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFi
 return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck():
 return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck():
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck():
-return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck():
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_DiscardAllChangesAck():
+return discardAllChangesAck(_that.changedFiles,_that.failures);case WorkerReply_ToolbarActionOutcomeAck():
 return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck():
 return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck():
 return createReviewTaskAck(_that.sectionId,_that.projects);case WorkerReply_PullRequestStatusAck():
@@ -361,9 +406,19 @@ return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAc
 return projectPullRequestsAck(_that.prs);case WorkerReply_OpenInStateAck():
 return openInStateAck(_that.state);case WorkerReply_ProjectActionsAck():
 return projectActionsAck(_that.actions);case WorkerReply_EnabledAgentsAck():
-return enabledAgentsAck(_that.view);case WorkerReply_AgentSettingsAck():
-return agentSettingsAck(_that.view);case WorkerReply_RunProjectActionAck():
-return runProjectActionAck(_that.tabId);case WorkerReply_GitActionScriptsAck():
+return enabledAgentsAck(_that.view);case WorkerReply_SubmitNewTaskAck():
+return submitNewTaskAck(_that.sectionId);case WorkerReply_AddAgentToSectionAck():
+return addAgentToSectionAck(_that.tabId);case WorkerReply_ActivateSectionTabAck():
+return activateSectionTabAck();case WorkerReply_CloseSectionTabAck():
+return closeSectionTabAck(_that.activeTabId);case WorkerReply_ToggleSectionTabPinnedAck():
+return toggleSectionTabPinnedAck(_that.pinned);case WorkerReply_AgentSettingsAck():
+return agentSettingsAck(_that.view);case WorkerReply_OpenInSettingsAck():
+return openInSettingsAck(_that.view);case WorkerReply_SetOpenInAppEnabledAck():
+return setOpenInAppEnabledAck();case WorkerReply_OpenProjectInAppAck():
+return openProjectInAppAck();case WorkerReply_RunProjectActionAck():
+return runProjectActionAck(_that.tabId);case WorkerReply_SaveProjectActionAck():
+return saveProjectActionAck();case WorkerReply_DeleteProjectActionAck():
+return deleteProjectActionAck(_that.deleted);case WorkerReply_GitActionScriptsAck():
 return gitActionScriptsAck(_that.view);case WorkerReply_SetGitCommitScriptAck():
 return setGitCommitScriptAck(_that.changed);case WorkerReply_ResetGitCommitScriptAck():
 return resetGitCommitScriptAck(_that.changed);case WorkerReply_SetGitPrScriptAck():
@@ -389,7 +444,7 @@ return mcpRemoveAck();}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( ProjectSummary project)?  projectAdded,TResult? Function( String projectId)?  projectRemoved,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String projectId,  TaskSummary task)?  taskCreated,TResult? Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult? Function( bool changed,  TaskSummary? task)?  taskPinned,TResult? Function( String projectId,  String taskId,  bool removed)?  taskRemoved,TResult? Function( String slug)?  slugifyBranchNameAck,TResult? Function( List<String> branches)?  projectBranchesAck,TResult? Function( String? branch)?  primaryBranchAck,TResult? Function( String? action)?  repoDefaultCommitActionAck,TResult? Function( ActiveGitStateDto? state)?  activeGitStateAck,TResult? Function( List<ChangedFileDto>? files)?  changedFilesAck,TResult? Function( String? url)?  projectGithubUrlAck,TResult? Function( RecentCommitsView? view)?  recentCommitsAck,TResult? Function( List<BranchCompareFileDto>? files)?  commitFileChangesAck,TResult? Function( BranchCompareView? view)?  branchCompareAck,TResult? Function( ResolvedProjectBranchSettingsDto? settings)?  branchSettingsAck,TResult? Function( bool changed)?  setBranchSettingAck,TResult? Function( List<ChangedFileDto> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFileDto> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFileDto> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFileDto> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFileDto> changedFiles)?  discardChangedFileAck,TResult? Function( ToolbarActionOutcomeDto outcome)?  toolbarActionOutcomeAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,TResult? Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult? Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult? Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,TResult? Function( OpenInState state)?  openInStateAck,TResult? Function( List<ProjectActionDto> actions)?  projectActionsAck,TResult? Function( EnabledAgentsView view)?  enabledAgentsAck,TResult? Function( AgentSettingsView view)?  agentSettingsAck,TResult? Function( String tabId)?  runProjectActionAck,TResult? Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult? Function( bool changed)?  setGitCommitScriptAck,TResult? Function( bool changed)?  resetGitCommitScriptAck,TResult? Function( bool changed)?  setGitPrScriptAck,TResult? Function( bool changed)?  resetGitPrScriptAck,TResult? Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult? Function()?  setShortcutBindingAck,TResult? Function()?  resetShortcutBindingAck,TResult? Function( McpSettingsView view)?  mcpSettingsAck,TResult? Function()?  mcpAddFromCatalogAck,TResult? Function()?  mcpToggleAck,TResult? Function()?  mcpRemoveAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( ProjectSummary project)?  projectAdded,TResult? Function( String projectId)?  projectRemoved,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String projectId,  TaskSummary task)?  taskCreated,TResult? Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult? Function( bool changed,  TaskSummary? task)?  taskPinned,TResult? Function( String projectId,  String taskId,  bool removed)?  taskRemoved,TResult? Function( String slug)?  slugifyBranchNameAck,TResult? Function( List<String> branches)?  projectBranchesAck,TResult? Function( String? branch)?  primaryBranchAck,TResult? Function( String? action)?  repoDefaultCommitActionAck,TResult? Function( ActiveGitStateDto? state)?  activeGitStateAck,TResult? Function( List<ChangedFileDto>? files)?  changedFilesAck,TResult? Function( String? url)?  projectGithubUrlAck,TResult? Function( RecentCommitsView? view)?  recentCommitsAck,TResult? Function( List<BranchCompareFileDto>? files)?  commitFileChangesAck,TResult? Function( BranchCompareView? view)?  branchCompareAck,TResult? Function( ResolvedProjectBranchSettingsDto? settings)?  branchSettingsAck,TResult? Function( bool changed)?  setBranchSettingAck,TResult? Function( List<ChangedFileDto> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFileDto> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFileDto> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFileDto> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFileDto> changedFiles)?  discardChangedFileAck,TResult? Function( List<ChangedFileDto> changedFiles,  List<String> failures)?  discardAllChangesAck,TResult? Function( ToolbarActionOutcomeDto outcome)?  toolbarActionOutcomeAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,TResult? Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult? Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult? Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,TResult? Function( OpenInState state)?  openInStateAck,TResult? Function( List<ProjectActionDto> actions)?  projectActionsAck,TResult? Function( EnabledAgentsView view)?  enabledAgentsAck,TResult? Function( String sectionId)?  submitNewTaskAck,TResult? Function( String tabId)?  addAgentToSectionAck,TResult? Function()?  activateSectionTabAck,TResult? Function( String activeTabId)?  closeSectionTabAck,TResult? Function( bool pinned)?  toggleSectionTabPinnedAck,TResult? Function( AgentSettingsView view)?  agentSettingsAck,TResult? Function( OpenInSettingsView view)?  openInSettingsAck,TResult? Function()?  setOpenInAppEnabledAck,TResult? Function()?  openProjectInAppAck,TResult? Function( String tabId)?  runProjectActionAck,TResult? Function()?  saveProjectActionAck,TResult? Function( bool deleted)?  deleteProjectActionAck,TResult? Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult? Function( bool changed)?  setGitCommitScriptAck,TResult? Function( bool changed)?  resetGitCommitScriptAck,TResult? Function( bool changed)?  setGitPrScriptAck,TResult? Function( bool changed)?  resetGitPrScriptAck,TResult? Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult? Function()?  setShortcutBindingAck,TResult? Function()?  resetShortcutBindingAck,TResult? Function( McpSettingsView view)?  mcpSettingsAck,TResult? Function()?  mcpAddFromCatalogAck,TResult? Function()?  mcpToggleAck,TResult? Function()?  mcpRemoveAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_ProjectAdded() when projectAdded != null:
@@ -416,7 +471,8 @@ return stageChangedFileAck(_that.changedFiles);case WorkerReply_UnstageChangedFi
 return unstageChangedFileAck(_that.changedFiles);case WorkerReply_StageAllChangesAck() when stageAllChangesAck != null:
 return stageAllChangesAck(_that.changedFiles);case WorkerReply_UnstageAllChangesAck() when unstageAllChangesAck != null:
 return unstageAllChangesAck(_that.changedFiles);case WorkerReply_DiscardChangedFileAck() when discardChangedFileAck != null:
-return discardChangedFileAck(_that.changedFiles);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
+return discardChangedFileAck(_that.changedFiles);case WorkerReply_DiscardAllChangesAck() when discardAllChangesAck != null:
+return discardAllChangesAck(_that.changedFiles,_that.failures);case WorkerReply_ToolbarActionOutcomeAck() when toolbarActionOutcomeAck != null:
 return toolbarActionOutcomeAck(_that.outcome);case WorkerReply_CreateBranchAck() when createBranchAck != null:
 return createBranchAck(_that.sectionId,_that.projects);case WorkerReply_CreateReviewTaskAck() when createReviewTaskAck != null:
 return createReviewTaskAck(_that.sectionId,_that.projects);case WorkerReply_PullRequestStatusAck() when pullRequestStatusAck != null:
@@ -425,9 +481,19 @@ return pullRequestChecksAck(_that.checks);case WorkerReply_ProjectPullRequestsAc
 return projectPullRequestsAck(_that.prs);case WorkerReply_OpenInStateAck() when openInStateAck != null:
 return openInStateAck(_that.state);case WorkerReply_ProjectActionsAck() when projectActionsAck != null:
 return projectActionsAck(_that.actions);case WorkerReply_EnabledAgentsAck() when enabledAgentsAck != null:
-return enabledAgentsAck(_that.view);case WorkerReply_AgentSettingsAck() when agentSettingsAck != null:
-return agentSettingsAck(_that.view);case WorkerReply_RunProjectActionAck() when runProjectActionAck != null:
-return runProjectActionAck(_that.tabId);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
+return enabledAgentsAck(_that.view);case WorkerReply_SubmitNewTaskAck() when submitNewTaskAck != null:
+return submitNewTaskAck(_that.sectionId);case WorkerReply_AddAgentToSectionAck() when addAgentToSectionAck != null:
+return addAgentToSectionAck(_that.tabId);case WorkerReply_ActivateSectionTabAck() when activateSectionTabAck != null:
+return activateSectionTabAck();case WorkerReply_CloseSectionTabAck() when closeSectionTabAck != null:
+return closeSectionTabAck(_that.activeTabId);case WorkerReply_ToggleSectionTabPinnedAck() when toggleSectionTabPinnedAck != null:
+return toggleSectionTabPinnedAck(_that.pinned);case WorkerReply_AgentSettingsAck() when agentSettingsAck != null:
+return agentSettingsAck(_that.view);case WorkerReply_OpenInSettingsAck() when openInSettingsAck != null:
+return openInSettingsAck(_that.view);case WorkerReply_SetOpenInAppEnabledAck() when setOpenInAppEnabledAck != null:
+return setOpenInAppEnabledAck();case WorkerReply_OpenProjectInAppAck() when openProjectInAppAck != null:
+return openProjectInAppAck();case WorkerReply_RunProjectActionAck() when runProjectActionAck != null:
+return runProjectActionAck(_that.tabId);case WorkerReply_SaveProjectActionAck() when saveProjectActionAck != null:
+return saveProjectActionAck();case WorkerReply_DeleteProjectActionAck() when deleteProjectActionAck != null:
+return deleteProjectActionAck(_that.deleted);case WorkerReply_GitActionScriptsAck() when gitActionScriptsAck != null:
 return gitActionScriptsAck(_that.view);case WorkerReply_SetGitCommitScriptAck() when setGitCommitScriptAck != null:
 return setGitCommitScriptAck(_that.changed);case WorkerReply_ResetGitCommitScriptAck() when resetGitCommitScriptAck != null:
 return resetGitCommitScriptAck(_that.changed);case WorkerReply_SetGitPrScriptAck() when setGitPrScriptAck != null:
@@ -2170,6 +2236,86 @@ as List<ChangedFileDto>,
 /// @nodoc
 
 
+class WorkerReply_DiscardAllChangesAck extends WorkerReply {
+  const WorkerReply_DiscardAllChangesAck({required final  List<ChangedFileDto> changedFiles, required final  List<String> failures}): _changedFiles = changedFiles,_failures = failures,super._();
+
+
+ final  List<ChangedFileDto> _changedFiles;
+ List<ChangedFileDto> get changedFiles {
+  if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_changedFiles);
+}
+
+ final  List<String> _failures;
+ List<String> get failures {
+  if (_failures is EqualUnmodifiableListView) return _failures;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_failures);
+}
+
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_DiscardAllChangesAckCopyWith<WorkerReply_DiscardAllChangesAck> get copyWith => _$WorkerReply_DiscardAllChangesAckCopyWithImpl<WorkerReply_DiscardAllChangesAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_DiscardAllChangesAck&&const DeepCollectionEquality().equals(other._changedFiles, _changedFiles)&&const DeepCollectionEquality().equals(other._failures, _failures));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_changedFiles),const DeepCollectionEquality().hash(_failures));
+
+@override
+String toString() {
+  return 'WorkerReply.discardAllChangesAck(changedFiles: $changedFiles, failures: $failures)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_DiscardAllChangesAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_DiscardAllChangesAckCopyWith(WorkerReply_DiscardAllChangesAck value, $Res Function(WorkerReply_DiscardAllChangesAck) _then) = _$WorkerReply_DiscardAllChangesAckCopyWithImpl;
+@useResult
+$Res call({
+ List<ChangedFileDto> changedFiles, List<String> failures
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_DiscardAllChangesAckCopyWithImpl<$Res>
+    implements $WorkerReply_DiscardAllChangesAckCopyWith<$Res> {
+  _$WorkerReply_DiscardAllChangesAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_DiscardAllChangesAck _self;
+  final $Res Function(WorkerReply_DiscardAllChangesAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,Object? failures = null,}) {
+  return _then(WorkerReply_DiscardAllChangesAck(
+changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
+as List<ChangedFileDto>,failures: null == failures ? _self._failures : failures // ignore: cast_nullable_to_non_nullable
+as List<String>,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
 class WorkerReply_ToolbarActionOutcomeAck extends WorkerReply {
   const WorkerReply_ToolbarActionOutcomeAck({required this.outcome}): super._();
   
@@ -2802,6 +2948,302 @@ as EnabledAgentsView,
 /// @nodoc
 
 
+class WorkerReply_SubmitNewTaskAck extends WorkerReply {
+  const WorkerReply_SubmitNewTaskAck({required this.sectionId}): super._();
+
+
+ final  String sectionId;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_SubmitNewTaskAckCopyWith<WorkerReply_SubmitNewTaskAck> get copyWith => _$WorkerReply_SubmitNewTaskAckCopyWithImpl<WorkerReply_SubmitNewTaskAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_SubmitNewTaskAck&&(identical(other.sectionId, sectionId) || other.sectionId == sectionId));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,sectionId);
+
+@override
+String toString() {
+  return 'WorkerReply.submitNewTaskAck(sectionId: $sectionId)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_SubmitNewTaskAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_SubmitNewTaskAckCopyWith(WorkerReply_SubmitNewTaskAck value, $Res Function(WorkerReply_SubmitNewTaskAck) _then) = _$WorkerReply_SubmitNewTaskAckCopyWithImpl;
+@useResult
+$Res call({
+ String sectionId
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_SubmitNewTaskAckCopyWithImpl<$Res>
+    implements $WorkerReply_SubmitNewTaskAckCopyWith<$Res> {
+  _$WorkerReply_SubmitNewTaskAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_SubmitNewTaskAck _self;
+  final $Res Function(WorkerReply_SubmitNewTaskAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? sectionId = null,}) {
+  return _then(WorkerReply_SubmitNewTaskAck(
+sectionId: null == sectionId ? _self.sectionId : sectionId // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_AddAgentToSectionAck extends WorkerReply {
+  const WorkerReply_AddAgentToSectionAck({required this.tabId}): super._();
+
+
+ final  String tabId;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_AddAgentToSectionAckCopyWith<WorkerReply_AddAgentToSectionAck> get copyWith => _$WorkerReply_AddAgentToSectionAckCopyWithImpl<WorkerReply_AddAgentToSectionAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_AddAgentToSectionAck&&(identical(other.tabId, tabId) || other.tabId == tabId));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,tabId);
+
+@override
+String toString() {
+  return 'WorkerReply.addAgentToSectionAck(tabId: $tabId)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_AddAgentToSectionAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_AddAgentToSectionAckCopyWith(WorkerReply_AddAgentToSectionAck value, $Res Function(WorkerReply_AddAgentToSectionAck) _then) = _$WorkerReply_AddAgentToSectionAckCopyWithImpl;
+@useResult
+$Res call({
+ String tabId
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_AddAgentToSectionAckCopyWithImpl<$Res>
+    implements $WorkerReply_AddAgentToSectionAckCopyWith<$Res> {
+  _$WorkerReply_AddAgentToSectionAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_AddAgentToSectionAck _self;
+  final $Res Function(WorkerReply_AddAgentToSectionAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? tabId = null,}) {
+  return _then(WorkerReply_AddAgentToSectionAck(
+tabId: null == tabId ? _self.tabId : tabId // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_ActivateSectionTabAck extends WorkerReply {
+  const WorkerReply_ActivateSectionTabAck(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ActivateSectionTabAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.activateSectionTabAck()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class WorkerReply_CloseSectionTabAck extends WorkerReply {
+  const WorkerReply_CloseSectionTabAck({required this.activeTabId}): super._();
+
+
+ final  String activeTabId;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_CloseSectionTabAckCopyWith<WorkerReply_CloseSectionTabAck> get copyWith => _$WorkerReply_CloseSectionTabAckCopyWithImpl<WorkerReply_CloseSectionTabAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_CloseSectionTabAck&&(identical(other.activeTabId, activeTabId) || other.activeTabId == activeTabId));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,activeTabId);
+
+@override
+String toString() {
+  return 'WorkerReply.closeSectionTabAck(activeTabId: $activeTabId)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_CloseSectionTabAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_CloseSectionTabAckCopyWith(WorkerReply_CloseSectionTabAck value, $Res Function(WorkerReply_CloseSectionTabAck) _then) = _$WorkerReply_CloseSectionTabAckCopyWithImpl;
+@useResult
+$Res call({
+ String activeTabId
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_CloseSectionTabAckCopyWithImpl<$Res>
+    implements $WorkerReply_CloseSectionTabAckCopyWith<$Res> {
+  _$WorkerReply_CloseSectionTabAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_CloseSectionTabAck _self;
+  final $Res Function(WorkerReply_CloseSectionTabAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? activeTabId = null,}) {
+  return _then(WorkerReply_CloseSectionTabAck(
+activeTabId: null == activeTabId ? _self.activeTabId : activeTabId // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_ToggleSectionTabPinnedAck extends WorkerReply {
+  const WorkerReply_ToggleSectionTabPinnedAck({required this.pinned}): super._();
+
+
+ final  bool pinned;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_ToggleSectionTabPinnedAckCopyWith<WorkerReply_ToggleSectionTabPinnedAck> get copyWith => _$WorkerReply_ToggleSectionTabPinnedAckCopyWithImpl<WorkerReply_ToggleSectionTabPinnedAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_ToggleSectionTabPinnedAck&&(identical(other.pinned, pinned) || other.pinned == pinned));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,pinned);
+
+@override
+String toString() {
+  return 'WorkerReply.toggleSectionTabPinnedAck(pinned: $pinned)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_ToggleSectionTabPinnedAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_ToggleSectionTabPinnedAckCopyWith(WorkerReply_ToggleSectionTabPinnedAck value, $Res Function(WorkerReply_ToggleSectionTabPinnedAck) _then) = _$WorkerReply_ToggleSectionTabPinnedAckCopyWithImpl;
+@useResult
+$Res call({
+ bool pinned
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_ToggleSectionTabPinnedAckCopyWithImpl<$Res>
+    implements $WorkerReply_ToggleSectionTabPinnedAckCopyWith<$Res> {
+  _$WorkerReply_ToggleSectionTabPinnedAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_ToggleSectionTabPinnedAck _self;
+  final $Res Function(WorkerReply_ToggleSectionTabPinnedAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? pinned = null,}) {
+  return _then(WorkerReply_ToggleSectionTabPinnedAck(
+pinned: null == pinned ? _self.pinned : pinned // ignore: cast_nullable_to_non_nullable
+as bool,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
 class WorkerReply_AgentSettingsAck extends WorkerReply {
   const WorkerReply_AgentSettingsAck({required this.view}): super._();
   
@@ -2868,6 +3310,136 @@ as AgentSettingsView,
 /// @nodoc
 
 
+class WorkerReply_OpenInSettingsAck extends WorkerReply {
+  const WorkerReply_OpenInSettingsAck({required this.view}): super._();
+
+
+ final  OpenInSettingsView view;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_OpenInSettingsAckCopyWith<WorkerReply_OpenInSettingsAck> get copyWith => _$WorkerReply_OpenInSettingsAckCopyWithImpl<WorkerReply_OpenInSettingsAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_OpenInSettingsAck&&(identical(other.view, view) || other.view == view));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,view);
+
+@override
+String toString() {
+  return 'WorkerReply.openInSettingsAck(view: $view)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_OpenInSettingsAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_OpenInSettingsAckCopyWith(WorkerReply_OpenInSettingsAck value, $Res Function(WorkerReply_OpenInSettingsAck) _then) = _$WorkerReply_OpenInSettingsAckCopyWithImpl;
+@useResult
+$Res call({
+ OpenInSettingsView view
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_OpenInSettingsAckCopyWithImpl<$Res>
+    implements $WorkerReply_OpenInSettingsAckCopyWith<$Res> {
+  _$WorkerReply_OpenInSettingsAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_OpenInSettingsAck _self;
+  final $Res Function(WorkerReply_OpenInSettingsAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? view = null,}) {
+  return _then(WorkerReply_OpenInSettingsAck(
+view: null == view ? _self.view : view // ignore: cast_nullable_to_non_nullable
+as OpenInSettingsView,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_SetOpenInAppEnabledAck extends WorkerReply {
+  const WorkerReply_SetOpenInAppEnabledAck(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_SetOpenInAppEnabledAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.setOpenInAppEnabledAck()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class WorkerReply_OpenProjectInAppAck extends WorkerReply {
+  const WorkerReply_OpenProjectInAppAck(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_OpenProjectInAppAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.openProjectInAppAck()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
 class WorkerReply_RunProjectActionAck extends WorkerReply {
   const WorkerReply_RunProjectActionAck({required this.tabId}): super._();
   
@@ -2925,6 +3497,104 @@ class _$WorkerReply_RunProjectActionAckCopyWithImpl<$Res>
   return _then(WorkerReply_RunProjectActionAck(
 tabId: null == tabId ? _self.tabId : tabId // ignore: cast_nullable_to_non_nullable
 as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class WorkerReply_SaveProjectActionAck extends WorkerReply {
+  const WorkerReply_SaveProjectActionAck(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_SaveProjectActionAck);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'WorkerReply.saveProjectActionAck()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class WorkerReply_DeleteProjectActionAck extends WorkerReply {
+  const WorkerReply_DeleteProjectActionAck({required this.deleted}): super._();
+
+
+ final  bool deleted;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$WorkerReply_DeleteProjectActionAckCopyWith<WorkerReply_DeleteProjectActionAck> get copyWith => _$WorkerReply_DeleteProjectActionAckCopyWithImpl<WorkerReply_DeleteProjectActionAck>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is WorkerReply_DeleteProjectActionAck&&(identical(other.deleted, deleted) || other.deleted == deleted));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,deleted);
+
+@override
+String toString() {
+  return 'WorkerReply.deleteProjectActionAck(deleted: $deleted)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $WorkerReply_DeleteProjectActionAckCopyWith<$Res> implements $WorkerReplyCopyWith<$Res> {
+  factory $WorkerReply_DeleteProjectActionAckCopyWith(WorkerReply_DeleteProjectActionAck value, $Res Function(WorkerReply_DeleteProjectActionAck) _then) = _$WorkerReply_DeleteProjectActionAckCopyWithImpl;
+@useResult
+$Res call({
+ bool deleted
+});
+
+
+
+
+}
+/// @nodoc
+class _$WorkerReply_DeleteProjectActionAckCopyWithImpl<$Res>
+    implements $WorkerReply_DeleteProjectActionAckCopyWith<$Res> {
+  _$WorkerReply_DeleteProjectActionAckCopyWithImpl(this._self, this._then);
+
+  final WorkerReply_DeleteProjectActionAck _self;
+  final $Res Function(WorkerReply_DeleteProjectActionAck) _then;
+
+/// Create a copy of WorkerReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? deleted = null,}) {
+  return _then(WorkerReply_DeleteProjectActionAck(
+deleted: null == deleted ? _self.deleted : deleted // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 

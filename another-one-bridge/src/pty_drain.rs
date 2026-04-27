@@ -32,18 +32,16 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use another_one_core::agents::{
-    agent_id_for_provider, AgentProviderKind, TerminalLaunchConfig, AGENTS,
+    AGENTS, AgentProviderKind, TerminalLaunchConfig, agent_id_for_provider,
 };
 use another_one_core::daemon_embed::{RegistryState, TabLaunchRequest};
 use another_one_core::process::TrackedProcess;
-use another_one_core::terminal_launch::{
-    spawn_terminal_launch, TerminalLaunchReply,
-};
+use another_one_core::terminal_launch::{TerminalLaunchReply, spawn_terminal_launch};
 use another_one_core::terminal_types::{
     PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey,
 };
@@ -129,11 +127,9 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
                     // and the agent starts a brand-new conversation.
                     if let Ok(mut state) = registry.lock() {
                         let section_key = key.section_id.store_key();
-                        state.project_store.set_tab_session(
-                            &section_key,
-                            &key.tab_id,
-                            session,
-                        );
+                        state
+                            .project_store
+                            .set_tab_session(&section_key, &key.tab_id, session);
                     }
                 }
                 Ok(TerminalLaunchReply::Exited { key, .. })
@@ -143,6 +139,16 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return,
             }
+        }
+        let pending_terminations = {
+            let mut state = match registry.lock() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            std::mem::take(&mut state.pending_tab_terminations)
+        };
+        for key in pending_terminations {
+            handle_terminated(&registry, &mut live, &key);
         }
         drop(registry);
         thread::sleep(Duration::from_millis(50));
@@ -169,9 +175,7 @@ fn spawn_one(
     if state.broadcasts.contains_key(&req.key) {
         return;
     }
-    let Some((cwd, launch_config, agent_args)) =
-        resolve_launch_inputs(&state, &req.key)
-    else {
+    let Some((cwd, launch_config, agent_args)) = resolve_launch_inputs(&state, &req.key) else {
         return;
     };
     state.in_flight_launches.insert(req.key.clone());
@@ -201,14 +205,8 @@ fn resolve_launch_inputs(
 
     // Resolve launch config from the persisted tab; missing tab
     // means the queue raced with a tab close — skip the launch.
-    let tab = section?
-        .tabs
-        .iter()
-        .find(|t| t.id == key.tab_id)?;
-    let launch_config = tab
-        .launch_config
-        .clone()
-        .unwrap_or_default();
+    let tab = section?.tabs.iter().find(|t| t.id == key.tab_id)?;
+    let launch_config = tab.launch_config.clone().unwrap_or_default();
 
     let agent_args = if launch_config.use_agent_launch_args {
         launch_config
@@ -234,16 +232,33 @@ fn handle_launched(
     launch_config: TerminalLaunchConfig,
     process_id: Option<u32>,
 ) {
+    let tab_still_exists = {
+        let state = match registry.lock() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let section_key = key.section_id.store_key();
+        state
+            .project_store
+            .terminal_sections
+            .get(&section_key)
+            .is_some_and(|section| section.tabs.iter().any(|tab| tab.id == key.tab_id))
+    };
+    if !tab_still_exists {
+        if let Ok(mut state) = registry.lock() {
+            state.in_flight_launches.remove(&key);
+            state.pending_post_launch_input.remove(&key);
+            state.tracked_processes.remove(&key);
+        }
+        return;
+    }
+
     // Take writer + broadcast out of the runtime struct without
     // dropping `master` / `child_killer` (which would SIGHUP the
     // child). The broadcast Sender is `Clone`; the writer is a
     // trait object so we swap a no-op sink in its place.
-    let writer = std::mem::replace(
-        &mut runtime.writer,
-        Box::new(std::io::sink()),
-    );
-    let writer_arc: Arc<Mutex<Box<dyn Write + Send>>> =
-        Arc::new(Mutex::new(writer));
+    let writer = std::mem::replace(&mut runtime.writer, Box::new(std::io::sink()));
+    let writer_arc: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(writer));
     let output_broadcast = runtime.output_broadcast.clone();
     live.insert(
         key.clone(),
@@ -283,8 +298,7 @@ fn build_tracked_process(
     launch_config: &TerminalLaunchConfig,
     pid: u32,
 ) -> TrackedProcess {
-    let (project_key, project_label, task_key, task_label) =
-        resource_group_for_key(state, key);
+    let (project_key, project_label, task_key, task_label) = resource_group_for_key(state, key);
     TrackedProcess {
         pid,
         key: format!("session:{}:{}", key.section_id.store_key(), key.tab_id),
@@ -366,6 +380,15 @@ fn handle_terminated(
     state.broadcasts.remove(key);
     state.writers.remove(key);
     state.in_flight_launches.remove(key);
+    state
+        .pending_tab_launches
+        .retain(|request| request.key != *key);
+    state.pending_resizes.retain(|request| request.key != *key);
     state.pending_post_launch_input.remove(key);
     state.tracked_processes.remove(key);
+    state.active_viewers.remove(key);
+    state.effective_sizes.remove(key);
+    state
+        .viewer_focus
+        .retain(|_, focused_key| focused_key != key);
 }

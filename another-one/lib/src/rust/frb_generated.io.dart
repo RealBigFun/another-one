@@ -109,10 +109,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   McpSettingsView dco_decode_box_autoadd_mcp_settings_view(dynamic raw);
 
   @protected
+  OpenInSettingsView dco_decode_box_autoadd_open_in_settings_view(dynamic raw);
+
+  @protected
   OpenInState dco_decode_box_autoadd_open_in_state(dynamic raw);
 
   @protected
   PairingInfo dco_decode_box_autoadd_pairing_info(dynamic raw);
+
+  @protected
+  ProjectActionDto dco_decode_box_autoadd_project_action_dto(dynamic raw);
 
   @protected
   ProjectSummary dco_decode_box_autoadd_project_summary(dynamic raw);
@@ -566,12 +572,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  OpenInSettingsView sse_decode_box_autoadd_open_in_settings_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   OpenInState sse_decode_box_autoadd_open_in_state(
     SseDeserializer deserializer,
   );
 
   @protected
   PairingInfo sse_decode_box_autoadd_pairing_info(SseDeserializer deserializer);
+
+  @protected
+  ProjectActionDto sse_decode_box_autoadd_project_action_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ProjectSummary sse_decode_box_autoadd_project_summary(
@@ -1137,6 +1153,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_open_in_settings_view(
+    OpenInSettingsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_open_in_state(
     OpenInState self,
     SseSerializer serializer,
@@ -1145,6 +1167,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_pairing_info(
     PairingInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_project_action_dto(
+    ProjectActionDto self,
     SseSerializer serializer,
   );
 

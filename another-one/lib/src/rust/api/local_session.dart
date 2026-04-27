@@ -550,9 +550,9 @@ class McpSettingsView {
   final List<McpCatalogEntryDto> catalogEntries;
   final List<McpServerDto> registryEntries;
 
-  /// Providers whose most recent registry sync failed. The MCP UI
-  /// tints their toggle chips red until the next successful sync
-  /// clears them.
+  /// Providers whose last sync failed — UI tints their toggle
+  /// red. Empty in this first cut (sync errors live only in
+  /// GPUI's `mcp_last_sync_errors` today).
   final List<String> syncErrorProviderIds;
 
   const McpSettingsView({

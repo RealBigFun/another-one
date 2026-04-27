@@ -162,11 +162,53 @@ pub enum Control {
     /// new-task modal's agent multi-select. Reply:
     /// [`WorkerReply::EnabledAgentsAck`].
     ReadEnabledAgents,
+    /// Submit the new-task modal over the shared wire. The daemon
+    /// decides whether this becomes a direct task or a worktree task
+    /// based on `worktree_mode`, resolves the initial launch config
+    /// from `agent_ids`, persists the task + initial section/tab, and
+    /// queues the first PTY launch. Reply:
+    /// [`WorkerReply::SubmitNewTaskAck`].
+    SubmitNewTask {
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_ids: Vec<String>,
+        branch_mode_existing: bool,
+        worktree_mode: bool,
+    },
+    /// Append one agent tab (or plain shell when `agent_id` is
+    /// empty) to an existing task section, make it active, and queue
+    /// its PTY launch. Reply: [`WorkerReply::AddAgentToSectionAck`].
+    AddAgentToSection {
+        section_id: String,
+        agent_id: String,
+    },
+    /// Persist the active tab for a section. Does not itself launch
+    /// or attach — the client's existing selection/attach path owns
+    /// that. Reply: [`WorkerReply::ActivateSectionTabAck`].
+    ActivateSectionTab { section_id: String, tab_id: String },
+    /// Remove one tab from a section and tear down its live PTY if
+    /// present. Reply: [`WorkerReply::CloseSectionTabAck`].
+    CloseSectionTab { section_id: String, tab_id: String },
+    /// Flip one section tab's `pinned` flag and return its new value.
+    /// Reply: [`WorkerReply::ToggleSectionTabPinnedAck`].
+    ToggleSectionTabPinned { section_id: String, tab_id: String },
     /// Full agent registry — every agent in `core::agents::AGENTS`
     /// paired with its per-host enabled flag, default flag, and
     /// launch-args list. Drives the Settings → Agents page. Reply:
     /// [`WorkerReply::AgentSettingsAck`].
     ReadAgentSettings,
+    /// Snapshot of every detected Open-In app on the daemon host plus
+    /// its enabled flag. Drives Settings → Open In. Reply:
+    /// [`WorkerReply::OpenInSettingsAck`].
+    ReadOpenInSettings,
+    /// Toggle one Open-In app's enabled flag on the daemon host.
+    /// Reply: [`WorkerReply::SetOpenInAppEnabledAck`].
+    SetOpenInAppEnabled { app_id: String, enabled: bool },
+    /// Launch `project_id` in `app_id` on the daemon host and persist
+    /// the chosen app as the preferred default when the spawn
+    /// succeeds. Reply: [`WorkerReply::OpenProjectInAppAck`].
+    OpenProjectInApp { project_id: String, app_id: String },
     /// Run one custom action inside `section_id`'s task: appends a
     /// fresh `PersistedTerminalTab`, queues a launch, and (for
     /// shell actions) records the command bytes the daemon writes
@@ -186,6 +228,20 @@ pub enum Control {
     RunProjectAction {
         project_id: String,
         section_id: String,
+        action_id: String,
+    },
+    /// Upsert one custom action for `project_id`, optionally saving a
+    /// global copy instead of a project-local one. Reply:
+    /// [`WorkerReply::SaveProjectActionAck`].
+    SaveProjectAction {
+        project_id: String,
+        action: ProjectActionWire,
+        save_global_copy: bool,
+    },
+    /// Delete one custom action by id from the project or global
+    /// registry. Reply: [`WorkerReply::DeleteProjectActionAck`].
+    DeleteProjectAction {
+        project_id: String,
         action_id: String,
     },
     /// TOFU (trust-on-first-use) pairing handshake. Sent as the very
@@ -260,10 +316,7 @@ pub enum Control {
     /// semantics as the desktop side. Reply is
     /// [`WorkerReply::TaskRemoved`] with `removed = true` if a task
     /// was deleted, `false` for an unknown id (idempotent).
-    RemoveTask {
-        project_id: String,
-        task_id: String,
-    },
+    RemoveTask { project_id: String, task_id: String },
     /// Compute the canonical branch slug for a free-text input.
     /// Powers the Create Branch modal's live `Branch: …` preview.
     /// Pure function — no project state involved. Reply is
@@ -395,6 +448,16 @@ pub enum Control {
         untracked: bool,
         original_path: Option<String>,
     },
+    /// `another-one-ojm.5` — discard a whole snapshot of changed
+    /// files in one round-trip. The caller provides the current
+    /// `changed_files` list so the daemon can avoid re-reading git
+    /// state between per-path reverts. Reply is
+    /// [`WorkerReply::DiscardAllChangesAck`] carrying the final
+    /// post-mutation snapshot plus any per-path failures.
+    DiscardAllChanges {
+        project_id: String,
+        files: Vec<ChangedFileWire>,
+    },
     /// `another-one-ojm.5` — run a titlebar git action against
     /// `project_id`. `action_id` is the verbatim string the
     /// titlebar split-button emits: `"commit"`, `"commit-and-push"`,
@@ -493,10 +556,7 @@ pub enum Control {
     /// [`WorkerReply::Err`] with [`ErrKind::UnknownId`] when it
     /// doesn't recognise the id. Reply on success:
     /// [`WorkerReply::SetShortcutBindingAck`].
-    SetShortcutBinding {
-        action_id: String,
-        binding: String,
-    },
+    SetShortcutBinding { action_id: String, binding: String },
     /// Settings → Keybindings: reset one shortcut to its built-in
     /// default. Reply: [`WorkerReply::ResetShortcutBindingAck`].
     ResetShortcutBinding { action_id: String },
@@ -633,17 +693,42 @@ pub enum WorkerReply {
     /// the canonical `core::agents::AGENTS` order — clients render
     /// without re-sorting.
     EnabledAgentsAck { view: EnabledAgentsViewWire },
+    /// Reply to [`Control::SubmitNewTask`]. `section_id` is the
+    /// persisted section the caller should focus; its initial tab is
+    /// always `"0"`.
+    SubmitNewTaskAck { section_id: String },
+    /// Reply to [`Control::AddAgentToSection`]. `tab_id` is the
+    /// freshly-minted tab that was appended and made active.
+    AddAgentToSectionAck { tab_id: String },
+    /// Reply to [`Control::ActivateSectionTab`].
+    ActivateSectionTabAck,
+    /// Reply to [`Control::CloseSectionTab`]. `active_tab_id` is the
+    /// section's new active tab after removal, or empty when the
+    /// section is now tabless.
+    CloseSectionTabAck { active_tab_id: String },
+    /// Reply to [`Control::ToggleSectionTabPinned`].
+    ToggleSectionTabPinnedAck { pinned: bool },
     /// Reply to [`Control::ReadAgentSettings`]. `view.agents`
     /// contains every agent in `core::agents::AGENTS` (canonical
     /// order) regardless of enabled state, so the Settings →
     /// Agents page can render rows for every agent at once.
     AgentSettingsAck { view: AgentSettingsViewWire },
+    /// Reply to [`Control::ReadOpenInSettings`].
+    OpenInSettingsAck { view: OpenInSettingsViewWire },
+    /// Reply to [`Control::SetOpenInAppEnabled`].
+    SetOpenInAppEnabledAck,
+    /// Reply to [`Control::OpenProjectInApp`].
+    OpenProjectInAppAck,
     /// Reply to [`Control::RunProjectAction`]. `tab_id` is the
     /// freshly-minted uuid for the spawned tab; the caller
     /// follows up with `Control::AttachTab` (or relies on the
     /// active-tab-changed event the desktop UI emits) to start
     /// receiving the action's PTY output.
     RunProjectActionAck { tab_id: String },
+    /// Reply to [`Control::SaveProjectAction`].
+    SaveProjectActionAck,
+    /// Reply to [`Control::DeleteProjectAction`].
+    DeleteProjectActionAck { deleted: bool },
     /// Uniform per-request failure frame. The daemon emits this in
     /// place of dropping the connection when a verb fails — keeps
     /// the channel open for other in-flight requests on the same
@@ -715,14 +800,10 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadActiveGitState`]. `state == None`
     /// when the project id is unknown — UI shows the empty state
     /// rather than surfacing an error.
-    ActiveGitStateAck {
-        state: Option<ActiveGitStateWire>,
-    },
+    ActiveGitStateAck { state: Option<ActiveGitStateWire> },
     /// Reply to [`Control::ReadChangedFiles`]. `files == None` when
     /// the project id is unknown.
-    ChangedFilesAck {
-        files: Option<Vec<ChangedFileWire>>,
-    },
+    ChangedFilesAck { files: Option<Vec<ChangedFileWire>> },
     /// Reply to [`Control::ReadProjectGithubUrl`]. `url == None`
     /// when the project is untracked, has no `origin`, or `origin`
     /// isn't a github.com URL.
@@ -753,34 +834,29 @@ pub enum WorkerReply {
     /// without a follow-up `ReadChangedFiles` round-trip — see the
     /// "Push vs pull" contract block above. Empty list means the
     /// working tree is clean after the stage.
-    StageChangedFileAck {
-        changed_files: Vec<ChangedFileWire>,
-    },
+    StageChangedFileAck { changed_files: Vec<ChangedFileWire> },
     /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
     /// Same inline-snapshot semantics as [`Self::StageChangedFileAck`].
-    UnstageChangedFileAck {
-        changed_files: Vec<ChangedFileWire>,
-    },
+    UnstageChangedFileAck { changed_files: Vec<ChangedFileWire> },
     /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
     /// Inline post-mutation snapshot.
-    StageAllChangesAck {
-        changed_files: Vec<ChangedFileWire>,
-    },
+    StageAllChangesAck { changed_files: Vec<ChangedFileWire> },
     /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
-    UnstageAllChangesAck {
-        changed_files: Vec<ChangedFileWire>,
-    },
+    UnstageAllChangesAck { changed_files: Vec<ChangedFileWire> },
     /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
-    DiscardChangedFileAck {
+    DiscardChangedFileAck { changed_files: Vec<ChangedFileWire> },
+    /// `another-one-ojm.5` — ack for [`Control::DiscardAllChanges`].
+    /// Returns the final `changed_files` snapshot after the batch plus
+    /// any per-path failures the caller should surface.
+    DiscardAllChangesAck {
         changed_files: Vec<ChangedFileWire>,
+        failures: Vec<String>,
     },
     /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
     /// Carries the `ToolbarActionOutcome` (toast + warning/refresh
     /// flags) the issuing client uses to render its snackbar and
     /// invalidate the active git-state / changed-files providers.
-    ToolbarActionOutcomeAck {
-        outcome: ToolbarActionOutcome,
-    },
+    ToolbarActionOutcomeAck { outcome: ToolbarActionOutcome },
     /// `another-one-ojm.5` — ack for [`Control::CreateBranch`].
     /// `section_id` is the new worktree task's section id (empty
     /// string for the current-task branch-swap case) so the issuing
@@ -802,9 +878,7 @@ pub enum WorkerReply {
     /// when the project has no open PR for its current branch (or
     /// the project id is unknown). Mutator-snapshot rules don't
     /// apply — this is a pure read.
-    PullRequestStatusAck {
-        status: Option<PullRequestStatus>,
-    },
+    PullRequestStatusAck { status: Option<PullRequestStatus> },
     /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
     /// payload mirrors the GPUI desktop's
     /// `core::git_actions::find_pull_request_checks` contract:
@@ -1200,6 +1274,23 @@ pub struct OpenInStateWire {
     /// Id of the app the titlebar's primary action launches, or
     /// `None` when no app is enabled at all.
     pub preferred_app_id: Option<String>,
+}
+
+/// Wire projection of one row from Settings → Open In. Same fields as
+/// `another_one_bridge::api::local_session::OpenInAppSettingsRow`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenInAppSettingsRowWire {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub icon_path: String,
+    pub enabled: bool,
+}
+
+/// Wire projection of the full Settings → Open In page state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenInSettingsViewWire {
+    pub available_apps: Vec<OpenInAppSettingsRowWire>,
 }
 
 /// Wire projection of `another_one_core::project_store::ProjectAction`.

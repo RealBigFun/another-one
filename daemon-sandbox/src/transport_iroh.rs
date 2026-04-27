@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
-use iroh::endpoint::{presets, Connection, Incoming};
+use iroh::endpoint::{Connection, Incoming, presets};
 use iroh::{Endpoint, EndpointAddr, SecretKey};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
@@ -427,10 +427,145 @@ async fn handle_control(
             let reply = WorkerReply::EnabledAgentsAck { view };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::SubmitNewTask {
+            project_id,
+            task_name,
+            source_branch,
+            agent_ids,
+            branch_mode_existing,
+            worktree_mode,
+        } => {
+            let outcome = registry
+                .submit_new_task(
+                    project_id,
+                    task_name,
+                    source_branch,
+                    agent_ids,
+                    branch_mode_existing,
+                    worktree_mode,
+                )
+                .await;
+            match outcome {
+                Ok(section_id) => {
+                    let reply = WorkerReply::SubmitNewTaskAck { section_id };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::AddAgentToSection {
+            section_id,
+            agent_id,
+        } => match registry.add_agent_to_section(&section_id, &agent_id) {
+            Ok(tab_id) => {
+                let reply = WorkerReply::AddAgentToSectionAck { tab_id };
+                send_worker_reply(outbound_tx, request_id, &reply).await?;
+            }
+            Err(message) => {
+                let kind = if message.contains("unknown") || message.contains("malformed") {
+                    ErrKind::UnknownId
+                } else {
+                    ErrKind::Internal
+                };
+                send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
+                    .await?;
+            }
+        },
+        Control::ActivateSectionTab { section_id, tab_id } => {
+            match registry.activate_section_tab(&section_id, &tab_id) {
+                Ok(()) => {
+                    send_worker_reply(outbound_tx, request_id, &WorkerReply::ActivateSectionTabAck)
+                        .await?;
+                }
+                Err(message) => {
+                    let kind = if message.contains("unknown") || message.contains("malformed") {
+                        ErrKind::UnknownId
+                    } else {
+                        ErrKind::Internal
+                    };
+                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
+                        .await?;
+                }
+            }
+        }
+        Control::CloseSectionTab { section_id, tab_id } => {
+            match registry.close_section_tab(&section_id, &tab_id) {
+                Ok(active_tab_id) => {
+                    let reply = WorkerReply::CloseSectionTabAck { active_tab_id };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(message) => {
+                    let kind = if message.contains("unknown") || message.contains("malformed") {
+                        ErrKind::UnknownId
+                    } else {
+                        ErrKind::Internal
+                    };
+                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
+                        .await?;
+                }
+            }
+        }
+        Control::ToggleSectionTabPinned { section_id, tab_id } => {
+            match registry.toggle_section_tab_pinned(&section_id, &tab_id) {
+                Ok(pinned) => {
+                    let reply = WorkerReply::ToggleSectionTabPinnedAck { pinned };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(message) => {
+                    let kind = if message.contains("unknown") || message.contains("malformed") {
+                        ErrKind::UnknownId
+                    } else {
+                        ErrKind::Internal
+                    };
+                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
+                        .await?;
+                }
+            }
+        }
         Control::ReadAgentSettings => {
             let view = registry.read_agent_settings();
             let reply = WorkerReply::AgentSettingsAck { view };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::ReadOpenInSettings => {
+            let reply = match registry.read_open_in_settings() {
+                Some(view) => WorkerReply::OpenInSettingsAck { view },
+                None => WorkerReply::Err {
+                    message: "read_open_in_settings: registry does not surface \
+                              Open-In settings on this host"
+                        .to_string(),
+                    kind: ErrKind::Unsupported,
+                },
+            };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::SetOpenInAppEnabled { app_id, enabled } => {
+            match registry.set_open_in_app_enabled(&app_id, enabled) {
+                Ok(()) => {
+                    let reply = WorkerReply::SetOpenInAppEnabledAck;
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(message) => {
+                    send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+                }
+            }
+        }
+        Control::OpenProjectInApp { project_id, app_id } => {
+            match registry.open_project_in_app(&project_id, &app_id) {
+                Ok(()) => {
+                    let reply = WorkerReply::OpenProjectInAppAck;
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(message) => {
+                    send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+                }
+            }
         }
         Control::RunProjectAction {
             project_id,
@@ -452,6 +587,27 @@ async fn handle_control(
                     kind: ErrKind::Internal,
                 },
             };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::SaveProjectAction {
+            project_id,
+            action,
+            save_global_copy,
+        } => match registry.save_project_action(&project_id, action, save_global_copy) {
+            Ok(()) => {
+                let reply = WorkerReply::SaveProjectActionAck;
+                send_worker_reply(outbound_tx, request_id, &reply).await?;
+            }
+            Err(message) => {
+                send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+            }
+        },
+        Control::DeleteProjectAction {
+            project_id,
+            action_id,
+        } => {
+            let deleted = registry.delete_project_action(&project_id, &action_id);
+            let reply = WorkerReply::DeleteProjectActionAck { deleted };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
         Control::AttachTab { section_id, tab_id } => {
@@ -553,21 +709,19 @@ async fn handle_control(
                 }
             }
         }
-        Control::RemoveProject { project_id } => {
-            match registry.remove_project(&project_id) {
-                Ok(()) => {
-                    let wire = WorkerReply::ProjectRemoved { project_id };
-                    send_worker_reply(outbound_tx, request_id, &wire).await?;
-                }
-                Err(e) => {
-                    let wire = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &wire).await?;
-                }
+        Control::RemoveProject { project_id } => match registry.remove_project(&project_id) {
+            Ok(()) => {
+                let wire = WorkerReply::ProjectRemoved { project_id };
+                send_worker_reply(outbound_tx, request_id, &wire).await?;
             }
-        }
+            Err(e) => {
+                let wire = WorkerReply::Err {
+                    message: format!("{e:#}"),
+                    kind: ErrKind::Internal,
+                };
+                send_worker_reply(outbound_tx, request_id, &wire).await?;
+            }
+        },
         Control::Hello { .. } => {
             // Hello is only meaningful as the *first* control frame
             // from an unpaired peer — see `consume_hello`. A paired
@@ -699,6 +853,25 @@ async fn handle_control(
             match outcome {
                 Ok(changed_files) => {
                     let reply = WorkerReply::DiscardChangedFileAck { changed_files };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(e) => {
+                    let reply = WorkerReply::Err {
+                        message: format!("{e:#}"),
+                        kind: ErrKind::Internal,
+                    };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+            }
+        }
+        Control::DiscardAllChanges { project_id, files } => {
+            let outcome = registry.discard_all_changes(&project_id, files).await;
+            match outcome {
+                Ok((changed_files, failures)) => {
+                    let reply = WorkerReply::DiscardAllChangesAck {
+                        changed_files,
+                        failures,
+                    };
                     send_worker_reply(outbound_tx, request_id, &reply).await?;
                 }
                 Err(e) => {
@@ -935,11 +1108,8 @@ async fn handle_control(
             // Same Ok/Err split as the sibling PR readers above.
             // `Ok(None)` covers unknown-project; gh CLI / auth /
             // network errors land as WorkerReply::Err.
-            let reply = match registry.find_project_pull_requests(
-                &project_id,
-                filter_index,
-                &query,
-            ) {
+            let reply = match registry.find_project_pull_requests(&project_id, filter_index, &query)
+            {
                 Ok(prs) => WorkerReply::ProjectPullRequestsAck { prs },
                 Err(message) => WorkerReply::Err {
                     message,
@@ -959,98 +1129,90 @@ async fn handle_control(
             )
             .await?;
         }
-        Control::SetGitCommitScript { script } => {
-            match registry.set_git_commit_script(&script) {
-                Ok(changed) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::SetGitCommitScriptAck { changed },
-                    )
-                    .await?;
-                }
-                Err(message) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::Err {
-                            message,
-                            kind: crate::frame::ErrKind::Internal,
-                        },
-                    )
-                    .await?;
-                }
+        Control::SetGitCommitScript { script } => match registry.set_git_commit_script(&script) {
+            Ok(changed) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::SetGitCommitScriptAck { changed },
+                )
+                .await?;
             }
-        }
-        Control::ResetGitCommitScript => {
-            match registry.reset_git_commit_script() {
-                Ok(changed) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::ResetGitCommitScriptAck { changed },
-                    )
-                    .await?;
-                }
-                Err(message) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::Err {
-                            message,
-                            kind: crate::frame::ErrKind::Internal,
-                        },
-                    )
-                    .await?;
-                }
+            Err(message) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::Err {
+                        message,
+                        kind: crate::frame::ErrKind::Internal,
+                    },
+                )
+                .await?;
             }
-        }
-        Control::SetGitPrScript { script } => {
-            match registry.set_git_pr_script(&script) {
-                Ok(changed) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::SetGitPrScriptAck { changed },
-                    )
-                    .await?;
-                }
-                Err(message) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::Err {
-                            message,
-                            kind: crate::frame::ErrKind::Internal,
-                        },
-                    )
-                    .await?;
-                }
+        },
+        Control::ResetGitCommitScript => match registry.reset_git_commit_script() {
+            Ok(changed) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::ResetGitCommitScriptAck { changed },
+                )
+                .await?;
             }
-        }
-        Control::ResetGitPrScript => {
-            match registry.reset_git_pr_script() {
-                Ok(changed) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::ResetGitPrScriptAck { changed },
-                    )
-                    .await?;
-                }
-                Err(message) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::Err {
-                            message,
-                            kind: crate::frame::ErrKind::Internal,
-                        },
-                    )
-                    .await?;
-                }
+            Err(message) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::Err {
+                        message,
+                        kind: crate::frame::ErrKind::Internal,
+                    },
+                )
+                .await?;
             }
-        }
+        },
+        Control::SetGitPrScript { script } => match registry.set_git_pr_script(&script) {
+            Ok(changed) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::SetGitPrScriptAck { changed },
+                )
+                .await?;
+            }
+            Err(message) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::Err {
+                        message,
+                        kind: crate::frame::ErrKind::Internal,
+                    },
+                )
+                .await?;
+            }
+        },
+        Control::ResetGitPrScript => match registry.reset_git_pr_script() {
+            Ok(changed) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::ResetGitPrScriptAck { changed },
+                )
+                .await?;
+            }
+            Err(message) => {
+                send_worker_reply(
+                    outbound_tx,
+                    request_id,
+                    &WorkerReply::Err {
+                        message,
+                        kind: crate::frame::ErrKind::Internal,
+                    },
+                )
+                .await?;
+            }
+        },
 
         // ── Settings → Keybindings (`another-one-ojm.8`) ───────────
         Control::ReadShortcutSettings => {
@@ -1062,32 +1224,23 @@ async fn handle_control(
             )
             .await?;
         }
-        Control::SetShortcutBinding {
-            action_id,
-            binding,
-        } => match registry.set_shortcut_binding(&action_id, &binding) {
-            Ok(()) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::SetShortcutBindingAck,
-                )
-                .await?;
+        Control::SetShortcutBinding { action_id, binding } => {
+            match registry.set_shortcut_binding(&action_id, &binding) {
+                Ok(()) => {
+                    send_worker_reply(outbound_tx, request_id, &WorkerReply::SetShortcutBindingAck)
+                        .await?;
+                }
+                Err(message) => {
+                    let kind = if message.contains("unknown action id") {
+                        crate::frame::ErrKind::UnknownId
+                    } else {
+                        crate::frame::ErrKind::Internal
+                    };
+                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
+                        .await?;
+                }
             }
-            Err(message) => {
-                let kind = if message.contains("unknown action id") {
-                    crate::frame::ErrKind::UnknownId
-                } else {
-                    crate::frame::ErrKind::Internal
-                };
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::Err { message, kind },
-                )
-                .await?;
-            }
-        },
+        }
         Control::ResetShortcutBinding { action_id } => {
             match registry.reset_shortcut_binding(&action_id) {
                 Ok(()) => {
@@ -1104,12 +1257,8 @@ async fn handle_control(
                     } else {
                         crate::frame::ErrKind::Internal
                     };
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::Err { message, kind },
-                    )
-                    .await?;
+                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
+                        .await?;
                 }
             }
         }
@@ -1127,12 +1276,8 @@ async fn handle_control(
         Control::McpAddFromCatalog { catalog_id } => {
             match registry.mcp_add_from_catalog(&catalog_id) {
                 Ok(()) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::McpAddFromCatalogAck,
-                    )
-                    .await?;
+                    send_worker_reply(outbound_tx, request_id, &WorkerReply::McpAddFromCatalogAck)
+                        .await?;
                 }
                 Err(message) => {
                     send_worker_reply(
@@ -1153,12 +1298,7 @@ async fn handle_control(
             enabled,
         } => match registry.mcp_toggle(&entry_id, &provider_id, enabled) {
             Ok(()) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::McpToggleAck,
-                )
-                .await?;
+                send_worker_reply(outbound_tx, request_id, &WorkerReply::McpToggleAck).await?;
             }
             Err(message) => {
                 let kind = if message.contains("unknown provider id") {
@@ -1166,37 +1306,26 @@ async fn handle_control(
                 } else {
                     crate::frame::ErrKind::Internal
                 };
+                send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
+                    .await?;
+            }
+        },
+        Control::McpRemove { entry_id } => match registry.mcp_remove(&entry_id) {
+            Ok(()) => {
+                send_worker_reply(outbound_tx, request_id, &WorkerReply::McpRemoveAck).await?;
+            }
+            Err(message) => {
                 send_worker_reply(
                     outbound_tx,
                     request_id,
-                    &WorkerReply::Err { message, kind },
+                    &WorkerReply::Err {
+                        message,
+                        kind: crate::frame::ErrKind::Internal,
+                    },
                 )
                 .await?;
             }
         },
-        Control::McpRemove { entry_id } => {
-            match registry.mcp_remove(&entry_id) {
-                Ok(()) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::McpRemoveAck,
-                    )
-                    .await?;
-                }
-                Err(message) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::Err {
-                            message,
-                            kind: crate::frame::ErrKind::Internal,
-                        },
-                    )
-                    .await?;
-                }
-            }
-        }
     }
     Ok(())
 }

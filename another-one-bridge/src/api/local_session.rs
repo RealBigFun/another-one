@@ -238,7 +238,7 @@ pub struct RecentCommitsView {
 /// and `changed_file_status_color`. We don't pre-format on the
 /// Rust side so the bridge stays display-agnostic and we don't
 /// pay the cross-FFI cost of re-encoding every redraw.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChangedFileDto {
     /// Path relative to the project root, the way `git status` reports it.
     pub path: String,
@@ -482,7 +482,7 @@ pub struct McpSettingsView {
 /// payload (`ProjectActionIconWire` from `daemon-sandbox`) directly
 /// into this DTO. Wire form is kebab-case to match
 /// `core::project_store::ProjectActionIcon`'s on-disk shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectActionIconDto {
     Play,
@@ -499,7 +499,7 @@ pub enum ProjectActionIconDto {
 /// "project first, global last" because that's how the dropdown row
 /// order treats them — global rows render with a globe glyph beside
 /// the action label.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectActionScopeDto {
     Project,
@@ -511,7 +511,7 @@ pub enum ProjectActionScopeDto {
 /// the agent-mode CLI's permission flag — `default` passes nothing
 /// extra, the other three map to `--read-only`, `--workspace-write`,
 /// `--full-access` (Claude Code today; other providers ignore).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectActionAccessDto {
     Default,
@@ -528,7 +528,7 @@ pub enum ProjectActionAccessDto {
 /// `Deserialize` lets the iroh transport decode the daemon's
 /// `ProjectActionKindWire` (externally-tagged via serde default)
 /// directly into this enum.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ProjectActionKindDto {
     /// A shell command typed verbatim into a freshly-spawned PTY.
     /// `command` is run as `<command>\n` so multi-line input works
@@ -557,7 +557,7 @@ pub enum ProjectActionKindDto {
 /// `Deserialize` lets the iroh transport decode the daemon's
 /// `ProjectActionWire` shape directly into this DTO; field names
 /// align by design.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectActionDto {
     pub id: String,
     pub name: String,

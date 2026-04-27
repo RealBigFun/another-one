@@ -53,6 +53,16 @@ import 'rust/api/local_session.dart'
         ToolbarActionOutcomeDto;
 import 'transport.dart';
 
+class DiscardAllChangesResult {
+  const DiscardAllChangesResult({
+    required this.changedFiles,
+    required this.failures,
+  });
+
+  final List<ChangedFileDto> changedFiles;
+  final List<String> failures;
+}
+
 /// Unified interface for any daemon — local FFI or remote iroh —
 /// the UI can hold and drive. One connection corresponds to one
 /// daemon endpoint.
@@ -436,8 +446,9 @@ abstract class DaemonConnection {
   /// Implemented by both transports as of `another-one-ojm.5`:
   /// `LocalTransport` calls the FRB-bound `LocalSession`;
   /// `IrohTransport` issues `Control::StageChangedFile` and awaits
-  /// the matching `WorkerReply::StageChangedFileAck`.
-  Future<void> stageChangedFile({
+  /// the matching `WorkerReply::StageChangedFileAck`, which carries
+  /// the post-mutation `changed_files` snapshot inline.
+  Future<List<ChangedFileDto>> stageChangedFile({
     required String projectId,
     required String path,
     String? originalPath,
@@ -446,29 +457,42 @@ abstract class DaemonConnection {
   /// Unstage one changed file via `git restore --staged` (or
   /// `git reset HEAD` on older git). See [`stageChangedFile`] for
   /// the rename-pair contract.
-  Future<void> unstageChangedFile({
+  Future<List<ChangedFileDto>> unstageChangedFile({
     required String projectId,
     required String path,
     String? originalPath,
   });
 
   /// `git add -A` on the project root — stage every change.
-  Future<void> stageAllChanges(String projectId);
+  Future<List<ChangedFileDto>> stageAllChanges(String projectId);
 
   /// Unstage every currently-staged change.
-  Future<void> unstageAllChanges(String projectId);
+  Future<List<ChangedFileDto>> unstageAllChanges(String projectId);
 
   /// Discard one file's changes. Untracked files are deleted from
   /// disk; tracked files are restored from HEAD. `untracked` is
   /// passed through verbatim so the daemon picks the right code
   /// path. Mirrors `core::revert_changed_file`. This action is
   /// destructive and should always be gated behind a confirmation.
-  Future<void> discardChangedFile({
+  Future<List<ChangedFileDto>> discardChangedFile({
     required String projectId,
     required String path,
     required bool untracked,
     String? originalPath,
   });
+
+  /// Discard a whole snapshot of changed files and return the final
+  /// `changed_files` list plus any per-path failures encountered
+  /// during the batch.
+  Future<DiscardAllChangesResult> discardAllChanges({
+    required String projectId,
+    required List<ChangedFileDto> files,
+  }) {
+    throw UnimplementedError(
+      'discardAllChanges: requires Control::DiscardAllChanges wire '
+      'variant on the active transport.',
+    );
+  }
 
   // ── Custom actions (titlebar split-button + modal editor) ───────
 
@@ -810,11 +834,9 @@ class ConnectionManager {
 
   /// Returns the connection with the given `id`, or `null` if none
   /// match.
-  DaemonConnection? lookup(String id) =>
-      _connections.cast<DaemonConnection?>().firstWhere(
-            (c) => c?.id == id,
-            orElse: () => null,
-          );
+  DaemonConnection? lookup(String id) => _connections
+      .cast<DaemonConnection?>()
+      .firstWhere((c) => c?.id == id, orElse: () => null);
 
   /// Closes every connection and clears the list.
   Future<void> closeAll() async {

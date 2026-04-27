@@ -31,18 +31,18 @@ use std::thread;
 
 use tokio::sync::broadcast;
 
-use another_one_core::agents::AgentProviderKind;
+use another_one_core::agents::{AgentProviderKind, TerminalLaunchConfig};
 use another_one_core::daemon_embed::{
-    daemon_paths, key_from_wire, RegistryState, TabLaunchRequest,
+    RegistryState, TabLaunchRequest, daemon_paths, key_from_wire,
 };
 use another_one_core::open_in::OpenInAppKind;
 use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
 use another_one_core::project_store::ProjectKind as CoreProjectKind;
+use another_one_core::project_store::ProjectStore;
 use another_one_core::project_store::{
     PersistedSectionState, PersistedTerminalTab, ProjectAction, ProjectActionAccess,
     ProjectActionIcon, ProjectActionKind, ProjectActionScope,
 };
-use another_one_core::project_store::ProjectStore;
 use another_one_core::section::SectionId;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
@@ -50,17 +50,17 @@ use daemon_sandbox::frame::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
     AgentSummaryWire, BranchCompareFileWire, BranchCompareWire, ChangedFileWire, Check,
     CheckBucket, CommitWire, EnabledAgentsViewWire, GitActionScriptsView, McpCatalogEntryDto,
-    McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto, OpenInAppWire,
-    OpenInStateWire, ProjectActionAccessWire, ProjectActionIconWire, ProjectActionKindWire,
-    ProjectActionScopeWire, ProjectActionWire, ProjectKind, ProjectPagePullRequest,
-    ProjectSummary, PullRequestState, PullRequestStatus, RecentCommitsWire,
-    ResolvedBranchSettingsWire, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
-    ToolbarActionOutcome,
+    McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto, OpenInAppSettingsRowWire,
+    OpenInAppWire, OpenInSettingsViewWire, OpenInStateWire, ProjectActionAccessWire,
+    ProjectActionIconWire, ProjectActionKindWire, ProjectActionScopeWire, ProjectActionWire,
+    ProjectKind, ProjectPagePullRequest, ProjectSummary, PullRequestState, PullRequestStatus,
+    RecentCommitsWire, ResolvedBranchSettingsWire, ShortcutSettingsRow, ShortcutSettingsView,
+    TabSummary, TaskSummary, ToolbarActionOutcome,
 };
 use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
-use crate::local_pair::{set_local_pair_info, LocalPairInfo};
+use crate::local_pair::{LocalPairInfo, set_local_pair_info};
 use crate::local_registry::set_local_registry;
 
 /// Tracks whether the embedded daemon has been booted in this
@@ -190,8 +190,7 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
     match crate::api::iroh_client::load_or_create_device_secret_key() {
         Ok(sk) => {
             let device_node_id = sk.public().to_string();
-            if let Err(e) = daemon_sandbox::persist_pairing(&device_node_id, &paths.paired_peers)
-            {
+            if let Err(e) = daemon_sandbox::persist_pairing(&device_node_id, &paths.paired_peers) {
                 tracing::warn!(
                     "loopback self-trust: persist_pairing failed (device_node_id={}): {:#}",
                     device_node_id,
@@ -309,11 +308,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             .unwrap_or_default()
     }
 
-    fn attach_tab(
-        &self,
-        section_id: &str,
-        tab_id: &str,
-    ) -> Option<broadcast::Receiver<Vec<u8>>> {
+    fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>> {
         let key = key_from_wire(section_id, tab_id)?;
         self.with_state(|state| state.broadcasts.get(&key).map(|tx| tx.subscribe()))
             .flatten()
@@ -339,14 +334,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         });
     }
 
-    fn tab_resize(
-        &self,
-        viewer_id: &str,
-        section_id: &str,
-        tab_id: &str,
-        cols: u16,
-        rows: u16,
-    ) {
+    fn tab_resize(&self, viewer_id: &str, section_id: &str, tab_id: &str, cols: u16, rows: u16) {
         let Some(key) = key_from_wire(section_id, tab_id) else {
             return;
         };
@@ -449,14 +437,9 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 let state = arc.lock().map_err(|_| {
                     anyhow::anyhow!("create_worktree_task: RegistryState mutex poisoned")
                 })?;
-                let project = state
-                    .project_store
-                    .project(&project_id)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "create_worktree_task: unknown project_id `{project_id}`"
-                        )
-                    })?;
+                let project = state.project_store.project(&project_id).ok_or_else(|| {
+                    anyhow::anyhow!("create_worktree_task: unknown project_id `{project_id}`")
+                })?;
                 (
                     project.path.clone(),
                     project.name.clone(),
@@ -748,10 +731,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             return Ok(None);
         };
         let result = tokio::task::block_in_place(|| {
-            another_one_core::project_store::read_project_branch_commit_state(
-                &project_path,
-                limit,
-            )
+            another_one_core::project_store::read_project_branch_commit_state(&project_path, limit)
         })?;
         Ok(Some(RecentCommitsWire {
             current_branch: result.current_branch,
@@ -838,9 +818,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             "default-target-branch" => state
                 .project_store
                 .update_default_target_branch(project_id, branch_name.map(|s| s.to_string())),
-            other => Err(format!(
-                "set_branch_setting: unknown field `{other}`"
-            )),
+            other => Err(format!("set_branch_setting: unknown field `{other}`")),
         });
         match result {
             Some(inner) => inner,
@@ -867,10 +845,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                     let mut changed = another_one_core::project_store::ChangedFile::default();
                     changed.path = path_arg;
                     changed.original_path = original_path;
-                    another_one_core::project_store::stage_changed_file(
-                        &project_path,
-                        &changed,
-                    )
+                    another_one_core::project_store::stage_changed_file(&project_path, &changed)
                 },
             )
             .await
@@ -896,10 +871,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                     let mut changed = another_one_core::project_store::ChangedFile::default();
                     changed.path = path_arg;
                     changed.original_path = original_path;
-                    another_one_core::project_store::unstage_changed_file(
-                        &project_path,
-                        &changed,
-                    )
+                    another_one_core::project_store::unstage_changed_file(&project_path, &changed)
                 },
             )
             .await
@@ -913,14 +885,9 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         Box::pin(async move {
-            run_changed_file_mutation(
-                &inner,
-                "stage_all_changes",
-                &project_id,
-                |project_path| {
-                    another_one_core::project_store::stage_all_changes(&project_path)
-                },
-            )
+            run_changed_file_mutation(&inner, "stage_all_changes", &project_id, |project_path| {
+                another_one_core::project_store::stage_all_changes(&project_path)
+            })
             .await
         })
     }
@@ -932,14 +899,9 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let inner = self.inner.clone();
         let project_id = project_id.to_string();
         Box::pin(async move {
-            run_changed_file_mutation(
-                &inner,
-                "unstage_all_changes",
-                &project_id,
-                |project_path| {
-                    another_one_core::project_store::unstage_all_changes(&project_path)
-                },
-            )
+            run_changed_file_mutation(&inner, "unstage_all_changes", &project_id, |project_path| {
+                another_one_core::project_store::unstage_all_changes(&project_path)
+            })
             .await
         })
     }
@@ -966,10 +928,8 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                     changed.path = path_arg;
                     changed.original_path = original_path;
                     changed.untracked = untracked;
-                    if another_one_core::project_store::revert_changed_file(
-                        &project_path,
-                        &changed,
-                    ) {
+                    if another_one_core::project_store::revert_changed_file(&project_path, &changed)
+                    {
                         Ok(())
                     } else {
                         Err(format!("Could not discard {path_for_err}"))
@@ -977,6 +937,53 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 },
             )
             .await
+        })
+    }
+
+    fn discard_all_changes<'a>(
+        &'a self,
+        project_id: &'a str,
+        files: Vec<ChangedFileWire>,
+    ) -> RegistryFuture<'a, anyhow::Result<(Vec<ChangedFileWire>, Vec<String>)>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        Box::pin(async move {
+            let project_path = resolve_project_path(&inner, &project_id).ok_or_else(|| {
+                anyhow::anyhow!("discard_all_changes: unknown project_id `{project_id}`")
+            })?;
+            let project_path_for_mutate = project_path.clone();
+            let failures = tokio::task::spawn_blocking(move || {
+                let mut failures = Vec::new();
+                for changed in files.into_iter().map(changed_file_from_wire) {
+                    let path_for_err = changed.path.clone();
+                    if !another_one_core::project_store::revert_changed_file(
+                        &project_path_for_mutate,
+                        &changed,
+                    ) {
+                        failures.push(format!("Could not discard {path_for_err}"));
+                    }
+                }
+                failures
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("discard_all_changes join: {e}"))?;
+            let project_path_for_read = project_path.clone();
+            let git_state = tokio::task::spawn_blocking(move || {
+                another_one_core::project_store::read_project_git_state(
+                    &project_path_for_read,
+                    false,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("discard_all_changes post-read join: {e}"))?;
+            Ok((
+                git_state
+                    .changed_files
+                    .into_iter()
+                    .map(changed_file_to_wire)
+                    .collect(),
+                failures,
+            ))
         })
     }
 
@@ -997,23 +1004,14 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             // shape so the failure modes are identical.
             let (project_path, project_name, target_project_id) = {
                 let arc = inner.upgrade().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "create_review_task: registry vanished before lookup"
-                    )
+                    anyhow::anyhow!("create_review_task: registry vanished before lookup")
                 })?;
                 let state = arc.lock().map_err(|_| {
-                    anyhow::anyhow!(
-                        "create_review_task: RegistryState mutex poisoned"
-                    )
+                    anyhow::anyhow!("create_review_task: RegistryState mutex poisoned")
                 })?;
-                let project = state
-                    .project_store
-                    .project(&project_id)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "create_review_task: unknown project_id `{project_id}`"
-                        )
-                    })?;
+                let project = state.project_store.project(&project_id).ok_or_else(|| {
+                    anyhow::anyhow!("create_review_task: unknown project_id `{project_id}`")
+                })?;
                 (
                     project.path.clone(),
                     project.name.clone(),
@@ -1039,9 +1037,10 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 true,
                 true,
             );
-            let reply = rx.recv().await.map_err(|_| {
-                anyhow::anyhow!("review task worker dropped before reply")
-            })?;
+            let reply = rx
+                .recv()
+                .await
+                .map_err(|_| anyhow::anyhow!("review task worker dropped before reply"))?;
             let success = reply
                 .result
                 .map_err(|f| anyhow::anyhow!("create review task: {}", f.message))?;
@@ -1051,9 +1050,9 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 let arc = inner.upgrade().ok_or_else(|| {
                     anyhow::anyhow!("create_review_task: registry vanished mid-flight")
                 })?;
-                let mut state = arc.lock().map_err(|_| {
-                    anyhow::anyhow!("create_review_task: registry mutex poisoned")
-                })?;
+                let mut state = arc
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("create_review_task: registry mutex poisoned"))?;
                 let inserted_worktree = state
                     .project_store
                     .insert_prepared_project(success.project.clone());
@@ -1098,13 +1097,11 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             // Phase 3: re-flatten for the inline-snapshot ack.
             let projects = {
                 let arc = inner.upgrade().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "create_review_task: registry vanished during snapshot read"
-                    )
+                    anyhow::anyhow!("create_review_task: registry vanished during snapshot read")
                 })?;
-                let state = arc.lock().map_err(|_| {
-                    anyhow::anyhow!("create_review_task: registry mutex poisoned")
-                })?;
+                let state = arc
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("create_review_task: registry mutex poisoned"))?;
                 flatten_state_to_frame(&state)
             };
             Ok((section_id, projects))
@@ -1126,26 +1123,15 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             // outside the mutation worker. Mirrors LocalSession's
             // create_branch which does the same lookup-then-spawn split.
             let (project_path, target_project_id) = {
-                let arc = inner
-                    .upgrade()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "create_branch: registry vanished before lookup"
-                        )
-                    })?;
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("create_branch: registry vanished before lookup")
+                })?;
                 let state = arc
                     .lock()
-                    .map_err(|_| {
-                        anyhow::anyhow!("create_branch: RegistryState mutex poisoned")
-                    })?;
-                let project = state
-                    .project_store
-                    .project(&project_id)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "create_branch: unknown project_id `{project_id}`"
-                        )
-                    })?;
+                    .map_err(|_| anyhow::anyhow!("create_branch: RegistryState mutex poisoned"))?;
+                let project = state.project_store.project(&project_id).ok_or_else(|| {
+                    anyhow::anyhow!("create_branch: unknown project_id `{project_id}`")
+                })?;
                 (project.path.clone(), project.id.clone())
             };
 
@@ -1161,9 +1147,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             let reply = rx
                 .recv()
                 .await
-                .map_err(|_| {
-                    anyhow::anyhow!("branch creation worker dropped before reply")
-                })?;
+                .map_err(|_| anyhow::anyhow!("branch creation worker dropped before reply"))?;
             let success = reply
                 .result
                 .map_err(|f| anyhow::anyhow!("create branch: {}", f.message))?;
@@ -1174,16 +1158,12 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             // mode where there's no new project, only a branch swap
             // on the existing checkout.
             let section_id = if let Some(prepared) = success.project {
-                let arc = inner
-                    .upgrade()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("create_branch: registry vanished mid-flight")
-                    })?;
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("create_branch: registry vanished mid-flight")
+                })?;
                 let mut state = arc
                     .lock()
-                    .map_err(|_| {
-                        anyhow::anyhow!("create_branch: registry mutex poisoned")
-                    })?;
+                    .map_err(|_| anyhow::anyhow!("create_branch: registry mutex poisoned"))?;
                 let inserted_worktree = state
                     .project_store
                     .insert_prepared_project(prepared.clone());
@@ -1234,18 +1214,12 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             // ProjectSummary list so the ack carries the post-
             // mutation snapshot inline.
             let projects = {
-                let arc = inner
-                    .upgrade()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "create_branch: registry vanished during snapshot read"
-                        )
-                    })?;
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("create_branch: registry vanished during snapshot read")
+                })?;
                 let state = arc
                     .lock()
-                    .map_err(|_| {
-                        anyhow::anyhow!("create_branch: registry mutex poisoned")
-                    })?;
+                    .map_err(|_| anyhow::anyhow!("create_branch: registry mutex poisoned"))?;
                 flatten_state_to_frame(&state)
             };
             Ok((section_id, projects))
@@ -1262,9 +1236,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let action_id = action_id.to_string();
         Box::pin(async move {
             let project_path = resolve_project_path(&inner, &project_id).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "run_toolbar_git_action: unknown project_id `{project_id}`"
-                )
+                anyhow::anyhow!("run_toolbar_git_action: unknown project_id `{project_id}`")
             })?;
             let action = parse_toolbar_action_id(&action_id)?;
             let outcome = tokio::task::spawn_blocking(move || {
@@ -1318,21 +1290,20 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let Some(Some((project_path, head_branch))) = path_and_branch else {
             return Ok(None);
         };
-        Ok(another_one_core::git_actions::find_latest_pull_request_status(
-            &project_path,
-            &head_branch,
+        Ok(
+            another_one_core::git_actions::find_latest_pull_request_status(
+                &project_path,
+                &head_branch,
+            )
+            .map(|status| PullRequestStatus {
+                number: status.number,
+                url: status.url,
+                state: map_pull_request_state(status.state),
+            }),
         )
-        .map(|status| PullRequestStatus {
-            number: status.number,
-            url: status.url,
-            state: map_pull_request_state(status.state),
-        }))
     }
 
-    fn read_pull_request_checks(
-        &self,
-        project_id: &str,
-    ) -> Result<Option<Vec<Check>>, String> {
+    fn read_pull_request_checks(&self, project_id: &str) -> Result<Option<Vec<Check>>, String> {
         // Same shape as `find_pull_request_status`: snapshot the
         // project path under the registry mutex, drop the lock,
         // then shell out via core's gh-CLI helper. The three-state
@@ -1381,7 +1352,11 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             return Ok(None);
         };
         let trimmed = query.trim();
-        let q = if trimmed.is_empty() { None } else { Some(trimmed) };
+        let q = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
         let prs = another_one_core::git_actions::find_project_pull_requests(
             &project_path,
             filter_index as usize,
@@ -1435,11 +1410,11 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             let enabled = another_one_core::agents::effective_enabled_agents(
                 state.project_store.ui.enabled_agents.as_ref(),
             );
-            let agents = enabled.iter().map(|agent| agent_def_to_wire(agent)).collect();
-            let default_agent_id = state
-                .project_store
-                .default_agent_id()
-                .map(str::to_string);
+            let agents = enabled
+                .iter()
+                .map(|agent| agent_def_to_wire(agent))
+                .collect();
+            let default_agent_id = state.project_store.default_agent_id().map(str::to_string);
             EnabledAgentsViewWire {
                 agents,
                 default_agent_id,
@@ -1451,13 +1426,281 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
     }
 
+    fn submit_new_task(
+        &self,
+        project_id: String,
+        task_name: String,
+        source_branch: String,
+        agent_ids: Vec<String>,
+        branch_mode_existing: bool,
+        worktree_mode: bool,
+    ) -> RegistryFuture<'_, anyhow::Result<String>> {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            let root_project_id = {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("submit_new_task: registry vanished before lookup")
+                })?;
+                let state = arc
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("submit_new_task: registry mutex poisoned"))?;
+                state
+                    .project_store
+                    .root_project_id_for_project(&project_id)
+                    .unwrap_or(project_id.clone())
+            };
+
+            let trimmed_task_name = task_name.trim().to_string();
+            if trimmed_task_name.is_empty() {
+                anyhow::bail!("submit_new_task: task_name must not be blank");
+            }
+
+            let launch_config = selected_agent_launch_config(&agent_ids);
+
+            if !worktree_mode {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("submit_new_task: registry vanished before direct insert")
+                })?;
+                let mut state = arc
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("submit_new_task: registry mutex poisoned"))?;
+                let project = state
+                    .project_store
+                    .project(&root_project_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("submit_new_task: unknown project_id `{root_project_id}`")
+                    })?;
+                let branch_name = another_one_core::project_store::current_branch(&project.path)
+                    .or_else(|| state.project_store.current_branch_name(&project.id))
+                    .unwrap_or_else(|| source_branch.trim().to_string());
+                if branch_name.trim().is_empty() {
+                    anyhow::bail!(
+                        "submit_new_task: could not determine current branch for `{}`",
+                        project.name
+                    );
+                }
+
+                return Ok(insert_task_with_initial_tab(
+                    &mut state,
+                    project.id.clone(),
+                    project.id.clone(),
+                    another_one_core::project_store::TaskKind::Direct,
+                    trimmed_task_name,
+                    branch_name,
+                    None,
+                    project.path.clone(),
+                    launch_config,
+                ));
+            }
+
+            let (project_path, project_name) = {
+                let arc = inner.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("submit_new_task: registry vanished before worktree lookup")
+                })?;
+                let state = arc
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("submit_new_task: registry mutex poisoned"))?;
+                let project = state
+                    .project_store
+                    .project(&root_project_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("submit_new_task: unknown project_id `{root_project_id}`")
+                    })?;
+                (project.path.clone(), project.name.clone())
+            };
+
+            let trimmed_source_branch = source_branch.trim().to_string();
+            if trimmed_source_branch.is_empty() {
+                anyhow::bail!("submit_new_task: source_branch must not be blank");
+            }
+
+            let branch_mode = if branch_mode_existing {
+                another_one_core::project_store::TaskWorktreeBranchMode::ExistingBranch {
+                    branch: trimmed_source_branch,
+                }
+            } else {
+                another_one_core::project_store::TaskWorktreeBranchMode::NewBranchFrom {
+                    source_branch: trimmed_source_branch,
+                }
+            };
+
+            let mut rx = another_one_core::project_service::spawn_task_creation(
+                root_project_id.clone(),
+                project_path,
+                project_name,
+                trimmed_task_name.clone(),
+                trimmed_task_name,
+                branch_mode,
+                launch_config,
+            );
+            let reply = rx
+                .recv()
+                .await
+                .map_err(|_| anyhow::anyhow!("submit_new_task: worker dropped"))?;
+            let success = reply
+                .result
+                .map_err(|f| anyhow::anyhow!("submit new task: {}", f.message))?;
+
+            let arc = inner.upgrade().ok_or_else(|| {
+                anyhow::anyhow!("submit_new_task: registry vanished after worker")
+            })?;
+            let mut state = arc
+                .lock()
+                .map_err(|_| anyhow::anyhow!("submit_new_task: registry mutex poisoned"))?;
+            let inserted_worktree = state
+                .project_store
+                .insert_prepared_project(success.project.clone());
+            let worktree_project_id = if inserted_worktree {
+                success.project.project.id.clone()
+            } else {
+                state
+                    .project_store
+                    .projects
+                    .iter()
+                    .find(|project| project.path == success.project.project.path)
+                    .map(|project| project.id.clone())
+                    .unwrap_or_else(|| success.project.project.id.clone())
+            };
+
+            Ok(insert_task_with_initial_tab(
+                &mut state,
+                root_project_id,
+                worktree_project_id.clone(),
+                another_one_core::project_store::TaskKind::Worktree,
+                success.task_name,
+                success.branch_name,
+                Some(worktree_project_id),
+                success.project.project.path.clone(),
+                success.launch_config,
+            ))
+        })
+    }
+
+    fn add_agent_to_section(&self, section_id: &str, agent_id: &str) -> Result<String, String> {
+        let section = SectionId::from_store_key(section_id).ok_or_else(|| {
+            format!(
+                "add_agent_to_section: malformed section_id `{section_id}` — \
+                 expected SectionId::store_key()"
+            )
+        })?;
+        let launch_config = launch_config_for_add_agent(agent_id)?;
+        let tab_id = self
+            .with_state(|state| {
+                let mut section_state = state
+                    .project_store
+                    .terminal_sections
+                    .get(section_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("add_agent_to_section: unknown section_id `{section_id}`")
+                    })?;
+                let (tab_id, tab) = build_terminal_tab(launch_config, None);
+                append_tab_to_section(&mut section_state, tab);
+                state
+                    .project_store
+                    .set_section_state(section_id.to_string(), section_state);
+                state.pending_tab_launches.push(TabLaunchRequest {
+                    key: TerminalRuntimeKey {
+                        section_id: section,
+                        tab_id: tab_id.clone(),
+                    },
+                });
+                Ok::<_, String>(tab_id)
+            })
+            .ok_or_else(|| "add_agent_to_section: registry state dropped".to_string())??;
+        Ok(tab_id)
+    }
+
+    fn activate_section_tab(&self, section_id: &str, tab_id: &str) -> Result<(), String> {
+        self.with_state(|state| {
+            let mut section_state = state
+                .project_store
+                .terminal_sections
+                .get(section_id)
+                .cloned()
+                .ok_or_else(|| {
+                    format!("activate_section_tab: unknown section_id `{section_id}`")
+                })?;
+            if !set_active_tab_in_section(&mut section_state, tab_id) {
+                return Err(format!(
+                    "activate_section_tab: unknown tab_id `{tab_id}` for section `{section_id}`"
+                ));
+            }
+            state
+                .project_store
+                .set_section_state(section_id.to_string(), section_state);
+            Ok(())
+        })
+        .ok_or_else(|| "activate_section_tab: registry state dropped".to_string())?
+    }
+
+    fn close_section_tab(&self, section_id: &str, tab_id: &str) -> Result<String, String> {
+        let section = SectionId::from_store_key(section_id).ok_or_else(|| {
+            format!(
+                "close_section_tab: malformed section_id `{section_id}` — \
+                 expected SectionId::store_key()"
+            )
+        })?;
+        let active_tab_id = self
+            .with_state(|state| {
+                let mut section_state = state
+                    .project_store
+                    .terminal_sections
+                    .get(section_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("close_section_tab: unknown section_id `{section_id}`")
+                    })?;
+                let active_tab_id = close_tab_in_section(&mut section_state, tab_id).ok_or_else(
+                    || {
+                        format!(
+                            "close_section_tab: unknown tab_id `{tab_id}` for section `{section_id}`"
+                        )
+                    },
+                )?;
+                state
+                    .project_store
+                    .set_section_state(section_id.to_string(), section_state);
+                state.pending_tab_terminations.push(TerminalRuntimeKey {
+                    section_id: section,
+                    tab_id: tab_id.to_string(),
+                });
+                Ok::<_, String>(active_tab_id)
+            })
+            .ok_or_else(|| "close_section_tab: registry state dropped".to_string())??;
+        Ok(active_tab_id)
+    }
+
+    fn toggle_section_tab_pinned(&self, section_id: &str, tab_id: &str) -> Result<bool, String> {
+        self.with_state(|state| {
+            let mut section_state = state
+                .project_store
+                .terminal_sections
+                .get(section_id)
+                .cloned()
+                .ok_or_else(|| {
+                    format!("toggle_section_tab_pinned: unknown section_id `{section_id}`")
+                })?;
+            let pinned =
+                toggle_tab_pinned_in_section(&mut section_state, tab_id).ok_or_else(|| {
+                    format!(
+                        "toggle_section_tab_pinned: unknown tab_id `{tab_id}` \
+                         for section `{section_id}`"
+                    )
+                })?;
+            state
+                .project_store
+                .set_section_state(section_id.to_string(), section_state);
+            Ok(pinned)
+        })
+        .ok_or_else(|| "toggle_section_tab_pinned: registry state dropped".to_string())?
+    }
+
     fn read_agent_settings(&self) -> AgentSettingsViewWire {
         // Mirrors `LocalSession::read_agent_settings`.
         self.with_state(|state| {
-            let default_agent_id = state
-                .project_store
-                .default_agent_id()
-                .map(str::to_string);
+            let default_agent_id = state.project_store.default_agent_id().map(str::to_string);
             let agents = another_one_core::agents::AGENTS
                 .iter()
                 .map(|agent| AgentSettingsRowWire {
@@ -1467,10 +1710,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                     provider: agent.provider.map(map_agent_provider),
                     enabled: state.project_store.agent_enabled(agent.id),
                     is_default: default_agent_id.as_deref() == Some(agent.id),
-                    launch_args: state
-                        .project_store
-                        .agent_launch_args(agent.id)
-                        .to_vec(),
+                    launch_args: state.project_store.agent_launch_args(agent.id).to_vec(),
                 })
                 .collect();
             AgentSettingsViewWire {
@@ -1482,6 +1722,73 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             agents: Vec::new(),
             default_agent_id: None,
         })
+    }
+
+    fn read_open_in_settings(&self) -> Option<OpenInSettingsViewWire> {
+        let available = available_open_in_apps();
+        self.with_state(|state| OpenInSettingsViewWire {
+            available_apps: available
+                .iter()
+                .copied()
+                .map(|app| OpenInAppSettingsRowWire {
+                    id: app.id().to_string(),
+                    label: app.label().to_string(),
+                    description: app.description().to_string(),
+                    icon_path: app.icon_path().to_string(),
+                    enabled: state.project_store.open_in_app_enabled(app, &available),
+                })
+                .collect(),
+        })
+    }
+
+    fn set_open_in_app_enabled(&self, app_id: &str, enabled: bool) -> Result<(), String> {
+        let app = parse_open_in_app_id(app_id)
+            .ok_or_else(|| format!("unknown open-in app `{app_id}`"))?;
+        let available = available_open_in_apps();
+        if !available.contains(&app) {
+            return Err(format!(
+                "open-in app `{app_id}` is not available on this host"
+            ));
+        }
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_open_in_app_enabled(app, enabled, &available);
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
+    }
+
+    fn open_project_in_app(&self, project_id: &str, app_id: &str) -> Result<(), String> {
+        let app = parse_open_in_app_id(app_id)
+            .ok_or_else(|| format!("unknown open-in app `{app_id}`"))?;
+        let available = available_open_in_apps();
+        if !available.contains(&app) {
+            return Err(format!(
+                "open-in app `{app_id}` is not available on this host"
+            ));
+        }
+        let project_path = self
+            .project_path(project_id)
+            .ok_or_else(|| format!("unknown project_id `{project_id}`"))?;
+        let enabled = self
+            .with_state(|state| state.project_store.open_in_app_enabled(app, &available))
+            .ok_or_else(|| "registry state dropped".to_string())?;
+        if !enabled {
+            return Err(format!("open-in app `{app_id}` is disabled"));
+        }
+
+        let mut command =
+            <CurrentPlatform as HeadlessPlatform>::command_for_open_in(app, &project_path);
+        command
+            .spawn()
+            .map_err(|err| format!("Could not open {}: {err}", app.label()))?;
+
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_preferred_open_in_app(app, &available);
+        })
+        .ok_or_else(|| "registry state dropped".to_string())
     }
 
     fn run_project_action(
@@ -1520,9 +1827,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             ProjectActionKind::Shell { command } => {
                 let trimmed = command.trim();
                 if trimmed.is_empty() {
-                    return Err(
-                        "Shell actions need a command before they can run.".to_string()
-                    );
+                    return Err("Shell actions need a command before they can run.".to_string());
                 }
                 let title = {
                     let name = action.name.trim();
@@ -1547,19 +1852,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             }
         };
 
-        let tab_id = uuid::Uuid::new_v4().to_string();
-        let title = fixed_title
-            .clone()
-            .unwrap_or_else(|| launch_config.default_title());
-        let tab = PersistedTerminalTab {
-            id: tab_id.clone(),
-            title,
-            pinned: false,
-            fixed_title,
-            provider: launch_config.provider,
-            launch_config: Some(launch_config.clone()),
-            restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
-        };
+        let (tab_id, tab) = build_terminal_tab(launch_config.clone(), fixed_title);
 
         let key = TerminalRuntimeKey {
             section_id: key_section,
@@ -1577,9 +1870,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                 cwd: None,
                 tabs: Vec::new(),
             });
-        existing_section.tabs.push(tab);
-        existing_section.active_tab_id = tab_id.clone();
-        existing_section.next_tab_id = existing_section.next_tab_id.saturating_add(1);
+        append_tab_to_section(&mut existing_section, tab);
         state
             .project_store
             .set_section_state(section_id.to_string(), existing_section);
@@ -1590,6 +1881,30 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         state.pending_tab_launches.push(TabLaunchRequest { key });
 
         Ok(tab_id)
+    }
+
+    fn save_project_action(
+        &self,
+        project_id: &str,
+        action: ProjectActionWire,
+        save_global_copy: bool,
+    ) -> Result<(), String> {
+        let action = project_action_from_wire(action)?;
+        self.with_state(|state| {
+            state
+                .project_store
+                .upsert_project_action(project_id, action, save_global_copy)
+        })
+        .ok_or_else(|| "registry state dropped".to_string())?
+    }
+
+    fn delete_project_action(&self, project_id: &str, action_id: &str) -> bool {
+        self.with_state(|state| {
+            state
+                .project_store
+                .delete_project_action(project_id, action_id)
+        })
+        .unwrap_or(false)
     }
 
     // ── Settings → Git Actions (`another-one-ojm.8`) ───────────────
@@ -1673,11 +1988,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
     }
 
-    fn set_shortcut_binding(
-        &self,
-        action_id: &str,
-        binding: &str,
-    ) -> Result<(), String> {
+    fn set_shortcut_binding(&self, action_id: &str, binding: &str) -> Result<(), String> {
         let action = parse_shortcut_action_id(action_id)
             .ok_or_else(|| format!("unknown action id `{action_id}`"))?;
         self.with_state(|state| {
@@ -1732,12 +2043,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         Ok(())
     }
 
-    fn mcp_toggle(
-        &self,
-        entry_id: &str,
-        provider_id: &str,
-        enabled: bool,
-    ) -> Result<(), String> {
+    fn mcp_toggle(&self, entry_id: &str, provider_id: &str, enabled: bool) -> Result<(), String> {
         let provider = parse_provider_id(provider_id)
             .ok_or_else(|| format!("unknown provider id `{provider_id}`"))?;
         let mut registry = another_one_core::mcp::registry::McpRegistry::load();
@@ -1787,6 +2093,243 @@ impl BridgeDaemonRegistry {
     }
 }
 
+fn insert_task_with_initial_tab(
+    state: &mut RegistryState,
+    root_project_id: String,
+    target_project_id: String,
+    kind: another_one_core::project_store::TaskKind,
+    task_name: String,
+    branch_name: String,
+    worktree_project_id: Option<String>,
+    project_path: std::path::PathBuf,
+    launch_config: TerminalLaunchConfig,
+) -> String {
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let section = SectionId::for_task(&target_project_id, &branch_name, &task_id);
+    let section_key = section.store_key();
+
+    state
+        .project_store
+        .insert_task(another_one_core::project_store::Task {
+            id: task_id,
+            name: task_name,
+            kind,
+            root_project_id,
+            target_project_id,
+            branch_name,
+            section_id: section_key.clone(),
+            worktree_project_id,
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        });
+
+    let initial_tab_id = "0".to_string();
+    let initial_tab = PersistedTerminalTab {
+        id: initial_tab_id.clone(),
+        title: launch_config.default_title(),
+        pinned: false,
+        fixed_title: None,
+        provider: launch_config.provider,
+        launch_config: Some(launch_config),
+        restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
+    };
+    state.project_store.set_section_state(
+        section_key.clone(),
+        PersistedSectionState {
+            active_tab_id: initial_tab_id.clone(),
+            next_tab_id: 1,
+            cwd: Some(project_path),
+            tabs: vec![initial_tab],
+        },
+    );
+    state.pending_tab_launches.push(TabLaunchRequest {
+        key: TerminalRuntimeKey {
+            section_id: section,
+            tab_id: initial_tab_id,
+        },
+    });
+
+    section_key
+}
+fn launch_config_for_add_agent(agent_id: &str) -> Result<TerminalLaunchConfig, String> {
+    let trimmed_agent_id = agent_id.trim();
+    another_one_core::agents::terminal_launch_config_for_selected_agent(
+        (!trimmed_agent_id.is_empty()).then_some(trimmed_agent_id),
+    )
+    .ok_or_else(|| format!("add_agent_to_section: unknown agent_id `{trimmed_agent_id}`"))
+}
+
+fn build_terminal_tab(
+    launch_config: TerminalLaunchConfig,
+    fixed_title: Option<String>,
+) -> (String, PersistedTerminalTab) {
+    let tab_id = uuid::Uuid::new_v4().to_string();
+    let title = fixed_title
+        .clone()
+        .unwrap_or_else(|| launch_config.default_title());
+    let tab = PersistedTerminalTab {
+        id: tab_id.clone(),
+        title,
+        pinned: false,
+        fixed_title,
+        provider: launch_config.provider,
+        launch_config: Some(launch_config),
+        restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
+    };
+    (tab_id, tab)
+}
+
+fn append_tab_to_section(section: &mut PersistedSectionState, tab: PersistedTerminalTab) {
+    section.active_tab_id = tab.id.clone();
+    section.tabs.push(tab);
+    section.next_tab_id = section.next_tab_id.saturating_add(1);
+}
+
+fn set_active_tab_in_section(section: &mut PersistedSectionState, tab_id: &str) -> bool {
+    if !section.tabs.iter().any(|tab| tab.id == tab_id) {
+        return false;
+    }
+    section.active_tab_id = tab_id.to_string();
+    true
+}
+
+fn close_tab_in_section(section: &mut PersistedSectionState, tab_id: &str) -> Option<String> {
+    let remove_index = section.tabs.iter().position(|tab| tab.id == tab_id)?;
+    let mut active_index = if section.tabs.is_empty() {
+        0
+    } else {
+        section
+            .tabs
+            .iter()
+            .position(|tab| tab.id == section.active_tab_id)
+            .unwrap_or_else(|| section.tabs.len().saturating_sub(1))
+    };
+    section.tabs.remove(remove_index);
+    if section.tabs.is_empty() {
+        section.active_tab_id.clear();
+        return Some(String::new());
+    }
+    if remove_index < active_index {
+        active_index = active_index.saturating_sub(1);
+    }
+    if active_index >= section.tabs.len() {
+        active_index = section.tabs.len() - 1;
+    }
+    section.active_tab_id = section.tabs[active_index].id.clone();
+    Some(section.active_tab_id.clone())
+}
+
+fn toggle_tab_pinned_in_section(section: &mut PersistedSectionState, tab_id: &str) -> Option<bool> {
+    let index = section.tabs.iter().position(|tab| tab.id == tab_id)?;
+    let pinned = !section.tabs[index].pinned;
+    section.tabs[index].pinned = pinned;
+    let active_tab_id = section.active_tab_id.clone();
+    section.tabs.sort_by_key(|tab| !tab.pinned);
+    if !section.tabs.iter().any(|tab| tab.id == active_tab_id) {
+        section.active_tab_id = section
+            .tabs
+            .last()
+            .map(|tab| tab.id.clone())
+            .unwrap_or_default();
+    }
+    Some(pinned)
+}
+
+fn selected_agent_launch_config(agent_ids: &[String]) -> TerminalLaunchConfig {
+    let selected = agent_ids
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    another_one_core::agents::terminal_launch_config_for_selected_agents(&selected)
+}
+
+fn parse_open_in_app_id(app_id: &str) -> Option<OpenInAppKind> {
+    match app_id {
+        "cursor" => Some(OpenInAppKind::Cursor),
+        "zed" => Some(OpenInAppKind::Zed),
+        "vscode" => Some(OpenInAppKind::VsCode),
+        "file-manager" => Some(OpenInAppKind::FileManager),
+        _ => None,
+    }
+}
+
+fn project_action_from_wire(action: ProjectActionWire) -> Result<ProjectAction, String> {
+    Ok(ProjectAction {
+        id: action.id,
+        name: action.name,
+        icon: map_project_action_icon_back(action.icon),
+        run_on_worktree_create: action.run_on_worktree_create,
+        scope: map_project_action_scope_back(action.scope),
+        kind: map_project_action_kind_back(action.kind)?,
+    })
+}
+
+fn map_project_action_kind_back(kind: ProjectActionKindWire) -> Result<ProjectActionKind, String> {
+    match kind {
+        ProjectActionKindWire::Shell { command } => Ok(ProjectActionKind::Shell { command }),
+        ProjectActionKindWire::Agent {
+            prompt,
+            provider,
+            model,
+            traits,
+            mode,
+            access,
+        } => Ok(ProjectActionKind::Agent {
+            prompt,
+            provider: project_action_provider_from_wire(provider)?,
+            model,
+            traits,
+            mode,
+            access: map_project_action_access_back(access),
+        }),
+    }
+}
+
+fn project_action_provider_from_wire(provider: AgentProvider) -> Result<AgentProviderKind, String> {
+    match provider {
+        AgentProvider::ClaudeCode => Ok(AgentProviderKind::ClaudeCode),
+        AgentProvider::CursorAgent => Ok(AgentProviderKind::CursorAgent),
+        AgentProvider::Codex => Ok(AgentProviderKind::Codex),
+        AgentProvider::Pi => Ok(AgentProviderKind::Pi),
+        AgentProvider::Gemini => Ok(AgentProviderKind::Gemini),
+        AgentProvider::OpenCode => Ok(AgentProviderKind::OpenCode),
+        AgentProvider::Amp => Ok(AgentProviderKind::Amp),
+        AgentProvider::RovoDev => Ok(AgentProviderKind::RovoDev),
+        AgentProvider::Forge => Ok(AgentProviderKind::Forge),
+        AgentProvider::Shell => Err("agent actions require a concrete provider".to_string()),
+    }
+}
+
+fn map_project_action_icon_back(icon: ProjectActionIconWire) -> ProjectActionIcon {
+    match icon {
+        ProjectActionIconWire::Play => ProjectActionIcon::Play,
+        ProjectActionIconWire::Test => ProjectActionIcon::Test,
+        ProjectActionIconWire::Lint => ProjectActionIcon::Lint,
+        ProjectActionIconWire::Configure => ProjectActionIcon::Configure,
+        ProjectActionIconWire::Build => ProjectActionIcon::Build,
+        ProjectActionIconWire::Debug => ProjectActionIcon::Debug,
+        ProjectActionIconWire::Agent => ProjectActionIcon::Agent,
+    }
+}
+
+fn map_project_action_scope_back(scope: ProjectActionScopeWire) -> ProjectActionScope {
+    match scope {
+        ProjectActionScopeWire::Project => ProjectActionScope::Project,
+        ProjectActionScopeWire::Global => ProjectActionScope::Global,
+    }
+}
+
+fn map_project_action_access_back(access: ProjectActionAccessWire) -> ProjectActionAccess {
+    match access {
+        ProjectActionAccessWire::Default => ProjectActionAccess::Default,
+        ProjectActionAccessWire::ReadOnly => ProjectActionAccess::ReadOnly,
+        ProjectActionAccessWire::WorkspaceWrite => ProjectActionAccess::WorkspaceWrite,
+        ProjectActionAccessWire::FullAccess => ProjectActionAccess::FullAccess,
+    }
+}
+
 /// Wire `frame::AgentProvider` → core `AgentProviderKind`. Mirror of
 /// the same-named helper in `api/local_session.rs`; the wire enum's
 /// `Shell` variant has no core counterpart (it represents "no agent,
@@ -1828,9 +2371,7 @@ fn map_check(check: another_one_core::git_actions::PullRequestCheck) -> Check {
     }
 }
 
-fn map_check_bucket(
-    bucket: another_one_core::git_actions::PullRequestCheckBucket,
-) -> CheckBucket {
+fn map_check_bucket(bucket: another_one_core::git_actions::PullRequestCheckBucket) -> CheckBucket {
     match bucket {
         another_one_core::git_actions::PullRequestCheckBucket::Pass => CheckBucket::Pass,
         another_one_core::git_actions::PullRequestCheckBucket::Fail => CheckBucket::Fail,
@@ -1876,9 +2417,7 @@ fn agent_def_to_wire(agent: &&'static another_one_core::agents::AgentDef) -> Age
 fn available_open_in_apps() -> Vec<OpenInAppKind> {
     OpenInAppKind::all()
         .into_iter()
-        .filter(|app| {
-            <CurrentPlatform as HeadlessPlatform>::is_open_in_app_available(*app)
-        })
+        .filter(|app| <CurrentPlatform as HeadlessPlatform>::is_open_in_app_available(*app))
         .collect()
 }
 
@@ -1952,9 +2491,7 @@ fn map_project_action_access(access: ProjectActionAccess) -> ProjectActionAccess
 
 // ── Settings helpers (`another-one-ojm.8`) ────────────────────────
 
-fn shortcut_action_id(
-    action: another_one_core::shortcuts::ShortcutAction,
-) -> &'static str {
+fn shortcut_action_id(action: another_one_core::shortcuts::ShortcutAction) -> &'static str {
     use another_one_core::shortcuts::ShortcutAction;
     match action {
         ShortcutAction::CycleProjects => "cycle-projects",
@@ -1968,9 +2505,7 @@ fn shortcut_action_id(
     }
 }
 
-fn parse_shortcut_action_id(
-    id: &str,
-) -> Option<another_one_core::shortcuts::ShortcutAction> {
+fn parse_shortcut_action_id(id: &str) -> Option<another_one_core::shortcuts::ShortcutAction> {
     use another_one_core::shortcuts::ShortcutAction;
     match id {
         "cycle-projects" => Some(ShortcutAction::CycleProjects),
@@ -2073,22 +2608,15 @@ fn mcp_server_to_wire(server: &another_one_core::mcp::McpServer) -> McpServerDto
         source: match server.source {
             another_one_core::mcp::McpSource::Catalog => McpSourceDto::Catalog,
             another_one_core::mcp::McpSource::Custom => McpSourceDto::Custom,
-            another_one_core::mcp::McpSource::BuiltInDaemon => {
-                McpSourceDto::BuiltInDaemon
-            }
+            another_one_core::mcp::McpSource::BuiltInDaemon => McpSourceDto::BuiltInDaemon,
         },
         transport_kind: match server.transport {
-            another_one_core::mcp::McpTransport::Stdio { .. } => {
-                McpTransportKindDto::Stdio
-            }
-            another_one_core::mcp::McpTransport::Http { .. } => {
-                McpTransportKindDto::Http
-            }
+            another_one_core::mcp::McpTransport::Stdio { .. } => McpTransportKindDto::Stdio,
+            another_one_core::mcp::McpTransport::Http { .. } => McpTransportKindDto::Http,
         },
         enabled_for,
     }
 }
-
 
 /// Flatten the bridge's `RegistryState` into the iroh wire's
 /// `frame::ProjectSummary` shape. Mirrors `flatten_project_store`
@@ -2236,6 +2764,20 @@ fn changed_file_to_wire(f: another_one_core::project_store::ChangedFile) -> Chan
     }
 }
 
+fn changed_file_from_wire(f: ChangedFileWire) -> another_one_core::project_store::ChangedFile {
+    another_one_core::project_store::ChangedFile {
+        path: f.path,
+        original_path: f.original_path,
+        staged_additions: f.staged_additions,
+        staged_deletions: f.staged_deletions,
+        unstaged_additions: f.unstaged_additions,
+        unstaged_deletions: f.unstaged_deletions,
+        index_status: f.index_status.chars().next().unwrap_or(' '),
+        worktree_status: f.worktree_status.chars().next().unwrap_or(' '),
+        untracked: f.untracked,
+    }
+}
+
 fn commit_to_wire(c: another_one_core::project_store::BranchCommit) -> CommitWire {
     CommitWire {
         id: c.id,
@@ -2304,9 +2846,8 @@ async fn run_changed_file_mutation<F>(
 where
     F: FnOnce(std::path::PathBuf) -> Result<(), String> + Send + 'static,
 {
-    let project_path = resolve_project_path(inner, project_id).ok_or_else(|| {
-        anyhow::anyhow!("{verb_label}: unknown project_id `{project_id}`")
-    })?;
+    let project_path = resolve_project_path(inner, project_id)
+        .ok_or_else(|| anyhow::anyhow!("{verb_label}: unknown project_id `{project_id}`"))?;
     let project_path_for_mutate = project_path.clone();
     tokio::task::spawn_blocking(move || mutate(project_path_for_mutate))
         .await
@@ -2314,10 +2855,7 @@ where
         .map_err(|e| anyhow::anyhow!(e))?;
     let project_path_for_read = project_path.clone();
     let git_state = tokio::task::spawn_blocking(move || {
-        another_one_core::project_store::read_project_git_state(
-            &project_path_for_read,
-            false,
-        )
+        another_one_core::project_store::read_project_git_state(&project_path_for_read, false)
     })
     .await
     .map_err(|e| anyhow::anyhow!("{verb_label} post-read join: {e}"))?;

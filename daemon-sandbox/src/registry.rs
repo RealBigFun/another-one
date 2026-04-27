@@ -15,9 +15,9 @@ use tokio::sync::broadcast;
 use crate::frame::{
     ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, BranchCompareFileWire,
     BranchCompareWire, ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView,
-    McpSettingsView, OpenInStateWire, ProjectActionWire, ProjectPagePullRequest, ProjectSummary,
-    PullRequestStatus, RecentCommitsWire, ResolvedBranchSettingsWire, ShortcutSettingsView,
-    TaskSummary, ToolbarActionOutcome,
+    McpSettingsView, OpenInSettingsViewWire, OpenInStateWire, ProjectActionWire,
+    ProjectPagePullRequest, ProjectSummary, PullRequestStatus, RecentCommitsWire,
+    ResolvedBranchSettingsWire, ShortcutSettingsView, TaskSummary, ToolbarActionOutcome,
 };
 
 /// Boxed-future return type for `DaemonRegistry` methods that are
@@ -227,8 +227,15 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// directory twice, so a typed failure is more honest than a
     /// fake-success Ack would be. Mirror of
     /// `another-one-bridge/src/api/local_session.rs::add_project`.
-    fn add_project<'a>(&'a self, _path: String) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
-        Box::pin(async { Err(anyhow::anyhow!("add_project: not supported on this registry")) })
+    fn add_project<'a>(
+        &'a self,
+        _path: String,
+    ) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "add_project: not supported on this registry"
+            ))
+        })
     }
 
     /// Remove a project from the daemon's store by id. Cascades to
@@ -500,6 +507,21 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// `another-one-ojm.5` — run one of the titlebar git actions.
     /// `action_id` strings round-trip verbatim from the wire (see
     /// [`crate::frame::Control::RunToolbarGitAction`]).
+    fn discard_all_changes<'a>(
+        &'a self,
+        _project_id: &'a str,
+        _files: Vec<ChangedFileWire>,
+    ) -> RegistryFuture<'a, anyhow::Result<(Vec<ChangedFileWire>, Vec<String>)>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "discard_all_changes: not supported on this registry"
+            ))
+        })
+    }
+
+    /// `another-one-ojm.5` — run one of the titlebar git actions.
+    /// `action_id` strings round-trip verbatim from the wire (see
+    /// [`crate::frame::Control::RunToolbarGitAction`]).
     fn run_toolbar_git_action<'a>(
         &'a self,
         _project_id: &'a str,
@@ -580,10 +602,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// Default impl returns `Ok(None)` so the standalone sandbox's
     /// in-memory shape stays self-contained. The bridge override
     /// delegates to `another_one_core::git_actions::find_pull_request_checks`.
-    fn read_pull_request_checks(
-        &self,
-        _project_id: &str,
-    ) -> Result<Option<Vec<Check>>, String> {
+    fn read_pull_request_checks(&self, _project_id: &str) -> Result<Option<Vec<Check>>, String> {
         Ok(None)
     }
 
@@ -641,6 +660,42 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         }
     }
 
+    /// Submit the new-task modal. Returns the section id the caller
+    /// should focus. Default impl returns `Err("unsupported")`.
+    fn submit_new_task(
+        &self,
+        _project_id: String,
+        _task_name: String,
+        _source_branch: String,
+        _agent_ids: Vec<String>,
+        _branch_mode_existing: bool,
+        _worktree_mode: bool,
+    ) -> RegistryFuture<'_, anyhow::Result<String>> {
+        Box::pin(async { Err(anyhow::anyhow!("unsupported on this daemon")) })
+    }
+
+    /// Append one agent tab (or plain shell when `agent_id` is
+    /// empty) to an existing section. Returns the new tab id.
+    fn add_agent_to_section(&self, _section_id: &str, _agent_id: &str) -> Result<String, String> {
+        Err("unsupported on this daemon".to_string())
+    }
+
+    /// Persist the active tab for a section.
+    fn activate_section_tab(&self, _section_id: &str, _tab_id: &str) -> Result<(), String> {
+        Err("unsupported on this daemon".to_string())
+    }
+
+    /// Remove a tab from a section. Returns the new active tab id, or
+    /// empty when the section is now tabless.
+    fn close_section_tab(&self, _section_id: &str, _tab_id: &str) -> Result<String, String> {
+        Err("unsupported on this daemon".to_string())
+    }
+
+    /// Flip one section tab's `pinned` flag and return its new value.
+    fn toggle_section_tab_pinned(&self, _section_id: &str, _tab_id: &str) -> Result<bool, String> {
+        Err("unsupported on this daemon".to_string())
+    }
+
     /// Full agent registry — every entry in `core::agents::AGENTS`
     /// paired with per-host enabled / default flags + per-agent
     /// launch-args list. Drives the Settings → Agents page on a
@@ -651,6 +706,25 @@ pub trait DaemonRegistry: Send + Sync + 'static {
             agents: Vec::new(),
             default_agent_id: None,
         }
+    }
+
+    /// Snapshot of the Settings → Open In page on the daemon host.
+    /// Default impl returns `None` for registries that do not surface
+    /// Open-In settings.
+    fn read_open_in_settings(&self) -> Option<OpenInSettingsViewWire> {
+        None
+    }
+
+    /// Toggle one Open-In app's enabled flag. Default impl returns
+    /// `Err("unsupported")`.
+    fn set_open_in_app_enabled(&self, _app_id: &str, _enabled: bool) -> Result<(), String> {
+        Err("unsupported on this daemon".to_string())
+    }
+
+    /// Launch a project directory in a host-local app. Default impl
+    /// returns `Err("unsupported")`.
+    fn open_project_in_app(&self, _project_id: &str, _app_id: &str) -> Result<(), String> {
+        Err("unsupported on this daemon".to_string())
     }
 
     /// Run one custom action inside `section_id`'s task. Returns
@@ -671,6 +745,21 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         _action_id: &str,
     ) -> Result<String, String> {
         Err("unsupported on this daemon".to_string())
+    }
+
+    /// Upsert one custom action. Default impl returns `Err("unsupported")`.
+    fn save_project_action(
+        &self,
+        _project_id: &str,
+        _action: ProjectActionWire,
+        _save_global_copy: bool,
+    ) -> Result<(), String> {
+        Err("unsupported on this daemon".to_string())
+    }
+
+    /// Delete one custom action by id. Default impl returns `false`.
+    fn delete_project_action(&self, _project_id: &str, _action_id: &str) -> bool {
+        false
     }
 
     // ── Settings → Git Actions (`another-one-ojm.8`) ───────────────
@@ -727,11 +816,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// Set / clear one shortcut binding. Empty `binding` clears the
     /// action. Returns `Err` for unknown action ids — the daemon
     /// surfaces those as `WorkerReply::Err { kind: UnknownId }`.
-    fn set_shortcut_binding(
-        &self,
-        _action_id: &str,
-        _binding: &str,
-    ) -> Result<(), String> {
+    fn set_shortcut_binding(&self, _action_id: &str, _binding: &str) -> Result<(), String> {
         Err("not supported on sandbox".to_string())
     }
 

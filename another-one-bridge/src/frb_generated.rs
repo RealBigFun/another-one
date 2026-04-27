@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2098408242;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 416376882;
 
 // Section: executor
 
@@ -47,6 +47,134 @@ flutter_rust_bridge::frb_generated_default_handler!();
 
 // Section: wire_funcs
 
+fn wire__crate__api__iroh_client__IrohSession_activate_section_tab_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_activate_section_tab",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_section_id = <String>::sse_decode(&mut deserializer);
+            let api_tab_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::activate_section_tab(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_section_id,
+                            api_tab_id,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_add_agent_to_section_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_add_agent_to_section",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_section_id = <String>::sse_decode(&mut deserializer);
+            let api_agent_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::add_agent_to_section(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_section_id,
+                            api_agent_id,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__iroh_client__IrohSession_add_project_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -220,6 +348,70 @@ fn wire__crate__api__iroh_client__IrohSession_close_impl(
                         let output_ok = Result::<_, ()>::Ok({
                             crate::api::iroh_client::IrohSession::close(&*api_that_guard).await;
                         })?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_close_section_tab_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_close_section_tab",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_section_id = <String>::sse_decode(&mut deserializer);
+            let api_tab_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::close_section_tab(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_section_id,
+                            api_tab_id,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -434,6 +626,71 @@ fn wire__crate__api__iroh_client__IrohSession_create_worktree_task_impl(
         },
     )
 }
+fn wire__crate__api__iroh_client__IrohSession_delete_project_action_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_delete_project_action",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_action_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok =
+                            crate::api::iroh_client::IrohSession::delete_project_action(
+                                &*api_that_guard,
+                                api_request_id,
+                                api_project_id,
+                                api_action_id,
+                            )
+                            .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -483,6 +740,71 @@ fn wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
                         let output_ok =
                             crate::api::iroh_client::IrohSession::detach_tab(&*api_that_guard)
                                 .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_discard_all_changes_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_discard_all_changes",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_files =
+                <Vec<crate::api::local_session::ChangedFileDto>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::discard_all_changes(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_files,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -1171,6 +1493,70 @@ fn wire__crate__api__iroh_client__IrohSession_open_in_state_impl(
         },
     )
 }
+fn wire__crate__api__iroh_client__IrohSession_open_project_in_app_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_open_project_in_app",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_app_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::open_project_in_app(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_app_id,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__iroh_client__IrohSession_primary_branch_for_project_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1784,6 +2170,67 @@ fn wire__crate__api__iroh_client__IrohSession_read_mcp_settings_impl(
                             api_request_id,
                         )
                         .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_read_open_in_settings_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_read_open_in_settings",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok =
+                            crate::api::iroh_client::IrohSession::read_open_in_settings(
+                                &*api_that_guard,
+                                api_request_id,
+                            )
+                            .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -2736,6 +3183,73 @@ fn wire__crate__api__iroh_client__IrohSession_run_toolbar_git_action_impl(
         },
     )
 }
+fn wire__crate__api__iroh_client__IrohSession_save_project_action_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_save_project_action",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_action =
+                <crate::api::local_session::ProjectActionDto>::sse_decode(&mut deserializer);
+            let api_save_global_copy = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::save_project_action(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_action,
+                            api_save_global_copy,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__iroh_client__IrohSession_send_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2977,6 +3491,71 @@ fn wire__crate__api__iroh_client__IrohSession_set_git_pr_script_impl(
                             api_script,
                         )
                         .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_set_open_in_app_enabled_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_set_open_in_app_enabled",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_app_id = <String>::sse_decode(&mut deserializer);
+            let api_enabled = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok =
+                            crate::api::iroh_client::IrohSession::set_open_in_app_enabled(
+                                &*api_that_guard,
+                                api_request_id,
+                                api_app_id,
+                                api_enabled,
+                            )
+                            .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -3303,6 +3882,78 @@ fn wire__crate__api__iroh_client__IrohSession_stage_changed_file_impl(
         },
     )
 }
+fn wire__crate__api__iroh_client__IrohSession_submit_new_task_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_submit_new_task",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_project_id = <String>::sse_decode(&mut deserializer);
+            let api_task_name = <String>::sse_decode(&mut deserializer);
+            let api_source_branch = <String>::sse_decode(&mut deserializer);
+            let api_agent_ids = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_branch_mode_existing = <bool>::sse_decode(&mut deserializer);
+            let api_worktree_mode = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = crate::api::iroh_client::IrohSession::submit_new_task(
+                            &*api_that_guard,
+                            api_request_id,
+                            api_project_id,
+                            api_task_name,
+                            api_source_branch,
+                            api_agent_ids,
+                            api_branch_mode_existing,
+                            api_worktree_mode,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__iroh_client__IrohSession_subscribe_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3484,6 +4135,71 @@ fn wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
                             api_rows,
                         )
                         .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__iroh_client__IrohSession_toggle_section_tab_pinned_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "IrohSession_toggle_section_tab_pinned",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_request_id = <u64>::sse_decode(&mut deserializer);
+            let api_section_id = <String>::sse_decode(&mut deserializer);
+            let api_tab_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok =
+                            crate::api::iroh_client::IrohSession::toggle_section_tab_pinned(
+                                &*api_that_guard,
+                                api_request_id,
+                                api_section_id,
+                                api_tab_id,
+                            )
+                            .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -5993,13 +6709,22 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                 };
             }
             25 => {
+                let mut var_changedFiles =
+                    <Vec<crate::api::local_session::ChangedFileDto>>::sse_decode(deserializer);
+                let mut var_failures = <Vec<String>>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::DiscardAllChangesAck {
+                    changed_files: var_changedFiles,
+                    failures: var_failures,
+                };
+            }
+            26 => {
                 let mut var_outcome =
                     <crate::api::local_session::ToolbarActionOutcomeDto>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::ToolbarActionOutcomeAck {
                     outcome: var_outcome,
                 };
             }
-            26 => {
+            27 => {
                 let mut var_sectionId = <String>::sse_decode(deserializer);
                 let mut var_projects =
                     <Vec<crate::api::iroh_client::ProjectSummary>>::sse_decode(deserializer);
@@ -6008,7 +6733,7 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                     projects: var_projects,
                 };
             }
-            27 => {
+            28 => {
                 let mut var_sectionId = <String>::sse_decode(deserializer);
                 let mut var_projects =
                     <Vec<crate::api::iroh_client::ProjectSummary>>::sse_decode(deserializer);
@@ -6017,7 +6742,7 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                     projects: var_projects,
                 };
             }
-            28 => {
+            29 => {
                 let mut var_status =
                     <Option<crate::api::local_session::PullRequestStatusDto>>::sse_decode(
                         deserializer,
@@ -6026,14 +6751,14 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                     status: var_status,
                 };
             }
-            29 => {
+            30 => {
                 let mut var_checks =
                     <Option<Vec<crate::api::local_session::CheckDto>>>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::PullRequestChecksAck {
                     checks: var_checks,
                 };
             }
-            30 => {
+            31 => {
                 let mut var_prs =
                     <Option<Vec<crate::api::local_session::ProjectPagePullRequestDto>>>::sse_decode(
                         deserializer,
@@ -6042,90 +6767,137 @@ impl SseDecode for crate::api::iroh_client::WorkerReply {
                     prs: var_prs,
                 };
             }
-            31 => {
+            32 => {
                 let mut var_state =
                     <crate::api::local_session::OpenInState>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::OpenInStateAck { state: var_state };
             }
-            32 => {
+            33 => {
                 let mut var_actions =
                     <Vec<crate::api::local_session::ProjectActionDto>>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::ProjectActionsAck {
                     actions: var_actions,
                 };
             }
-            33 => {
+            34 => {
                 let mut var_view =
                     <crate::api::local_session::EnabledAgentsView>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::EnabledAgentsAck { view: var_view };
             }
-            34 => {
+            35 => {
+                let mut var_sectionId = <String>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::SubmitNewTaskAck {
+                    section_id: var_sectionId,
+                };
+            }
+            36 => {
+                let mut var_tabId = <String>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::AddAgentToSectionAck {
+                    tab_id: var_tabId,
+                };
+            }
+            37 => {
+                return crate::api::iroh_client::WorkerReply::ActivateSectionTabAck;
+            }
+            38 => {
+                let mut var_activeTabId = <String>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::CloseSectionTabAck {
+                    active_tab_id: var_activeTabId,
+                };
+            }
+            39 => {
+                let mut var_pinned = <bool>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::ToggleSectionTabPinnedAck {
+                    pinned: var_pinned,
+                };
+            }
+            40 => {
                 let mut var_view =
                     <crate::api::local_session::AgentSettingsView>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::AgentSettingsAck { view: var_view };
             }
-            35 => {
+            41 => {
+                let mut var_view =
+                    <crate::api::local_session::OpenInSettingsView>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::OpenInSettingsAck { view: var_view };
+            }
+            42 => {
+                return crate::api::iroh_client::WorkerReply::SetOpenInAppEnabledAck;
+            }
+            43 => {
+                return crate::api::iroh_client::WorkerReply::OpenProjectInAppAck;
+            }
+            44 => {
                 let mut var_tabId = <String>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::RunProjectActionAck {
                     tab_id: var_tabId,
                 };
             }
-            36 => {
+            45 => {
+                return crate::api::iroh_client::WorkerReply::SaveProjectActionAck;
+            }
+            46 => {
+                let mut var_deleted = <bool>::sse_decode(deserializer);
+                return crate::api::iroh_client::WorkerReply::DeleteProjectActionAck {
+                    deleted: var_deleted,
+                };
+            }
+            47 => {
                 let mut var_view =
                     <crate::api::local_session::GitActionScriptsView>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::GitActionScriptsAck {
                     view: var_view,
                 };
             }
-            37 => {
+            48 => {
                 let mut var_changed = <bool>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::SetGitCommitScriptAck {
                     changed: var_changed,
                 };
             }
-            38 => {
+            49 => {
                 let mut var_changed = <bool>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::ResetGitCommitScriptAck {
                     changed: var_changed,
                 };
             }
-            39 => {
+            50 => {
                 let mut var_changed = <bool>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::SetGitPrScriptAck {
                     changed: var_changed,
                 };
             }
-            40 => {
+            51 => {
                 let mut var_changed = <bool>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::ResetGitPrScriptAck {
                     changed: var_changed,
                 };
             }
-            41 => {
+            52 => {
                 let mut var_view =
                     <crate::api::local_session::ShortcutSettingsView>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::ShortcutSettingsAck {
                     view: var_view,
                 };
             }
-            42 => {
+            53 => {
                 return crate::api::iroh_client::WorkerReply::SetShortcutBindingAck;
             }
-            43 => {
+            54 => {
                 return crate::api::iroh_client::WorkerReply::ResetShortcutBindingAck;
             }
-            44 => {
+            55 => {
                 let mut var_view =
                     <crate::api::local_session::McpSettingsView>::sse_decode(deserializer);
                 return crate::api::iroh_client::WorkerReply::McpSettingsAck { view: var_view };
             }
-            45 => {
+            56 => {
                 return crate::api::iroh_client::WorkerReply::McpAddFromCatalogAck;
             }
-            46 => {
+            57 => {
                 return crate::api::iroh_client::WorkerReply::McpToggleAck;
             }
-            47 => {
+            58 => {
                 return crate::api::iroh_client::WorkerReply::McpRemoveAck;
             }
             _ => {
@@ -6156,413 +6928,479 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        1 => wire__crate__api__iroh_client__IrohSession_add_project_impl(
+        1 => wire__crate__api__iroh_client__IrohSession_activate_section_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        2 => wire__crate__api__iroh_client__IrohSession_attach_tab_impl(
+        2 => wire__crate__api__iroh_client__IrohSession_add_agent_to_section_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        3 => {
+        3 => wire__crate__api__iroh_client__IrohSession_add_project_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        4 => wire__crate__api__iroh_client__IrohSession_attach_tab_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        5 => {
             wire__crate__api__iroh_client__IrohSession_close_impl(port, ptr, rust_vec_len, data_len)
         }
-        4 => wire__crate__api__iroh_client__IrohSession_create_branch_impl(
+        6 => wire__crate__api__iroh_client__IrohSession_close_section_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        5 => wire__crate__api__iroh_client__IrohSession_create_review_task_impl(
+        7 => wire__crate__api__iroh_client__IrohSession_create_branch_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        6 => wire__crate__api__iroh_client__IrohSession_create_worktree_task_impl(
+        8 => wire__crate__api__iroh_client__IrohSession_create_review_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        7 => wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
+        9 => wire__crate__api__iroh_client__IrohSession_create_worktree_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        8 => wire__crate__api__iroh_client__IrohSession_discard_changed_file_impl(
+        10 => wire__crate__api__iroh_client__IrohSession_delete_project_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        9 => wire__crate__api__iroh_client__IrohSession_find_project_pull_requests_impl(
+        11 => wire__crate__api__iroh_client__IrohSession_detach_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        10 => wire__crate__api__iroh_client__IrohSession_find_pull_request_status_impl(
+        12 => wire__crate__api__iroh_client__IrohSession_discard_all_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        11 => wire__crate__api__iroh_client__IrohSession_launch_tab_impl(
+        13 => wire__crate__api__iroh_client__IrohSession_discard_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__iroh_client__IrohSession_list_project_actions_impl(
+        14 => wire__crate__api__iroh_client__IrohSession_find_project_pull_requests_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        13 => wire__crate__api__iroh_client__IrohSession_list_projects_impl(
+        15 => wire__crate__api__iroh_client__IrohSession_find_pull_request_status_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        14 => wire__crate__api__iroh_client__IrohSession_mcp_add_from_catalog_impl(
+        16 => wire__crate__api__iroh_client__IrohSession_launch_tab_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        15 => wire__crate__api__iroh_client__IrohSession_mcp_remove_impl(
+        17 => wire__crate__api__iroh_client__IrohSession_list_project_actions_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__iroh_client__IrohSession_mcp_toggle_impl(
+        18 => wire__crate__api__iroh_client__IrohSession_list_projects_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => wire__crate__api__iroh_client__IrohSession_next_request_id_impl(
+        19 => wire__crate__api__iroh_client__IrohSession_mcp_add_from_catalog_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__iroh_client__IrohSession_open_in_state_impl(
+        20 => wire__crate__api__iroh_client__IrohSession_mcp_remove_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__iroh_client__IrohSession_primary_branch_for_project_impl(
+        21 => wire__crate__api__iroh_client__IrohSession_mcp_toggle_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__iroh_client__IrohSession_read_active_git_state_impl(
+        22 => wire__crate__api__iroh_client__IrohSession_next_request_id_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        21 => wire__crate__api__iroh_client__IrohSession_read_agent_settings_impl(
+        23 => wire__crate__api__iroh_client__IrohSession_open_in_state_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        22 => wire__crate__api__iroh_client__IrohSession_read_branch_compare_state_impl(
+        24 => wire__crate__api__iroh_client__IrohSession_open_project_in_app_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__iroh_client__IrohSession_read_branch_settings_impl(
+        25 => wire__crate__api__iroh_client__IrohSession_primary_branch_for_project_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__iroh_client__IrohSession_read_changed_files_impl(
+        26 => wire__crate__api__iroh_client__IrohSession_read_active_git_state_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => wire__crate__api__iroh_client__IrohSession_read_commit_file_changes_impl(
+        27 => wire__crate__api__iroh_client__IrohSession_read_agent_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__iroh_client__IrohSession_read_enabled_agents_impl(
+        28 => wire__crate__api__iroh_client__IrohSession_read_branch_compare_state_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        27 => wire__crate__api__iroh_client__IrohSession_read_git_action_scripts_impl(
+        29 => wire__crate__api__iroh_client__IrohSession_read_branch_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        28 => wire__crate__api__iroh_client__IrohSession_read_mcp_settings_impl(
+        30 => wire__crate__api__iroh_client__IrohSession_read_changed_files_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        29 => wire__crate__api__iroh_client__IrohSession_read_project_branches_impl(
+        31 => wire__crate__api__iroh_client__IrohSession_read_commit_file_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        30 => wire__crate__api__iroh_client__IrohSession_read_project_github_url_impl(
+        32 => wire__crate__api__iroh_client__IrohSession_read_enabled_agents_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        31 => wire__crate__api__iroh_client__IrohSession_read_pull_request_checks_impl(
+        33 => wire__crate__api__iroh_client__IrohSession_read_git_action_scripts_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        32 => wire__crate__api__iroh_client__IrohSession_read_recent_commits_impl(
+        34 => wire__crate__api__iroh_client__IrohSession_read_mcp_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        33 => wire__crate__api__iroh_client__IrohSession_read_shortcut_settings_impl(
+        35 => wire__crate__api__iroh_client__IrohSession_read_open_in_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        34 => wire__crate__api__iroh_client__IrohSession_remove_project_impl(
+        36 => wire__crate__api__iroh_client__IrohSession_read_project_branches_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        35 => wire__crate__api__iroh_client__IrohSession_remove_task_impl(
+        37 => wire__crate__api__iroh_client__IrohSession_read_project_github_url_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        36 => wire__crate__api__iroh_client__IrohSession_rename_task_impl(
+        38 => wire__crate__api__iroh_client__IrohSession_read_pull_request_checks_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        37 => wire__crate__api__iroh_client__IrohSession_repo_default_commit_action_impl(
+        39 => wire__crate__api__iroh_client__IrohSession_read_recent_commits_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__iroh_client__IrohSession_reset_git_commit_script_impl(
+        40 => wire__crate__api__iroh_client__IrohSession_read_shortcut_settings_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__iroh_client__IrohSession_reset_git_pr_script_impl(
+        41 => wire__crate__api__iroh_client__IrohSession_remove_project_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        40 => wire__crate__api__iroh_client__IrohSession_reset_shortcut_binding_impl(
+        42 => wire__crate__api__iroh_client__IrohSession_remove_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        41 => wire__crate__api__iroh_client__IrohSession_resize_impl(
+        43 => wire__crate__api__iroh_client__IrohSession_rename_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        42 => wire__crate__api__iroh_client__IrohSession_run_project_action_impl(
+        44 => wire__crate__api__iroh_client__IrohSession_repo_default_commit_action_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        43 => wire__crate__api__iroh_client__IrohSession_run_toolbar_git_action_impl(
+        45 => wire__crate__api__iroh_client__IrohSession_reset_git_commit_script_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        44 => {
+        46 => wire__crate__api__iroh_client__IrohSession_reset_git_pr_script_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        47 => wire__crate__api__iroh_client__IrohSession_reset_shortcut_binding_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        48 => wire__crate__api__iroh_client__IrohSession_resize_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        49 => wire__crate__api__iroh_client__IrohSession_run_project_action_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        50 => wire__crate__api__iroh_client__IrohSession_run_toolbar_git_action_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        51 => wire__crate__api__iroh_client__IrohSession_save_project_action_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        52 => {
             wire__crate__api__iroh_client__IrohSession_send_impl(port, ptr, rust_vec_len, data_len)
         }
-        45 => wire__crate__api__iroh_client__IrohSession_set_branch_setting_impl(
+        53 => wire__crate__api__iroh_client__IrohSession_set_branch_setting_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        46 => wire__crate__api__iroh_client__IrohSession_set_git_commit_script_impl(
+        54 => wire__crate__api__iroh_client__IrohSession_set_git_commit_script_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        47 => wire__crate__api__iroh_client__IrohSession_set_git_pr_script_impl(
+        55 => wire__crate__api__iroh_client__IrohSession_set_git_pr_script_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        48 => wire__crate__api__iroh_client__IrohSession_set_shortcut_binding_impl(
+        56 => wire__crate__api__iroh_client__IrohSession_set_open_in_app_enabled_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        49 => wire__crate__api__iroh_client__IrohSession_set_task_pinned_impl(
+        57 => wire__crate__api__iroh_client__IrohSession_set_shortcut_binding_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        50 => wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
+        58 => wire__crate__api__iroh_client__IrohSession_set_task_pinned_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__iroh_client__IrohSession_stage_all_changes_impl(
+        59 => wire__crate__api__iroh_client__IrohSession_slugify_branch_name_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => wire__crate__api__iroh_client__IrohSession_stage_changed_file_impl(
+        60 => wire__crate__api__iroh_client__IrohSession_stage_all_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        53 => wire__crate__api__iroh_client__IrohSession_subscribe_impl(
+        61 => wire__crate__api__iroh_client__IrohSession_stage_changed_file_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        54 => wire__crate__api__iroh_client__IrohSession_subscribe_worker_replies_impl(
+        62 => wire__crate__api__iroh_client__IrohSession_submit_new_task_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
+        63 => wire__crate__api__iroh_client__IrohSession_subscribe_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        56 => wire__crate__api__iroh_client__IrohSession_unstage_all_changes_impl(
+        64 => wire__crate__api__iroh_client__IrohSession_subscribe_worker_replies_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        57 => wire__crate__api__iroh_client__IrohSession_unstage_changed_file_impl(
+        65 => wire__crate__api__iroh_client__IrohSession_tab_resize_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        59 => wire__crate__api__embedded_daemon__await_loopback_session_addr_impl(
+        66 => wire__crate__api__iroh_client__IrohSession_toggle_section_tab_pinned_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        60 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+        67 => wire__crate__api__iroh_client__IrohSession_unstage_all_changes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => {
+        68 => wire__crate__api__iroh_client__IrohSession_unstage_changed_file_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        69 => wire__crate__api__embedded_daemon__await_loopback_session_addr_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        70 => wire__crate__api__embedded_daemon__boot_embedded_daemon_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        71 => {
             wire__crate__api__terminal_engine__engine_close_impl(port, ptr, rust_vec_len, data_len)
         }
-        62 => wire__crate__api__terminal_engine__engine_encode_input_impl(
+        72 => wire__crate__api__terminal_engine__engine_encode_input_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => {
+        73 => {
             wire__crate__api__terminal_engine__engine_open_impl(port, ptr, rust_vec_len, data_len)
         }
-        64 => {
+        74 => {
             wire__crate__api__terminal_engine__engine_resize_impl(port, ptr, rust_vec_len, data_len)
         }
-        65 => wire__crate__api__terminal_engine__engine_revision_impl(
+        75 => wire__crate__api__terminal_engine__engine_revision_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        66 => wire__crate__api__terminal_engine__engine_snapshot_impl(
+        76 => wire__crate__api__terminal_engine__engine_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__terminal_engine__engine_write_pty_impl(
+        77 => wire__crate__api__terminal_engine__engine_write_pty_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
-        69 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__embedded_daemon__loopback_session_addr_impl(
+        78 => wire__crate__api__iroh_client__init_app_impl(port, ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__iroh_client__iroh_connect_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__embedded_daemon__loopback_session_addr_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        71 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
-        72 => wire__crate__api__resources__read_app_resource_sample_impl(
+        81 => wire__crate__api__pair__pairing_info_impl(port, ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__resources__read_app_resource_sample_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
+        83 => wire__crate__api__build_info__read_build_info_impl(port, ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__resources__read_resource_usage_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => {
+        85 => {
             wire__crate__api__pair__regenerate_local_pairing_impl(port, ptr, rust_vec_len, data_len)
         }
-        76 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
+        86 => wire__crate__api__iroh_client__set_data_dir_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -7910,19 +8748,19 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::WorkerReply {
             crate::api::iroh_client::WorkerReply::DiscardChangedFileAck { changed_files } => {
                 [24.into_dart(), changed_files.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ToolbarActionOutcomeAck { outcome } => {
-                [25.into_dart(), outcome.into_into_dart().into_dart()].into_dart()
-            }
-            crate::api::iroh_client::WorkerReply::CreateBranchAck {
-                section_id,
-                projects,
+            crate::api::iroh_client::WorkerReply::DiscardAllChangesAck {
+                changed_files,
+                failures,
             } => [
-                26.into_dart(),
-                section_id.into_into_dart().into_dart(),
-                projects.into_into_dart().into_dart(),
+                25.into_dart(),
+                changed_files.into_into_dart().into_dart(),
+                failures.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::api::iroh_client::WorkerReply::CreateReviewTaskAck {
+            crate::api::iroh_client::WorkerReply::ToolbarActionOutcomeAck { outcome } => {
+                [26.into_dart(), outcome.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::CreateBranchAck {
                 section_id,
                 projects,
             } => [
@@ -7931,62 +8769,101 @@ impl flutter_rust_bridge::IntoDart for crate::api::iroh_client::WorkerReply {
                 projects.into_into_dart().into_dart(),
             ]
             .into_dart(),
+            crate::api::iroh_client::WorkerReply::CreateReviewTaskAck {
+                section_id,
+                projects,
+            } => [
+                28.into_dart(),
+                section_id.into_into_dart().into_dart(),
+                projects.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
             crate::api::iroh_client::WorkerReply::PullRequestStatusAck { status } => {
-                [28.into_dart(), status.into_into_dart().into_dart()].into_dart()
+                [29.into_dart(), status.into_into_dart().into_dart()].into_dart()
             }
             crate::api::iroh_client::WorkerReply::PullRequestChecksAck { checks } => {
-                [29.into_dart(), checks.into_into_dart().into_dart()].into_dart()
+                [30.into_dart(), checks.into_into_dart().into_dart()].into_dart()
             }
             crate::api::iroh_client::WorkerReply::ProjectPullRequestsAck { prs } => {
-                [30.into_dart(), prs.into_into_dart().into_dart()].into_dart()
+                [31.into_dart(), prs.into_into_dart().into_dart()].into_dart()
             }
             crate::api::iroh_client::WorkerReply::OpenInStateAck { state } => {
-                [31.into_dart(), state.into_into_dart().into_dart()].into_dart()
+                [32.into_dart(), state.into_into_dart().into_dart()].into_dart()
             }
             crate::api::iroh_client::WorkerReply::ProjectActionsAck { actions } => {
-                [32.into_dart(), actions.into_into_dart().into_dart()].into_dart()
+                [33.into_dart(), actions.into_into_dart().into_dart()].into_dart()
             }
             crate::api::iroh_client::WorkerReply::EnabledAgentsAck { view } => {
-                [33.into_dart(), view.into_into_dart().into_dart()].into_dart()
-            }
-            crate::api::iroh_client::WorkerReply::AgentSettingsAck { view } => {
                 [34.into_dart(), view.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::RunProjectActionAck { tab_id } => {
-                [35.into_dart(), tab_id.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::SubmitNewTaskAck { section_id } => {
+                [35.into_dart(), section_id.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::GitActionScriptsAck { view } => {
-                [36.into_dart(), view.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::AddAgentToSectionAck { tab_id } => {
+                [36.into_dart(), tab_id.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::SetGitCommitScriptAck { changed } => {
-                [37.into_dart(), changed.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::ActivateSectionTabAck => {
+                [37.into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ResetGitCommitScriptAck { changed } => {
-                [38.into_dart(), changed.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::CloseSectionTabAck { active_tab_id } => {
+                [38.into_dart(), active_tab_id.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::SetGitPrScriptAck { changed } => {
-                [39.into_dart(), changed.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::ToggleSectionTabPinnedAck { pinned } => {
+                [39.into_dart(), pinned.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ResetGitPrScriptAck { changed } => {
-                [40.into_dart(), changed.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::AgentSettingsAck { view } => {
+                [40.into_dart(), view.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ShortcutSettingsAck { view } => {
+            crate::api::iroh_client::WorkerReply::OpenInSettingsAck { view } => {
                 [41.into_dart(), view.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::SetShortcutBindingAck => {
+            crate::api::iroh_client::WorkerReply::SetOpenInAppEnabledAck => {
                 [42.into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::ResetShortcutBindingAck => {
+            crate::api::iroh_client::WorkerReply::OpenProjectInAppAck => {
                 [43.into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::McpSettingsAck { view } => {
-                [44.into_dart(), view.into_into_dart().into_dart()].into_dart()
+            crate::api::iroh_client::WorkerReply::RunProjectActionAck { tab_id } => {
+                [44.into_dart(), tab_id.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::McpAddFromCatalogAck => {
+            crate::api::iroh_client::WorkerReply::SaveProjectActionAck => {
                 [45.into_dart()].into_dart()
             }
-            crate::api::iroh_client::WorkerReply::McpToggleAck => [46.into_dart()].into_dart(),
-            crate::api::iroh_client::WorkerReply::McpRemoveAck => [47.into_dart()].into_dart(),
+            crate::api::iroh_client::WorkerReply::DeleteProjectActionAck { deleted } => {
+                [46.into_dart(), deleted.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::GitActionScriptsAck { view } => {
+                [47.into_dart(), view.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::SetGitCommitScriptAck { changed } => {
+                [48.into_dart(), changed.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::ResetGitCommitScriptAck { changed } => {
+                [49.into_dart(), changed.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::SetGitPrScriptAck { changed } => {
+                [50.into_dart(), changed.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::ResetGitPrScriptAck { changed } => {
+                [51.into_dart(), changed.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::ShortcutSettingsAck { view } => {
+                [52.into_dart(), view.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::SetShortcutBindingAck => {
+                [53.into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::ResetShortcutBindingAck => {
+                [54.into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::McpSettingsAck { view } => {
+                [55.into_dart(), view.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::McpAddFromCatalogAck => {
+                [56.into_dart()].into_dart()
+            }
+            crate::api::iroh_client::WorkerReply::McpToggleAck => [57.into_dart()].into_dart(),
+            crate::api::iroh_client::WorkerReply::McpRemoveAck => [58.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -9324,8 +10201,19 @@ impl SseEncode for crate::api::iroh_client::WorkerReply {
                     serializer,
                 );
             }
-            crate::api::iroh_client::WorkerReply::ToolbarActionOutcomeAck { outcome } => {
+            crate::api::iroh_client::WorkerReply::DiscardAllChangesAck {
+                changed_files,
+                failures,
+            } => {
                 <i32>::sse_encode(25, serializer);
+                <Vec<crate::api::local_session::ChangedFileDto>>::sse_encode(
+                    changed_files,
+                    serializer,
+                );
+                <Vec<String>>::sse_encode(failures, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::ToolbarActionOutcomeAck { outcome } => {
+                <i32>::sse_encode(26, serializer);
                 <crate::api::local_session::ToolbarActionOutcomeDto>::sse_encode(
                     outcome, serializer,
                 );
@@ -9334,7 +10222,7 @@ impl SseEncode for crate::api::iroh_client::WorkerReply {
                 section_id,
                 projects,
             } => {
-                <i32>::sse_encode(26, serializer);
+                <i32>::sse_encode(27, serializer);
                 <String>::sse_encode(section_id, serializer);
                 <Vec<crate::api::iroh_client::ProjectSummary>>::sse_encode(projects, serializer);
             }
@@ -9342,88 +10230,124 @@ impl SseEncode for crate::api::iroh_client::WorkerReply {
                 section_id,
                 projects,
             } => {
-                <i32>::sse_encode(27, serializer);
+                <i32>::sse_encode(28, serializer);
                 <String>::sse_encode(section_id, serializer);
                 <Vec<crate::api::iroh_client::ProjectSummary>>::sse_encode(projects, serializer);
             }
             crate::api::iroh_client::WorkerReply::PullRequestStatusAck { status } => {
-                <i32>::sse_encode(28, serializer);
+                <i32>::sse_encode(29, serializer);
                 <Option<crate::api::local_session::PullRequestStatusDto>>::sse_encode(
                     status, serializer,
                 );
             }
             crate::api::iroh_client::WorkerReply::PullRequestChecksAck { checks } => {
-                <i32>::sse_encode(29, serializer);
+                <i32>::sse_encode(30, serializer);
                 <Option<Vec<crate::api::local_session::CheckDto>>>::sse_encode(checks, serializer);
             }
             crate::api::iroh_client::WorkerReply::ProjectPullRequestsAck { prs } => {
-                <i32>::sse_encode(30, serializer);
+                <i32>::sse_encode(31, serializer);
                 <Option<Vec<crate::api::local_session::ProjectPagePullRequestDto>>>::sse_encode(
                     prs, serializer,
                 );
             }
             crate::api::iroh_client::WorkerReply::OpenInStateAck { state } => {
-                <i32>::sse_encode(31, serializer);
+                <i32>::sse_encode(32, serializer);
                 <crate::api::local_session::OpenInState>::sse_encode(state, serializer);
             }
             crate::api::iroh_client::WorkerReply::ProjectActionsAck { actions } => {
-                <i32>::sse_encode(32, serializer);
+                <i32>::sse_encode(33, serializer);
                 <Vec<crate::api::local_session::ProjectActionDto>>::sse_encode(actions, serializer);
             }
             crate::api::iroh_client::WorkerReply::EnabledAgentsAck { view } => {
-                <i32>::sse_encode(33, serializer);
+                <i32>::sse_encode(34, serializer);
                 <crate::api::local_session::EnabledAgentsView>::sse_encode(view, serializer);
             }
-            crate::api::iroh_client::WorkerReply::AgentSettingsAck { view } => {
-                <i32>::sse_encode(34, serializer);
-                <crate::api::local_session::AgentSettingsView>::sse_encode(view, serializer);
-            }
-            crate::api::iroh_client::WorkerReply::RunProjectActionAck { tab_id } => {
+            crate::api::iroh_client::WorkerReply::SubmitNewTaskAck { section_id } => {
                 <i32>::sse_encode(35, serializer);
+                <String>::sse_encode(section_id, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::AddAgentToSectionAck { tab_id } => {
+                <i32>::sse_encode(36, serializer);
                 <String>::sse_encode(tab_id, serializer);
             }
+            crate::api::iroh_client::WorkerReply::ActivateSectionTabAck => {
+                <i32>::sse_encode(37, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::CloseSectionTabAck { active_tab_id } => {
+                <i32>::sse_encode(38, serializer);
+                <String>::sse_encode(active_tab_id, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::ToggleSectionTabPinnedAck { pinned } => {
+                <i32>::sse_encode(39, serializer);
+                <bool>::sse_encode(pinned, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::AgentSettingsAck { view } => {
+                <i32>::sse_encode(40, serializer);
+                <crate::api::local_session::AgentSettingsView>::sse_encode(view, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::OpenInSettingsAck { view } => {
+                <i32>::sse_encode(41, serializer);
+                <crate::api::local_session::OpenInSettingsView>::sse_encode(view, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::SetOpenInAppEnabledAck => {
+                <i32>::sse_encode(42, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::OpenProjectInAppAck => {
+                <i32>::sse_encode(43, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::RunProjectActionAck { tab_id } => {
+                <i32>::sse_encode(44, serializer);
+                <String>::sse_encode(tab_id, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::SaveProjectActionAck => {
+                <i32>::sse_encode(45, serializer);
+            }
+            crate::api::iroh_client::WorkerReply::DeleteProjectActionAck { deleted } => {
+                <i32>::sse_encode(46, serializer);
+                <bool>::sse_encode(deleted, serializer);
+            }
             crate::api::iroh_client::WorkerReply::GitActionScriptsAck { view } => {
-                <i32>::sse_encode(36, serializer);
+                <i32>::sse_encode(47, serializer);
                 <crate::api::local_session::GitActionScriptsView>::sse_encode(view, serializer);
             }
             crate::api::iroh_client::WorkerReply::SetGitCommitScriptAck { changed } => {
-                <i32>::sse_encode(37, serializer);
+                <i32>::sse_encode(48, serializer);
                 <bool>::sse_encode(changed, serializer);
             }
             crate::api::iroh_client::WorkerReply::ResetGitCommitScriptAck { changed } => {
-                <i32>::sse_encode(38, serializer);
+                <i32>::sse_encode(49, serializer);
                 <bool>::sse_encode(changed, serializer);
             }
             crate::api::iroh_client::WorkerReply::SetGitPrScriptAck { changed } => {
-                <i32>::sse_encode(39, serializer);
+                <i32>::sse_encode(50, serializer);
                 <bool>::sse_encode(changed, serializer);
             }
             crate::api::iroh_client::WorkerReply::ResetGitPrScriptAck { changed } => {
-                <i32>::sse_encode(40, serializer);
+                <i32>::sse_encode(51, serializer);
                 <bool>::sse_encode(changed, serializer);
             }
             crate::api::iroh_client::WorkerReply::ShortcutSettingsAck { view } => {
-                <i32>::sse_encode(41, serializer);
+                <i32>::sse_encode(52, serializer);
                 <crate::api::local_session::ShortcutSettingsView>::sse_encode(view, serializer);
             }
             crate::api::iroh_client::WorkerReply::SetShortcutBindingAck => {
-                <i32>::sse_encode(42, serializer);
+                <i32>::sse_encode(53, serializer);
             }
             crate::api::iroh_client::WorkerReply::ResetShortcutBindingAck => {
-                <i32>::sse_encode(43, serializer);
+                <i32>::sse_encode(54, serializer);
             }
             crate::api::iroh_client::WorkerReply::McpSettingsAck { view } => {
-                <i32>::sse_encode(44, serializer);
+                <i32>::sse_encode(55, serializer);
                 <crate::api::local_session::McpSettingsView>::sse_encode(view, serializer);
             }
             crate::api::iroh_client::WorkerReply::McpAddFromCatalogAck => {
-                <i32>::sse_encode(45, serializer);
+                <i32>::sse_encode(56, serializer);
             }
             crate::api::iroh_client::WorkerReply::McpToggleAck => {
-                <i32>::sse_encode(46, serializer);
+                <i32>::sse_encode(57, serializer);
             }
             crate::api::iroh_client::WorkerReply::McpRemoveAck => {
-                <i32>::sse_encode(47, serializer);
+                <i32>::sse_encode(58, serializer);
             }
             _ => {
                 unimplemented!("");

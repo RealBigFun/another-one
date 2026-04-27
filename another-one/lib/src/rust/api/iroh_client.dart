@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'iroh_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `decode_ack_field`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
+// These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`, `PendingTable`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
@@ -44,6 +44,20 @@ Future<IrohSession> irohConnect({
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<IrohSession>>
 abstract class IrohSession implements RustOpaqueInterface {
+  /// Issue [`Control::ActivateSectionTab`] under `request_id`.
+  Future<void> activateSectionTab({
+    required BigInt requestId,
+    required String sectionId,
+    required String tabId,
+  });
+
+  /// Issue [`Control::AddAgentToSection`] under `request_id`.
+  Future<void> addAgentToSection({
+    required BigInt requestId,
+    required String sectionId,
+    required String agentId,
+  });
+
   /// Issue a [`Control::AddProject`] under a Dart-allocated
   /// `request_id` so the Dart layer can register a `Completer`
   /// keyed by the same id before the frame goes out. Mirror of
@@ -69,6 +83,13 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Closes the session. Safe to call multiple times.
   Future<void> close();
+
+  /// Issue [`Control::CloseSectionTab`] under `request_id`.
+  Future<void> closeSectionTab({
+    required BigInt requestId,
+    required String sectionId,
+    required String tabId,
+  });
 
   /// `another-one-ojm.5` — issue a `Control::CreateBranch` frame.
   Future<void> createBranch({
@@ -102,10 +123,25 @@ abstract class IrohSession implements RustOpaqueInterface {
     AgentProvider? agentProvider,
   });
 
+  /// Issue [`Control::DeleteProjectAction`] under `request_id`.
+  Future<void> deleteProjectAction({
+    required BigInt requestId,
+    required String projectId,
+    required String actionId,
+  });
+
   /// Stop forwarding PTY bytes for the currently-attached tab.
   /// Idempotent if nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::DetachTab`.
   Future<void> detachTab();
+
+  /// `another-one-ojm.5` — issue a `Control::DiscardAllChanges`
+  /// frame.
+  Future<void> discardAllChanges({
+    required BigInt requestId,
+    required String projectId,
+    required List<ChangedFileDto> files,
+  });
 
   /// `another-one-ojm.5` — issue a `Control::DiscardChangedFile`
   /// frame.
@@ -181,6 +217,13 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Issue [`Control::OpenInState`] under `request_id`.
   Future<void> openInState({required BigInt requestId});
 
+  /// Issue [`Control::OpenProjectInApp`] under `request_id`.
+  Future<void> openProjectInApp({
+    required BigInt requestId,
+    required String projectId,
+    required String appId,
+  });
+
   /// Issue [`Control::PrimaryBranchForProject`] for `project_id`.
   Future<void> primaryBranchForProject({
     required BigInt requestId,
@@ -232,6 +275,9 @@ abstract class IrohSession implements RustOpaqueInterface {
 
   /// Send `Control::ReadMcpSettings`.
   Future<void> readMcpSettings({required BigInt requestId});
+
+  /// Issue [`Control::ReadOpenInSettings`] under `request_id`.
+  Future<void> readOpenInSettings({required BigInt requestId});
 
   /// Issue [`Control::ReadProjectBranches`] for `project_id`.
   Future<void> readProjectBranches({
@@ -326,6 +372,14 @@ abstract class IrohSession implements RustOpaqueInterface {
     required String actionId,
   });
 
+  /// Issue [`Control::SaveProjectAction`] under `request_id`.
+  Future<void> saveProjectAction({
+    required BigInt requestId,
+    required String projectId,
+    required ProjectActionDto action,
+    required bool saveGlobalCopy,
+  });
+
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
 
@@ -349,6 +403,13 @@ abstract class IrohSession implements RustOpaqueInterface {
   Future<void> setGitPrScript({
     required BigInt requestId,
     required String script,
+  });
+
+  /// Issue [`Control::SetOpenInAppEnabled`] under `request_id`.
+  Future<void> setOpenInAppEnabled({
+    required BigInt requestId,
+    required String appId,
+    required bool enabled,
   });
 
   /// Send `Control::SetShortcutBinding`.
@@ -393,6 +454,17 @@ abstract class IrohSession implements RustOpaqueInterface {
     String? originalPath,
   });
 
+  /// Issue [`Control::SubmitNewTask`] under `request_id`.
+  Future<void> submitNewTask({
+    required BigInt requestId,
+    required String projectId,
+    required String taskName,
+    required String sourceBranch,
+    required List<String> agentIds,
+    required bool branchModeExisting,
+    required bool worktreeMode,
+  });
+
   /// Start pushing inbound bytes into the given Dart StreamSink. Call once
   /// per session; subsequent calls return an error.
   Stream<Uint8List> subscribe();
@@ -411,6 +483,13 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// the daemon when nothing is attached. Mirror of
   /// `daemon-sandbox/src/frame.rs::Control::TabResize`.
   Future<void> tabResize({required int cols, required int rows});
+
+  /// Issue [`Control::ToggleSectionTabPinned`] under `request_id`.
+  Future<void> toggleSectionTabPinned({
+    required BigInt requestId,
+    required String sectionId,
+    required String tabId,
+  });
 
   /// `another-one-ojm.5` — issue a `Control::UnstageAllChanges`
   /// frame.
@@ -790,6 +869,14 @@ sealed class WorkerReply with _$WorkerReply {
     required List<ChangedFileDto> changedFiles,
   }) = WorkerReply_DiscardChangedFileAck;
 
+  /// `another-one-ojm.5` — ack for [`Control::DiscardAllChanges`].
+  /// Carries the final post-batch snapshot plus any per-path
+  /// failures that occurred while discarding.
+  const factory WorkerReply.discardAllChangesAck({
+    required List<ChangedFileDto> changedFiles,
+    required List<String> failures,
+  }) = WorkerReply_DiscardAllChangesAck;
+
   /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
   /// Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
@@ -861,16 +948,63 @@ sealed class WorkerReply with _$WorkerReply {
     required EnabledAgentsView view,
   }) = WorkerReply_EnabledAgentsAck;
 
+  /// Reply to [`Control::SubmitNewTask`]. `section_id` is the task
+  /// section the caller should focus; its initial tab is always
+  /// `"0"`.
+  const factory WorkerReply.submitNewTaskAck({required String sectionId}) =
+      WorkerReply_SubmitNewTaskAck;
+
+  /// Reply to [`Control::AddAgentToSection`]. `tab_id` is the
+  /// freshly-minted tab that was appended and made active.
+  const factory WorkerReply.addAgentToSectionAck({required String tabId}) =
+      WorkerReply_AddAgentToSectionAck;
+
+  /// Reply to [`Control::ActivateSectionTab`].
+  const factory WorkerReply.activateSectionTabAck() =
+      WorkerReply_ActivateSectionTabAck;
+
+  /// Reply to [`Control::CloseSectionTab`]. `active_tab_id` is the
+  /// section's new active tab, or empty when the section is now
+  /// tabless.
+  const factory WorkerReply.closeSectionTabAck({required String activeTabId}) =
+      WorkerReply_CloseSectionTabAck;
+
+  /// Reply to [`Control::ToggleSectionTabPinned`].
+  const factory WorkerReply.toggleSectionTabPinnedAck({required bool pinned}) =
+      WorkerReply_ToggleSectionTabPinnedAck;
+
   /// Reply to [`Control::ReadAgentSettings`]. Reuses
   /// `local_session::AgentSettingsView` directly.
   const factory WorkerReply.agentSettingsAck({
     required AgentSettingsView view,
   }) = WorkerReply_AgentSettingsAck;
 
+  /// Reply to [`Control::ReadOpenInSettings`]. Reuses
+  /// `local_session::OpenInSettingsView` directly.
+  const factory WorkerReply.openInSettingsAck({
+    required OpenInSettingsView view,
+  }) = WorkerReply_OpenInSettingsAck;
+
+  /// Reply to [`Control::SetOpenInAppEnabled`].
+  const factory WorkerReply.setOpenInAppEnabledAck() =
+      WorkerReply_SetOpenInAppEnabledAck;
+
+  /// Reply to [`Control::OpenProjectInApp`].
+  const factory WorkerReply.openProjectInAppAck() =
+      WorkerReply_OpenProjectInAppAck;
+
   /// Reply to [`Control::RunProjectAction`]. Single-shot Ack —
   /// `tab_id` is the freshly-minted uuid for the spawned tab.
   const factory WorkerReply.runProjectActionAck({required String tabId}) =
       WorkerReply_RunProjectActionAck;
+
+  /// Reply to [`Control::SaveProjectAction`].
+  const factory WorkerReply.saveProjectActionAck() =
+      WorkerReply_SaveProjectActionAck;
+
+  /// Reply to [`Control::DeleteProjectAction`].
+  const factory WorkerReply.deleteProjectActionAck({required bool deleted}) =
+      WorkerReply_DeleteProjectActionAck;
 
   /// Reply to `Control::ReadGitActionScripts`.
   const factory WorkerReply.gitActionScriptsAck({
