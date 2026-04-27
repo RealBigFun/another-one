@@ -146,6 +146,7 @@ class _ScriptPanelState extends ConsumerState<_ScriptPanel> {
   static const Color _activeBg = Color(0xFF2E67B8);
 
   late final TextEditingController _controller;
+  late String _lastAppliedScript;
   Timer? _debounce;
   bool _focused = false;
   bool _busy = false;
@@ -154,20 +155,22 @@ class _ScriptPanelState extends ConsumerState<_ScriptPanel> {
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialScript);
+    _lastAppliedScript = widget.initialScript;
     _controller.addListener(_onChanged);
   }
 
   @override
   void didUpdateWidget(covariant _ScriptPanel old) {
     super.didUpdateWidget(old);
-    if (widget.initialScript != _controller.text &&
-        widget.initialScript != old.initialScript) {
-      // External change (e.g. reset to default) — sync the editor
-      // text without re-firing the debounce save.
-      _controller.removeListener(_onChanged);
-      _controller.text = widget.initialScript;
-      _controller.addListener(_onChanged);
+    if (widget.initialScript == old.initialScript) {
+      return;
     }
+    final hasNewerLocalEdits = _controller.text != _lastAppliedScript;
+    final incomingMatchesLocalText = widget.initialScript == _controller.text;
+    if (hasNewerLocalEdits && !incomingMatchesLocalText) {
+      return;
+    }
+    _applyInitialScript(widget.initialScript);
   }
 
   @override
@@ -181,6 +184,17 @@ class _ScriptPanelState extends ConsumerState<_ScriptPanel> {
   void _onChanged() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), _save);
+  }
+
+  void _applyInitialScript(String script) {
+    _lastAppliedScript = script;
+    if (_controller.text == script) {
+      return;
+    }
+    // Remote refreshes should not schedule another debounced save.
+    _controller.removeListener(_onChanged);
+    _controller.text = script;
+    _controller.addListener(_onChanged);
   }
 
   Future<void> _save() async {
@@ -209,6 +223,7 @@ class _ScriptPanelState extends ConsumerState<_ScriptPanel> {
 
   Future<void> _resetToDefault() async {
     if (_busy) return;
+    _debounce?.cancel();
     setState(() => _busy = true);
     final connection = ref.read(localConnectionProvider);
     try {
