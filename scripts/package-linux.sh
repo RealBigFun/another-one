@@ -93,6 +93,19 @@ APPIMAGE_OUT="$PACKAGE_DIR/${APP_NAME}-${ARCH}.AppImage"
 RELEASE_ID="${RELEASE_ID:-}"
 ARTIFACT_PREFIX="${ARTIFACT_PREFIX:-AnotherOne}"
 
+if [[ -n "$RELEASE_ID" ]]; then
+  TRUST_PUBKEY_HEX="${ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX:-}"
+  if [[ -z "$TRUST_PUBKEY_HEX" ]]; then
+    echo "ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX is required when RELEASE_ID is set." >&2
+    echo "Without it, the packaged AppImage cannot verify update manifests." >&2
+    exit 1
+  fi
+  if [[ ! "$TRUST_PUBKEY_HEX" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX must be a 32-byte Ed25519 public key encoded as 64 hex characters." >&2
+    exit 1
+  fi
+fi
+
 BINARY_PATH="$RELEASE_DIR/$PACKAGE_NAME"
 SHIM_BINARY_PATH="$RELEASE_DIR/$SHIM_NAME"
 

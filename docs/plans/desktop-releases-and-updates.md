@@ -144,10 +144,11 @@ Add `.github/workflows/desktop-release.yml`:
   - upload all assets to the public release repo,
   - mark as non-prerelease for `main`.
 
-Follow-up hardening before broad macOS distribution:
+macOS distribution hardening:
 
-- Replace ad-hoc signing with Developer ID signing.
-- Notarize DMG/app payloads.
+- `scripts/package-macos.sh` supports Developer ID signing and notarization
+  through `MACOS_SIGN_IDENTITY`, `MACOS_NOTARIZE=1`, and notarytool credentials.
+- Local builds still fall back to ad-hoc signing when those values are absent.
 - Keep updater payload signatures separate from platform signing; the app should verify the manifest signature and SHA256 before enabling **Install update**.
 
 ## App architecture plan
@@ -259,7 +260,7 @@ Content:
    - macOS `.app` replacement/relaunch helper or manual-open fallback.
 
 5. **Hardening**
-   - macOS Developer ID signing/notarization.
+   - Configure production macOS signing/notarization secrets in CI.
    - Manifest signing key rotation docs.
    - Resume/cleanup partial downloads.
    - Tests for manifest parsing, update comparison, OS/arch asset selection, checksum verification, and state transitions.

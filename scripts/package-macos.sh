@@ -25,6 +25,14 @@ Environment overrides (used by CI):
                       updater payload (.app.tar.gz). Defaults to
                       target/release/macos.
   ARTIFACT_PREFIX     Filename prefix for release-named outputs.
+  MACOS_SIGN_IDENTITY Developer ID Application identity used for
+                      distribution signing. Defaults to ad-hoc signing.
+  MACOS_NOTARIZE      Set to 1 to notarize and staple the app/DMG. Requires
+                      MACOS_SIGN_IDENTITY and notarytool credentials.
+  MACOS_NOTARY_PROFILE
+                      Keychain profile name for xcrun notarytool.
+                      Alternatively set APPLE_ID, APPLE_TEAM_ID, and
+                      APPLE_APP_SPECIFIC_PASSWORD.
   ANOTHER_ONE_BUILD_FULL_SHA
                       Forwarded to cargo so build.rs can stamp the
                       full SHA into the binary even when the worktree
@@ -76,6 +84,43 @@ RELEASE_ID="${RELEASE_ID:-}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 TARGET_TRIPLE="${TARGET_TRIPLE:-}"
 ARTIFACT_PREFIX="${ARTIFACT_PREFIX:-}"
+MACOS_SIGN_IDENTITY="${MACOS_SIGN_IDENTITY:-}"
+MACOS_NOTARIZE="${MACOS_NOTARIZE:-0}"
+MACOS_NOTARY_PROFILE="${MACOS_NOTARY_PROFILE:-}"
+APPLE_ID="${APPLE_ID:-}"
+APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
+APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-}"
+
+if [[ "$MACOS_NOTARIZE" != "0" && "$MACOS_NOTARIZE" != "1" ]]; then
+  echo "MACOS_NOTARIZE must be 0 or 1." >&2
+  exit 1
+fi
+
+if [[ "$MACOS_NOTARIZE" == "1" ]]; then
+  if [[ -z "$MACOS_SIGN_IDENTITY" ]]; then
+    echo "MACOS_SIGN_IDENTITY is required when MACOS_NOTARIZE=1." >&2
+    exit 1
+  fi
+  if [[ -z "$MACOS_NOTARY_PROFILE" ]]; then
+    if [[ -z "$APPLE_ID" || -z "$APPLE_TEAM_ID" || -z "$APPLE_APP_SPECIFIC_PASSWORD" ]]; then
+      echo "MACOS_NOTARIZE=1 requires either MACOS_NOTARY_PROFILE or APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_SPECIFIC_PASSWORD." >&2
+      exit 1
+    fi
+  fi
+fi
+
+if [[ -n "$RELEASE_ID" ]]; then
+  TRUST_PUBKEY_HEX="${ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX:-}"
+  if [[ -z "$TRUST_PUBKEY_HEX" ]]; then
+    echo "ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX is required when RELEASE_ID is set." >&2
+    echo "Without it, the packaged app cannot verify update manifests." >&2
+    exit 1
+  fi
+  if [[ ! "$TRUST_PUBKEY_HEX" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX must be a 32-byte Ed25519 public key encoded as 64 hex characters." >&2
+    exit 1
+  fi
+fi
 
 if [[ -n "$TARGET_TRIPLE" ]]; then
   RELEASE_DIR="$ROOT_DIR/target/$TARGET_TRIPLE/release"
@@ -91,6 +136,7 @@ ASSETS_DIR="$RESOURCES_DIR/assets"
 BINARY_PATH="$RELEASE_DIR/$PACKAGE_NAME"
 DMG_PATH="$PACKAGE_DIR/$APP_NAME.dmg"
 STAGING_DIR="$PACKAGE_DIR/dmg-staging"
+NOTARY_ZIP="$PACKAGE_DIR/$APP_NAME.notary.zip"
 UPDATE_PAYLOAD="$PACKAGE_DIR/$APP_NAME.app.tar.gz"
 
 ICON_PATH="$ROOT_DIR/desktop/assets/app-icon/macos/$APP_NAME.icns"
@@ -103,6 +149,35 @@ fi
 
 SHIM_NAME="another-one-mcp-shim"
 SHIM_BINARY_PATH="$RELEASE_DIR/$SHIM_NAME"
+
+notarytool_args=()
+if [[ -n "$MACOS_NOTARY_PROFILE" ]]; then
+  notarytool_args=(--keychain-profile "$MACOS_NOTARY_PROFILE")
+else
+  notarytool_args=(
+    --apple-id "$APPLE_ID"
+    --team-id "$APPLE_TEAM_ID"
+    --password "$APPLE_APP_SPECIFIC_PASSWORD"
+  )
+fi
+
+sign_file() {
+  local path="$1"
+  if [[ -n "$MACOS_SIGN_IDENTITY" ]]; then
+    codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$path"
+  else
+    codesign --force --sign - "$path"
+  fi
+}
+
+notarize_artifact() {
+  local path="$1"
+  if [[ "$MACOS_NOTARIZE" != "1" ]]; then
+    return
+  fi
+  echo "Notarizing $path..."
+  xcrun notarytool submit "$path" --wait "${notarytool_args[@]}"
+}
 
 echo "Building $PACKAGE_NAME + $SHIM_NAME for release..."
 build_args=(build -p "$PACKAGE_NAME" -p "$SHIM_NAME" --release)
@@ -126,7 +201,7 @@ if [[ ! -x "$SHIM_BINARY_PATH" ]]; then
 fi
 
 echo "Assembling $APP_NAME.app..."
-rm -rf "$APP_BUNDLE" "$STAGING_DIR" "$DMG_PATH"
+rm -rf "$APP_BUNDLE" "$STAGING_DIR" "$DMG_PATH" "$NOTARY_ZIP"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 install -m 755 "$BINARY_PATH" "$MACOS_DIR/$PACKAGE_NAME"
@@ -170,8 +245,23 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "Signing $APP_NAME.app with an ad-hoc identity..."
-codesign --force --deep --sign - "$APP_BUNDLE"
+if [[ -n "$MACOS_SIGN_IDENTITY" ]]; then
+  echo "Signing $APP_NAME.app with Developer ID identity..."
+else
+  echo "Signing $APP_NAME.app with an ad-hoc identity..."
+fi
+sign_file "$MACOS_DIR/$SHIM_NAME"
+sign_file "$MACOS_DIR/$PACKAGE_NAME"
+sign_file "$APP_BUNDLE"
+codesign --verify --strict --deep --verbose=2 "$APP_BUNDLE"
+
+if [[ "$MACOS_NOTARIZE" == "1" ]]; then
+  echo "Creating notarization upload $NOTARY_ZIP..."
+  ditto -c -k --keepParent "$APP_BUNDLE" "$NOTARY_ZIP"
+  notarize_artifact "$NOTARY_ZIP"
+  xcrun stapler staple "$APP_BUNDLE"
+  rm -f "$NOTARY_ZIP"
+fi
 
 echo "Creating $APP_NAME.dmg..."
 mkdir -p "$STAGING_DIR"
@@ -185,6 +275,17 @@ hdiutil create \
   "$DMG_PATH"
 rm -rf "$STAGING_DIR"
 
+if [[ -n "$MACOS_SIGN_IDENTITY" ]]; then
+  echo "Signing $APP_NAME.dmg with Developer ID identity..."
+  codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG_PATH"
+  codesign --verify --verbose=2 "$DMG_PATH"
+fi
+
+if [[ "$MACOS_NOTARIZE" == "1" ]]; then
+  notarize_artifact "$DMG_PATH"
+  xcrun stapler staple "$DMG_PATH"
+fi
+
 echo "Creating updater payload $UPDATE_PAYLOAD..."
 # Used by the in-app updater: a tarball containing the .app bundle
 # at its root so the install helper can extract and atomically
@@ -193,11 +294,17 @@ echo "Creating updater payload $UPDATE_PAYLOAD..."
 ( cd "$PACKAGE_DIR" && tar -czf "$UPDATE_PAYLOAD" "$APP_NAME.app" )
 
 if [[ -n "$RELEASE_ID" ]]; then
-  ARCH_LABEL="$(uname -m)"
-  case "$ARCH_LABEL" in
-    arm64) ARCH_LABEL="aarch64" ;;
-    x86_64) ARCH_LABEL="x86_64" ;;
-  esac
+  if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
+    ARCH_LABEL="aarch64"
+  elif [[ "$TARGET_TRIPLE" == x86_64-apple-darwin ]]; then
+    ARCH_LABEL="x86_64"
+  else
+    ARCH_LABEL="$(uname -m)"
+    case "$ARCH_LABEL" in
+      arm64) ARCH_LABEL="aarch64" ;;
+      x86_64) ARCH_LABEL="x86_64" ;;
+    esac
+  fi
   PREFIX="${ARTIFACT_PREFIX:-AnotherOne}"
   RELEASE_DMG="$PACKAGE_DIR/${PREFIX}-macos-${ARCH_LABEL}-${RELEASE_ID}.dmg"
   RELEASE_PAYLOAD="$PACKAGE_DIR/${PREFIX}-macos-${ARCH_LABEL}-${RELEASE_ID}.app.tar.gz"

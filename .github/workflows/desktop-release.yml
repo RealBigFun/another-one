@@ -87,6 +87,39 @@ jobs:
           cache-on-failure: true
       - name: Set up compiler cache
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.ANOTHER_ONE_MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.ANOTHER_ONE_MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.ANOTHER_ONE_MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MACOS_CERTIFICATE_P12_BASE64:-}" ]]; then
+            echo "No Developer ID certificate configured; macOS artifacts will use ad-hoc signing."
+            exit 0
+          fi
+          if [[ -z "${MACOS_CERTIFICATE_PASSWORD:-}" || -z "${MACOS_KEYCHAIN_PASSWORD:-}" ]]; then
+            echo "Developer ID certificate import requires ANOTHER_ONE_MACOS_CERTIFICATE_PASSWORD and ANOTHER_ONE_MACOS_KEYCHAIN_PASSWORD." >&2
+            exit 1
+          fi
+          KEYCHAIN_PATH="$RUNNER_TEMP/another-one-signing.keychain-db"
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/[ "]//g')
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$MACOS_KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
       - name: Run macOS packaging script
         env:
           CARGO_VERSION: ${{ needs.identity.outputs.cargo_version }}
@@ -94,6 +127,12 @@ jobs:
           BUILD_NUMBER: ${{ needs.identity.outputs.build_number }}
           TARGET_TRIPLE: ${{ matrix.target }}
           OUTPUT_DIR: ${{ github.workspace }}/dist/macos-${{ matrix.arch }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.ANOTHER_ONE_MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARIZE: ${{ secrets.ANOTHER_ONE_MACOS_NOTARIZE || '0' }}
+          MACOS_NOTARY_PROFILE: ${{ secrets.ANOTHER_ONE_MACOS_NOTARY_PROFILE }}
+          APPLE_ID: ${{ secrets.ANOTHER_ONE_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.ANOTHER_ONE_APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.ANOTHER_ONE_APP_SPECIFIC_PASSWORD }}
           ANOTHER_ONE_BUILD_FULL_SHA: ${{ needs.identity.outputs.commit_sha }}
           ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX: ${{ secrets.ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX }}
           ANOTHER_ONE_UPDATE_MANIFEST_URL: https://github.com/${{ env.RELEASE_REPO }}/releases/latest/download/latest.json

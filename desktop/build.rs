@@ -53,6 +53,8 @@ fn main() {
     println!("cargo:rustc-env=ANOTHER_ONE_BUILD_DIRTY={dirty}");
     println!("cargo:rustc-env=ANOTHER_ONE_BUILD_TIME_UNIX={build_time}");
     println!("cargo:rerun-if-env-changed=ANOTHER_ONE_BUILD_FULL_SHA");
+    println!("cargo:rerun-if-env-changed=ANOTHER_ONE_UPDATE_MANIFEST_URL");
+    println!("cargo:rerun-if-env-changed=ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX");
 
     // Re-run when commit, branch, or working-tree changes. Without
     // these, cargo would cache build.rs output and the SHA would

@@ -62,6 +62,9 @@ docker run --rm \
   -v "$CACHE_DIR/cargo-git":/opt/cargo/git \
   -e CARGO_TARGET_DIR="/src/$CONTAINER_TARGET_DIR_REL" \
   -e CARGO_HOME=/opt/cargo \
+  -e ANOTHER_ONE_BUILD_FULL_SHA \
+  -e ANOTHER_ONE_UPDATE_MANIFEST_URL \
+  -e ANOTHER_ONE_UPDATE_TRUST_PUBKEY_HEX \
   -w /src \
   "$IMAGE_TAG" \
   cargo build -p another-one -p another-one-mcp-shim --release
