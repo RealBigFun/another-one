@@ -12,6 +12,7 @@
 // to invalidate `projectActionsProvider`.
 
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -30,6 +31,7 @@ import '../../rust/api/local_session.dart'
         ProjectActionScopeDto;
 import '../../state/local_connection_provider.dart';
 import '../../tokens.dart';
+import '../../widgets/app_toast.dart';
 
 /// Open the Add / Edit Custom Action modal. `existing` is `null`
 /// for the "Add" flow; passing one routes to the "Edit" flow with
@@ -46,28 +48,37 @@ Future<bool> showCustomActionModal({
   final result = await showDialog<bool>(
     context: context,
     barrierColor: const Color(0x80000000),
-    builder: (ctx) => _CustomActionModal(
-      projectId: projectId,
-      existing: existing,
-    ),
+    builder: (ctx) =>
+        _CustomActionModal(projectId: projectId, existing: existing),
   );
   return result ?? false;
 }
 
 enum _Kind { shell, agent }
 
+// Match GPUI's pre-save UUID allocation without pulling in a new package.
+final Random _actionIdRandom = Random.secure();
+
+String _newActionId() {
+  final bytes = List<int>.generate(16, (_) => _actionIdRandom.nextInt(256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  return '${hex.substring(0, 8)}-'
+      '${hex.substring(8, 12)}-'
+      '${hex.substring(12, 16)}-'
+      '${hex.substring(16, 20)}-'
+      '${hex.substring(20)}';
+}
+
 class _CustomActionModal extends ConsumerStatefulWidget {
-  const _CustomActionModal({
-    required this.projectId,
-    required this.existing,
-  });
+  const _CustomActionModal({required this.projectId, required this.existing});
 
   final String projectId;
   final ProjectActionDto? existing;
 
   @override
-  ConsumerState<_CustomActionModal> createState() =>
-      _CustomActionModalState();
+  ConsumerState<_CustomActionModal> createState() => _CustomActionModalState();
 }
 
 class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
@@ -77,6 +88,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
   late final TextEditingController _name;
   late final TextEditingController _command;
   late final TextEditingController _prompt;
+  late final String _actionId;
 
   late ProjectActionIconDto _icon;
   late _Kind _kind;
@@ -93,6 +105,10 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
   void initState() {
     super.initState();
     final existing = widget.existing;
+    final existingId = existing?.id;
+    _actionId = existingId != null && existingId.isNotEmpty
+        ? existingId
+        : _newActionId();
     _name = TextEditingController(text: existing?.name ?? '');
     _command = TextEditingController(
       text: existing?.kind is ProjectActionKindDto_Shell
@@ -137,8 +153,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
     return Shortcuts(
       shortcuts: const <ShortcutActivator, Intent>{
         SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
-        SingleActivator(LogicalKeyboardKey.enter, meta: true):
-            _SubmitIntent(),
+        SingleActivator(LogicalKeyboardKey.enter, meta: true): _SubmitIntent(),
         SingleActivator(LogicalKeyboardKey.enter, control: true):
             _SubmitIntent(),
       },
@@ -224,10 +239,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
                 const SizedBox(height: 4),
                 const Text(
                   'Save project commands or agent prompts for this repository.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppTokens.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 12, color: AppTokens.textMuted),
                 ),
               ],
             ),
@@ -275,10 +287,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
         _buildIconPicker(),
         if (_kind == _Kind.shell) ...[
           _FieldLabel('Command'),
-          _TextFieldShell(
-            controller: _command,
-            placeholder: 'npm test',
-          ),
+          _TextFieldShell(controller: _command, placeholder: 'npm test'),
         ] else ...[
           _FieldLabel('Provider'),
           _DropdownPicker<AgentProvider>(
@@ -310,9 +319,10 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
           _DropdownPicker<String>(
             value: _model,
             label: _modelLabel(_provider, _model),
-            options: _modelOptions(_provider, _model)
-                .map((o) => o.value)
-                .toList(),
+            options: _modelOptions(
+              _provider,
+              _model,
+            ).map((o) => o.value).toList(),
             optionLabel: (v) => _modelLabel(_provider, v),
             onChanged: (next) {
               setState(() {
@@ -325,9 +335,11 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
           _DropdownPicker<String>(
             value: _traits,
             label: _traitsLabel(_provider, _model, _traits),
-            options: _traitsOptions(_provider, _model, _traits)
-                .map((o) => o.value)
-                .toList(),
+            options: _traitsOptions(
+              _provider,
+              _model,
+              _traits,
+            ).map((o) => o.value).toList(),
             optionLabel: (v) => _traitsLabel(_provider, _model, v),
             onChanged: (next) => setState(() => _traits = next),
           ),
@@ -396,9 +408,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
           height: 32,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected
-                ? AppTokens.overlayActive
-                : Colors.transparent,
+            color: selected ? AppTokens.overlayActive : Colors.transparent,
             borderRadius: BorderRadius.circular(AppTokens.radiusXs + 1),
           ),
           child: Text(
@@ -444,9 +454,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
           const Spacer(),
           _GhostButton(
             label: 'Cancel',
-            onTap: _busy
-                ? null
-                : () => Navigator.of(context).pop(false),
+            onTap: _busy ? null : () => Navigator.of(context).pop(false),
           ),
           const SizedBox(width: 8),
           _PrimaryButton(
@@ -490,7 +498,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
       );
     }
     final action = ProjectActionDto(
-      id: widget.existing?.id ?? '',
+      id: _actionId,
       name: name,
       icon: _icon,
       runOnWorktreeCreate: _runOnWorktreeCreate,
@@ -502,12 +510,15 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
     );
     setState(() => _busy = true);
     try {
-      await ref.read(localConnectionProvider).saveProjectAction(
+      await ref
+          .read(localConnectionProvider)
+          .saveProjectAction(
             projectId: widget.projectId,
             action: action,
             saveGlobalCopy: _saveGlobalCopy,
           );
       if (!mounted) return;
+      _toast('Action saved.', warning: false);
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
@@ -521,11 +532,15 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
     if (id == null || id.isEmpty || _busy) return;
     setState(() => _busy = true);
     try {
-      await ref.read(localConnectionProvider).deleteProjectAction(
-            projectId: widget.projectId,
-            actionId: id,
-          );
+      final deleted = await ref
+          .read(localConnectionProvider)
+          .deleteProjectAction(projectId: widget.projectId, actionId: id);
       if (!mounted) return;
+      if (!deleted) {
+        setState(() => _busy = false);
+        return;
+      }
+      _toast('Action deleted.', warning: false);
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
@@ -534,13 +549,12 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
     }
   }
 
+  void _toast(String message, {bool warning = true}) {
+    showAppToast(context, message: message, warning: warning);
+  }
+
   void _toastError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppTokens.errorBg,
-      ),
-    );
+    _toast(message);
   }
 }
 
@@ -606,23 +620,15 @@ class _TextFieldShell extends StatelessWidget {
         autofocus: autofocus,
         maxLines: multiline ? null : 1,
         minLines: multiline ? 6 : 1,
-        keyboardType: multiline
-            ? TextInputType.multiline
-            : TextInputType.text,
-        style: const TextStyle(
-          fontSize: 13,
-          color: AppTokens.textPrimary,
-        ),
+        keyboardType: multiline ? TextInputType.multiline : TextInputType.text,
+        style: const TextStyle(fontSize: 13, color: AppTokens.textPrimary),
         cursorColor: AppTokens.textPrimary,
         decoration: InputDecoration(
           isDense: true,
           contentPadding: EdgeInsets.zero,
           border: InputBorder.none,
           hintText: placeholder,
-          hintStyle: const TextStyle(
-            fontSize: 13,
-            color: AppTokens.textMuted,
-          ),
+          hintStyle: const TextStyle(fontSize: 13, color: AppTokens.textMuted),
         ),
       ),
     );
@@ -652,14 +658,10 @@ class _IconPickerButton extends StatelessWidget {
           height: 30,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected
-                ? AppTokens.overlayActive
-                : AppTokens.overlayHover,
+            color: selected ? AppTokens.overlayActive : AppTokens.overlayHover,
             borderRadius: BorderRadius.circular(AppTokens.radiusMd),
             border: Border.all(
-              color: selected
-                  ? const Color(0xFF6F86CB)
-                  : AppTokens.border,
+              color: selected ? const Color(0xFF6F86CB) : AppTokens.border,
             ),
           ),
           child: SvgPicture.asset(
@@ -717,9 +719,7 @@ class _DropdownPickerState<T> extends State<_DropdownPicker<T>> {
               color: AppTokens.overlayHover,
               borderRadius: BorderRadius.circular(AppTokens.radiusMd),
               border: Border.all(
-                color: _open
-                    ? const Color(0xFF6F86CB)
-                    : AppTokens.border,
+                color: _open ? const Color(0xFF6F86CB) : AppTokens.border,
               ),
             ),
             child: Row(
@@ -825,10 +825,7 @@ class _ProviderOption extends StatelessWidget {
         const SizedBox(width: 10),
         Text(
           _providerLabel(provider),
-          style: const TextStyle(
-            fontSize: 13,
-            color: AppTokens.textPrimary,
-          ),
+          style: const TextStyle(fontSize: 13, color: AppTokens.textPrimary),
         ),
       ],
     );
@@ -860,12 +857,9 @@ class _Toggle extends StatelessWidget {
               width: 18,
               height: 18,
               decoration: BoxDecoration(
-                color:
-                    value ? const Color(0xFF6F86CB) : Colors.transparent,
+                color: value ? const Color(0xFF6F86CB) : Colors.transparent,
                 border: Border.all(
-                  color: value
-                      ? const Color(0xFF6F86CB)
-                      : AppTokens.border,
+                  color: value ? const Color(0xFF6F86CB) : AppTokens.border,
                 ),
                 borderRadius: BorderRadius.circular(AppTokens.radiusXs),
               ),
@@ -913,10 +907,7 @@ class _GhostButton extends StatelessWidget {
         alignment: Alignment.center,
         child: Text(
           label,
-          style: const TextStyle(
-            fontSize: 13,
-            color: AppTokens.textPrimary,
-          ),
+          style: const TextStyle(fontSize: 13, color: AppTokens.textPrimary),
         ),
       ),
     );
@@ -953,8 +944,7 @@ class _PrimaryButton extends StatelessWidget {
                 height: 14,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor:
-                      AlwaysStoppedAnimation<Color>(Colors.white),
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               )
             : Text(
@@ -993,10 +983,7 @@ class _DeleteButton extends StatelessWidget {
               'assets/icons/icons__discard.svg',
               width: 13,
               height: 13,
-              colorFilter: const ColorFilter.mode(
-                danger,
-                BlendMode.srcIn,
-              ),
+              colorFilter: const ColorFilter.mode(danger, BlendMode.srcIn),
             ),
             const SizedBox(width: 6),
             const Text(
