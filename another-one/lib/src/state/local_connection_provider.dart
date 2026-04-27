@@ -106,3 +106,23 @@ final desktopProjectsProvider = StreamProvider<List<ProjectSummary>>((ref) {
   });
   return controller.stream;
 });
+
+/// True after the first real `ProjectList` reply arrives from the
+/// daemon. This lets desktop surfaces distinguish "not loaded yet"
+/// from "loaded and currently empty" instead of treating the seeded
+/// empty list from [desktopProjectsProvider] as authoritative.
+final desktopProjectsLoadedProvider = StreamProvider<bool>((ref) {
+  final transport = ref.watch(localConnectionProvider);
+  final controller = StreamController<bool>();
+  controller.add(false);
+  final sub = transport.workerReplies.listen((reply) {
+    if (reply is WorkerReply_ProjectList) {
+      controller.add(true);
+    }
+  });
+  ref.onDispose(() {
+    sub.cancel();
+    controller.close();
+  });
+  return controller.stream.distinct();
+});

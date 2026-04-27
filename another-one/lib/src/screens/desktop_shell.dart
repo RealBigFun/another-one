@@ -17,6 +17,7 @@ import '../state/active_project_page_provider.dart';
 import '../state/left_sidebar_provider.dart';
 import '../state/local_connection_provider.dart';
 import '../state/right_sidebar_provider.dart';
+import '../state/resolved_tab_selection_provider.dart';
 import '../state/settings_provider.dart';
 import '../state/tab_selection_provider.dart';
 import '../tokens.dart';
@@ -77,11 +78,35 @@ class _MainArea extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selection = ref.watch(selectedTabProvider);
-    if (selection != null) {
+    final projectsLoaded =
+        ref.watch(desktopProjectsLoadedProvider).valueOrNull ?? false;
+    final resolvedSelection = ref.watch(resolvedSelectedTabProvider);
+
+    if (selection != null && projectsLoaded && resolvedSelection != selection) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final latest = ref.read(selectedTabProvider);
+        if (latest == null || latest == resolvedSelection) return;
+        final notifier = ref.read(selectedTabProvider.notifier);
+        if (resolvedSelection == null) {
+          notifier.clear();
+        } else {
+          notifier.set(resolvedSelection);
+        }
+      });
+    }
+
+    if (selection != null && !projectsLoaded) {
+      return const ColoredBox(
+        color: AppTokens.terminalBg,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (resolvedSelection != null) {
       return Column(
         children: [
-          DesktopTabStrip(selection: selection),
-          Expanded(child: DesktopTerminalPane(selection: selection)),
+          DesktopTabStrip(selection: resolvedSelection),
+          Expanded(child: DesktopTerminalPane(selection: resolvedSelection)),
         ],
       );
     }
@@ -108,4 +133,3 @@ class _MainArea extends ConsumerWidget {
     );
   }
 }
-
