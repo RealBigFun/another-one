@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../rust/api/iroh_client.dart';
+import '../../rust/api/terminal_engine.dart' as engine;
 import '../../state/local_connection_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
@@ -142,6 +143,9 @@ class _TabState extends ConsumerState<_Tab> {
       final newActive = await connection.closeSectionTab(
         sectionId: widget.sectionId,
         tabId: widget.tab.id,
+      );
+      unawaited(
+        engine.engineClose(sectionId: widget.sectionId, tabId: widget.tab.id),
       );
       // Local transport mutates the persisted store; refresh the
       // project tree so the strip re-renders without this tab.

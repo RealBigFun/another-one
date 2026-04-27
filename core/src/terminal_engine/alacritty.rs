@@ -13,8 +13,8 @@ use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte::ansi::{Color as AlacColor, CursorShape, NamedColor, Rgb};
 
 use super::{
-    cell_flags, Cell, CursorState, CursorStyle, InputEvent, SearchHit, SelectionRange,
-    Snapshot, TerminalEngine,
+    cell_flags, Cell, CursorState, CursorStyle, InputEvent, SearchHit, SelectionRange, Snapshot,
+    TerminalEngine,
 };
 
 /// Adapter wrapping `alacritty_terminal::Term<VoidListener>`.
@@ -209,10 +209,7 @@ fn map_cursor_style(shape: CursorShape) -> CursorStyle {
 /// treats fully-transparent bg as "skip the fill" so the canvas
 /// background shows through.
 fn rgb_to_rgba(rgb: Rgb, alpha: u8) -> u32 {
-    ((rgb.r as u32) << 24)
-        | ((rgb.g as u32) << 16)
-        | ((rgb.b as u32) << 8)
-        | (alpha as u32)
+    ((rgb.r as u32) << 24) | ((rgb.g as u32) << 16) | ((rgb.b as u32) << 8) | (alpha as u32)
 }
 
 /// Resolve an alacritty `Color` to the bridge's packed RGBA. Spike
@@ -347,6 +344,16 @@ mod tests {
         let snap = e.snapshot(0, 1);
         assert!(snap.cells[0].flags & cell_flags::UNDERLINE != 0);
         assert_eq!(snap.cells[1].flags & cell_flags::UNDERLINE, 0);
+    }
+
+    #[test]
+    fn sgr_colors_are_resolved_into_cells() {
+        let mut e = AlacrittyEngine::new(10, 1);
+        e.write_pty(b"\x1b[31mR\x1b[32mG\x1b[0mD");
+        let snap = e.snapshot(0, 1);
+        assert_eq!(snap.cells[0].fg, 0xCC0403FF);
+        assert_eq!(snap.cells[1].fg, 0x19CB00FF);
+        assert_eq!(snap.cells[2].fg, 0xEAEAEAFF);
     }
 
     #[test]

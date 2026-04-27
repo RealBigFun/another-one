@@ -3,7 +3,9 @@
 //! Wire format: `[1 byte type][4 bytes BE length][N bytes payload]`.
 //!
 //! Types:
-//! - `0x00` — PTY data (raw bytes, either direction)
+//! - `0x00` — PTY data (raw bytes, either direction). This includes
+//!   keyboard input, paste payloads, and terminal mouse protocol
+//!   escape sequences; the daemon deliberately does not parse them.
 //! - `0x01` — JSON control message (UTF-8; see [`Control`])
 //! - `0x02` — JSON worker reply (UTF-8; see [`WorkerReply`]).
 //!   Daemon → client only. One variant per core-extracted worker that

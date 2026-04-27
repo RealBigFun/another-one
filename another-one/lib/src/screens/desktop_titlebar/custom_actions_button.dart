@@ -19,42 +19,11 @@
 
 part of 'desktop_titlebar.dart';
 
-class _CustomActionsButton extends ConsumerStatefulWidget {
+class _CustomActionsButton extends ConsumerWidget {
   const _CustomActionsButton();
 
   @override
-  ConsumerState<_CustomActionsButton> createState() =>
-      _CustomActionsButtonState();
-}
-
-class _CustomActionsButtonState extends ConsumerState<_CustomActionsButton> {
-  // Pulled from `desktop/src/titlebar.rs` constants so visual
-  // metrics stay anchored to the GPUI source.
-  static const double _buttonW = 148;
-  static const double _buttonH = 28;
-  static const double _chevronW = 26;
-  static const double _menuW = 260;
-
-  // GPUI's titlebar uses #2b2d31 as the dropdown surface (slightly
-  // warmer than the chrome bg) — shared with the git-actions menu
-  // body; lifted here as a constant so the two stay in sync.
-  static const Color _menuBg = Color(0xFF2B2D31);
-
-  final OverlayPortalController _menu = OverlayPortalController();
-  final LayerLink _link = LayerLink();
-  bool _bodyHover = false;
-  bool _chevronHover = false;
-
-  void _syncMenuVisibility(bool visible) {
-    if (visible == _menu.isShowing) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || visible == _menu.isShowing) return;
-      setState(visible ? _menu.show : _menu.hide);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final projectId = ref.watch(activeProjectIdProvider);
     if (projectId == null) return const SizedBox.shrink();
     final actions =
@@ -64,10 +33,6 @@ class _CustomActionsButtonState extends ConsumerState<_CustomActionsButton> {
     final menuOpen =
         ref.watch(_activeTitlebarDropdownProvider) ==
         _TitlebarDropdown.customActions;
-    _syncMenuVisibility(menuOpen);
-    final containerBg = menuOpen
-        ? AppTokens.overlayActive
-        : AppTokens.overlayRest;
     final iconPath = selected != null
         ? _actionIconPath(selected.icon)
         : 'assets/icons/icons__tool-bolt.svg';
@@ -75,207 +40,95 @@ class _CustomActionsButtonState extends ConsumerState<_CustomActionsButton> {
         ? selected!.name
         : (selected != null ? _kindLabel(selected.kind) : 'Actions');
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: CompositedTransformTarget(
-        link: _link,
-        child: OverlayPortal(
-          controller: _menu,
-          overlayChildBuilder: (context) =>
-              _buildMenu(context, projectId, actions),
-          child: Container(
-            width: _buttonW,
-            height: _buttonH,
-            decoration: BoxDecoration(
-              color: containerBg,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: AppTokens.border),
-            ),
-            child: Row(
-              children: [
-                _buildPrimaryHalf(projectId, selected, iconPath, label),
-                _buildChevronHalf(projectId, actions),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPrimaryHalf(
-    String projectId,
-    ProjectActionDto? selected,
-    String iconPath,
-    String label,
-  ) {
-    return Expanded(
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _bodyHover = true),
-        onExit: (_) => setState(() => _bodyHover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            _dismissTitlebarDropdowns(ref);
-            if (selected != null) {
-              unawaited(_runAction(projectId, selected));
-            } else {
-              _openModal(null);
-            }
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              color: _bodyHover
-                  ? AppTokens.overlayHoverStrong
-                  : Colors.transparent,
-              border: const Border(right: BorderSide(color: AppTokens.divider)),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 9),
-            child: Row(
-              children: [
-                SvgPicture.asset(
-                  iconPath,
-                  width: 14,
-                  height: 14,
-                  colorFilter: const ColorFilter.mode(
-                    Color(0xEBFFFFFF),
-                    BlendMode.srcIn,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xDBFFFFFF),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChevronHalf(String projectId, List<ProjectActionDto> actions) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _chevronHover = true),
-      onExit: (_) => setState(() => _chevronHover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          if (actions.isEmpty) {
-            // Mirrors GPUI's "if no actions exist, jump straight to
-            // the modal instead of opening an empty dropdown".
-            _dismissTitlebarDropdowns(ref);
-            _openModal(null);
-            return;
-          }
-          _toggleTitlebarDropdown(ref, _TitlebarDropdown.customActions);
-        },
-        child: Container(
-          width: _chevronW,
-          height: _buttonH,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: _chevronHover
-                ? AppTokens.overlayHoverStrong
-                : Colors.transparent,
-            borderRadius: const BorderRadius.only(
-              topRight: Radius.circular(11),
-              bottomRight: Radius.circular(11),
-            ),
-          ),
-          child: SvgPicture.asset(
-            'assets/icons/icons__chevron-down.svg',
-            width: 11,
-            height: 11,
+    return _TitlebarSplitButton(
+      buttonWidth: _buttonW,
+      menuWidth: _menuW,
+      menuOpen: menuOpen,
+      onDismissMenu: () => _dismissTitlebarDropdowns(ref),
+      onPrimaryTap: () {
+        _dismissTitlebarDropdowns(ref);
+        if (selected != null) {
+          unawaited(_runAction(context, ref, projectId, selected));
+        } else {
+          unawaited(_openModal(context, ref, projectId, null));
+        }
+      },
+      onChevronTap: () {
+        if (actions.isEmpty) {
+          // Mirrors GPUI's "if no actions exist, jump straight to
+          // the modal instead of opening an empty dropdown".
+          _dismissTitlebarDropdowns(ref);
+          unawaited(_openModal(context, ref, projectId, null));
+          return;
+        }
+        _toggleTitlebarDropdown(ref, _TitlebarDropdown.customActions);
+      },
+      primaryBuilder: (context) => Row(
+        children: [
+          SvgPicture.asset(
+            iconPath,
+            width: 14,
+            height: 14,
             colorFilter: const ColorFilter.mode(
-              Color(0xADFFFFFF),
+              Color(0xEBFFFFFF),
               BlendMode.srcIn,
             ),
           ),
-        ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Color(0xDBFFFFFF),
+              ),
+            ),
+          ),
+        ],
+      ),
+      chevronBuilder: (context) => SvgPicture.asset(
+        'assets/icons/icons__chevron-down.svg',
+        width: 11,
+        height: 11,
+        colorFilter: const ColorFilter.mode(Color(0xADFFFFFF), BlendMode.srcIn),
+      ),
+      menuBuilder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final action in actions)
+            _CustomActionMenuRow(
+              action: action,
+              onRun: () {
+                _dismissTitlebarDropdowns(ref);
+                unawaited(_runAction(context, ref, projectId, action));
+              },
+              onEdit: () {
+                _dismissTitlebarDropdowns(ref);
+                unawaited(_openModal(context, ref, projectId, action));
+              },
+            ),
+          Container(
+            height: 1,
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+            color: const Color(0x14FFFFFF),
+          ),
+          _CustomActionAddRow(
+            onTap: () {
+              _dismissTitlebarDropdowns(ref);
+              unawaited(_openModal(context, ref, projectId, null));
+            },
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildMenu(
-    BuildContext context,
-    String projectId,
-    List<ProjectActionDto> actions,
-  ) {
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () => _dismissTitlebarDropdowns(ref),
-          ),
-        ),
-        CompositedTransformFollower(
-          link: _link,
-          targetAnchor: Alignment.bottomRight,
-          followerAnchor: Alignment.topRight,
-          offset: const Offset(0, 6),
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              width: _menuW,
-              decoration: BoxDecoration(
-                color: _menuBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTokens.border),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x66000000),
-                    blurRadius: 12,
-                    offset: Offset(0, 4),
-                  ),
-                ],
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final action in actions)
-                    _CustomActionMenuRow(
-                      action: action,
-                      onRun: () {
-                        _dismissTitlebarDropdowns(ref);
-                        unawaited(_runAction(projectId, action));
-                      },
-                      onEdit: () {
-                        _dismissTitlebarDropdowns(ref);
-                        _openModal(action);
-                      },
-                    ),
-                  Container(
-                    height: 1,
-                    margin: const EdgeInsets.symmetric(horizontal: 8),
-                    color: const Color(0x14FFFFFF),
-                  ),
-                  _CustomActionAddRow(
-                    onTap: () {
-                      _dismissTitlebarDropdowns(ref);
-                      _openModal(null);
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  // Pulled from `desktop/src/titlebar.rs` constants so visual
+  // metrics stay anchored to the GPUI source.
+  static const double _buttonW = 148;
+  static const double _menuW = 260;
 
   /// Pick the action the primary half should run on click.
   /// Mirrors GPUI's `selected_custom_action`: most-recently-clicked
@@ -294,9 +147,15 @@ class _CustomActionsButtonState extends ConsumerState<_CustomActionsButton> {
     return actions.first;
   }
 
-  Future<void> _runAction(String projectId, ProjectActionDto action) async {
+  Future<void> _runAction(
+    BuildContext context,
+    WidgetRef ref,
+    String projectId,
+    ProjectActionDto action,
+  ) async {
     final selection = ref.read(selectedTabProvider);
     if (selection == null) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Custom actions run inside an active task.'),
@@ -314,7 +173,7 @@ class _CustomActionsButtonState extends ConsumerState<_CustomActionsButton> {
       );
       ref.read(lastUsedCustomActionIdProvider.notifier).state = action.id;
     } catch (e) {
-      if (!mounted) return;
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Action failed: $e'),
@@ -324,15 +183,18 @@ class _CustomActionsButtonState extends ConsumerState<_CustomActionsButton> {
     }
   }
 
-  Future<void> _openModal(ProjectActionDto? edit) async {
-    final projectId = ref.read(activeProjectIdProvider);
-    if (projectId == null) return;
+  Future<void> _openModal(
+    BuildContext context,
+    WidgetRef ref,
+    String projectId,
+    ProjectActionDto? edit,
+  ) async {
     final saved = await showCustomActionModal(
       context: context,
       projectId: projectId,
       existing: edit,
     );
-    if (!mounted || !saved) return;
+    if (!context.mounted || !saved) return;
     ref.invalidate(projectActionsProvider(projectId));
   }
 }

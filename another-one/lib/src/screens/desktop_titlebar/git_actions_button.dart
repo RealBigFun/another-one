@@ -108,37 +108,11 @@ _PrimaryAction _computePrimaryAction({
 
 String _countLabel(String base, int n) => n > 0 ? '$base ($n)' : base;
 
-class _GitActionsButton extends ConsumerStatefulWidget {
+class _GitActionsButton extends ConsumerWidget {
   const _GitActionsButton();
 
   @override
-  ConsumerState<_GitActionsButton> createState() => _GitActionsButtonState();
-}
-
-class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
-  // Dimensions from desktop/src/titlebar.rs constants.
-  static const double _buttonW = 156;
-  static const double _buttonH = 28;
-  static const double _chevronW = 26;
-  static const double _menuW = 220;
-
-  final OverlayPortalController _menu = OverlayPortalController();
-  final LayerLink _link = LayerLink();
-  bool _bodyHover = false;
-  bool _chevronHover = false;
-
-  static const Color _dangerText = Color(0xFFEB7B7B);
-
-  void _syncMenuVisibility(bool visible) {
-    if (visible == _menu.isShowing) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || visible == _menu.isShowing) return;
-      setState(visible ? _menu.show : _menu.hide);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final projectId = ref.watch(activeProjectIdProvider);
     if (projectId == null) return const SizedBox.shrink();
     final files = ref.watch(changedFilesProvider(projectId)).valueOrNull;
@@ -147,6 +121,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
         .watch(repoDefaultCommitActionProvider(projectId))
         .valueOrNull;
     final activeAction = ref.watch(activeGitActionProvider(projectId));
+    final pr = ref.watch(pullRequestStatusProvider(projectId));
     final hasChanges = (files?.isNotEmpty) ?? false;
     final aheadCount = gitState?.aheadCount ?? 0;
     final behindCount = gitState?.behindCount ?? 0;
@@ -161,304 +136,175 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
     final menuOpen =
         ref.watch(_activeTitlebarDropdownProvider) ==
         _TitlebarDropdown.gitActions;
-    _syncMenuVisibility(menuOpen);
-    final containerBg = menuOpen
-        ? const Color(0x1AFFFFFF) // white @ 0.10
-        : const Color(0x0DFFFFFF); // white @ 0.05
-
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: CompositedTransformTarget(
-        link: _link,
-        child: OverlayPortal(
-          controller: _menu,
-          overlayChildBuilder: (ctx) => _buildOverlay(
-            ctx,
-            projectId: projectId,
-            hasChanges: hasChanges,
-            running: running,
-          ),
-          child: Container(
-            width: _buttonW,
-            height: _buttonH,
-            decoration: BoxDecoration(
-              color: containerBg,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: AppTokens.border),
-            ),
-            child: Row(
-              children: [
-                _buildPrimaryHalf(
-                  projectId,
-                  primary,
-                  activeAction: activeAction,
-                ),
-                _buildChevronHalf(
-                  projectId,
-                  running: running,
-                  menuOpen: menuOpen,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPrimaryHalf(
-    String projectId,
-    _PrimaryAction primary, {
-    required String? activeAction,
-  }) {
-    final running = activeAction != null;
-    final interactive = !running;
     final presentation = _activeActionPresentation(activeAction);
     final danger = presentation?.danger ?? false;
     final label = presentation?.label ?? primary.label;
     final iconColor = danger ? _dangerText : const Color(0xEBFFFFFF); // 0.92
     final textColor = danger ? _dangerText : const Color(0xDBFFFFFF); // 0.86
-    return Expanded(
-      child: MouseRegion(
-        cursor: interactive
-            ? SystemMouseCursors.click
-            : SystemMouseCursors.basic,
-        onEnter: interactive ? (_) => setState(() => _bodyHover = true) : null,
-        onExit: interactive ? (_) => setState(() => _bodyHover = false) : null,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: interactive ? () => _run(projectId, primary.action) : null,
-          child: Container(
-            decoration: BoxDecoration(
-              color: interactive && _bodyHover
-                  ? AppTokens.overlayHoverStrong
-                  : Colors.transparent,
-              border: const Border(right: BorderSide(color: AppTokens.divider)),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 9),
-            alignment: Alignment.centerLeft,
-            child: Row(
-              children: [
-                if (running)
-                  ToolbarSpinner(size: 12, color: iconColor)
-                else
-                  AppIcon(primary.icon, size: 14, color: iconColor),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: textColor,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChevronHalf(
-    String projectId, {
-    required bool running,
-    required bool menuOpen,
-  }) {
-    final interactive = !running;
-    return MouseRegion(
-      cursor: interactive ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      onEnter: interactive ? (_) => setState(() => _chevronHover = true) : null,
-      onExit: interactive ? (_) => setState(() => _chevronHover = false) : null,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: interactive
-            ? () {
-                final opening = !menuOpen;
-                _toggleTitlebarDropdown(ref, _TitlebarDropdown.gitActions);
-                if (opening) {
-                  // Refresh PR lookup on dropdown open — mirrors
-                  // GPUI's refresh_active_project_pull_request_lookup.
-                  ref.invalidate(pullRequestStatusProvider(projectId));
-                }
-              }
-            : null,
-        child: Container(
-          width: _chevronW,
-          height: _buttonH,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: interactive && _chevronHover
-                ? AppTokens.overlayHoverStrong
-                : Colors.transparent,
-            borderRadius: const BorderRadius.only(
-              topRight: Radius.circular(11),
-              bottomRight: Radius.circular(11),
-            ),
-          ),
-          child: const AppIcon(
-            'chevron-down',
-            size: 11,
-            color: Color(0xADFFFFFF), // white @ 0.68
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOverlay(
-    BuildContext context, {
-    required String projectId,
-    required bool hasChanges,
-    required bool running,
-  }) {
-    final pr = ref.watch(pullRequestStatusProvider(projectId));
     final hasExistingPr = pr.valueOrNull != null;
     final lookupChecked = pr.hasValue;
     final canCreatePr = !running && lookupChecked && !hasExistingPr;
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () => _dismissTitlebarDropdowns(ref),
-          ),
-        ),
-        CompositedTransformFollower(
-          link: _link,
-          targetAnchor: Alignment.bottomRight,
-          followerAnchor: Alignment.topRight,
-          offset: const Offset(0, 6),
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              width: _menuW,
-              decoration: BoxDecoration(
-                color: AppTokens.cardBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTokens.border),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x66000000),
-                    blurRadius: 12,
-                    offset: Offset(0, 4),
-                  ),
-                ],
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _GitActionRow(
-                    icon: 'git-commit',
-                    label: 'Commit',
-                    tooltip:
-                        'Commit changes, staging all files first if needed',
-                    enabled: hasChanges && !running,
-                    onTap: () => _run(projectId, _GitActionId.commit),
-                  ),
-                  _GitActionRow(
-                    icon: 'cloud-upload',
-                    label: 'Commit & Push',
-                    tooltip:
-                        'Commit changes and push, staging all files '
-                        'first if needed',
-                    enabled: hasChanges && !running,
-                    onTap: () => _run(projectId, _GitActionId.commitAndPush),
-                  ),
-                  const _MenuDivider(),
-                  _GitActionRow(
-                    icon: 'tool-download',
-                    label: 'Fetch',
-                    tooltip:
-                        'Fetch remote updates without changing the local '
-                        'checkout',
-                    enabled: !running,
-                    onTap: () => _run(projectId, _GitActionId.fetch),
-                  ),
-                  _GitActionRow(
-                    icon: 'git-pull',
-                    label: _countLabel(
-                      'Pull',
-                      ref
-                              .watch(activeGitStateProvider(projectId))
-                              .valueOrNull
-                              ?.behindCount ??
-                          0,
-                    ),
-                    tooltip: 'Pull remote updates with fast-forward only',
-                    enabled: !running,
-                    onTap: () => _run(projectId, _GitActionId.pull),
-                  ),
-                  _GitActionRow(
-                    icon: 'cloud-upload',
-                    label: _countLabel(
-                      'Push',
-                      ref
-                              .watch(activeGitStateProvider(projectId))
-                              .valueOrNull
-                              ?.aheadCount ??
-                          0,
-                    ),
-                    tooltip:
-                        'Push the current checked-out branch to its remote',
-                    enabled: !running,
-                    onTap: () => _run(projectId, _GitActionId.push),
-                  ),
-                  _GitActionRow(
-                    icon: 'cloud-upload',
-                    label: 'Force Push',
-                    tooltip:
-                        'Force-push with lease to overwrite the remote '
-                        'branch if needed',
-                    enabled: !running,
-                    danger: true,
-                    onTap: () => _run(projectId, _GitActionId.forcePush),
-                  ),
-                  const _MenuDivider(),
-                  _GitActionRow(
-                    icon: 'github',
-                    label: 'Create PR',
-                    tooltip: 'Create a pull request for the current branch',
-                    enabled: canCreatePr,
-                    onTap: () => _run(projectId, _GitActionId.createPr),
-                  ),
-                  _GitActionRow(
-                    icon: 'github',
-                    label: 'Draft PR',
-                    tooltip:
-                        'Create a draft pull request for the current branch',
-                    enabled: canCreatePr,
-                    onTap: () => _run(projectId, _GitActionId.createDraftPr),
-                  ),
-                  const _MenuDivider(),
-                  _GitActionRow(
-                    icon: 'git-branch',
-                    label: 'Create Branch',
-                    tooltip: 'Create a branch in this task or a new worktree',
-                    enabled: !running,
-                    onTap: () => _openCreateBranch(projectId),
-                  ),
-                ],
+
+    return _TitlebarSplitButton(
+      buttonWidth: _buttonW,
+      menuWidth: _menuW,
+      menuOpen: menuOpen,
+      primaryEnabled: !running,
+      chevronEnabled: !running,
+      onDismissMenu: () => _dismissTitlebarDropdowns(ref),
+      onPrimaryTap: () {
+        unawaited(_run(context, ref, projectId, primary.action));
+      },
+      onChevronTap: () {
+        final opening = !menuOpen;
+        _toggleTitlebarDropdown(ref, _TitlebarDropdown.gitActions);
+        if (opening) {
+          // Refresh PR lookup on dropdown open — mirrors
+          // GPUI's refresh_active_project_pull_request_lookup.
+          ref.invalidate(pullRequestStatusProvider(projectId));
+        }
+      },
+      primaryBuilder: (context) => Row(
+        children: [
+          if (running)
+            ToolbarSpinner(size: 12, color: iconColor)
+          else
+            AppIcon(primary.icon, size: 14, color: iconColor),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: textColor,
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
+      chevronBuilder: (context) => const AppIcon(
+        'chevron-down',
+        size: 11,
+        color: Color(0xADFFFFFF), // white @ 0.68
+      ),
+      menuBuilder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _GitActionRow(
+            icon: 'git-commit',
+            label: 'Commit',
+            tooltip: 'Commit changes, staging all files first if needed',
+            enabled: hasChanges && !running,
+            onTap: () {
+              unawaited(_run(context, ref, projectId, _GitActionId.commit));
+            },
+          ),
+          _GitActionRow(
+            icon: 'cloud-upload',
+            label: 'Commit & Push',
+            tooltip:
+                'Commit changes and push, staging all files '
+                'first if needed',
+            enabled: hasChanges && !running,
+            onTap: () {
+              unawaited(
+                _run(context, ref, projectId, _GitActionId.commitAndPush),
+              );
+            },
+          ),
+          const _MenuDivider(),
+          _GitActionRow(
+            icon: 'tool-download',
+            label: 'Fetch',
+            tooltip: 'Fetch remote updates without changing the local checkout',
+            enabled: !running,
+            onTap: () {
+              unawaited(_run(context, ref, projectId, _GitActionId.fetch));
+            },
+          ),
+          _GitActionRow(
+            icon: 'git-pull',
+            label: _countLabel('Pull', behindCount),
+            tooltip: 'Pull remote updates with fast-forward only',
+            enabled: !running,
+            onTap: () {
+              unawaited(_run(context, ref, projectId, _GitActionId.pull));
+            },
+          ),
+          _GitActionRow(
+            icon: 'cloud-upload',
+            label: _countLabel('Push', aheadCount),
+            tooltip: 'Push the current checked-out branch to its remote',
+            enabled: !running,
+            onTap: () {
+              unawaited(_run(context, ref, projectId, _GitActionId.push));
+            },
+          ),
+          _GitActionRow(
+            icon: 'cloud-upload',
+            label: 'Force Push',
+            tooltip:
+                'Force-push with lease to overwrite the remote '
+                'branch if needed',
+            enabled: !running,
+            danger: true,
+            onTap: () {
+              unawaited(_run(context, ref, projectId, _GitActionId.forcePush));
+            },
+          ),
+          const _MenuDivider(),
+          _GitActionRow(
+            icon: 'github',
+            label: 'Create PR',
+            tooltip: 'Create a pull request for the current branch',
+            enabled: canCreatePr,
+            onTap: () {
+              unawaited(_run(context, ref, projectId, _GitActionId.createPr));
+            },
+          ),
+          _GitActionRow(
+            icon: 'github',
+            label: 'Draft PR',
+            tooltip: 'Create a draft pull request for the current branch',
+            enabled: canCreatePr,
+            onTap: () {
+              unawaited(
+                _run(context, ref, projectId, _GitActionId.createDraftPr),
+              );
+            },
+          ),
+          const _MenuDivider(),
+          _GitActionRow(
+            icon: 'git-branch',
+            label: 'Create Branch',
+            tooltip: 'Create a branch in this task or a new worktree',
+            enabled: !running,
+            onTap: () => _openCreateBranch(context, projectId),
+          ),
+        ],
+      ),
     );
   }
 
-  void _openCreateBranch(String projectId) {
-    _dismissTitlebarDropdowns(ref);
+  // Dimensions from desktop/src/titlebar.rs constants.
+  static const double _buttonW = 156;
+  static const double _menuW = 220;
+
+  static const Color _dangerText = Color(0xFFEB7B7B);
+  void _openCreateBranch(BuildContext context, String projectId) {
     showCreateBranchModal(context: context, projectId: projectId);
   }
 
-  Future<void> _run(String projectId, _GitActionId action) async {
+  Future<void> _run(
+    BuildContext context,
+    WidgetRef ref,
+    String projectId,
+    _GitActionId action,
+  ) async {
     _dismissTitlebarDropdowns(ref);
     final notifier = ref.read(activeGitActionProvider(projectId).notifier);
     notifier.start(action.wireId);
@@ -469,7 +315,7 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
         projectId: projectId,
         actionId: action.wireId,
       );
-      if (mounted) {
+      if (context.mounted) {
         messenger?.showSnackBar(
           SnackBar(
             content: Text(outcome.toastMessage),
@@ -480,12 +326,10 @@ class _GitActionsButtonState extends ConsumerState<_GitActionsButton> {
         );
       }
       if (outcome.refreshGitState) {
-        ref.invalidate(changedFilesProvider(projectId));
-        ref.invalidate(activeGitStateProvider(projectId));
-        ref.invalidate(pullRequestStatusProvider(projectId));
+        invalidateGitRefreshState(ref, projectId);
       }
     } catch (e) {
-      if (mounted) {
+      if (context.mounted) {
         messenger?.showSnackBar(
           SnackBar(
             content: Text(e.toString()),

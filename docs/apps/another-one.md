@@ -50,7 +50,7 @@ the same way GPUI's render-tick used to.
 # from repo root
 scripts/dev-watch.sh
 # or, equivalently:
-cd another-one && flutter run -d linux
+cd another-one && flutter run -d "$(uname -s | sed 's/Darwin/macos/;s/Linux/linux/')"
 ```
 
 `flutter run` watches `lib/` and triggers hot reloads on save.

@@ -37,6 +37,13 @@ use crate::frame::{
 /// so an impl CAN borrow if it wants to.
 pub type RegistryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// Live tab subscription plus any raw PTY bytes the client missed
+/// before the subscription existed.
+pub struct TabAttachment {
+    pub replay: Vec<Vec<u8>>,
+    pub receiver: broadcast::Receiver<Vec<u8>>,
+}
+
 /// Shared pairing state: the one-shot TOFU nonce the daemon expects
 /// in the first `Control::Hello` from any new peer, plus the current
 /// pairing URL + QR PNG that encode it. Lives behind an `Arc<Mutex>`
@@ -177,6 +184,27 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// (e.g., closed or never launched). Multiple subscribers share
     /// the same broadcast — each gets a fresh `Receiver`.
     fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>>;
+
+    /// Subscribe to a live tab and include any missed replay for this
+    /// viewer. The default preserves existing registry semantics:
+    /// subscribers get only future live bytes.
+    fn attach_tab_with_replay(
+        &self,
+        _viewer_id: &str,
+        section_id: &str,
+        tab_id: &str,
+    ) -> Option<TabAttachment> {
+        self.attach_tab(section_id, tab_id)
+            .map(|receiver| TabAttachment {
+                replay: Vec::new(),
+                receiver,
+            })
+    }
+
+    /// Mark all currently-buffered output for this tab as observed by
+    /// the viewer. Called when a live attachment is replaced/detached;
+    /// registries without replay can ignore it.
+    fn note_tab_output_observed(&self, _viewer_id: &str, _section_id: &str, _tab_id: &str) {}
 
     /// Feed input bytes into the tab's master PTY writer. Serialised
     /// by the underlying `Arc<Mutex<…>>` so desktop and mobile can
@@ -504,9 +532,9 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         })
     }
 
-    /// `another-one-ojm.5` — run one of the titlebar git actions.
-    /// `action_id` strings round-trip verbatim from the wire (see
-    /// [`crate::frame::Control::RunToolbarGitAction`]).
+    /// `another-one-ojm.5` — discard a batch of changed files and
+    /// return the final `changed_files` snapshot plus any per-path
+    /// failures.
     fn discard_all_changes<'a>(
         &'a self,
         _project_id: &'a str,

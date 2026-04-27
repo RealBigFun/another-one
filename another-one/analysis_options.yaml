@@ -9,6 +9,13 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # CargoKit vendors its own Dart build-tool package under rust_builder.
+    # The app analyzer should not analyze that nested package with the app's
+    # package config.
+    - rust_builder/cargokit/build_tool/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

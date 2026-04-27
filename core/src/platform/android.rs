@@ -28,7 +28,10 @@ impl HeadlessPlatform for AndroidPlatform {
         // will route URL opens through a Dart platform channel;
         // this Rust-side implementation exists only so the trait
         // shape is the same on every target.
-        Err("open_external_url not supported from Rust on Android; use a Dart platform channel".into())
+        Err(
+            "open_external_url not supported from Rust on Android; use a Dart platform channel"
+                .into(),
+        )
     }
 
     fn total_system_memory_bytes() -> Option<u64> {
@@ -40,16 +43,16 @@ impl HeadlessPlatform for AndroidPlatform {
     }
 
     fn read_process_samples(
-        _app_pid: u32,
-        _tracked_processes: &[crate::process::TrackedProcess],
+        app_pid: u32,
+        tracked_processes: &[crate::process::TrackedProcess],
     ) -> Vec<crate::process::RawProcessSample> {
         // Same procfs layout as Linux. Note that on modern Android
         // the SELinux policy + per-app sandboxing severely restricts
         // which `/proc/<pid>` directories the app can read — the
-        // returned vec on Android will typically only contain the
-        // app's own process and its descendants, which is exactly
+        // returned vec on Android will typically only contain the app
+        // process plus requested tracked descendants, which is exactly
         // what the resource indicator wants anyway.
-        super::linux::procfs_read_process_samples()
+        super::linux::procfs_read_process_samples(app_pid, tracked_processes)
     }
 
     fn is_open_in_app_available(_app: OpenInAppKind) -> bool {
@@ -89,7 +92,10 @@ mod tests {
         let result = AndroidPlatform::open_external_url("https://example.com");
         assert!(result.is_err());
         assert!(
-            result.as_ref().unwrap_err().contains("Dart platform channel"),
+            result
+                .as_ref()
+                .unwrap_err()
+                .contains("Dart platform channel"),
             "expected the error to point at the Dart-side workaround, got: {:?}",
             result.unwrap_err()
         );

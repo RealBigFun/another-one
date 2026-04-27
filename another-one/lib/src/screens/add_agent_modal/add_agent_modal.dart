@@ -14,7 +14,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import '../../rust/api/embedded_daemon.dart' as embedded_daemon;
 import '../../rust/api/local_session.dart' show AgentSummaryDto;
 import '../../state/local_connection_provider.dart';
 import '../../state/new_task_data_provider.dart';
@@ -53,12 +52,10 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
   String? _selectedAgentId;
   bool _dropdownOpen = false;
   bool _submitting = false;
+  bool _closing = false;
   bool _seeded = false;
-  bool _submitted = false;
-  bool _prewarmSyncScheduled = false;
   _AddAgentFocusKind _focusKind = _AddAgentFocusKind.create;
   int? _focusOptionIndex;
-  String? _lastRequestedPrewarmAgentId;
 
   String? _resolvedSelection(
     String? selectedAgentId,
@@ -91,31 +88,8 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
     _seeded = true;
   }
 
-  void _schedulePrewarmSync() {
-    if (_submitted) return;
-    final desiredAgentId = _selectedAgentId;
-    if (_lastRequestedPrewarmAgentId == desiredAgentId &&
-        !_prewarmSyncScheduled) {
-      return;
-    }
-    _lastRequestedPrewarmAgentId = desiredAgentId;
-    if (_prewarmSyncScheduled) return;
-    _prewarmSyncScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      _prewarmSyncScheduled = false;
-      if (!mounted || _submitted) return;
-      final requestedAgentId = _lastRequestedPrewarmAgentId;
-      try {
-        await embedded_daemon.syncAddAgentModalPrewarm(
-          sectionId: widget.sectionId,
-          selectedAgentId: requestedAgentId,
-        );
-      } catch (_) {}
-    });
-  }
-
   Future<void> _submit() async {
-    if (_submitting) return;
+    if (_submitting || _closing) return;
     final agentsView = ref.read(enabledAgentsProvider).valueOrNull;
     final selectedAgentId = agentsView == null
         ? _selectedAgentId
@@ -136,7 +110,6 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
             sectionId: widget.sectionId,
             agentId: selectedAgentId ?? '',
           );
-      _submitted = true;
       ref
           .read(selectedTabProvider.notifier)
           .set(TabSelection(sectionId: widget.sectionId, tabId: tabId));
@@ -149,6 +122,12 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
       });
       showAppToast(context, message: 'Could not add agent tab: $e');
     }
+  }
+
+  void _close() {
+    if (_submitting || _closing || !mounted) return;
+    _closing = true;
+    Navigator.of(context).pop<String?>(null);
   }
 
   int _optionCount(List<AgentSummaryDto> agents) => agents.length + 1;
@@ -247,7 +226,7 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
         unawaited(_submit());
       case _AddAgentFocusKind.cancel:
         if (!_submitting) {
-          Navigator.of(context).pop(false);
+          _close();
         }
     }
   }
@@ -279,7 +258,7 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
           _focusOptionIndex = null;
         });
       } else if (!_submitting) {
-        Navigator.of(context).pop(false);
+        _close();
       }
       return KeyEventResult.handled;
     }
@@ -296,14 +275,6 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
   }
 
   @override
-  void dispose() {
-    if (!_submitted) {
-      unawaited(embedded_daemon.cancelActiveAddAgentPrewarm());
-    }
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final agentsAsync = ref.watch(enabledAgentsProvider);
     final view = agentsAsync.valueOrNull;
@@ -311,7 +282,6 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
     if (view != null) {
       _syncSelection(view.agents, view.defaultAgentId);
     }
-    _schedulePrewarmSync();
     return PopScope(
       canPop: !_submitting,
       child: Focus(
@@ -343,9 +313,7 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _Header(
-                      onClose: _submitting
-                          ? null
-                          : () => Navigator.of(context).pop(false),
+                      onClose: _submitting ? null : _close,
                     ),
                     Flexible(
                       child: SingleChildScrollView(
@@ -392,9 +360,7 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
                       submitting: _submitting,
                       createFocused: _focusKind == _AddAgentFocusKind.create,
                       cancelFocused: _focusKind == _AddAgentFocusKind.cancel,
-                      onCancel: _submitting
-                          ? null
-                          : () => Navigator.of(context).pop(false),
+                      onCancel: _submitting ? null : _close,
                       onSubmit: _submitting ? null : _submit,
                     ),
                   ],

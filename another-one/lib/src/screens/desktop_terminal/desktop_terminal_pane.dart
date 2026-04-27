@@ -1,5 +1,5 @@
-// Desktop terminal pane — embeds an xterm.dart Terminal bound to
-// the local daemon's PTY for the currently-selected tab.
+// Desktop terminal pane — embeds the active terminal renderer bound
+// to the local daemon's PTY for the currently-selected tab.
 //
 // Lifts the proven timing tricks from mobile's `task_page.dart`:
 //   - 200ms "ignore window" after attach so in-flight bytes from
@@ -18,8 +18,8 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
@@ -31,22 +31,29 @@ import '../../tokens.dart';
 import '../../transport.dart';
 import '../../widgets/terminal_view_alacritty.dart';
 
-/// Phase 0 spike flag. Set with `--dart-define=ANOTHER_ONE_ALACRITTY=1`
-/// (or `=true`, or any non-empty string) to mount the alacritty-
-/// engine pane instead of xterm.dart. Default builds keep the
-/// existing pane.
+/// Desktop defaults to the alacritty-backed engine on macOS/Linux.
+/// Set `--dart-define=ANOTHER_ONE_ALACRITTY=0` (or `false` / `off`)
+/// to force the legacy xterm.dart pane for comparison.
 ///
 /// Both forms accepted because `bool.fromEnvironment` only honours
 /// the literal string `"true"` — `=1` (the cargokit-style convention
-/// people reach for, and what the previous launch instructions
-/// suggested) silently parses as `false`. The `String.fromEnvironment`
-/// fallback catches that. `!= ''` rather than `.isNotEmpty` because
-/// the analyser's const-evaluator rejects getter access on a
-/// `String.fromEnvironment` result; `String.==` is fine.
-const bool _useAlacrittyEngine =
-    bool.fromEnvironment('ANOTHER_ONE_ALACRITTY', defaultValue: false) ||
-        String.fromEnvironment('ANOTHER_ONE_ALACRITTY', defaultValue: '') !=
-            '';
+/// people reach for) silently parses as `false`, so use the raw string
+/// to distinguish explicit opt-out from "unset".
+const String _alacrittyEngineOverride = String.fromEnvironment(
+  'ANOTHER_ONE_ALACRITTY',
+  defaultValue: '',
+);
+
+bool get _useAlacrittyEngine {
+  final override = _alacrittyEngineOverride.trim().toLowerCase();
+  if (override == '0' || override == 'false' || override == 'off') {
+    return false;
+  }
+  if (override.isNotEmpty) return true;
+  if (kIsWeb) return false;
+  return defaultTargetPlatform == TargetPlatform.linux ||
+      defaultTargetPlatform == TargetPlatform.macOS;
+}
 
 class DesktopTerminalPane extends ConsumerWidget {
   const DesktopTerminalPane({super.key, required this.selection});
@@ -58,8 +65,7 @@ class DesktopTerminalPane extends ConsumerWidget {
     final transport = ref.watch(localConnectionProvider);
     if (_useAlacrittyEngine) {
       return TerminalViewAlacritty(
-        key: ValueKey(
-            'alacritty::${selection.sectionId}::${selection.tabId}'),
+        key: ValueKey('alacritty::${selection.sectionId}::${selection.tabId}'),
         transport: transport,
         sectionId: selection.sectionId,
         tabId: selection.tabId,
@@ -100,8 +106,9 @@ class _AttachedTerminalState extends State<_AttachedTerminal> {
   /// might still hold bytes from a previously-attached tab. Set
   /// once at mount; selection changes re-key the widget so a
   /// fresh ignore window starts with the new instance.
-  final DateTime _ignoreBytesUntil =
-      DateTime.now().add(const Duration(milliseconds: 200));
+  final DateTime _ignoreBytesUntil = DateTime.now().add(
+    const Duration(milliseconds: 200),
+  );
 
   bool _awaitingFirstByte = true;
   Timer? _spinnerTimeout;
@@ -166,8 +173,9 @@ class _AttachedTerminalState extends State<_AttachedTerminal> {
       _attachRetry?.cancel();
       _attachRetry = null;
       _clearSpinner();
-      _terminal.write(_patchExtendedUnderlineSgr(
-          utf8.decode(bytes, allowMalformed: true)));
+      _terminal.write(
+        _patchExtendedUnderlineSgr(utf8.decode(bytes, allowMalformed: true)),
+      );
     });
   }
 
@@ -191,11 +199,14 @@ class _AttachedTerminalState extends State<_AttachedTerminal> {
     return input.replaceAllMapped(_sgrPattern, (m) {
       final raw = m.group(1) ?? '';
       if (!raw.contains(':')) return m.group(0)!;
-      final patched = raw.split(';').map((p) {
-        if (p == '4:0') return '24';
-        if (_underlineStylePattern.hasMatch(p)) return '4';
-        return p;
-      }).join(';');
+      final patched = raw
+          .split(';')
+          .map((p) {
+            if (p == '4:0') return '24';
+            if (_underlineStylePattern.hasMatch(p)) return '4';
+            return p;
+          })
+          .join(';');
       return '\x1b[${patched}m';
     });
   }

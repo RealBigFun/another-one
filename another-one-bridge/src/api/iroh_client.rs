@@ -1985,7 +1985,7 @@ impl IrohSession {
         .await
     }
 
-    // ── Custom actions + Open In + agents read verbs (`another-one-ojm.7`) ───
+    // ── Custom actions + Open In + agents (`another-one-ojm.7`) ─────
 
     /// Issue [`Control::OpenInState`] under `request_id`.
     pub async fn open_in_state(&self, request_id: u64) -> anyhow::Result<()> {

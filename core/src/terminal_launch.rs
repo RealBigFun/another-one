@@ -169,19 +169,12 @@ fn launch_terminal(
     let process_id = child.process_id();
     let child_killer = child.clone_killer();
 
-    // Broadcast tee — see `PreparedTerminalRuntime::output_broadcast`.
-    // Capacity 512 absorbs a burst of ~4 MB (8 KiB reads × 512) —
-    // roughly one full alt-screen repaint from Claude Code's
-    // status-panel rewrite storms without the subscriber hitting
-    // `RecvError::Lagged` and skipping rows.
+    // Live-output sender owned by the embedder's PTY drain. The
+    // reader thread emits `TerminalLaunchReply::Output`; the drain
+    // records replay and forwards live bytes through this sender under
+    // one registry lock so attach replay cannot race live delivery.
+    // Capacity 512 absorbs a burst of ~4 MB (8 KiB reads × 512).
     let (output_broadcast, _initial_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(512);
-    let broadcast_for_reader = output_broadcast.clone();
-
-    // Only clone the 8 KiB chunk when there's actually a subscriber —
-    // zero-subscriber `send()` returns Err and we were cloning for
-    // nothing before. `receiver_count()` is atomic, so this is cheap.
-    let has_subscribers = move || broadcast_for_reader.receiver_count() > 0;
-    let broadcast_for_reader_send = output_broadcast.clone();
 
     // Snapshot the provider before the launch_config moves into the
     // `Launched` reply — the Claude session watcher below needs it
@@ -214,14 +207,6 @@ fn launch_terminal(
                 Ok(count) => {
                     crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
-                    // Only clone + broadcast when a mobile viewer is
-                    // actually subscribed. Zero-subscriber send()
-                    // would return Err, but the `.clone()` of the
-                    // Vec runs unconditionally — wasted at ~hundreds
-                    // of chunks/sec under chatty agents.
-                    if has_subscribers() {
-                        let _ = broadcast_for_reader_send.send(bytes.clone());
-                    }
                     let _ = output_sender.send(TerminalLaunchReply::Output {
                         key: output_key.clone(),
                         bytes,
@@ -625,14 +610,13 @@ fn claude_session_watch_loop(
     loop {
         if let Some(active_id) = newest_claude_session_id(&cwd) {
             if last_id.as_deref() != Some(active_id.as_str()) {
-                let send_result =
-                    sender.send(TerminalLaunchReply::SessionDiscovered {
-                        key: key.clone(),
-                        session: TerminalSessionRef {
-                            kind: TerminalSessionKind::ClaudeSession,
-                            id: active_id.clone(),
-                        },
-                    });
+                let send_result = sender.send(TerminalLaunchReply::SessionDiscovered {
+                    key: key.clone(),
+                    session: TerminalSessionRef {
+                        kind: TerminalSessionKind::ClaudeSession,
+                        id: active_id.clone(),
+                    },
+                });
                 if send_result.is_err() {
                     return;
                 }
@@ -687,6 +671,10 @@ fn apply_terminal_environment(builder: &mut CommandBuilder, cwd: &Path) {
     builder.env("COLORTERM_BCE", "1");
     builder.env("TERM_PROGRAM", "WezTerm");
     builder.env("TERM_PROGRAM_VERSION", "20240203");
+    builder.env_remove("NO_COLOR");
+    builder.env("CLICOLOR", "1");
+    builder.env("CLICOLOR_FORCE", "1");
+    builder.env("FORCE_COLOR", "1");
     apply_agent_command_path(builder, cwd);
 }
 

@@ -24,7 +24,7 @@ Run the desktop app with hot reload:
 ```sh
 scripts/dev-watch.sh
 # or, equivalently:
-cd another-one && flutter run -d linux
+cd another-one && flutter run -d "$(uname -s | sed 's/Darwin/macos/;s/Linux/linux/')"
 ```
 
 Saves under `another-one/lib/` hot-reload immediately. Rust changes

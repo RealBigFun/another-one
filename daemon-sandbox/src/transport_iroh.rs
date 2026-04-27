@@ -17,10 +17,13 @@
 //! tab's PTY input.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 
 use anyhow::Context;
-use iroh::endpoint::{Connection, Incoming, presets};
+use iroh::endpoint::{presets, Connection, Incoming};
 use iroh::{Endpoint, EndpointAddr, SecretKey};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
@@ -153,8 +156,25 @@ struct Attached {
     /// Abort handle for the forwarder task draining the per-tab
     /// broadcast into this connection's outbound mpsc. Dropped /
     /// aborted when the client detaches or attaches elsewhere.
-    forwarder: AbortHandle,
+    forwarder: Option<AbortHandle>,
 }
+
+impl Attached {
+    fn abort_forwarder(self) {
+        if let Some(forwarder) = self.forwarder {
+            forwarder.abort();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct OutboundFrame {
+    ty: u8,
+    payload: Vec<u8>,
+    data_generation: Option<u64>,
+}
+
+type OutboundTx = mpsc::Sender<OutboundFrame>;
 
 async fn handle_incoming(
     incoming: Incoming,
@@ -222,12 +242,19 @@ async fn handle_connection(
     let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
 
     // Outbound mpsc: all producers (worker-reply replies + the PTY
-    // forwarder task) push (type, payload) tuples; the writer task
-    // owns `send` and serialises writes.
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<(u8, Vec<u8>)>(64);
+    // forwarder task) push frames; the writer task owns `send` and
+    // serialises writes.
+    let data_generation = Arc::new(AtomicU64::new(0));
+    let data_generation_for_writer = data_generation.clone();
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundFrame>(64);
     let writer_task = tokio::spawn(async move {
-        while let Some((ty, payload)) = outbound_rx.recv().await {
-            if let Err(e) = frame::write_frame(&mut send, ty, &payload).await {
+        while let Some(frame) = outbound_rx.recv().await {
+            if frame.ty == frame::TY_DATA
+                && frame.data_generation != Some(data_generation_for_writer.load(Ordering::Relaxed))
+            {
+                continue;
+            }
+            if let Err(e) = frame::write_frame(&mut send, frame.ty, &frame.payload).await {
                 debug!(error = %e, "iroh frame write failed");
                 break;
             }
@@ -245,9 +272,7 @@ async fn handle_connection(
                     conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
                     break;
                 }
-                if let Some(att) = &attached {
-                    registry.tab_input(&att.section_id, &att.tab_id, &payload);
-                }
+                route_pty_input(registry.as_ref(), attached.as_ref(), &payload);
                 // No attachment → silently drop. Not an error:
                 // clients may type during the race between AttachTab
                 // going out and the first reply coming back.
@@ -300,6 +325,7 @@ async fn handle_connection(
                             ctrl,
                             &registry,
                             &outbound_tx,
+                            &data_generation,
                             &mut attached,
                             viewer_id,
                         )
@@ -324,12 +350,22 @@ async fn handle_connection(
     }
 
     if let Some(att) = attached.take() {
-        att.forwarder.abort();
+        if att.forwarder.is_some() {
+            registry.note_tab_output_observed(viewer_id, &att.section_id, &att.tab_id);
+        }
+        att.abort_forwarder();
     }
     drop(outbound_tx);
     writer_task.abort();
     info!("iroh session ended");
     Ok(())
+}
+
+fn route_pty_input(registry: &dyn DaemonRegistry, attached: Option<&Attached>, payload: &[u8]) {
+    let Some(att) = attached else {
+        return;
+    };
+    registry.tab_input(&att.section_id, &att.tab_id, payload);
 }
 
 /// Validate a `Control::Hello` from an unpaired peer. On match, consume
@@ -349,40 +385,22 @@ fn consume_hello(
     let presented =
         pair_token.ok_or_else(|| anyhow::anyhow!("Hello from unpaired peer missing pair_token"))?;
 
-    // Validate-under-lock but do NOT consume yet — we need to know the
-    // allowlist write succeeded before clearing the nonce. If we
-    // consumed first and `persist_pairing` failed (disk full, perms),
-    // the peer would be in limbo: rejected for the rest of this
-    // session and unable to pair via Hello ever again until the user
-    // clicks "Reset pairings" to roll a fresh nonce. The trade-off is
-    // the short window where two concurrent Hellos could both pass
-    // validation if they squeak past the lock boundary — bounded by
-    // the time between dropping the guard here and re-acquiring it
-    // below. Acceptable because only whichever peer wins the
-    // allowlist `append` race ends up paired; the loser's nonce-clear
-    // attempt is still under lock and the nonce is already `None`, so
-    // the loser's `persist_pairing` still runs (idempotent append of
-    // the same NodeId), double-adding the *same* peer. Not a security
-    // issue.
-    {
-        let state = pair_state.lock().unwrap_or_else(|p| p.into_inner());
-        let expected = state
-            .nonce
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("no outstanding pair nonce (consumed or not rolled)"))?;
-        if !constant_time_eq(expected.as_bytes(), presented.as_bytes()) {
-            anyhow::bail!("pair_token mismatch");
-        }
+    // Hold the nonce lock until the allowlist write succeeds so
+    // validation, persistence, and nonce-consumption form one atomic
+    // pairing step. That closes the race where two concurrent Hellos
+    // carrying the same QR token could both pass validation before one
+    // of them cleared the nonce.
+    let mut state = pair_state.lock().unwrap_or_else(|p| p.into_inner());
+    let expected = state
+        .nonce
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no outstanding pair nonce (consumed or not rolled)"))?;
+    if !constant_time_eq(expected.as_bytes(), presented.as_bytes()) {
+        anyhow::bail!("pair_token mismatch");
     }
 
     persist_pairing(viewer_id, paired_peers_path)?;
-
-    // Only clear after persist succeeded. A second peer that presents
-    // the same token between the two locks will also pass validation
-    // and persist — which is fine; both end up in the allowlist, the
-    // nonce ends up None either way, and the typical case (one phone
-    // scanning one QR) is unchanged.
-    pair_state.lock().unwrap_or_else(|p| p.into_inner()).nonce = None;
+    state.nonce = None;
     Ok(())
 }
 
@@ -390,7 +408,8 @@ async fn handle_control(
     request_id: u64,
     ctrl: Control,
     registry: &Arc<dyn DaemonRegistry>,
-    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    outbound_tx: &OutboundTx,
+    data_generation: &Arc<AtomicU64>,
     attached: &mut Option<Attached>,
     viewer_id: &str,
 ) -> anyhow::Result<()> {
@@ -611,9 +630,22 @@ async fn handle_control(
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
         Control::AttachTab { section_id, tab_id } => {
+            let same_target = attached
+                .as_ref()
+                .is_some_and(|prev| prev.section_id == section_id && prev.tab_id == tab_id);
+            let generation = if same_target {
+                data_generation.load(Ordering::Relaxed)
+            } else {
+                data_generation
+                    .fetch_add(1, Ordering::Relaxed)
+                    .wrapping_add(1)
+            };
             // Drop any prior attachment on this connection.
             if let Some(prev) = attached.take() {
-                prev.forwarder.abort();
+                if prev.forwarder.is_some() {
+                    registry.note_tab_output_observed(viewer_id, &prev.section_id, &prev.tab_id);
+                }
+                prev.abort_forwarder();
             }
             // Clear this viewer's viewport claim from the prior tab
             // before installing a new one. Without this, switching
@@ -622,19 +654,50 @@ async fn handle_control(
             // often doesn't fire on cold attach, leaving the old
             // tab's PTY clamped to this phone's viewport despite
             // the phone having moved on.
-            registry.viewer_disconnected(viewer_id);
+            if !same_target {
+                registry.viewer_disconnected(viewer_id);
+            }
 
-            let Some(mut rx) = registry.attach_tab(&section_id, &tab_id) else {
-                warn!(section_id, tab_id, "attach_tab: no such live runtime");
+            let Some(attachment) = registry.attach_tab_with_replay(viewer_id, &section_id, &tab_id)
+            else {
+                debug!(section_id, tab_id, "attach_tab: waiting for live runtime");
+                *attached = Some(Attached {
+                    section_id,
+                    tab_id,
+                    forwarder: None,
+                });
                 return Ok(());
             };
 
+            let mut rx = attachment.receiver;
+            let replay = attachment.replay;
             let out = outbound_tx.clone();
             let forwarder = tokio::spawn(async move {
+                for bytes in replay {
+                    if out
+                        .send(OutboundFrame {
+                            ty: frame::TY_DATA,
+                            payload: bytes,
+                            data_generation: Some(generation),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
                 loop {
                     match rx.recv().await {
                         Ok(bytes) => {
-                            if out.send((frame::TY_DATA, bytes)).await.is_err() {
+                            if out
+                                .send(OutboundFrame {
+                                    ty: frame::TY_DATA,
+                                    payload: bytes,
+                                    data_generation: Some(generation),
+                                })
+                                .await
+                                .is_err()
+                            {
                                 break;
                             }
                         }
@@ -665,12 +728,16 @@ async fn handle_control(
             *attached = Some(Attached {
                 section_id,
                 tab_id,
-                forwarder: forwarder.abort_handle(),
+                forwarder: Some(forwarder.abort_handle()),
             });
         }
         Control::DetachTab => {
+            data_generation.fetch_add(1, Ordering::Relaxed);
             if let Some(prev) = attached.take() {
-                prev.forwarder.abort();
+                if prev.forwarder.is_some() {
+                    registry.note_tab_output_observed(viewer_id, &prev.section_id, &prev.tab_id);
+                }
+                prev.abort_forwarder();
             }
             // A detached viewer has no focused tab, so their
             // viewport claim is stale — clear it so the PTY
@@ -1337,7 +1404,7 @@ async fn handle_control(
 /// data frames bypass this entirely via `TY_DATA`, the same id-0
 /// rule applies if/when we add push variants of `WorkerReply`).
 async fn send_worker_reply(
-    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    outbound_tx: &OutboundTx,
     request_id: u64,
     reply: &WorkerReply,
 ) -> anyhow::Result<()> {
@@ -1347,7 +1414,11 @@ async fn send_worker_reply(
     };
     let payload = serde_json::to_vec(&envelope).context("serialize worker reply")?;
     outbound_tx
-        .send((frame::TY_WORKER_REPLY, payload))
+        .send(OutboundFrame {
+            ty: frame::TY_WORKER_REPLY,
+            payload,
+            data_generation: None,
+        })
         .await
         .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))
 }
@@ -1358,7 +1429,7 @@ async fn send_worker_reply(
 /// the registry route the `Err` arm through here so the connection
 /// stays open for other in-flight requests on the same session.
 async fn send_err(
-    outbound_tx: &mpsc::Sender<(u8, Vec<u8>)>,
+    outbound_tx: &OutboundTx,
     request_id: u64,
     kind: ErrKind,
     message: String,
@@ -1566,6 +1637,81 @@ fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+
+    #[derive(Default)]
+    struct RecordingRegistry {
+        inputs: Mutex<Vec<(String, String, Vec<u8>)>>,
+    }
+
+    impl DaemonRegistry for RecordingRegistry {
+        fn list_projects(&self) -> Vec<crate::frame::ProjectSummary> {
+            Vec::new()
+        }
+
+        fn attach_tab(
+            &self,
+            _section_id: &str,
+            _tab_id: &str,
+        ) -> Option<broadcast::Receiver<Vec<u8>>> {
+            None
+        }
+
+        fn tab_input(&self, section_id: &str, tab_id: &str, bytes: &[u8]) {
+            self.inputs.lock().unwrap().push((
+                section_id.to_string(),
+                tab_id.to_string(),
+                bytes.to_vec(),
+            ));
+        }
+
+        fn tab_resize(
+            &self,
+            _viewer_id: &str,
+            _section_id: &str,
+            _tab_id: &str,
+            _cols: u16,
+            _rows: u16,
+        ) {
+        }
+    }
+
+    fn test_pair_state(nonce: &str) -> Arc<Mutex<PairState>> {
+        Arc::new(Mutex::new(PairState {
+            nonce: Some(nonce.to_string()),
+            addr: EndpointAddr::new(SecretKey::generate().public().into()),
+            pairing_url: String::new(),
+            qr_png_bytes: Vec::new(),
+        }))
+    }
+
+    #[test]
+    fn route_pty_input_forwards_terminal_mouse_bytes_unchanged() {
+        let registry = RecordingRegistry::default();
+        let attached = Attached {
+            section_id: "section-1".to_string(),
+            tab_id: "tab-1".to_string(),
+            forwarder: None,
+        };
+        let mouse_bytes = b"\x1b[<0;12;34M\x1b[<0;12;34m".to_vec();
+
+        route_pty_input(&registry, Some(&attached), &mouse_bytes);
+
+        let inputs = registry.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].0, "section-1");
+        assert_eq!(inputs[0].1, "tab-1");
+        assert_eq!(inputs[0].2, mouse_bytes);
+    }
+
+    #[test]
+    fn route_pty_input_drops_bytes_without_attachment() {
+        let registry = RecordingRegistry::default();
+
+        route_pty_input(&registry, None, b"\x1b[<64;1;1M");
+
+        assert!(registry.inputs.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn hex_roundtrips() {
@@ -1586,6 +1732,54 @@ mod tests {
         assert_eq!(
             &png[..8],
             &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']
+        );
+    }
+
+    #[test]
+    fn consume_hello_persists_peer_and_consumes_nonce() {
+        let dir = tempdir().unwrap();
+        let allowlist = dir.path().join("paired_peers");
+        let pair_state = test_pair_state("abc123");
+
+        consume_hello(
+            Control::Hello {
+                pair_token: Some("abc123".to_string()),
+                protocol_version: PROTOCOL_VERSION,
+            },
+            "peer-1",
+            &pair_state,
+            &allowlist,
+        )
+        .unwrap();
+
+        let stored = std::fs::read_to_string(&allowlist).unwrap();
+        assert_eq!(stored, "peer-1\n");
+        assert_eq!(
+            pair_state.lock().unwrap_or_else(|p| p.into_inner()).nonce,
+            None
+        );
+    }
+
+    #[test]
+    fn consume_hello_keeps_nonce_when_allowlist_write_fails() {
+        let dir = tempdir().unwrap();
+        let pair_state = test_pair_state("abc123");
+
+        let err = consume_hello(
+            Control::Hello {
+                pair_token: Some("abc123".to_string()),
+                protocol_version: PROTOCOL_VERSION,
+            },
+            "peer-1",
+            &pair_state,
+            dir.path(),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("open allowlist"));
+        assert_eq!(
+            pair_state.lock().unwrap_or_else(|p| p.into_inner()).nonce,
+            Some("abc123".to_string())
         );
     }
 }

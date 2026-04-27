@@ -97,7 +97,12 @@ pub struct Cell {
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { ch: 0, fg: 0xFFFFFFFF, bg: 0x00000000, flags: 0 }
+        Self {
+            ch: 0,
+            fg: 0xFFFFFFFF,
+            bg: 0x00000000,
+            flags: 0,
+        }
     }
 }
 

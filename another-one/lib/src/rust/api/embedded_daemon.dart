@@ -13,25 +13,6 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 Future<void> bootEmbeddedDaemon() =>
     RustLib.instance.api.crateApiEmbeddedDaemonBootEmbeddedDaemon();
 
-/// Keep the Add Agent modal's hidden prewarmed launch aligned with
-/// the current section + selected agent. Desktop-only optimisation:
-/// the loopback iroh transport still owns the real tab mutation, but
-/// this direct bridge call lets the embedded daemon reuse the already
-/// launched PTY when the user presses Create.
-Future<void> syncAddAgentModalPrewarm({
-  required String sectionId,
-  String? selectedAgentId,
-}) => RustLib.instance.api.crateApiEmbeddedDaemonSyncAddAgentModalPrewarm(
-  sectionId: sectionId,
-  selectedAgentId: selectedAgentId,
-);
-
-/// Cancel the Add Agent modal's currently reserved hidden launch, if
-/// any. Called when the modal dismisses without creating a tab so the
-/// background PTY does not linger.
-Future<void> cancelActiveAddAgentPrewarm() =>
-    RustLib.instance.api.crateApiEmbeddedDaemonCancelActiveAddAgentPrewarm();
-
 /// Snapshot of the embedded daemon's iroh address. Returns `None`
 /// until [`boot_embedded_daemon`] has finished binding the endpoint
 /// (typically a few hundred milliseconds after `boot`).

@@ -16,13 +16,17 @@
 //!          `master` + `child_killer` locally so the PTY's child
 //!          doesn't get SIGHUP. Drain
 //!          `pending_post_launch_input` if recorded.
-//!        * `Output` → no-op. The PTY reader's
-//!          [`tokio::sync::broadcast`] tee already routes to
-//!          subscribers via `attach_tab`'s forwarder loop.
+//!        * `Output` → append to the tab's bounded replay buffer and
+//!          forward to any live `attach_tab` subscribers.
 //!        * `SessionDiscovered` → no-op (session restoration is
 //!          GPUI-only today).
 //!        * `Exited` / `Failed` → drop the live entry + remove
 //!          the registry's `broadcasts` / `writers` entries.
+//!   3. Drains [`RegistryState::pending_resizes`] and forwards
+//!      each request to the matching live PTY's master handle.
+//!   4. Drains [`RegistryState::pending_tab_terminations`] and
+//!      tears down any matching live PTY after section/tab
+//!      mutators remove it from the store.
 //!
 //! What this drain DOESN'T do (vs GPUI's tick): no VT-parsing,
 //! no snapshot rebuilds, no toast surfacing. Flutter's
@@ -39,11 +43,11 @@ use std::time::Duration;
 use another_one_core::agents::{
     agent_id_for_provider, AgentProviderKind, TerminalLaunchConfig, AGENTS,
 };
-use another_one_core::daemon_embed::{RegistryState, TabLaunchRequest};
-use another_one_core::process::TrackedProcess;
-use another_one_core::terminal_launch::{
-    spawn_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
+use another_one_core::daemon_embed::{
+    RegistryState, TabLaunchRequest, TabResizeRequest, TerminalReplayBuffer,
 };
+use another_one_core::process::TrackedProcess;
+use another_one_core::terminal_launch::{spawn_terminal_launch, TerminalLaunchReply};
 use another_one_core::terminal_types::{
     PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey,
 };
@@ -63,12 +67,6 @@ struct LiveTab {
     _runtime_handle: PreparedTerminalRuntime,
 }
 
-struct HiddenWarmLaunch {
-    runtime: PreparedTerminalRuntime,
-    launch_config: TerminalLaunchConfig,
-    process_id: Option<u32>,
-}
-
 /// Spawn the drain thread. Returns immediately. The thread runs
 /// for the lifetime of the process and exits cleanly when the
 /// `Weak<RegistryState>` upgrades to `None` (the daemon's
@@ -83,11 +81,7 @@ pub fn spawn_drain(registry: Arc<Mutex<RegistryState>>) {
 
 fn run(weak: Weak<Mutex<RegistryState>>) {
     let (tx, rx) = mpsc::sync_channel::<TerminalLaunchReply>(1024);
-    let (warm_tx, warm_rx) = mpsc::sync_channel::<WarmTerminalLaunchReply>(1024);
-    crate::embedded_daemon::set_add_agent_prewarm_sender(warm_tx);
     let mut live: HashMap<TerminalRuntimeKey, LiveTab> = HashMap::new();
-    let mut hidden_warm_launches: HashMap<u64, HiddenWarmLaunch> = HashMap::new();
-    let mut attached_warm_launches: HashMap<u64, TerminalRuntimeKey> = HashMap::new();
     loop {
         let Some(registry) = weak.upgrade() else {
             return;
@@ -124,11 +118,8 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
                         process_id,
                     );
                 }
-                Ok(TerminalLaunchReply::Output { .. }) => {
-                    // The PTY reader already broadcasts each chunk
-                    // via `output_broadcast` (we route that to
-                    // attached viewers in `attach_tab`); no extra
-                    // bookkeeping needed here.
+                Ok(TerminalLaunchReply::Output { key, bytes }) => {
+                    handle_output(&registry, &key, bytes);
                 }
                 Ok(TerminalLaunchReply::SessionDiscovered { key, session }) => {
                     // GPUI's `AnotherOneApp` used to write the
@@ -152,86 +143,6 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
                 Err(mpsc::TryRecvError::Disconnected) => return,
             }
         }
-        loop {
-            match warm_rx.try_recv() {
-                Ok(WarmTerminalLaunchReply::Launched {
-                    launch_id,
-                    runtime,
-                    launch_config,
-                    process_id,
-                }) => {
-                    let hidden = HiddenWarmLaunch {
-                        runtime,
-                        launch_config,
-                        process_id,
-                    };
-                    if let Some(prewarm) =
-                        crate::embedded_daemon::add_agent_prewarm_launch(launch_id)
-                    {
-                        if let Some(key) = prewarm.attached_tab {
-                            if promote_hidden_warm_launch(
-                                &registry,
-                                &mut live,
-                                &mut attached_warm_launches,
-                                launch_id,
-                                key,
-                                hidden,
-                            ) {
-                                crate::embedded_daemon::complete_add_agent_prewarm_launch(
-                                    launch_id,
-                                );
-                            }
-                        } else {
-                            hidden_warm_launches.insert(launch_id, hidden);
-                        }
-                    }
-                }
-                Ok(WarmTerminalLaunchReply::Output { .. }) => {}
-                Ok(WarmTerminalLaunchReply::SessionDiscovered { launch_id, session }) => {
-                    if let Some(hidden) = hidden_warm_launches.get_mut(&launch_id) {
-                        hidden.launch_config = hidden
-                            .launch_config
-                            .clone()
-                            .with_session(Some(session.clone()));
-                        let _ = crate::embedded_daemon::update_add_agent_prewarm_launch_config(
-                            launch_id,
-                            hidden.launch_config.clone(),
-                        );
-                    } else if let Some(key) = attached_warm_launches.get(&launch_id).cloned() {
-                        set_tab_session(&registry, &key, session);
-                    }
-                }
-                Ok(WarmTerminalLaunchReply::Exited { launch_id, .. })
-                | Ok(WarmTerminalLaunchReply::Failed { launch_id, .. }) => {
-                    hidden_warm_launches.remove(&launch_id);
-                    if let Some(key) = attached_warm_launches.remove(&launch_id) {
-                        handle_terminated(&registry, &mut live, &key);
-                    }
-                    crate::embedded_daemon::complete_add_agent_prewarm_launch(launch_id);
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => return,
-            }
-        }
-        for launch_id in crate::embedded_daemon::take_canceled_add_agent_prewarm_launch_ids() {
-            hidden_warm_launches.remove(&launch_id);
-            attached_warm_launches.remove(&launch_id);
-        }
-        for (launch_id, key) in crate::embedded_daemon::add_agent_prewarm_attached_tabs() {
-            let Some(hidden) = hidden_warm_launches.remove(&launch_id) else {
-                continue;
-            };
-            if promote_hidden_warm_launch(
-                &registry,
-                &mut live,
-                &mut attached_warm_launches,
-                launch_id,
-                key,
-                hidden,
-            ) {
-                crate::embedded_daemon::complete_add_agent_prewarm_launch(launch_id);
-            }
-        }
         let pending_terminations = {
             let mut state = match registry.lock() {
                 Ok(s) => s,
@@ -241,7 +152,24 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
         };
         for key in pending_terminations {
             handle_terminated(&registry, &mut live, &key);
-            attached_warm_launches.retain(|_, attached_key| attached_key != &key);
+        }
+        let pending_resizes = {
+            let mut state = match registry.lock() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            std::mem::take(&mut state.pending_resizes)
+                .into_iter()
+                .filter_map(|request| {
+                    resize_request_for_effective_size(
+                        &request.key,
+                        state.effective_sizes.get(&request.key).copied(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        for request in pending_resizes {
+            apply_resize_request(&mut live, &request);
         }
         drop(registry);
         thread::sleep(Duration::from_millis(50));
@@ -271,15 +199,110 @@ fn spawn_one(
     let Some((cwd, launch_config, agent_args)) = resolve_launch_inputs(&state, &req.key) else {
         return;
     };
+    let launch_size = launch_size_for_effective_size(state.effective_sizes.get(&req.key).copied());
     state.in_flight_launches.insert(req.key.clone());
     drop(state);
-    let size = TerminalGridSize {
-        cols: 80,
-        rows: 24,
+    spawn_terminal_launch(
+        tx,
+        req.key,
+        Some(cwd),
+        launch_config,
+        agent_args,
+        launch_size,
+    );
+}
+
+fn launch_size_for_effective_size(effective_size: Option<(u16, u16)>) -> TerminalGridSize {
+    let (cols, rows) = effective_size.unwrap_or((80, 24));
+    TerminalGridSize {
+        cols: cols.max(1),
+        rows: rows.max(1),
         pixel_width: 0,
         pixel_height: 0,
+    }
+}
+
+fn resize_request_for_effective_size(
+    key: &TerminalRuntimeKey,
+    effective_size: Option<(u16, u16)>,
+) -> Option<TabResizeRequest> {
+    let (cols, rows) = effective_size?;
+    Some(TabResizeRequest {
+        key: key.clone(),
+        cols: cols.max(1),
+        rows: rows.max(1),
+    })
+}
+
+fn effective_resize_request(
+    key: &TerminalRuntimeKey,
+    current_size: TerminalGridSize,
+    effective_size: Option<(u16, u16)>,
+) -> Option<TabResizeRequest> {
+    let request = resize_request_for_effective_size(key, effective_size)?;
+    if current_size.cols == request.cols && current_size.rows == request.rows {
+        return None;
+    }
+    Some(request)
+}
+
+fn apply_resize_request_to_size<F>(
+    size: &mut TerminalGridSize,
+    request: &TabResizeRequest,
+    mut resize: F,
+) -> bool
+where
+    F: FnMut(TerminalGridSize) -> bool,
+{
+    if size.cols == request.cols && size.rows == request.rows {
+        return true;
+    }
+    let mut next_size = *size;
+    next_size.cols = request.cols.max(1);
+    next_size.rows = request.rows.max(1);
+    if !resize(next_size) {
+        return false;
+    }
+    *size = next_size;
+    true
+}
+
+fn apply_resize_request(
+    live: &mut HashMap<TerminalRuntimeKey, LiveTab>,
+    request: &TabResizeRequest,
+) -> bool {
+    let Some(tab) = live.get_mut(&request.key) else {
+        return false;
     };
-    spawn_terminal_launch(tx, req.key, Some(cwd), launch_config, agent_args, size);
+    let runtime = &mut tab._runtime_handle;
+    let master = &runtime.master;
+    apply_resize_request_to_size(&mut runtime.size, request, |size| {
+        master.resize(size.as_pty_size()).is_ok()
+    })
+}
+
+fn handle_output(registry: &Arc<Mutex<RegistryState>>, key: &TerminalRuntimeKey, bytes: Vec<u8>) {
+    let mut state = match registry.lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let Some(sender) = state.broadcasts.get(key).cloned() else {
+        return;
+    };
+    if sender.receiver_count() == 0 {
+        state
+            .terminal_replay
+            .entry(key.clone())
+            .or_default()
+            .push(bytes);
+        return;
+    }
+    state
+        .terminal_replay
+        .entry(key.clone())
+        .or_default()
+        .push(bytes.clone());
+    let _ = sender.send(bytes);
 }
 
 fn resolve_launch_inputs(
@@ -324,11 +347,11 @@ fn handle_launched(
     mut runtime: PreparedTerminalRuntime,
     launch_config: TerminalLaunchConfig,
     process_id: Option<u32>,
-) -> bool {
+) {
     let tab_still_exists = {
         let state = match registry.lock() {
             Ok(s) => s,
-            Err(_) => return false,
+            Err(_) => return,
         };
         let section_key = key.section_id.store_key();
         state
@@ -342,14 +365,16 @@ fn handle_launched(
             state.in_flight_launches.remove(&key);
             state.pending_post_launch_input.remove(&key);
             state.tracked_processes.remove(&key);
+            clear_viewer_output_cursors(&mut state, &key);
         }
-        return false;
+        return;
     }
 
     // Take writer + broadcast out of the runtime struct without
     // dropping `master` / `child_killer` (which would SIGHUP the
     // child). The broadcast Sender is `Clone`; the writer is a
     // trait object so we swap a no-op sink in its place.
+    let launch_size = runtime.size;
     let writer = std::mem::replace(&mut runtime.writer, Box::new(std::io::sink()));
     let writer_arc: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(writer));
     let output_broadcast = runtime.output_broadcast.clone();
@@ -359,27 +384,36 @@ fn handle_launched(
             _runtime_handle: runtime,
         },
     );
-    let pending_input = {
+    let (pending_input, pending_resize) = {
         let mut state = match registry.lock() {
             Ok(s) => s,
-            Err(_) => return false,
+            Err(_) => return,
         };
         state.broadcasts.insert(key.clone(), output_broadcast);
+        state
+            .terminal_replay
+            .insert(key.clone(), TerminalReplayBuffer::default());
+        clear_viewer_output_cursors(&mut state, &key);
         state.writers.insert(key.clone(), writer_arc.clone());
         state.in_flight_launches.remove(&key);
         if let Some(pid) = process_id {
             let tracked = build_tracked_process(&state, &key, &launch_config, pid);
             state.tracked_processes.insert(key.clone(), tracked);
         }
-        state.pending_post_launch_input.remove(&key)
+        (
+            state.pending_post_launch_input.remove(&key),
+            effective_resize_request(&key, launch_size, state.effective_sizes.get(&key).copied()),
+        )
     };
+    if let Some(request) = pending_resize {
+        apply_resize_request(live, &request);
+    }
     if let Some(bytes) = pending_input {
         if let Ok(mut writer) = writer_arc.lock() {
             let _ = writer.write_all(&bytes);
             let _ = writer.flush();
         }
     }
-    true
 }
 
 /// Build the per-tab `TrackedProcess` row the resource sampler
@@ -472,6 +506,7 @@ fn handle_terminated(
         Err(_) => return,
     };
     state.broadcasts.remove(key);
+    state.terminal_replay.remove(key);
     state.writers.remove(key);
     state.in_flight_launches.remove(key);
     state
@@ -482,47 +517,189 @@ fn handle_terminated(
     state.tracked_processes.remove(key);
     state.active_viewers.remove(key);
     state.effective_sizes.remove(key);
+    clear_viewer_output_cursors(&mut state, key);
     state
         .viewer_focus
         .retain(|_, focused_key| focused_key != key);
 }
 
-fn promote_hidden_warm_launch(
-    registry: &Arc<Mutex<RegistryState>>,
-    live: &mut HashMap<TerminalRuntimeKey, LiveTab>,
-    attached_warm_launches: &mut HashMap<u64, TerminalRuntimeKey>,
-    launch_id: u64,
-    key: TerminalRuntimeKey,
-    hidden: HiddenWarmLaunch,
-) -> bool {
-    let session = hidden.launch_config.session.clone();
-    let launched = handle_launched(
-        registry,
-        live,
-        key.clone(),
-        hidden.runtime,
-        hidden.launch_config,
-        hidden.process_id,
-    );
-    if !launched {
-        return false;
-    }
-    if let Some(session) = session {
-        set_tab_session(registry, &key, session);
-    }
-    attached_warm_launches.insert(launch_id, key);
-    true
+fn clear_viewer_output_cursors(state: &mut RegistryState, key: &TerminalRuntimeKey) {
+    state
+        .viewer_output_cursors
+        .retain(|(_, cursor_key), _| cursor_key != key);
 }
 
-fn set_tab_session(
-    registry: &Arc<Mutex<RegistryState>>,
-    key: &TerminalRuntimeKey,
-    session: another_one_core::agents::TerminalSessionRef,
-) {
-    if let Ok(mut state) = registry.lock() {
-        let section_key = key.section_id.store_key();
-        state
-            .project_store
-            .set_tab_session(&section_key, &key.tab_id, session);
+#[cfg(test)]
+mod tests {
+    use super::{
+        apply_resize_request_to_size, effective_resize_request, launch_size_for_effective_size,
+        resize_request_for_effective_size,
+    };
+    use another_one_core::daemon_embed::TabResizeRequest;
+    use another_one_core::section::SectionId;
+    use another_one_core::terminal_types::{TerminalGridSize, TerminalRuntimeKey};
+
+    fn test_key() -> TerminalRuntimeKey {
+        TerminalRuntimeKey {
+            section_id: SectionId::new("project-1", "main"),
+            tab_id: "tab-1".to_string(),
+        }
+    }
+
+    #[test]
+    fn apply_resize_request_to_size_updates_grid_and_preserves_pixels() {
+        let key = test_key();
+        let request = TabResizeRequest {
+            key,
+            cols: 120,
+            rows: 40,
+        };
+        let mut size = TerminalGridSize {
+            cols: 80,
+            rows: 24,
+            pixel_width: 17,
+            pixel_height: 33,
+        };
+        let mut resized_to = Vec::new();
+
+        let applied = apply_resize_request_to_size(&mut size, &request, |next_size| {
+            resized_to.push(next_size);
+            true
+        });
+
+        assert!(applied);
+        assert_eq!(
+            size,
+            TerminalGridSize {
+                cols: 120,
+                rows: 40,
+                pixel_width: 17,
+                pixel_height: 33,
+            }
+        );
+        assert_eq!(
+            resized_to,
+            vec![TerminalGridSize {
+                cols: 120,
+                rows: 40,
+                pixel_width: 17,
+                pixel_height: 33,
+            }]
+        );
+    }
+
+    #[test]
+    fn apply_resize_request_to_size_skips_redundant_resize() {
+        let key = test_key();
+        let request = TabResizeRequest {
+            key,
+            cols: 80,
+            rows: 24,
+        };
+        let mut size = TerminalGridSize {
+            cols: 80,
+            rows: 24,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut called = false;
+
+        let applied = apply_resize_request_to_size(&mut size, &request, |_next_size| {
+            called = true;
+            true
+        });
+
+        assert!(applied);
+        assert!(!called);
+        assert_eq!(
+            size,
+            TerminalGridSize {
+                cols: 80,
+                rows: 24,
+                pixel_width: 0,
+                pixel_height: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_resize_request_to_size_keeps_current_size_when_resize_fails() {
+        let key = test_key();
+        let request = TabResizeRequest {
+            key,
+            cols: 132,
+            rows: 50,
+        };
+        let original = TerminalGridSize {
+            cols: 80,
+            rows: 24,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut size = original;
+
+        let applied = apply_resize_request_to_size(&mut size, &request, |_next_size| false);
+
+        assert!(!applied);
+        assert_eq!(size, original);
+    }
+
+    #[test]
+    fn effective_resize_request_only_returns_when_launch_size_differs() {
+        let key = test_key();
+        let launch_size = TerminalGridSize {
+            cols: 80,
+            rows: 24,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        assert!(effective_resize_request(&key, launch_size, None).is_none());
+        assert!(effective_resize_request(&key, launch_size, Some((80, 24))).is_none());
+
+        let request = effective_resize_request(&key, launch_size, Some((100, 30)))
+            .expect("changed effective size should produce a resize request");
+        assert_eq!(request.key, key);
+        assert_eq!(request.cols, 100);
+        assert_eq!(request.rows, 30);
+    }
+
+    #[test]
+    fn launch_size_for_effective_size_uses_viewer_size_when_available() {
+        assert_eq!(
+            launch_size_for_effective_size(Some((132, 50))),
+            TerminalGridSize {
+                cols: 132,
+                rows: 50,
+                pixel_width: 0,
+                pixel_height: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn launch_size_for_effective_size_defaults_to_legacy_size() {
+        assert_eq!(
+            launch_size_for_effective_size(None),
+            TerminalGridSize {
+                cols: 80,
+                rows: 24,
+                pixel_width: 0,
+                pixel_height: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn resize_request_for_effective_size_returns_none_when_viewer_state_is_gone() {
+        let key = test_key();
+
+        assert!(resize_request_for_effective_size(&key, None).is_none());
+
+        let request = resize_request_for_effective_size(&key, Some((0, 0)))
+            .expect("effective sizes should clamp to a non-zero resize request");
+        assert_eq!(request.key, key);
+        assert_eq!(request.cols, 1);
+        assert_eq!(request.rows, 1);
     }
 }

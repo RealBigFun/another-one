@@ -16,18 +16,18 @@
 //!      `LocalSession` + the pair-mobile FRB API can read from
 //!      it.
 //!
-//! Idempotent at the registration layer: both seams use
-//! `OnceLock`, so a second `boot_embedded_daemon` call from Dart is
-//! a no-op (we early-out before spawning the thread).
+//! Registry registration is still one-time, but boot coordination is
+//! handled separately so concurrent `boot_embedded_daemon` calls
+//! collapse into one in-flight attempt and a failed startup can be
+//! retried later.
 //!
 //! MCP transport is not started here — the GPUI desktop owns that
 //! today. Phase 6 of the migration will move MCP wiring into core
 //! and fold it back in.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread;
 
 use tokio::sync::broadcast;
@@ -45,8 +45,6 @@ use another_one_core::project_store::{
     ProjectActionIcon, ProjectActionKind, ProjectActionScope,
 };
 use another_one_core::section::SectionId;
-use another_one_core::terminal_launch::{spawn_warm_terminal_launch, WarmTerminalLaunchReply};
-use another_one_core::terminal_types::TerminalGridSize;
 use another_one_core::terminal_types::TerminalRuntimeKey;
 
 use daemon_sandbox::frame::{
@@ -60,134 +58,115 @@ use daemon_sandbox::frame::{
     RecentCommitsWire, ResolvedBranchSettingsWire, ShortcutSettingsRow, ShortcutSettingsView,
     TabSummary, TaskSummary, ToolbarActionOutcome,
 };
-use daemon_sandbox::registry::RegistryFuture;
+use daemon_sandbox::registry::{RegistryFuture, TabAttachment};
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
 use crate::local_pair::{set_local_pair_info, LocalPairInfo};
 use crate::local_registry::set_local_registry;
 
-/// Tracks whether the embedded daemon has been booted in this
-/// process. `OnceLock` so two concurrent `boot_embedded_daemon`
-/// calls from Dart resolve to the same boot.
-static BOOTED: OnceLock<()> = OnceLock::new();
+/// One-time process-wide registry state for the embedded daemon.
+///
+/// Startup retries must keep reusing this state because
+/// [`crate::local_registry`] and the PTY drain are both registered
+/// once per process.
+static REGISTRY_STATE: OnceLock<Arc<Mutex<RegistryState>>> = OnceLock::new();
+
+/// Tracks the embedded daemon's boot phase so concurrent callers
+/// share one in-flight startup and a failed startup reopens the boot
+/// slot for the next call.
+static BOOT_COORDINATOR: OnceLock<Mutex<BootCoordinator>> = OnceLock::new();
 
 /// Providers whose most recent MCP sync failed. Mirrors GPUI's
-/// `mcp_last_sync_errors` state so the Flutter MCP settings can tint
-/// the affected provider chips red until the next successful sync.
+/// `mcp_last_sync_errors` column-level state so the Flutter settings
+/// page can tint the affected provider chips red after a partial
+/// `sync_all` failure.
 static MCP_LAST_SYNC_ERRORS: OnceLock<Mutex<HashSet<AgentProviderKind>>> = OnceLock::new();
 
-#[derive(Clone, Debug)]
-pub(crate) struct AddAgentPrewarmLaunch {
-    pub cwd: PathBuf,
-    pub launch_config: TerminalLaunchConfig,
-    pub attached_tab: Option<TerminalRuntimeKey>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BootPhase {
+    Idle,
+    Booting,
+    Booted,
 }
 
-#[derive(Default)]
-struct AddAgentPrewarmState {
-    active_launch_id: Option<u64>,
-    next_launch_id: u64,
-    launches: HashMap<u64, AddAgentPrewarmLaunch>,
-    canceled_launch_ids: HashSet<u64>,
+#[derive(Debug)]
+struct BootCoordinator {
+    phase: BootPhase,
 }
 
-static ADD_AGENT_PREWARM_STATE: OnceLock<Mutex<AddAgentPrewarmState>> = OnceLock::new();
-static ADD_AGENT_PREWARM_SENDER: OnceLock<mpsc::SyncSender<WarmTerminalLaunchReply>> =
-    OnceLock::new();
+impl Default for BootCoordinator {
+    fn default() -> Self {
+        Self {
+            phase: BootPhase::Idle,
+        }
+    }
+}
 
-fn with_add_agent_prewarm_state<R>(f: impl FnOnce(&mut AddAgentPrewarmState) -> R) -> R {
-    let state = ADD_AGENT_PREWARM_STATE.get_or_init(|| {
-        Mutex::new(AddAgentPrewarmState {
-            active_launch_id: None,
-            next_launch_id: 1,
-            launches: HashMap::new(),
-            canceled_launch_ids: HashSet::new(),
-        })
-    });
-    let mut guard = state
+impl BootCoordinator {
+    fn try_start(&mut self) -> bool {
+        match self.phase {
+            BootPhase::Idle => {
+                self.phase = BootPhase::Booting;
+                true
+            }
+            BootPhase::Booting | BootPhase::Booted => false,
+        }
+    }
+
+    fn mark_booted(&mut self) {
+        self.phase = BootPhase::Booted;
+    }
+
+    fn mark_failed(&mut self) {
+        self.phase = BootPhase::Idle;
+    }
+
+    #[cfg(test)]
+    fn phase(&self) -> BootPhase {
+        self.phase
+    }
+}
+
+struct BootAttemptGuard {
+    booted: bool,
+}
+
+impl BootAttemptGuard {
+    fn new() -> Self {
+        Self { booted: false }
+    }
+
+    fn mark_booted(&mut self) {
+        with_boot_coordinator(|coordinator| coordinator.mark_booted());
+        self.booted = true;
+    }
+}
+
+impl Drop for BootAttemptGuard {
+    fn drop(&mut self) {
+        if !self.booted {
+            with_boot_coordinator(|coordinator| coordinator.mark_failed());
+        }
+    }
+}
+
+fn with_boot_coordinator<R>(f: impl FnOnce(&mut BootCoordinator) -> R) -> R {
+    let coordinator = BOOT_COORDINATOR.get_or_init(|| Mutex::new(BootCoordinator::default()));
+    let mut guard = coordinator
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     f(&mut guard)
 }
 
-pub(crate) fn set_add_agent_prewarm_sender(sender: mpsc::SyncSender<WarmTerminalLaunchReply>) {
-    let _ = ADD_AGENT_PREWARM_SENDER.set(sender);
-}
-
-fn add_agent_prewarm_sender() -> Option<mpsc::SyncSender<WarmTerminalLaunchReply>> {
-    ADD_AGENT_PREWARM_SENDER.get().cloned()
-}
-
-fn same_add_agent_prewarm_launch_config(
-    left: &TerminalLaunchConfig,
-    right: &TerminalLaunchConfig,
-) -> bool {
-    left.mode == right.mode
-        && left.provider == right.provider
-        && left.home_override == right.home_override
-        && left.extra_args == right.extra_args
-        && left.use_agent_launch_args == right.use_agent_launch_args
-}
-
-fn cancel_add_agent_prewarm_launch(state: &mut AddAgentPrewarmState, launch_id: u64) {
-    state.launches.remove(&launch_id);
-    state.canceled_launch_ids.insert(launch_id);
-    if state.active_launch_id == Some(launch_id) {
-        state.active_launch_id = None;
-    }
-}
-
-pub(crate) fn add_agent_prewarm_launch(launch_id: u64) -> Option<AddAgentPrewarmLaunch> {
-    with_add_agent_prewarm_state(|state| state.launches.get(&launch_id).cloned())
-}
-
-pub(crate) fn add_agent_prewarm_attached_tabs() -> Vec<(u64, TerminalRuntimeKey)> {
-    with_add_agent_prewarm_state(|state| {
-        state
-            .launches
-            .iter()
-            .filter_map(|(launch_id, launch)| {
-                launch
-                    .attached_tab
-                    .clone()
-                    .map(|attached_tab| (*launch_id, attached_tab))
-            })
-            .collect()
-    })
-}
-
-pub(crate) fn update_add_agent_prewarm_launch_config(
-    launch_id: u64,
-    launch_config: TerminalLaunchConfig,
-) -> Option<TerminalRuntimeKey> {
-    with_add_agent_prewarm_state(|state| {
-        let launch = state.launches.get_mut(&launch_id)?;
-        launch.launch_config = launch_config;
-        launch.attached_tab.clone()
-    })
-}
-
-pub(crate) fn take_canceled_add_agent_prewarm_launch_ids() -> Vec<u64> {
-    with_add_agent_prewarm_state(|state| state.canceled_launch_ids.drain().collect())
-}
-
-pub(crate) fn complete_add_agent_prewarm_launch(launch_id: u64) {
-    with_add_agent_prewarm_state(|state| {
-        state.launches.remove(&launch_id);
-        state.canceled_launch_ids.remove(&launch_id);
-        if state.active_launch_id == Some(launch_id) {
-            state.active_launch_id = None;
-        }
-    });
-}
-
-pub(crate) fn is_add_agent_prewarm_attached_to_tab(key: &TerminalRuntimeKey) -> bool {
-    with_add_agent_prewarm_state(|state| {
-        state
-            .launches
-            .values()
-            .any(|launch| launch.attached_tab.as_ref() == Some(key))
-    })
+fn embedded_registry_state() -> Arc<Mutex<RegistryState>> {
+    REGISTRY_STATE
+        .get_or_init(|| {
+            let registry_state = Arc::new(Mutex::new(RegistryState::new(ProjectStore::load())));
+            set_local_registry(registry_state.clone());
+            crate::pty_drain::spawn_drain(registry_state.clone());
+            registry_state
+        })
+        .clone()
 }
 
 fn with_mcp_last_sync_errors<R>(f: impl FnOnce(&mut HashSet<AgentProviderKind>) -> R) -> R {
@@ -234,158 +213,34 @@ fn record_mcp_sync_errors(
     }
 }
 
-fn cwd_for_section(state: &RegistryState, section: &SectionId) -> Option<PathBuf> {
-    let section_key = section.store_key();
-    let section_state = state.project_store.terminal_sections.get(&section_key);
-    let project = state.project_store.project(&section.project_id)?;
-    Some(
-        section_state
-            .and_then(|persisted| persisted.cwd.clone())
-            .unwrap_or_else(|| project.path.clone()),
-    )
-}
-
-fn agent_launch_args_for_config(
-    store: &ProjectStore,
-    launch_config: &TerminalLaunchConfig,
-) -> Vec<String> {
-    if !launch_config.use_agent_launch_args {
-        return Vec::new();
-    }
-    launch_config
-        .provider
-        .and_then(another_one_core::agents::agent_id_for_provider)
-        .map(|agent_id| store.agent_launch_args(agent_id).to_vec())
-        .unwrap_or_default()
-}
-
-pub(crate) fn attach_active_add_agent_prewarm(
-    key: &TerminalRuntimeKey,
-    cwd: &PathBuf,
-    launch_config: &TerminalLaunchConfig,
-) -> bool {
-    with_add_agent_prewarm_state(|state| {
-        let Some(launch_id) = state.active_launch_id else {
-            return false;
-        };
-        let Some(launch) = state.launches.get_mut(&launch_id) else {
-            state.active_launch_id = None;
-            return false;
-        };
-        if launch.cwd != *cwd
-            || !same_add_agent_prewarm_launch_config(&launch.launch_config, launch_config)
-        {
-            return false;
-        }
-        launch.attached_tab = Some(key.clone());
-        state.active_launch_id = None;
-        true
-    })
-}
-
-pub(crate) fn sync_add_agent_modal_prewarm(
-    section_id: &str,
-    selected_agent_id: Option<&str>,
-) -> Result<(), String> {
-    let section = SectionId::from_store_key(section_id).ok_or_else(|| {
-        format!(
-            "sync_add_agent_modal_prewarm: malformed section_id `{section_id}` — \
-             expected SectionId::store_key()"
-        )
-    })?;
-    let launch_config = launch_config_for_add_agent(selected_agent_id.unwrap_or(""))?;
-    let registry = crate::local_registry::local_registry()
-        .ok_or_else(|| "sync_add_agent_modal_prewarm: registry not initialized".to_string())?;
-    let (cwd, agent_launch_args) = {
-        let state = registry
-            .lock()
-            .map_err(|_| "sync_add_agent_modal_prewarm: registry mutex poisoned".to_string())?;
-        let cwd = cwd_for_section(&state, &section).ok_or_else(|| {
-            format!("sync_add_agent_modal_prewarm: unknown section_id `{section_id}`")
-        })?;
-        let agent_launch_args = agent_launch_args_for_config(&state.project_store, &launch_config);
-        (cwd, agent_launch_args)
-    };
-    let sender = add_agent_prewarm_sender()
-        .ok_or_else(|| "sync_add_agent_modal_prewarm: prewarm drain not initialized".to_string())?;
-    let request = with_add_agent_prewarm_state(|state| {
-        if let Some(active_launch_id) = state.active_launch_id {
-            if let Some(existing) = state.launches.get(&active_launch_id) {
-                if existing.cwd == cwd
-                    && same_add_agent_prewarm_launch_config(&existing.launch_config, &launch_config)
-                {
-                    return None;
-                }
-            }
-            cancel_add_agent_prewarm_launch(state, active_launch_id);
-        }
-
-        let launch_id = state.next_launch_id.max(1);
-        state.next_launch_id = launch_id + 1;
-        state.active_launch_id = Some(launch_id);
-        state.launches.insert(
-            launch_id,
-            AddAgentPrewarmLaunch {
-                cwd: cwd.clone(),
-                launch_config: launch_config.clone(),
-                attached_tab: None,
-            },
-        );
-        Some((launch_id, cwd.clone(), launch_config.clone()))
-    });
-    let Some((launch_id, launch_cwd, launch_config)) = request else {
-        return Ok(());
-    };
-    spawn_warm_terminal_launch(
-        sender,
-        launch_id,
-        Some(launch_cwd),
-        launch_config,
-        agent_launch_args,
-        TerminalGridSize::default(),
-    );
-    Ok(())
-}
-
-pub(crate) fn cancel_active_add_agent_prewarm() {
-    with_add_agent_prewarm_state(|state| {
-        if let Some(launch_id) = state.active_launch_id.take() {
-            cancel_add_agent_prewarm_launch(state, launch_id);
-        }
-    });
-}
-
-/// Build, register, and boot the embedded daemon. Idempotent: a
-/// second call no-ops. Returns as soon as the registry is wired and
-/// the daemon thread is spawned; the endpoint handshake completes
-/// asynchronously on its own runtime, so [`crate::api::pair::pairing_info`]
-/// may return `None` for a few hundred milliseconds after this
-/// returns. The pair-mobile UI's empty state covers that window.
+/// Build, register, and boot the embedded daemon. A second call
+/// while startup is already in flight or after a successful boot
+/// no-ops. If startup later fails, the next call retries. Returns as
+/// soon as the registry is wired and the daemon thread is spawned;
+/// the endpoint handshake completes asynchronously on its own
+/// runtime, so [`crate::api::pair::pairing_info`] may return `None`
+/// for a few hundred milliseconds after this returns. The pair-mobile
+/// UI's empty state covers that window.
 pub(crate) fn boot() -> Result<(), String> {
-    if BOOTED.get().is_some() {
+    let registry_state = embedded_registry_state();
+
+    if !with_boot_coordinator(|coordinator| coordinator.try_start()) {
         return Ok(());
     }
-
-    let store = ProjectStore::load();
-    let registry_state = Arc::new(Mutex::new(RegistryState::new(store)));
-    set_local_registry(registry_state.clone());
-
-    crate::pty_drain::spawn_drain(registry_state.clone());
 
     thread::Builder::new()
         .name("another-one-embedded-daemon".into())
         .spawn(move || run(registry_state))
-        .map_err(|e| format!("spawn embedded daemon thread: {e}"))?;
+        .map_err(|e| {
+            with_boot_coordinator(|coordinator| coordinator.mark_failed());
+            format!("spawn embedded daemon thread: {e}")
+        })?;
 
-    // Mark booted now — even if the endpoint handshake later fails,
-    // we don't want a second `boot_embedded_daemon` call to spawn a
-    // duplicate registry. The Dart UI surfaces "daemon not ready"
-    // for as long as `local_pair_info()` is unset.
-    let _ = BOOTED.set(());
     Ok(())
 }
 
 fn run(registry_state: Arc<Mutex<RegistryState>>) {
+    let mut boot_attempt = BootAttemptGuard::new();
     // Mirrors `desktop::daemon_host::run`. Four workers: a single
     // stuck PTY write under `block_in_place` shouldn't be able to
     // starve the accept loop + writers + forwarders all at once.
@@ -458,6 +313,7 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
             let adapter: Arc<dyn LocalPairInfo> =
                 Arc::new(EndpointHandlePairAdapter::new(Arc::new(handle)));
             set_local_pair_info(adapter);
+            boot_attempt.mark_booted();
             // Park forever — the handle stays in `set_local_pair_info`'s
             // `OnceLock` for the rest of the process. Dropping the
             // runtime would tear down the endpoint.
@@ -468,6 +324,144 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
         Err(e) => {
             tracing::error!("embedded daemon boot failed: {e:#}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        close_tab_in_section, launch_config_for_add_agent, toggle_tab_pinned_in_section,
+        BootCoordinator, BootPhase,
+    };
+    use another_one_core::agents::TerminalRestoreStatus;
+    use another_one_core::project_store::{PersistedSectionState, PersistedTerminalTab};
+
+    fn sample_tab(id: &str, pinned: bool) -> PersistedTerminalTab {
+        PersistedTerminalTab {
+            id: id.to_string(),
+            title: id.to_string(),
+            pinned,
+            fixed_title: None,
+            provider: None,
+            launch_config: None,
+            restore_status: TerminalRestoreStatus::NotStarted,
+        }
+    }
+
+    #[test]
+    fn try_start_should_only_claim_idle_boot_slot() {
+        let mut coordinator = BootCoordinator::default();
+
+        assert!(coordinator.try_start());
+        assert_eq!(coordinator.phase(), BootPhase::Booting);
+        assert!(!coordinator.try_start());
+    }
+
+    #[test]
+    fn mark_failed_should_reopen_boot_slot_after_startup_failure() {
+        let mut coordinator = BootCoordinator::default();
+
+        assert!(coordinator.try_start());
+        coordinator.mark_failed();
+
+        assert_eq!(coordinator.phase(), BootPhase::Idle);
+        assert!(coordinator.try_start());
+    }
+
+    #[test]
+    fn mark_booted_should_keep_subsequent_boot_calls_noop() {
+        let mut coordinator = BootCoordinator::default();
+
+        assert!(coordinator.try_start());
+        coordinator.mark_booted();
+
+        assert_eq!(coordinator.phase(), BootPhase::Booted);
+        assert!(!coordinator.try_start());
+    }
+
+    #[test]
+    fn launch_config_for_add_agent_uses_shell_for_empty_selection() {
+        let config = launch_config_for_add_agent("").expect("default shell config");
+
+        assert_eq!(config.provider, None);
+    }
+
+    #[test]
+    fn launch_config_for_add_agent_rejects_unknown_agent_id() {
+        let err = launch_config_for_add_agent("missing").expect_err("unknown agent should fail");
+
+        assert!(err.contains("unknown agent_id"));
+    }
+
+    #[test]
+    fn close_tab_in_section_returns_empty_when_last_tab_is_removed() {
+        let mut section = PersistedSectionState {
+            active_tab_id: "tab-1".to_string(),
+            next_tab_id: 2,
+            cwd: None,
+            tabs: vec![sample_tab("tab-1", false)],
+        };
+
+        let next = close_tab_in_section(&mut section, "tab-1");
+
+        assert_eq!(next.as_deref(), Some(""));
+        assert!(section.tabs.is_empty());
+        assert!(section.active_tab_id.is_empty());
+    }
+
+    #[test]
+    fn close_tab_in_section_keeps_neighbor_active_when_active_tab_is_removed() {
+        let mut section = PersistedSectionState {
+            active_tab_id: "b".to_string(),
+            next_tab_id: 4,
+            cwd: None,
+            tabs: vec![
+                sample_tab("a", false),
+                sample_tab("b", false),
+                sample_tab("c", false),
+            ],
+        };
+
+        let next = close_tab_in_section(&mut section, "b");
+
+        assert_eq!(next.as_deref(), Some("c"));
+        assert_eq!(section.active_tab_id, "c");
+        assert_eq!(
+            section
+                .tabs
+                .iter()
+                .map(|tab| tab.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "c"]
+        );
+    }
+
+    #[test]
+    fn toggle_tab_pinned_in_section_reorders_without_losing_active_tab() {
+        let mut section = PersistedSectionState {
+            active_tab_id: "active".to_string(),
+            next_tab_id: 4,
+            cwd: None,
+            tabs: vec![
+                sample_tab("pinned", true),
+                sample_tab("active", false),
+                sample_tab("plain", false),
+            ],
+        };
+
+        let pinned = toggle_tab_pinned_in_section(&mut section, "active");
+
+        assert_eq!(pinned, Some(true));
+        assert_eq!(section.active_tab_id, "active");
+        assert_eq!(
+            section
+                .tabs
+                .iter()
+                .map(|tab| tab.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pinned", "active", "plain"]
+        );
+        assert!(section.tabs[1].pinned);
     }
 }
 
@@ -550,6 +544,49 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let key = key_from_wire(section_id, tab_id)?;
         self.with_state(|state| state.broadcasts.get(&key).map(|tx| tx.subscribe()))
             .flatten()
+    }
+
+    fn attach_tab_with_replay(
+        &self,
+        viewer_id: &str,
+        section_id: &str,
+        tab_id: &str,
+    ) -> Option<TabAttachment> {
+        let key = key_from_wire(section_id, tab_id)?;
+        self.with_state(|state| {
+            let last_seen = state
+                .viewer_output_cursors
+                .get(&(viewer_id.to_string(), key.clone()))
+                .copied();
+            let replay = state
+                .terminal_replay
+                .get(&key)
+                .map(|buffer| buffer.replay_after(last_seen))
+                .unwrap_or_default();
+            state.broadcasts.get(&key).map(|tx| TabAttachment {
+                replay,
+                receiver: tx.subscribe(),
+            })
+        })
+        .flatten()
+    }
+
+    fn note_tab_output_observed(&self, viewer_id: &str, section_id: &str, tab_id: &str) {
+        let Some(key) = key_from_wire(section_id, tab_id) else {
+            return;
+        };
+        self.with_state(|state| {
+            let Some(sequence) = state
+                .terminal_replay
+                .get(&key)
+                .and_then(|buffer| buffer.latest_sequence())
+            else {
+                return;
+            };
+            state
+                .viewer_output_cursors
+                .insert((viewer_id.to_string(), key), sequence);
+        });
     }
 
     fn tab_input(&self, section_id: &str, tab_id: &str, bytes: &[u8]) {
@@ -635,9 +672,6 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let Some(key) = key_from_wire(section_id, tab_id) else {
             return;
         };
-        if is_add_agent_prewarm_attached_to_tab(&key) {
-            return;
-        }
         self.with_state(|state| {
             if state.broadcasts.contains_key(&key) {
                 return;
@@ -745,30 +779,22 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                         .map(|p| p.id.clone())
                         .unwrap_or_else(|| success.project.project.id.clone())
                 };
-                let task_id = uuid::Uuid::new_v4().to_string();
-                let section = another_one_core::section::SectionId::for_task(
-                    &worktree_project_id,
-                    &success.branch_name,
-                    &task_id,
+                let section_key = insert_task_with_initial_tab(
+                    &mut state,
+                    target_project_id.clone(),
+                    worktree_project_id.clone(),
+                    another_one_core::project_store::TaskKind::Worktree,
+                    success.task_name,
+                    success.branch_name,
+                    Some(worktree_project_id),
+                    success.project.project.path.clone(),
+                    success.launch_config,
                 );
-                let section_key = section.store_key();
-                state
-                    .project_store
-                    .insert_task(another_one_core::project_store::Task {
-                        id: task_id.clone(),
-                        name: success.task_name,
-                        kind: another_one_core::project_store::TaskKind::Worktree,
-                        root_project_id: target_project_id,
-                        target_project_id: worktree_project_id.clone(),
-                        branch_name: success.branch_name,
-                        section_id: section_key,
-                        worktree_project_id: Some(worktree_project_id),
-                        tabs: Vec::new(),
-                        active_tab_id: String::new(),
-                        next_tab_id: 0,
-                        cwd: None,
-                    });
-                state.project_store.save();
+                let task_id = SectionId::from_store_key(&section_key)
+                    .and_then(|section| section.task_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("create_worktree_task: inserted section missing task id")
+                    })?;
                 lookup_task_summary(&state, &task_id).ok_or_else(|| {
                     anyhow::anyhow!("create_worktree_task: task vanished after insert")
                 })?
@@ -1308,31 +1334,17 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                         .map(|p| p.id.clone())
                         .unwrap_or_else(|| success.project.project.id.clone())
                 };
-                let task_id = uuid::Uuid::new_v4().to_string();
-                let section = another_one_core::section::SectionId::for_task(
-                    &worktree_project_id,
-                    &success.branch_name,
-                    &task_id,
-                );
-                let section_key = section.store_key();
-                state
-                    .project_store
-                    .insert_task(another_one_core::project_store::Task {
-                        id: task_id,
-                        name: format!("Review #{pull_request_number} ({project_name})"),
-                        kind: another_one_core::project_store::TaskKind::Worktree,
-                        root_project_id: target_project_id,
-                        target_project_id: worktree_project_id.clone(),
-                        branch_name: success.branch_name,
-                        section_id: section_key.clone(),
-                        worktree_project_id: Some(worktree_project_id),
-                        tabs: Vec::new(),
-                        active_tab_id: String::new(),
-                        next_tab_id: 0,
-                        cwd: None,
-                    });
-                state.project_store.save();
-                section_key
+                insert_task_with_initial_tab(
+                    &mut state,
+                    target_project_id,
+                    worktree_project_id.clone(),
+                    another_one_core::project_store::TaskKind::Worktree,
+                    format!("Review #{pull_request_number} ({project_name})"),
+                    success.branch_name,
+                    Some(worktree_project_id),
+                    success.project.project.path.clone(),
+                    success.launch_config,
+                )
             };
 
             // Phase 3: re-flatten for the inline-snapshot ack.
@@ -1419,31 +1431,17 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                         .map(|p| p.id.clone())
                         .unwrap_or_else(|| prepared.project.id.clone())
                 };
-                let task_id = uuid::Uuid::new_v4().to_string();
-                let section = another_one_core::section::SectionId::for_task(
-                    &worktree_project_id,
-                    &success.branch_name,
-                    &task_id,
-                );
-                let section_key = section.store_key();
-                state
-                    .project_store
-                    .insert_task(another_one_core::project_store::Task {
-                        id: task_id,
-                        name: success.task_name,
-                        kind: another_one_core::project_store::TaskKind::Worktree,
-                        root_project_id: target_project_id,
-                        target_project_id: worktree_project_id.clone(),
-                        branch_name: success.branch_name,
-                        section_id: section_key.clone(),
-                        worktree_project_id: Some(worktree_project_id),
-                        tabs: Vec::new(),
-                        active_tab_id: String::new(),
-                        next_tab_id: 0,
-                        cwd: None,
-                    });
-                state.project_store.save();
-                section_key
+                insert_task_with_initial_tab(
+                    &mut state,
+                    target_project_id,
+                    worktree_project_id.clone(),
+                    another_one_core::project_store::TaskKind::Worktree,
+                    success.task_name,
+                    success.branch_name,
+                    Some(worktree_project_id),
+                    prepared.project.path.clone(),
+                    TerminalLaunchConfig::default(),
+                )
             } else {
                 // Current-task mode: no new project. The daemon's
                 // checkout has already been swapped by
@@ -1836,32 +1834,17 @@ impl DaemonRegistry for BridgeDaemonRegistry {
                     .ok_or_else(|| {
                         format!("add_agent_to_section: unknown section_id `{section_id}`")
                     })?;
-                let cwd = section_state
-                    .cwd
-                    .clone()
-                    .or_else(|| {
-                        state
-                            .project_store
-                            .project(&section.project_id)
-                            .map(|project| project.path.clone())
-                    })
-                    .ok_or_else(|| {
-                        format!(
-                            "add_agent_to_section: could not resolve cwd for section `{section_id}`"
-                        )
-                    })?;
-                let (tab_id, tab) = build_terminal_tab(launch_config.clone(), None);
+                let (tab_id, tab) = build_terminal_tab(launch_config, None);
                 append_tab_to_section(&mut section_state, tab);
                 state
                     .project_store
                     .set_section_state(section_id.to_string(), section_state);
-                let key = TerminalRuntimeKey {
-                    section_id: section.clone(),
-                    tab_id: tab_id.clone(),
-                };
-                if !attach_active_add_agent_prewarm(&key, &cwd, &launch_config) {
-                    state.pending_tab_launches.push(TabLaunchRequest { key });
-                }
+                state.pending_tab_launches.push(TabLaunchRequest {
+                    key: TerminalRuntimeKey {
+                        section_id: section,
+                        tab_id: tab_id.clone(),
+                    },
+                });
                 Ok::<_, String>(tab_id)
             })
             .ok_or_else(|| "add_agent_to_section: registry state dropped".to_string())??;

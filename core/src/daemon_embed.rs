@@ -40,7 +40,7 @@
 //! `tab_resize` enqueues a [`TabResizeRequest`] on the state struct,
 //! and the UI render tick drains it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -52,6 +52,9 @@ use crate::project_store::ProjectStore;
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot};
 use crate::section::SectionId;
 use crate::terminal_types::TerminalRuntimeKey;
+
+const TERMINAL_REPLAY_MAX_BYTES: usize = 512 * 1024;
+const TERMINAL_REPLAY_MAX_CHUNKS: usize = 128;
 
 /// `viewer_id` used for the in-process desktop view. Stable across the
 /// app's lifetime; the app exits before it would ever need to disconnect.
@@ -72,6 +75,15 @@ pub struct RegistryState {
     /// launcher's `PreparedTerminalRuntime::output_broadcast`. Mobile
     /// `AttachTab` subscribes to the matching sender.
     pub broadcasts: HashMap<TerminalRuntimeKey, broadcast::Sender<Vec<u8>>>,
+    /// Bounded tail of raw PTY output per tab. A remote/client attach
+    /// gets this replay before live bytes so output emitted during the
+    /// launch/attach race is not lost.
+    pub terminal_replay: HashMap<TerminalRuntimeKey, TerminalReplayBuffer>,
+    /// Last replay sequence each viewer has already observed for a
+    /// tab. This prevents a tab switch from re-sending the full replay
+    /// into a client-side terminal engine that is intentionally kept
+    /// alive across tab mounts.
+    pub viewer_output_cursors: HashMap<(String, TerminalRuntimeKey), u64>,
     /// Per-tab master-PTY writer handles shared with the live
     /// terminal runtime. Mobile keystrokes flow through these
     /// exactly like desktop keystrokes do.
@@ -140,6 +152,8 @@ impl RegistryState {
         Self {
             project_store,
             broadcasts: HashMap::new(),
+            terminal_replay: HashMap::new(),
+            viewer_output_cursors: HashMap::new(),
             writers: HashMap::new(),
             pending_resizes: Vec::new(),
             pending_tab_launches: Vec::new(),
@@ -188,6 +202,62 @@ impl RegistryState {
             rows: effective.1,
         });
         Some(effective)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TerminalReplayChunk {
+    sequence: u64,
+    bytes: Vec<u8>,
+}
+
+/// Bounded raw PTY output tail for a live tab.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TerminalReplayBuffer {
+    chunks: VecDeque<TerminalReplayChunk>,
+    bytes: usize,
+    next_sequence: u64,
+}
+
+impl TerminalReplayBuffer {
+    pub fn push(&mut self, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.bytes = self.bytes.saturating_add(bytes.len());
+        self.chunks.push_back(TerminalReplayChunk {
+            sequence: self.next_sequence,
+            bytes,
+        });
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.evict_excess();
+    }
+
+    pub fn replay_after(&self, last_seen: Option<u64>) -> Vec<Vec<u8>> {
+        self.chunks
+            .iter()
+            .filter(|chunk| match last_seen {
+                Some(sequence) => chunk.sequence > sequence,
+                None => true,
+            })
+            .map(|chunk| chunk.bytes.clone())
+            .collect()
+    }
+
+    pub fn latest_sequence(&self) -> Option<u64> {
+        self.next_sequence.checked_sub(1)
+    }
+
+    fn evict_excess(&mut self) {
+        while self.chunks.len() > TERMINAL_REPLAY_MAX_CHUNKS
+            || self.bytes > TERMINAL_REPLAY_MAX_BYTES
+        {
+            let Some(chunk) = self.chunks.pop_front() else {
+                self.bytes = 0;
+                return;
+            };
+            self.bytes = self.bytes.saturating_sub(chunk.bytes.len());
+        }
     }
 }
 
@@ -258,4 +328,37 @@ pub fn daemon_paths() -> anyhow::Result<DaemonPaths> {
         secret_key: dir.join("secret_key"),
         paired_peers: dir.join("paired_peers"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TerminalReplayBuffer, TERMINAL_REPLAY_MAX_CHUNKS};
+
+    #[test]
+    fn terminal_replay_returns_only_chunks_after_cursor() {
+        let mut replay = TerminalReplayBuffer::default();
+        replay.push(b"first".to_vec());
+        let first_sequence = replay.latest_sequence();
+        replay.push(b"second".to_vec());
+
+        assert_eq!(
+            replay.replay_after(None),
+            vec![b"first".to_vec(), b"second".to_vec()]
+        );
+        assert_eq!(
+            replay.replay_after(first_sequence),
+            vec![b"second".to_vec()]
+        );
+    }
+
+    #[test]
+    fn terminal_replay_evicts_old_chunks() {
+        let mut replay = TerminalReplayBuffer::default();
+        for index in 0..(TERMINAL_REPLAY_MAX_CHUNKS + 1) {
+            replay.push(vec![index as u8]);
+        }
+
+        assert_eq!(replay.replay_after(None).len(), TERMINAL_REPLAY_MAX_CHUNKS);
+        assert_eq!(replay.replay_after(None).first().cloned(), Some(vec![1]));
+    }
 }

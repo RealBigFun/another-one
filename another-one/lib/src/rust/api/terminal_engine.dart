@@ -49,7 +49,7 @@ Future<void> engineResize({
 
 /// Cheap per-frame poll for the renderer. Returns just the engine's
 /// revision counter (`u64` round-trip) so the Flutter Ticker can
-/// skip the full `engine_snapshot` (`Vec<CellDto>` serialised across
+/// skip the full `engine_snapshot` (`Vec<CellDto>` serialise across
 /// FRB) when the cell grid is unchanged. Without this fast path an
 /// idle terminal burns ~2 cores at 60 Hz on a typical 80×24 grid.
 Future<BigInt> engineRevision({

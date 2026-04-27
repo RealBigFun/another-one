@@ -6,13 +6,17 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `reset_persisted_pairings`, `rewrite_paired_peers_with_local_device`
+
 /// Current pairing material, or `None` if the host hasn't registered
 /// the embedded daemon yet (boot race, or the binary was built
 /// without daemon-sandbox).
 Future<PairingInfo?> pairingInfo() =>
     RustLib.instance.api.crateApiPairPairingInfo();
 
-/// Roll a fresh TOFU nonce and rebuild the pairing URL + QR. Errors
+/// Reset paired mobile access by revoking persisted peers, while
+/// preserving the desktop's own loopback self-trust entry, then roll
+/// a fresh TOFU nonce and rebuild the pairing URL + QR. Errors
 /// surface as a string so the bridge doesn't need to expose a
 /// project-wide error type to Dart.
 Future<void> regenerateLocalPairing() =>

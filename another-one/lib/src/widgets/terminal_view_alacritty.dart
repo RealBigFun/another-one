@@ -1,14 +1,14 @@
 // Alacritty-engine terminal view (Phase 0 spike).
 //
 // Replaces xterm.dart's parser with `alacritty_terminal` behind the
-// `engine_*` FRB surface. Only mounts when `--dart-define=
-// ANOTHER_ONE_ALACRITTY=1` is set; default builds keep the existing
-// xterm pane.
+// `engine_*` FRB surface. This is the default desktop renderer on
+// macOS/Linux; `ANOTHER_ONE_ALACRITTY=0` forces the legacy xterm pane
+// for comparison.
 //
 // Pipeline:
 //   1. transport.incoming  → engineWritePty
-//   2. Ticker (every frame) polls engineSnapshot for the current
-//      revision; on bump, calls setState + repaint.
+//   2. Incoming bytes / resizes schedule a coalesced engineSnapshot
+//      pull; idle terminals do no frame polling.
 //   3. CustomPaint draws the cell grid + cursor.
 //   4. Keystrokes → engineEncodeInput → transport.sendBytes.
 //
@@ -24,7 +24,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../connection.dart';
@@ -47,13 +46,14 @@ class TerminalViewAlacritty extends StatefulWidget {
   State<TerminalViewAlacritty> createState() => _TerminalViewAlacrittyState();
 }
 
-class _TerminalViewAlacrittyState extends State<TerminalViewAlacritty>
-    with SingleTickerProviderStateMixin {
+class _TerminalViewAlacrittyState extends State<TerminalViewAlacritty> {
   static const double _fontSize = AppTokens.fontBodyLg;
   static const String _fontFamily = AppTokens.fontFamilyMono;
+  static const Duration _snapshotCadence = Duration(milliseconds: 33);
 
-  late final Ticker _ticker;
   StreamSubscription<Uint8List>? _bytesSub;
+  Timer? _snapshotTimer;
+  Timer? _attachRetry;
   final FocusNode _focus = FocusNode();
 
   /// Last revision we pulled — skip repaint when alacritty hasn't
@@ -64,24 +64,25 @@ class _TerminalViewAlacrittyState extends State<TerminalViewAlacritty>
   int _cols = 80;
   int _rows = 24;
   bool _opened = false;
+  bool _snapshotInFlight = false;
+  bool _snapshotRequested = false;
+  bool _gotFirstByte = false;
 
   @override
   void initState() {
     super.initState();
-    _ticker = createTicker(_onTick);
-    _ticker.start();
     _wireBytes();
   }
 
   @override
   void dispose() {
-    _ticker.dispose();
+    _snapshotTimer?.cancel();
+    _attachRetry?.cancel();
     _bytesSub?.cancel();
     _focus.dispose();
-    unawaited(engine.engineClose(
-      sectionId: widget.sectionId,
-      tabId: widget.tabId,
-    ));
+    // Keep the engine registry entry alive across tab switches so
+    // returning to an idle tab can repaint its last known grid without
+    // waiting for fresh PTY bytes. Tab close owns engine cleanup.
     super.dispose();
   }
 
@@ -94,68 +95,95 @@ class _TerminalViewAlacrittyState extends State<TerminalViewAlacritty>
       cols: _cols,
       rows: _rows,
     );
-    unawaited(widget.transport.launchTab(
-      sectionId: widget.sectionId,
-      tabId: widget.tabId,
-    ));
+    await _attachAndResize();
+    unawaited(
+      widget.transport.launchTab(
+        sectionId: widget.sectionId,
+        tabId: widget.tabId,
+      ),
+    );
+    _scheduleAttachRetry();
+    _scheduleSnapshot();
+  }
+
+  Future<void> _attachAndResize() async {
     try {
       await widget.transport.attachTab(
         sectionId: widget.sectionId,
         tabId: widget.tabId,
       );
-    } catch (_) {
-      Future.delayed(const Duration(milliseconds: 400), () async {
-        if (!mounted) return;
-        try {
-          await widget.transport.attachTab(
-            sectionId: widget.sectionId,
-            tabId: widget.tabId,
-          );
-        } catch (_) {}
-      });
-    }
+    } catch (_) {}
     try {
       await widget.transport.tabResize(cols: _cols, rows: _rows);
     } catch (_) {}
+  }
+
+  void _scheduleAttachRetry([int attempt = 1]) {
+    _attachRetry?.cancel();
+    if (_gotFirstByte || attempt > 30) return;
+    final delay = attempt < 5
+        ? const Duration(milliseconds: 250)
+        : const Duration(milliseconds: 500);
+    _attachRetry = Timer(delay, () async {
+      if (!mounted || _gotFirstByte) return;
+      await _attachAndResize();
+      _scheduleSnapshot();
+      _scheduleAttachRetry(attempt + 1);
+    });
   }
 
   void _wireBytes() {
     _bytesSub?.cancel();
     _bytesSub = widget.transport.incoming.listen((bytes) async {
       try {
+        _gotFirstByte = true;
+        _attachRetry?.cancel();
+        _attachRetry = null;
         await engine.engineWritePty(
           sectionId: widget.sectionId,
           tabId: widget.tabId,
           bytes: bytes,
         );
+        _scheduleSnapshot();
       } catch (_) {}
     });
   }
 
-  Future<void> _onTick(Duration _) async {
-    if (!mounted) return;
+  void _scheduleSnapshot() {
+    _snapshotRequested = true;
+    if (_snapshotTimer != null || _snapshotInFlight) return;
+    _snapshotTimer = Timer(_snapshotCadence, () {
+      _snapshotTimer = null;
+      unawaited(_pullSnapshot());
+    });
+  }
+
+  Future<void> _pullSnapshot() async {
+    if (_snapshotInFlight || !mounted) return;
+    _snapshotInFlight = true;
+    _snapshotRequested = false;
     try {
-      // Cheap revision poll first — only round-trip the full cell
-      // grid across FRB when the engine actually advanced. Without
-      // this gate the per-frame Vec<CellDto> serialise burns ~2
-      // cores at 60 Hz on an idle terminal (top -p ${pid} confirms;
-      // alacritty's grid is fast, FRB's encode is the cost).
       final revision = await engine.engineRevision(
         sectionId: widget.sectionId,
         tabId: widget.tabId,
       );
-      if (revision == _lastRevision && _snapshot != null) return;
-      final snap = await engine.engineSnapshot(
-        sectionId: widget.sectionId,
-        tabId: widget.tabId,
-        scrollbackOffset: 0,
-        maxRows: _rows,
-      );
-      _lastRevision = snap.revision;
-      if (!mounted) return;
-      setState(() => _snapshot = snap);
+      if (revision != _lastRevision || _snapshot == null) {
+        final snap = await engine.engineSnapshot(
+          sectionId: widget.sectionId,
+          tabId: widget.tabId,
+          scrollbackOffset: 0,
+          maxRows: _rows,
+        );
+        _lastRevision = snap.revision;
+        if (mounted) setState(() => _snapshot = snap);
+      }
     } catch (_) {
       // Engine not yet open — _ensureOpenedAndAttached lazily seeds it.
+    } finally {
+      _snapshotInFlight = false;
+    }
+    if (mounted && _snapshotRequested) {
+      _scheduleSnapshot();
     }
   }
 
@@ -164,12 +192,14 @@ class _TerminalViewAlacrittyState extends State<TerminalViewAlacritty>
     _viewportSize = size;
     final metrics = _CellMetrics.measure(_fontSize, _fontFamily);
     final padding = AppTokens.terminalViewPadding * 2;
-    final cols = ((size.width - padding) / metrics.width)
-        .floor()
-        .clamp(2, 1024);
-    final rows = ((size.height - padding) / metrics.height)
-        .floor()
-        .clamp(1, 1024);
+    final cols = ((size.width - padding) / metrics.width).floor().clamp(
+      2,
+      1024,
+    );
+    final rows = ((size.height - padding) / metrics.height).floor().clamp(
+      1,
+      1024,
+    );
     if (cols == _cols && rows == _rows && _opened) return;
     _cols = cols;
     _rows = rows;
@@ -177,13 +207,16 @@ class _TerminalViewAlacrittyState extends State<TerminalViewAlacritty>
       unawaited(_ensureOpenedAndAttached());
       return;
     }
-    unawaited(engine.engineResize(
-      sectionId: widget.sectionId,
-      tabId: widget.tabId,
-      cols: cols,
-      rows: rows,
-    ));
+    unawaited(
+      engine.engineResize(
+        sectionId: widget.sectionId,
+        tabId: widget.tabId,
+        cols: cols,
+        rows: rows,
+      ),
+    );
     unawaited(widget.transport.tabResize(cols: cols, rows: rows));
+    _scheduleSnapshot();
   }
 
   Future<void> _sendInput(engine.InputEventDto event) async {
@@ -331,8 +364,12 @@ class _TerminalPainter extends CustomPainter {
               color: fg,
               fontFamily: AppTokens.fontFamilyMono,
               fontSize: AppTokens.fontBodyLg,
-              fontWeight: (flags & 0x1) != 0 ? FontWeight.bold : FontWeight.normal,
-              fontStyle: (flags & 0x2) != 0 ? FontStyle.italic : FontStyle.normal,
+              fontWeight: (flags & 0x1) != 0
+                  ? FontWeight.bold
+                  : FontWeight.normal,
+              fontStyle: (flags & 0x2) != 0
+                  ? FontStyle.italic
+                  : FontStyle.normal,
               decoration: (flags & 0x4) != 0
                   ? TextDecoration.underline
                   : ((flags & 0x10) != 0 ? TextDecoration.lineThrough : null),

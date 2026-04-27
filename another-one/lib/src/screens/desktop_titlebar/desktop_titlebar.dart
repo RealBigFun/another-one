@@ -67,6 +67,7 @@ part 'chrome_button.dart';
 part 'custom_actions_button.dart';
 part 'git_actions_button.dart';
 part 'open_in_button.dart';
+part 'titlebar_split_button.dart';
 part 'window_controls.dart';
 
 enum _TitlebarDropdown { customActions, openIn, gitActions }
@@ -87,6 +88,14 @@ void _toggleTitlebarDropdown(WidgetRef ref, _TitlebarDropdown dropdown) {
 bool get _showLinuxWindowControls =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
 
+const double _showResourceIndicatorWidth = 1040;
+const double _showCustomActionsWidth = 860;
+const double _showOpenInWidth = 640;
+const double _showProjectLinksWidth = 580;
+const double _showPairMobileWidth = 520;
+const double _showBuildChipWidth = 480;
+const double _showGitActionsWidth = 440;
+
 class DesktopTitlebar extends ConsumerWidget {
   const DesktopTitlebar({super.key});
 
@@ -101,40 +110,44 @@ class DesktopTitlebar extends ConsumerWidget {
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: AppTokens.space2),
-      child: Row(
-        children: [
-          _TitlebarChromeButton(
-            assetPath: 'assets/icons/icons__sidebar-toggle.svg',
-            tooltip: 'Show or hide the projects sidebar',
-            onPressed: () {
-              _dismissTitlebarDropdowns(ref);
-              ref.read(leftSidebarOpenProvider.notifier).toggle();
-            },
-          ),
-          const _TitlebarDragRegion(),
-          const _BuildChip(),
-          const _CustomActionsButton(),
-          const _OpenInButton(),
-          const _ActiveProjectGithubButton(),
-          const _PullRequestButton(),
-          const _GitActionsButton(),
-          const _PairMobileButton(),
-          // The resource indicator already pads its own right
-          // edge with 6px (matching GPUI's `mr(px(6))`); the
-          // pair-mobile button does too. No extra spacers
-          // needed before/after — explicit `SizedBox(space2)`
-          // gaps were what tipped the row into 5.2px overflow.
-          const _ResourceIndicator(),
-          _TitlebarChromeButton(
-            assetPath: 'assets/icons/icons__right-sidebar-toggle.svg',
-            tooltip: 'Show or hide the changed files sidebar',
-            onPressed: () {
-              _dismissTitlebarDropdowns(ref);
-              ref.read(rightSidebarOpenProvider.notifier).toggle();
-            },
-          ),
-          if (_showLinuxWindowControls) const _LinuxWindowControls(),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          return Row(
+            children: [
+              _TitlebarChromeButton(
+                assetPath: 'assets/icons/icons__sidebar-toggle.svg',
+                tooltip: 'Show or hide the projects sidebar',
+                onPressed: () {
+                  _dismissTitlebarDropdowns(ref);
+                  ref.read(leftSidebarOpenProvider.notifier).toggle();
+                },
+              ),
+              const _TitlebarDragRegion(),
+              if (width >= _showBuildChipWidth) const _BuildChip(),
+              if (width >= _showCustomActionsWidth)
+                const _CustomActionsButton(),
+              if (width >= _showOpenInWidth) const _OpenInButton(),
+              if (width >= _showProjectLinksWidth) ...[
+                const _ActiveProjectGithubButton(),
+                const _PullRequestButton(),
+              ],
+              if (width >= _showGitActionsWidth) const _GitActionsButton(),
+              if (width >= _showPairMobileWidth) const _PairMobileButton(),
+              if (width >= _showResourceIndicatorWidth)
+                const _ResourceIndicator(),
+              _TitlebarChromeButton(
+                assetPath: 'assets/icons/icons__right-sidebar-toggle.svg',
+                tooltip: 'Show or hide the changed files sidebar',
+                onPressed: () {
+                  _dismissTitlebarDropdowns(ref);
+                  ref.read(rightSidebarOpenProvider.notifier).toggle();
+                },
+              ),
+              if (_showLinuxWindowControls) const _LinuxWindowControls(),
+            ],
+          );
+        },
       ),
     );
   }
@@ -195,6 +208,7 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
   bool _hover = false;
   final OverlayPortalController _popover = OverlayPortalController();
   final LayerLink _link = LayerLink();
+  late final StateController<bool> _popoverOpen;
   // Stable across repolls — collapsing a project/task in GPUI is
   // tracked the same way (`AnotherOneApp::resource_collapsed_nodes`).
   final Set<String> _collapsedNodes = <String>{};
@@ -202,6 +216,7 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
   @override
   void initState() {
     super.initState();
+    _popoverOpen = ref.read(resourceUsagePopoverOpenProvider.notifier);
     if (_kAutoOpen == 'resource-popover') {
       // 800ms gives the embedded daemon time to publish at least one
       // tracked-process sample so the popover renders the tree on
@@ -222,11 +237,17 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
         _popover.hide();
       }
     });
-    ref.read(resourceUsagePopoverOpenProvider.notifier).state = visible;
+    _popoverOpen.state = visible;
   }
 
   void _togglePopover() {
     _setPopoverVisible(!_popover.isShowing);
+  }
+
+  @override
+  void dispose() {
+    _popoverOpen.state = false;
+    super.dispose();
   }
 
   @override
@@ -235,10 +256,8 @@ class _ResourceIndicatorState extends ConsumerState<_ResourceIndicator> {
     final cpuLabel = usage?.cpuPercent != null
         ? '${usage!.cpuPercent!.toStringAsFixed(1)}%'
         : '— %';
-    final memLabel = usage?.snapshot != null
-        ? _formatMemory(usage!.snapshot!.appMemoryBytes)
-        : usage != null && usage.memoryMib > 0
-        ? '${usage.memoryMib.toStringAsFixed(1)} MB'
+    final memLabel = usage != null && usage.memoryMib > 0
+        ? _formatMemory(BigInt.from((usage.memoryMib * 1024 * 1024).round()))
         : '— MB';
     final open = _popover.isShowing;
     return Padding(

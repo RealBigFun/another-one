@@ -111,9 +111,9 @@ pub(super) fn sysctl_hw_memsize() -> Option<u64> {
     (result == 0).then_some(bytes)
 }
 
-/// Walk the descendants of `app_pid` + each tracked process root,
-/// returning a [`RawProcessSample`] per process the kernel will let
-/// us read. Shared with `IosPlatform` because the Darwin
+/// Sample `app_pid` itself plus the descendants of each tracked
+/// process root, returning a [`RawProcessSample`] per process the
+/// kernel will let us read. Shared with `IosPlatform` because the Darwin
 /// `proc_pidinfo` / `proc_pid_rusage` interfaces are identical on
 /// both — though iOS sandboxing may scope down which descendants are
 /// actually visible.
@@ -121,19 +121,28 @@ pub(super) fn darwin_read_process_samples(
     app_pid: u32,
     tracked_processes: &[TrackedProcess],
 ) -> Vec<RawProcessSample> {
-    let mut roots = Vec::with_capacity(1 + tracked_processes.len());
-    roots.push(app_pid);
-    roots.extend(
-        tracked_processes
-            .iter()
-            .map(|process| process.pid)
-            .filter(|pid| *pid != app_pid),
-    );
-
     let mut visited = HashSet::new();
-    let mut stack = roots;
     let mut samples = Vec::new();
 
+    if visited.insert(app_pid) {
+        if let Some(sample) = read_process_sample(app_pid) {
+            samples.push(sample);
+        }
+    }
+
+    for tracked in tracked_processes {
+        collect_darwin_process_tree(tracked.pid, &mut visited, &mut samples);
+    }
+
+    samples
+}
+
+fn collect_darwin_process_tree(
+    root_pid: u32,
+    visited: &mut HashSet<u32>,
+    samples: &mut Vec<RawProcessSample>,
+) {
+    let mut stack = vec![root_pid];
     while let Some(pid) = stack.pop() {
         if !visited.insert(pid) {
             continue;
@@ -144,8 +153,6 @@ pub(super) fn darwin_read_process_samples(
             samples.push(sample);
         }
     }
-
-    samples
 }
 
 fn read_process_sample(pid: u32) -> Option<RawProcessSample> {
@@ -360,7 +367,10 @@ mod tests {
     #[test]
     fn total_system_memory_bytes_is_positive() {
         let memory = MacosPlatform::total_system_memory_bytes();
-        assert!(memory.is_some(), "expected sysctlbyname to succeed on macOS");
+        assert!(
+            memory.is_some(),
+            "expected sysctlbyname to succeed on macOS"
+        );
         assert!(
             memory.unwrap() > 0,
             "expected total memory > 0, got {:?}",
