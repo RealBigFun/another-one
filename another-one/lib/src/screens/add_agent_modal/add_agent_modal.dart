@@ -34,6 +34,8 @@ Future<bool> showAddAgentModal({
   return result ?? false;
 }
 
+enum _AddAgentFocusKind { trigger, option, create, cancel }
+
 class _AddAgentModal extends ConsumerStatefulWidget {
   const _AddAgentModal({required this.sectionId, required this.seededAgentId});
   final String sectionId;
@@ -50,6 +52,8 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
   bool _dropdownOpen = false;
   bool _submitting = false;
   bool _seeded = false;
+  _AddAgentFocusKind _focusKind = _AddAgentFocusKind.create;
+  int? _focusOptionIndex;
 
   String? _resolvedSelection(
     String? selectedAgentId,
@@ -115,100 +119,244 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
     }
   }
 
+  int _optionCount(List<AgentSummaryDto> agents) => agents.length + 1;
+
+  int _selectedOptionIndex(List<AgentSummaryDto> agents) {
+    final selectedAgentId = _selectedAgentId;
+    if (selectedAgentId == null) return 0;
+    for (var i = 0; i < agents.length; i++) {
+      if (agents[i].id == selectedAgentId) return i + 1;
+    }
+    return 0;
+  }
+
+  String? _optionIdForIndex(int optionIndex, List<AgentSummaryDto> agents) {
+    if (optionIndex == 0) return null;
+    if (optionIndex > 0 && optionIndex <= agents.length) {
+      return agents[optionIndex - 1].id;
+    }
+    return null;
+  }
+
+  void _moveFocus(List<AgentSummaryDto> agents, {required bool backwards}) {
+    final order = <(_AddAgentFocusKind, int?)>[
+      (_AddAgentFocusKind.trigger, null),
+    ];
+    if (_dropdownOpen) {
+      for (var i = 0; i < _optionCount(agents); i++) {
+        order.add((_AddAgentFocusKind.option, i));
+      }
+    }
+    order.add((_AddAgentFocusKind.create, null));
+    order.add((_AddAgentFocusKind.cancel, null));
+
+    final currentIndex = order.indexWhere(
+      (focus) => focus.$1 == _focusKind && focus.$2 == _focusOptionIndex,
+    );
+    final nextIndex = currentIndex == -1
+        ? (backwards ? order.length - 1 : 0)
+        : backwards
+        ? (currentIndex + order.length - 1) % order.length
+        : (currentIndex + 1) % order.length;
+    final nextFocus = order[nextIndex];
+
+    setState(() {
+      _focusKind = nextFocus.$1;
+      _focusOptionIndex = nextFocus.$2;
+      if (_focusKind == _AddAgentFocusKind.create ||
+          _focusKind == _AddAgentFocusKind.cancel) {
+        _dropdownOpen = false;
+      }
+    });
+  }
+
+  void _moveOptionFocus(
+    List<AgentSummaryDto> agents, {
+    required bool backwards,
+  }) {
+    final optionCount = _optionCount(agents);
+    final fallbackIndex = _selectedOptionIndex(
+      agents,
+    ).clamp(0, optionCount - 1);
+    final currentIndex =
+        _focusKind == _AddAgentFocusKind.option && _focusOptionIndex != null
+        ? _focusOptionIndex!.clamp(0, optionCount - 1)
+        : fallbackIndex;
+    final nextIndex = backwards
+        ? (currentIndex + optionCount - 1) % optionCount
+        : (currentIndex + 1) % optionCount;
+
+    setState(() {
+      _focusKind = _AddAgentFocusKind.option;
+      _focusOptionIndex = nextIndex;
+    });
+  }
+
+  void _activateFocusedControl(List<AgentSummaryDto> agents) {
+    switch (_focusKind) {
+      case _AddAgentFocusKind.trigger:
+        setState(() {
+          _dropdownOpen = true;
+          _focusKind = _AddAgentFocusKind.option;
+          _focusOptionIndex = _selectedOptionIndex(agents);
+        });
+      case _AddAgentFocusKind.option:
+        final optionCount = _optionCount(agents);
+        final optionIndex =
+            _focusOptionIndex?.clamp(0, optionCount - 1) ??
+            _selectedOptionIndex(agents).clamp(0, optionCount - 1);
+        setState(() {
+          _selectedAgentId = _optionIdForIndex(optionIndex, agents);
+          _dropdownOpen = false;
+          _focusKind = _AddAgentFocusKind.trigger;
+          _focusOptionIndex = null;
+        });
+      case _AddAgentFocusKind.create:
+        unawaited(_submit());
+      case _AddAgentFocusKind.cancel:
+        if (!_submitting) {
+          Navigator.of(context).pop(false);
+        }
+    }
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final agents =
+        ref.read(enabledAgentsProvider).valueOrNull?.agents ??
+        const <AgentSummaryDto>[];
+    final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.tab) {
+      _moveFocus(agents, backwards: HardwareKeyboard.instance.isShiftPressed);
+      return KeyEventResult.handled;
+    }
+
+    if (_dropdownOpen &&
+        (key == LogicalKeyboardKey.arrowUp ||
+            key == LogicalKeyboardKey.arrowDown)) {
+      _moveOptionFocus(agents, backwards: key == LogicalKeyboardKey.arrowUp);
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.escape) {
+      if (_dropdownOpen) {
+        setState(() {
+          _dropdownOpen = false;
+          _focusKind = _AddAgentFocusKind.trigger;
+          _focusOptionIndex = null;
+        });
+      } else if (!_submitting) {
+        Navigator.of(context).pop(false);
+      }
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      if (!_submitting) {
+        _activateFocusedControl(agents);
+      }
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
   @override
   Widget build(BuildContext context) {
     final agentsAsync = ref.watch(enabledAgentsProvider);
     final view = agentsAsync.valueOrNull;
+    final agents = view?.agents ?? const <AgentSummaryDto>[];
     if (view != null) {
       _syncSelection(view.agents, view.defaultAgentId);
     }
     return PopScope(
       canPop: !_submitting,
-      child: Shortcuts(
-        shortcuts: const <ShortcutActivator, Intent>{
-          SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
-          SingleActivator(LogicalKeyboardKey.enter): _SubmitIntent(),
-        },
-        child: Actions(
-          actions: <Type, Action<Intent>>{
-            _DismissIntent: CallbackAction<_DismissIntent>(
-              onInvoke: (_) {
-                if (!_submitting) Navigator.of(context).pop(false);
-                return null;
-              },
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: _cardW,
+              maxHeight: MediaQuery.of(context).size.height * 0.9,
             ),
-            _SubmitIntent: CallbackAction<_SubmitIntent>(
-              onInvoke: (_) {
-                unawaited(_submit());
-                return null;
-              },
-            ),
-          },
-          child: Focus(
-            autofocus: true,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: _cardW,
-                  maxHeight: MediaQuery.of(context).size.height * 0.9,
-                ),
-                child: Material(
-                  color: Colors.transparent,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppTokens.cardBg,
-                      borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-                      border: Border.all(color: AppTokens.border),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x66000000),
-                          blurRadius: 20,
-                          offset: Offset(0, 8),
-                        ),
-                      ],
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppTokens.cardBg,
+                  borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+                  border: Border.all(color: AppTokens.border),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x66000000),
+                      blurRadius: 20,
+                      offset: Offset(0, 8),
                     ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _Header(
-                          onClose: _submitting
-                              ? null
-                              : () => Navigator.of(context).pop(false),
-                        ),
-                        Flexible(
-                          child: SingleChildScrollView(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-                              child: _AgentPicker(
-                                agents: view?.agents ?? const [],
-                                selectedId: _selectedAgentId,
-                                dropdownOpen: _dropdownOpen,
-                                onToggleDropdown: _submitting
-                                    ? null
-                                    : () => setState(
-                                        () => _dropdownOpen = !_dropdownOpen,
-                                      ),
-                                onSelect: _submitting
-                                    ? null
-                                    : (id) => setState(() {
-                                        _selectedAgentId = id;
-                                        _dropdownOpen = false;
-                                      }),
-                              ),
-                            ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _Header(
+                      onClose: _submitting
+                          ? null
+                          : () => Navigator.of(context).pop(false),
+                    ),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+                          child: _AgentPicker(
+                            agents: agents,
+                            selectedId: _selectedAgentId,
+                            dropdownOpen: _dropdownOpen,
+                            triggerFocused:
+                                _focusKind == _AddAgentFocusKind.trigger,
+                            focusedOptionIndex:
+                                _focusKind == _AddAgentFocusKind.option
+                                ? _focusOptionIndex
+                                : null,
+                            onToggleDropdown: _submitting
+                                ? null
+                                : () => setState(() {
+                                    if (_dropdownOpen) {
+                                      _dropdownOpen = false;
+                                      _focusKind = _AddAgentFocusKind.trigger;
+                                      _focusOptionIndex = null;
+                                    } else {
+                                      _dropdownOpen = true;
+                                      _focusKind = _AddAgentFocusKind.option;
+                                      _focusOptionIndex = _selectedOptionIndex(
+                                        agents,
+                                      );
+                                    }
+                                  }),
+                            onSelect: _submitting
+                                ? null
+                                : (id) => setState(() {
+                                    _selectedAgentId = id;
+                                    _dropdownOpen = false;
+                                    _focusKind = _AddAgentFocusKind.trigger;
+                                    _focusOptionIndex = null;
+                                  }),
                           ),
                         ),
-                        _Footer(
-                          submitting: _submitting,
-                          onCancel: _submitting
-                              ? null
-                              : () => Navigator.of(context).pop(false),
-                          onSubmit: _submitting ? null : _submit,
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
+                    _Footer(
+                      submitting: _submitting,
+                      createFocused: _focusKind == _AddAgentFocusKind.create,
+                      cancelFocused: _focusKind == _AddAgentFocusKind.cancel,
+                      onCancel: _submitting
+                          ? null
+                          : () => Navigator.of(context).pop(false),
+                      onSubmit: _submitting ? null : _submit,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -217,14 +365,6 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
       ),
     );
   }
-}
-
-class _DismissIntent extends Intent {
-  const _DismissIntent();
-}
-
-class _SubmitIntent extends Intent {
-  const _SubmitIntent();
 }
 
 class _Header extends StatelessWidget {
@@ -288,6 +428,8 @@ class _AgentPicker extends StatelessWidget {
     required this.agents,
     required this.selectedId,
     required this.dropdownOpen,
+    required this.triggerFocused,
+    required this.focusedOptionIndex,
     required this.onToggleDropdown,
     required this.onSelect,
   });
@@ -295,6 +437,8 @@ class _AgentPicker extends StatelessWidget {
   final List<AgentSummaryDto> agents;
   final String? selectedId;
   final bool dropdownOpen;
+  final bool triggerFocused;
+  final int? focusedOptionIndex;
   final VoidCallback? onToggleDropdown;
   final ValueChanged<String?>? onSelect;
 
@@ -338,7 +482,7 @@ class _AgentPicker extends StatelessWidget {
               color: AppTokens.overlayHover,
               borderRadius: BorderRadius.circular(AppTokens.radiusMd),
               border: Border.all(
-                color: dropdownOpen
+                color: (dropdownOpen || triggerFocused)
                     ? const Color(0xFF6F86CB)
                     : AppTokens.border,
               ),
@@ -394,25 +538,37 @@ class _AgentPicker extends StatelessWidget {
                 ],
               ),
               clipBehavior: Clip.antiAlias,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _AgentRow(
-                    label: 'Terminal',
-                    iconPath: null,
-                    selected: selectedId == null,
-                    onTap: onSelect == null ? null : () => onSelect!(null),
-                  ),
-                  for (final agent in agents)
-                    _AgentRow(
-                      label: agent.label,
-                      iconPath: agent.iconPath,
-                      selected: selectedId == agent.id,
-                      onTap: onSelect == null
-                          ? null
-                          : () => onSelect!(agent.id),
+              child: SizedBox(
+                height: (agents.length + 1).clamp(1, 6) * 36.0 + 8,
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _AgentRow(
+                          label: 'Terminal',
+                          iconPath: null,
+                          selected: selectedId == null,
+                          focused: focusedOptionIndex == 0,
+                          onTap: onSelect == null
+                              ? null
+                              : () => onSelect!(null),
+                        ),
+                        for (var i = 0; i < agents.length; i++)
+                          _AgentRow(
+                            label: agents[i].label,
+                            iconPath: agents[i].iconPath,
+                            selected: selectedId == agents[i].id,
+                            focused: focusedOptionIndex == i + 1,
+                            onTap: onSelect == null
+                                ? null
+                                : () => onSelect!(agents[i].id),
+                          ),
+                      ],
                     ),
-                ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -452,12 +608,14 @@ class _AgentRow extends StatefulWidget {
     required this.label,
     required this.iconPath,
     required this.selected,
+    required this.focused,
     required this.onTap,
   });
 
   final String label;
   final String? iconPath;
   final bool selected;
+  final bool focused;
   final VoidCallback? onTap;
 
   @override
@@ -481,9 +639,14 @@ class _AgentRowState extends State<_AgentRow> {
           margin: const EdgeInsets.symmetric(horizontal: 4),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
+            border: Border.all(
+              color: widget.focused ? accent : Colors.transparent,
+            ),
             color: widget.selected
                 ? AppTokens.overlayActive
-                : (_hover ? AppTokens.overlayHover : Colors.transparent),
+                : (widget.focused || _hover
+                      ? AppTokens.overlayHover
+                      : Colors.transparent),
             borderRadius: BorderRadius.circular(AppTokens.radiusMd),
           ),
           child: Row(
@@ -536,10 +699,14 @@ class _AgentRowState extends State<_AgentRow> {
 class _Footer extends StatelessWidget {
   const _Footer({
     required this.submitting,
+    required this.createFocused,
+    required this.cancelFocused,
     required this.onCancel,
     required this.onSubmit,
   });
   final bool submitting;
+  final bool createFocused;
+  final bool cancelFocused;
   final VoidCallback? onCancel;
   final VoidCallback? onSubmit;
 
@@ -562,7 +729,11 @@ class _Footer extends StatelessWidget {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-                border: Border.all(color: AppTokens.border),
+                border: Border.all(
+                  color: cancelFocused
+                      ? const Color(0xFF6F86CB)
+                      : AppTokens.border,
+                ),
               ),
               child: const Text(
                 'Cancel',
@@ -585,6 +756,11 @@ class _Footer extends StatelessWidget {
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+                border: Border.all(
+                  color: createFocused
+                      ? const Color(0xFF6F86CB)
+                      : Colors.transparent,
+                ),
               ),
               child: submitting
                   ? const SizedBox(
