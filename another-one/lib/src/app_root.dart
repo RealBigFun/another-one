@@ -9,8 +9,8 @@
 // hands us a URL.
 
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -35,6 +35,7 @@ class _AppRootState extends State<AppRoot> {
 
   String _endpoint = '';
   bool _prefsLoaded = false;
+
   /// Re-entrancy guard for [_unlink]. Two triggers can fire nearly
   /// simultaneously — the user tapping "Unlink" in settings and the
   /// transport reporting `.unpaired` — and both would otherwise race
@@ -238,16 +239,14 @@ class _AppRootState extends State<AppRoot> {
   @override
   Widget build(BuildContext context) {
     if (!_prefsLoaded) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     // Desktop breakpoints don't pair to a remote daemon — they run
     // their own embedded one (booted in main.dart). Skip the pair
     // flow entirely and drop into the desktop shell. The shell's
     // titlebar pair-mobile button is for inviting *mobile* peers.
-    if (!Breakpoint.of(context).isPhone) {
+    if (_usesDesktopShell(context)) {
       return const DesktopShell();
     }
 
@@ -279,5 +278,18 @@ class _AppRootState extends State<AppRoot> {
         );
       },
     );
+  }
+
+  bool _usesDesktopShell(BuildContext context) {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.macOS:
+      case TargetPlatform.linux:
+        return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.windows:
+        return !Breakpoint.of(context).isPhone;
+    }
   }
 }
