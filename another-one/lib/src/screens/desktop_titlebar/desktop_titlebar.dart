@@ -52,6 +52,7 @@ import '../../state/right_sidebar_provider.dart';
 import '../../state/settings_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
+import '../../window_chrome.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/hover_icon_button.dart';
@@ -104,16 +105,7 @@ class DesktopTitlebar extends ConsumerWidget {
               ref.read(leftSidebarOpenProvider.notifier).toggle();
             },
           ),
-          // Placeholder for the future drag region. Until native
-          // drag/maximize wiring lands, the blank titlebar space still
-          // serves as the shared "dismiss open dropdowns" target.
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _dismissTitlebarDropdowns(ref),
-              child: const SizedBox.expand(),
-            ),
-          ),
+          const _TitlebarDragRegion(),
           const _BuildChip(),
           const _CustomActionsButton(),
           const _OpenInButton(),
@@ -136,6 +128,29 @@ class DesktopTitlebar extends ConsumerWidget {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TitlebarDragRegion extends ConsumerWidget {
+  const _TitlebarDragRegion();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _dismissTitlebarDropdowns(ref),
+        onDoubleTap: () {
+          _dismissTitlebarDropdowns(ref);
+          unawaited(toggleNativeWindowMaximize());
+        },
+        onPanStart: (details) {
+          _dismissTitlebarDropdowns(ref);
+          unawaited(startNativeWindowDrag(details.globalPosition));
+        },
+        child: const SizedBox.expand(),
       ),
     );
   }

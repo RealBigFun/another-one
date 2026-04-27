@@ -1,5 +1,7 @@
 #include "my_application.h"
 
+#include <cstring>
+
 #include <flutter_linux/flutter_linux.h>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -7,9 +9,94 @@
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  FlView* view;
+  GtkWindow* window;
+  FlMethodChannel* window_chrome_channel;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+static constexpr char kWindowChromeChannel[] = "another_one/window_chrome";
+
+static FlMethodResponse* success_response() {
+  return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+}
+
+static FlMethodResponse* handle_start_window_drag(MyApplication* self,
+                                                  FlMethodCall* method_call) {
+  if (self->window == nullptr) {
+    return FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "NO_WINDOW", "Window not ready for drag handling.", nullptr));
+  }
+
+  FlValue* args = fl_method_call_get_args(method_call);
+  if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+    return FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "INVALID_ARGS", "Expected {x, y} coordinates.", nullptr));
+  }
+
+  FlValue* x_value = fl_value_lookup_string(args, "x");
+  FlValue* y_value = fl_value_lookup_string(args, "y");
+  if (x_value == nullptr || y_value == nullptr ||
+      fl_value_get_type(x_value) != FL_VALUE_TYPE_INT ||
+      fl_value_get_type(y_value) != FL_VALUE_TYPE_INT) {
+    return FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "INVALID_ARGS", "Expected integer x/y coordinates.", nullptr));
+  }
+
+  gtk_window_begin_move_drag(self->window, 1,
+                             static_cast<gint>(fl_value_get_int(x_value)),
+                             static_cast<gint>(fl_value_get_int(y_value)),
+                             GDK_CURRENT_TIME);
+  return success_response();
+}
+
+static FlMethodResponse* handle_toggle_maximize(MyApplication* self) {
+  if (self->window == nullptr) {
+    return FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "NO_WINDOW", "Window not ready for maximize handling.", nullptr));
+  }
+
+  if (gtk_window_is_maximized(self->window)) {
+    gtk_window_unmaximize(self->window);
+  } else {
+    gtk_window_maximize(self->window);
+  }
+  return success_response();
+}
+
+static void window_chrome_method_call_cb(FlMethodChannel* channel,
+                                         FlMethodCall* method_call,
+                                         gpointer user_data) {
+  MyApplication* self = static_cast<MyApplication*>(user_data);
+
+  g_autoptr(FlMethodResponse) response = nullptr;
+  const gchar* method = fl_method_call_get_name(method_call);
+  if (strcmp(method, "startWindowDrag") == 0) {
+    response = handle_start_window_drag(self, method_call);
+  } else if (strcmp(method, "toggleMaximize") == 0) {
+    response = handle_toggle_maximize(self);
+  } else {
+    response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
+  }
+
+  g_autoptr(GError) error = nullptr;
+  if (!fl_method_call_respond(method_call, response, &error)) {
+    g_warning("Failed to send window chrome response: %s", error->message);
+  }
+}
+
+static void create_window_chrome_channel(MyApplication* self) {
+  FlEngine* engine = fl_view_get_engine(self->view);
+  FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+
+  self->window_chrome_channel = fl_method_channel_new(
+      messenger, kWindowChromeChannel, FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(
+      self->window_chrome_channel, window_chrome_method_call_cb, self,
+      nullptr);
+}
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
@@ -21,6 +108,7 @@ static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  self->window = window;
 
   // Frameless window — AnotherOne's Flutter shell renders its own
   // 38px titlebar (`screens/desktop_titlebar/desktop_titlebar.dart`)
@@ -38,6 +126,7 @@ static void my_application_activate(GApplication* application) {
       project, self->dart_entrypoint_arguments);
 
   FlView* view = fl_view_new(project);
+  self->view = view;
   GdkRGBA background_color;
   // Background defaults to black, override it here if necessary, e.g. #00000000
   // for transparent.
@@ -53,6 +142,7 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_realize(GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  create_window_chrome_channel(self);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
@@ -100,6 +190,9 @@ static void my_application_shutdown(GApplication* application) {
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+  g_clear_object(&self->window_chrome_channel);
+  self->view = nullptr;
+  self->window = nullptr;
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 
