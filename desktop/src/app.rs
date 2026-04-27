@@ -64,6 +64,7 @@ const IDLE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const RESOURCE_REFRESH_INTERVAL_OPEN: Duration = Duration::from_secs(1);
 const RESOURCE_REFRESH_INTERVAL_CLOSED: Duration = Duration::from_secs(5);
 const TOAST_ANIMATION_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
+const TERMINAL_FAST_REFRESH_GRACE: Duration = Duration::from_millis(300);
 const TOAST_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_ERROR_EXTRA_LIFETIME: Duration = Duration::from_secs(3);
 const TOAST_FADE_IN: Duration = Duration::from_millis(220);
@@ -1298,6 +1299,8 @@ pub struct AnotherOneApp {
     warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
     /// Live PTY-backed terminal runtimes keyed by section and tab id.
     live_terminal_runtimes: HashMap<TerminalRuntimeKey, LiveTerminalRuntime>,
+    /// Last terminal mutation that needs low-latency drain/render ticks.
+    last_terminal_activity: Instant,
     /// Input to send once a newly launched action terminal is ready.
     pending_post_launch_input: HashMap<TerminalRuntimeKey, Vec<u8>>,
     /// GPUI-free bookkeeping for per-tab terminal state: recent output,
@@ -3780,6 +3783,7 @@ impl AnotherOneApp {
             warm_terminal_launch_sender,
             warm_terminal_launch_receiver,
             live_terminal_runtimes: HashMap::new(),
+            last_terminal_activity: Instant::now(),
             pending_post_launch_input: HashMap::new(),
             terminal_manager: another_one_core::terminal_manager::TerminalManager::new(),
             terminal_surface_snapshots: HashMap::new(),
@@ -4476,6 +4480,9 @@ impl AnotherOneApp {
         };
 
         if self.live_terminal_runtimes.contains_key(&request.key) {
+            if self.animating {
+                return;
+            }
             // Don't resize directly — announce the desktop's viewport
             // size to the registry and let
             // `drain_pending_tab_resizes` apply the effective min
@@ -4719,6 +4726,10 @@ impl AnotherOneApp {
             self.terminal_surface_snapshots.len(),
         );
 
+        if updated {
+            self.last_terminal_activity = Instant::now();
+        }
+
         updated
     }
 
@@ -4926,6 +4937,10 @@ impl AnotherOneApp {
             }
         }
 
+        if updated {
+            self.last_terminal_activity = Instant::now();
+        }
+
         updated
     }
 
@@ -5099,6 +5114,7 @@ impl AnotherOneApp {
             changed = true;
         }
         if changed {
+            self.last_terminal_activity = Instant::now();
             cx.notify();
         }
         changed
@@ -5149,6 +5165,7 @@ impl AnotherOneApp {
             }
         }
         if changed {
+            self.last_terminal_activity = Instant::now();
             cx.notify();
         }
         changed
@@ -5187,7 +5204,11 @@ impl AnotherOneApp {
         let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
             return false;
         };
-        runtime.write_input(bytes).is_ok()
+        let wrote = runtime.write_input(bytes).is_ok();
+        if wrote {
+            self.last_terminal_activity = Instant::now();
+        }
+        wrote
     }
 
     fn send_pending_post_launch_input(&mut self, key: &TerminalRuntimeKey) -> bool {
@@ -5198,7 +5219,11 @@ impl AnotherOneApp {
             self.pending_post_launch_input.insert(key.clone(), bytes);
             return false;
         };
-        runtime.write_input(&bytes).is_ok()
+        let wrote = runtime.write_input(&bytes).is_ok();
+        if wrote {
+            self.last_terminal_activity = Instant::now();
+        }
+        wrote
     }
 
     pub(crate) fn run_project_action(
@@ -8078,7 +8103,6 @@ impl AnotherOneApp {
                     let v = from + (to - from) * e;
                     let _ = handle.update(async_cx, |this, cx| {
                         this.sidebar_w = v;
-                        this.sync_workspace_layout(cx);
                         cx.notify();
                     });
                     Timer::after(Duration::from_millis(STEP_MS)).await;
@@ -8126,7 +8150,6 @@ impl AnotherOneApp {
                     let v = from + (to - from) * e;
                     let _ = handle.update(async_cx, |this, cx| {
                         this.right_w = v;
-                        this.sync_workspace_layout(cx);
                         cx.notify();
                     });
                     Timer::after(Duration::from_millis(STEP_MS)).await;
@@ -8521,11 +8544,11 @@ impl AnotherOneApp {
     }
 
     fn refresh_timer_interval(&self) -> Duration {
-        if !self.terminal_manager.pending_launches.is_empty()
-            || !self.live_terminal_runtimes.is_empty()
+        let terminal_fast_refresh = !self.terminal_manager.pending_launches.is_empty()
             || !self.prewarmed_terminal_launches.is_empty()
-            || self.resource_indicator_open
-        {
+            || self.last_terminal_activity.elapsed() < TERMINAL_FAST_REFRESH_GRACE;
+
+        if terminal_fast_refresh || self.resource_indicator_open {
             TOAST_ANIMATION_REFRESH_INTERVAL
         } else if self.toasts.is_empty()
             && self.copied_toast.is_none()

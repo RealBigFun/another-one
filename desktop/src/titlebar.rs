@@ -296,17 +296,19 @@ impl AnotherOneApp {
             .items_center()
             .justify_center()
             .h(px(20.))
+            .max_w(px(156.))
             .px(px(8.))
             .mr(px(6.))
             .rounded(px(10.))
             .bg(bg)
             .border_1()
             .border_color(border)
+            .overflow_hidden()
             .text_size(px(11.))
             .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(text)
             .tooltip(|_window, cx| Self::action_tooltip_view(crate::build_info::tooltip_text(), cx))
-            .child(label)
+            .child(div().min_w(px(0.)).truncate().child(label))
             .into_any_element()
     }
 
@@ -1549,31 +1551,6 @@ impl AnotherOneApp {
             .bg(chrome)
             .border_b_1()
             .border_color(rgb(0x27292e))
-            // `debug_assertions` is on for `cargo run` / `cargo build` and
-            // off for `--release`. The badge is absolutely positioned so
-            // it doesn't eat width from the drag region below.
-            .when(cfg!(debug_assertions), |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        // Can't intercept drag or window-control events.
-                        .occlude()
-                        .cursor_default()
-                        .child(
-                            div()
-                                .text_color(tokens::ErrorColors::text())
-                                .text_size(rems(11. / 16.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child(gpui::SharedString::new_static(
-                                    "DEBUG BUILD — not for daily use",
-                                )),
-                        ),
-                )
-            })
             .child(
                 div()
                     .w(px(crate::platform::CurrentPlatform::traffic_light_pad_px()))
@@ -1605,7 +1582,9 @@ impl AnotherOneApp {
             .child(
                 div()
                     .flex_1()
+                    .min_w(px(0.))
                     .h_full()
+                    .overflow_hidden()
                     .window_control_area(WindowControlArea::Drag)
                     .on_mouse_down(
                         MouseButton::Left,
@@ -1615,7 +1594,20 @@ impl AnotherOneApp {
                         MouseButton::Left,
                         cx.listener(Self::titlebar_background_mouse_up),
                     )
-                    .on_mouse_move(cx.listener(Self::titlebar_background_mouse_move)),
+                    .on_mouse_move(cx.listener(Self::titlebar_background_mouse_move))
+                    .when(cfg!(debug_assertions), |d| {
+                        d.flex().items_center().justify_center().px(px(8.)).child(
+                            div()
+                                .min_w(px(0.))
+                                .truncate()
+                                .text_color(tokens::ErrorColors::text())
+                                .text_size(rems(11. / 16.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(gpui::SharedString::new_static(
+                                    "DEBUG BUILD - not for daily use",
+                                )),
+                        )
+                    }),
             )
             .child(self.titlebar_build_chip(cx))
             .child(self.titlebar_custom_actions_button(cx))
