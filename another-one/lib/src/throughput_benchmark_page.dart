@@ -97,11 +97,13 @@ class _ThroughputBenchmarkPageState
     });
     await _teardown();
     try {
+      _setStatus('connecting…');
       final transport = _buildTransport();
       _transport = transport;
       await _waitForConnected(transport);
 
       // Pull the project tree so we can pick a real (sectionId, tabId).
+      _setStatus('discovering tab…');
       final picked = await _pickFirstTab(transport);
       if (picked == null) {
         setState(() {
@@ -112,67 +114,102 @@ class _ThroughputBenchmarkPageState
         });
         return;
       }
+      _log.info('benchmark picked tab', {
+        'section_id': picked.sectionId,
+        'tab_id': picked.tabId,
+        'is_shell': picked.isShell,
+      });
+      if (!picked.isShell) {
+        setState(() {
+          _running = false;
+          _status = 'no shell tab found — every existing tab is an '
+              'agent (Claude / Cursor / Codex / etc). Open a plain '
+              'shell tab in the regular UI and re-run the benchmark.';
+        });
+        return;
+      }
 
+      _setStatus('launching tab…');
       await transport.launchTab(
         sectionId: picked.sectionId,
         tabId: picked.tabId,
       );
+      // The daemon's launch_tab just queues the request — the actual
+      // PTY spawn happens async on the pty-drain task, so the broadcast
+      // for this (section_id, tab_id) doesn't exist immediately. Poll
+      // listProjects until the tab reports `running: true`, then
+      // attach. Without this gate, attachTab fires too early, the
+      // daemon emits "attach_tab: no such live runtime", and the data
+      // stream stays silent — exactly the symptom seen in the first
+      // benchmark attempt.
+      _setStatus('waiting for PTY…');
+      final live = await _waitForRunning(transport, picked,
+          Duration(seconds: 10));
+      if (!live) {
+        setState(() {
+          _running = false;
+          _status = 'gave up waiting for the daemon to mark the tab '
+              'running — check daemon logs';
+        });
+        return;
+      }
+      _setStatus('attaching…');
       await transport.attachTab(
         sectionId: picked.sectionId,
         tabId: picked.tabId,
       );
-
-      final start = DateTime.now();
-      int totalBytes = 0;
-      final completer = Completer<void>();
-      _bytesSub = transport.incoming.listen((chunk) {
-        totalBytes += chunk.lengthInBytes;
-        if (!completer.isCompleted &&
-            DateTime.now().difference(start).inSeconds >= kBenchmarkTimeoutS) {
-          completer.complete();
-        }
-      });
+      _setStatus('streaming…');
 
       // Drive a high-bandwidth producer through the tab's stdin.
       // `head -c <N>` bounds the run; `base64` keeps bytes printable
-      // so xterm doesn't crash on stray control sequences. The exact
-      // command is shell-portable enough for bash / zsh / fish.
-      final cmd = "stty -echo; cat /dev/urandom | base64 | head -c "
-          "$kBenchmarkBytes; stty echo; printf '\\\\nbench-done\\\\n'\n";
+      // so xterm doesn't crash on stray control sequences. We don't
+      // try to disable the shell's command-line echo — the previous
+      // attempt with `stty -echo + sentinel` fired off the command's
+      // own echo (the shell prints the line back as you "type" it),
+      // ending the run in 20 ms. Instead, measure throughput from
+      // the FIRST inbound byte (skipping prompt + command echo) until
+      // the byte stream stalls for [stallWindow] (= producer ran out).
+      final cmd =
+          "cat /dev/urandom | base64 | head -c $kBenchmarkBytes\n";
       transport.sendBytes(cmd.codeUnits);
 
-      // Wait for either the timeout or the EOF token; we look for the
-      // sentinel inline because the daemon's `attachTab` stream stays
-      // alive after the producer exits (the shell is still running).
-      Timer? deadlineTimer = Timer(
+      const stallWindow = Duration(milliseconds: 1500);
+      final completer = Completer<void>();
+      DateTime? firstByteAt;
+      DateTime lastByteAt = DateTime.now();
+      int totalBytes = 0;
+      Timer stallTimer = Timer.periodic(
+        const Duration(milliseconds: 250),
+        (timer) {
+          if (firstByteAt == null) return;
+          if (DateTime.now().difference(lastByteAt) >= stallWindow &&
+              !completer.isCompleted) {
+            timer.cancel();
+            completer.complete();
+          }
+        },
+      );
+      final deadlineTimer = Timer(
         Duration(seconds: kBenchmarkTimeoutS),
         () {
           if (!completer.isCompleted) completer.complete();
         },
       );
-      // Sentinel detection: a small ring-buffer of recent bytes lets us
-      // catch `bench-done` without retaining the full stream.
-      final tail = <int>[];
-      _bytesSub?.cancel();
       _bytesSub = transport.incoming.listen((chunk) {
+        lastByteAt = DateTime.now();
+        firstByteAt ??= lastByteAt;
         totalBytes += chunk.lengthInBytes;
-        for (final b in chunk) {
-          tail.add(b);
-          if (tail.length > 32) tail.removeAt(0);
-        }
-        if (!completer.isCompleted) {
-          final tailStr = String.fromCharCodes(tail);
-          if (tailStr.contains('bench-done')) {
-            completer.complete();
-          }
-        }
       });
 
       await completer.future;
+      stallTimer.cancel();
       deadlineTimer.cancel();
-      final elapsed = DateTime.now().difference(start);
+      final start = firstByteAt ?? DateTime.now();
+      final elapsed = lastByteAt.difference(start);
 
-      final mbps = totalBytes / 1e6 / elapsed.inMilliseconds * 1000;
+      final mbps = elapsed.inMilliseconds == 0
+          ? 0.0
+          : totalBytes / 1e6 / elapsed.inMilliseconds * 1000;
       _log.info('throughput benchmark complete', {
         'mode': kBenchmarkMode,
         'total_bytes': totalBytes,
@@ -184,10 +221,16 @@ class _ThroughputBenchmarkPageState
       setState(() {
         _running = false;
         _status = '$kBenchmarkMode mode: ${mbps.toStringAsFixed(1)} MB/s';
-        _details = '${(totalBytes / 1e6).toStringAsFixed(1)} MB in '
+        _details = '${_formatBytes(totalBytes)} in '
             '${elapsed.inMilliseconds} ms '
             '(target ${kBenchmarkBytes ~/ 1000000} MB; '
-            '${kBenchmarkTimeoutS}s timeout)';
+            '${kBenchmarkTimeoutS}s timeout). '
+            '${totalBytes < 100000 ? "tiny — daemon broadcast probably "
+                "bailed on lag (terminal-correctness policy in "
+                "daemon-sandbox/src/transport_iroh.rs); a release-mode "
+                "client should saturate the broadcast cleanly. " : ""}'
+            'measured from first inbound byte to last; stall '
+            'window 1.5s.';
       });
     } catch (e, s) {
       _log.error('throughput benchmark failed',
@@ -198,6 +241,12 @@ class _ThroughputBenchmarkPageState
         _details = '';
       });
     }
+  }
+
+  void _setStatus(String text) {
+    if (!mounted) return;
+    setState(() => _status = text);
+    _log.info('benchmark status', {'status': text});
   }
 
   Future<void> _teardown() async {
@@ -248,6 +297,52 @@ class _ThroughputBenchmarkPageState
     _statusSub = null;
   }
 
+  /// Poll [DaemonConnection.listProjects] until [_TabRef] surfaces as
+  /// `running: true`, or [maxWait] elapses. The daemon publishes
+  /// `running` flips on every project-list snapshot so this is the
+  /// only signal a remote client has that the PTY actually came up.
+  Future<bool> _waitForRunning(
+    DaemonConnection transport,
+    _TabRef target,
+    Duration maxWait,
+  ) async {
+    final deadline = DateTime.now().add(maxWait);
+    while (DateTime.now().isBefore(deadline)) {
+      final completer = Completer<List<ProjectSummary>>();
+      final sub = transport.workerReplies.listen((reply) {
+        if (reply is WorkerReply_ProjectList && !completer.isCompleted) {
+          completer.complete(reply.projects);
+        }
+      });
+      await transport.listProjects();
+      try {
+        final projects = await completer.future
+            .timeout(const Duration(seconds: 2));
+        await sub.cancel();
+        for (final p in projects) {
+          for (final task in p.tasks) {
+            if (task.sectionId != target.sectionId) continue;
+            for (final tab in task.tabs) {
+              if (tab.id == target.tabId && tab.running) return true;
+            }
+          }
+        }
+      } on TimeoutException {
+        await sub.cancel();
+      }
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+    return false;
+  }
+
+  /// Prefer the first tab whose `provider == null` (plain shell);
+  /// fall back to the first tab of any kind if no shell tab exists.
+  /// Skipping agent tabs matters for the benchmark because the
+  /// producer command (`cat /dev/urandom | base64 | head -c …`) is
+  /// shell-only — sent to Claude Code / Cursor / Codex / Gemini /
+  /// etc. it parses as a prompt, generates a short response, and
+  /// stalls waiting for more input. (Observed: 42 KB total before
+  /// stall, mistaken for a daemon throughput limit.)
   Future<_TabRef?> _pickFirstTab(DaemonConnection transport) async {
     final replies = transport.workerReplies;
     final completer = Completer<List<ProjectSummary>>();
@@ -260,14 +355,22 @@ class _ThroughputBenchmarkPageState
     final projects =
         await completer.future.timeout(const Duration(seconds: 5));
     await sub.cancel();
+    _TabRef? fallback;
     for (final p in projects) {
       for (final task in p.tasks) {
         for (final tab in task.tabs) {
-          return _TabRef(sectionId: task.sectionId, tabId: tab.id);
+          fallback ??= _TabRef(
+              sectionId: task.sectionId,
+              tabId: tab.id,
+              isShell: tab.provider == null);
+          if (tab.provider == null) {
+            return _TabRef(
+                sectionId: task.sectionId, tabId: tab.id, isShell: true);
+          }
         }
       }
     }
-    return null;
+    return fallback;
   }
 
   @override
@@ -358,8 +461,22 @@ class _ThroughputBenchmarkPageState
   }
 }
 
+String _formatBytes(int n) {
+  if (n < 1000) return '$n B';
+  if (n < 1000 * 1000) return '${(n / 1000).toStringAsFixed(1)} KB';
+  if (n < 1000 * 1000 * 1000) {
+    return '${(n / 1e6).toStringAsFixed(1)} MB';
+  }
+  return '${(n / 1e9).toStringAsFixed(2)} GB';
+}
+
 class _TabRef {
   final String sectionId;
   final String tabId;
-  _TabRef({required this.sectionId, required this.tabId});
+  final bool isShell;
+  _TabRef({
+    required this.sectionId,
+    required this.tabId,
+    required this.isShell,
+  });
 }
