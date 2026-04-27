@@ -257,7 +257,7 @@ return mcpRemoveAck(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( ProjectSummary project)?  projectAdded,TResult Function( String projectId)?  projectRemoved,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String projectId,  TaskSummary task)?  taskCreated,TResult Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult Function( bool changed,  TaskSummary? task)?  taskPinned,TResult Function( String projectId,  String taskId,  bool removed)?  taskRemoved,TResult Function( String slug)?  slugifyBranchNameAck,TResult Function( List<String> branches)?  projectBranchesAck,TResult Function( String? branch)?  primaryBranchAck,TResult Function( String? action)?  repoDefaultCommitActionAck,TResult Function( ActiveGitStateWire? state)?  activeGitStateAck,TResult Function( List<ChangedFileWire>? files)?  changedFilesAck,TResult Function( String? url)?  projectGithubUrlAck,TResult Function( RecentCommitsWire? view)?  recentCommitsAck,TResult Function( List<BranchCompareFileWire>? files)?  commitFileChangesAck,TResult Function( BranchCompareWire? view)?  branchCompareAck,TResult Function( ResolvedBranchSettingsWire? settings)?  branchSettingsAck,TResult Function( bool changed)?  setBranchSettingAck,TResult Function( List<ChangedFileWire> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFileWire> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFileWire> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFileWire> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFileWire> changedFiles)?  discardChangedFileAck,TResult Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,TResult Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,TResult Function( OpenInState state)?  openInStateAck,TResult Function( List<ProjectActionDto> actions)?  projectActionsAck,TResult Function( EnabledAgentsView view)?  enabledAgentsAck,TResult Function( AgentSettingsView view)?  agentSettingsAck,TResult Function( String tabId)?  runProjectActionAck,TResult Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult Function( bool changed)?  setGitCommitScriptAck,TResult Function( bool changed)?  resetGitCommitScriptAck,TResult Function( bool changed)?  setGitPrScriptAck,TResult Function( bool changed)?  resetGitPrScriptAck,TResult Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult Function()?  setShortcutBindingAck,TResult Function()?  resetShortcutBindingAck,TResult Function( McpSettingsView view)?  mcpSettingsAck,TResult Function()?  mcpAddFromCatalogAck,TResult Function()?  mcpToggleAck,TResult Function()?  mcpRemoveAck,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<ProjectSummary> projects)?  projectList,TResult Function( ProjectSummary project)?  projectAdded,TResult Function( String projectId)?  projectRemoved,TResult Function( String message,  ErrKind kind)?  err,TResult Function( String projectId,  TaskSummary task)?  taskCreated,TResult Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult Function( bool changed,  TaskSummary? task)?  taskPinned,TResult Function( String projectId,  String taskId,  bool removed)?  taskRemoved,TResult Function( String slug)?  slugifyBranchNameAck,TResult Function( List<String> branches)?  projectBranchesAck,TResult Function( String? branch)?  primaryBranchAck,TResult Function( String? action)?  repoDefaultCommitActionAck,TResult Function( ActiveGitStateDto? state)?  activeGitStateAck,TResult Function( List<ChangedFileDto>? files)?  changedFilesAck,TResult Function( String? url)?  projectGithubUrlAck,TResult Function( RecentCommitsView? view)?  recentCommitsAck,TResult Function( List<BranchCompareFileDto>? files)?  commitFileChangesAck,TResult Function( BranchCompareView? view)?  branchCompareAck,TResult Function( ResolvedProjectBranchSettingsDto? settings)?  branchSettingsAck,TResult Function( bool changed)?  setBranchSettingAck,TResult Function( List<ChangedFileDto> changedFiles)?  stageChangedFileAck,TResult Function( List<ChangedFileDto> changedFiles)?  unstageChangedFileAck,TResult Function( List<ChangedFileDto> changedFiles)?  stageAllChangesAck,TResult Function( List<ChangedFileDto> changedFiles)?  unstageAllChangesAck,TResult Function( List<ChangedFileDto> changedFiles)?  discardChangedFileAck,TResult Function( ToolbarActionOutcomeDto outcome)?  toolbarActionOutcomeAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,TResult Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,TResult Function( OpenInState state)?  openInStateAck,TResult Function( List<ProjectActionDto> actions)?  projectActionsAck,TResult Function( EnabledAgentsView view)?  enabledAgentsAck,TResult Function( AgentSettingsView view)?  agentSettingsAck,TResult Function( String tabId)?  runProjectActionAck,TResult Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult Function( bool changed)?  setGitCommitScriptAck,TResult Function( bool changed)?  resetGitCommitScriptAck,TResult Function( bool changed)?  setGitPrScriptAck,TResult Function( bool changed)?  resetGitPrScriptAck,TResult Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult Function()?  setShortcutBindingAck,TResult Function()?  resetShortcutBindingAck,TResult Function( McpSettingsView view)?  mcpSettingsAck,TResult Function()?  mcpAddFromCatalogAck,TResult Function()?  mcpToggleAck,TResult Function()?  mcpRemoveAck,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_ProjectAdded() when projectAdded != null:
@@ -325,7 +325,7 @@ return mcpRemoveAck();case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( ProjectSummary project)  projectAdded,required TResult Function( String projectId)  projectRemoved,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String projectId,  TaskSummary task)  taskCreated,required TResult Function( bool changed,  TaskSummary? task)  taskRenamed,required TResult Function( bool changed,  TaskSummary? task)  taskPinned,required TResult Function( String projectId,  String taskId,  bool removed)  taskRemoved,required TResult Function( String slug)  slugifyBranchNameAck,required TResult Function( List<String> branches)  projectBranchesAck,required TResult Function( String? branch)  primaryBranchAck,required TResult Function( String? action)  repoDefaultCommitActionAck,required TResult Function( ActiveGitStateWire? state)  activeGitStateAck,required TResult Function( List<ChangedFileWire>? files)  changedFilesAck,required TResult Function( String? url)  projectGithubUrlAck,required TResult Function( RecentCommitsWire? view)  recentCommitsAck,required TResult Function( List<BranchCompareFileWire>? files)  commitFileChangesAck,required TResult Function( BranchCompareWire? view)  branchCompareAck,required TResult Function( ResolvedBranchSettingsWire? settings)  branchSettingsAck,required TResult Function( bool changed)  setBranchSettingAck,required TResult Function( List<ChangedFileWire> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFileWire> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFileWire> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFileWire> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFileWire> changedFiles)  discardChangedFileAck,required TResult Function( ToolbarActionOutcome outcome)  toolbarActionOutcomeAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createBranchAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createReviewTaskAck,required TResult Function( PullRequestStatusDto? status)  pullRequestStatusAck,required TResult Function( List<CheckDto>? checks)  pullRequestChecksAck,required TResult Function( List<ProjectPagePullRequestDto>? prs)  projectPullRequestsAck,required TResult Function( OpenInState state)  openInStateAck,required TResult Function( List<ProjectActionDto> actions)  projectActionsAck,required TResult Function( EnabledAgentsView view)  enabledAgentsAck,required TResult Function( AgentSettingsView view)  agentSettingsAck,required TResult Function( String tabId)  runProjectActionAck,required TResult Function( GitActionScriptsView view)  gitActionScriptsAck,required TResult Function( bool changed)  setGitCommitScriptAck,required TResult Function( bool changed)  resetGitCommitScriptAck,required TResult Function( bool changed)  setGitPrScriptAck,required TResult Function( bool changed)  resetGitPrScriptAck,required TResult Function( ShortcutSettingsView view)  shortcutSettingsAck,required TResult Function()  setShortcutBindingAck,required TResult Function()  resetShortcutBindingAck,required TResult Function( McpSettingsView view)  mcpSettingsAck,required TResult Function()  mcpAddFromCatalogAck,required TResult Function()  mcpToggleAck,required TResult Function()  mcpRemoveAck,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<ProjectSummary> projects)  projectList,required TResult Function( ProjectSummary project)  projectAdded,required TResult Function( String projectId)  projectRemoved,required TResult Function( String message,  ErrKind kind)  err,required TResult Function( String projectId,  TaskSummary task)  taskCreated,required TResult Function( bool changed,  TaskSummary? task)  taskRenamed,required TResult Function( bool changed,  TaskSummary? task)  taskPinned,required TResult Function( String projectId,  String taskId,  bool removed)  taskRemoved,required TResult Function( String slug)  slugifyBranchNameAck,required TResult Function( List<String> branches)  projectBranchesAck,required TResult Function( String? branch)  primaryBranchAck,required TResult Function( String? action)  repoDefaultCommitActionAck,required TResult Function( ActiveGitStateDto? state)  activeGitStateAck,required TResult Function( List<ChangedFileDto>? files)  changedFilesAck,required TResult Function( String? url)  projectGithubUrlAck,required TResult Function( RecentCommitsView? view)  recentCommitsAck,required TResult Function( List<BranchCompareFileDto>? files)  commitFileChangesAck,required TResult Function( BranchCompareView? view)  branchCompareAck,required TResult Function( ResolvedProjectBranchSettingsDto? settings)  branchSettingsAck,required TResult Function( bool changed)  setBranchSettingAck,required TResult Function( List<ChangedFileDto> changedFiles)  stageChangedFileAck,required TResult Function( List<ChangedFileDto> changedFiles)  unstageChangedFileAck,required TResult Function( List<ChangedFileDto> changedFiles)  stageAllChangesAck,required TResult Function( List<ChangedFileDto> changedFiles)  unstageAllChangesAck,required TResult Function( List<ChangedFileDto> changedFiles)  discardChangedFileAck,required TResult Function( ToolbarActionOutcomeDto outcome)  toolbarActionOutcomeAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createBranchAck,required TResult Function( String sectionId,  List<ProjectSummary> projects)  createReviewTaskAck,required TResult Function( PullRequestStatusDto? status)  pullRequestStatusAck,required TResult Function( List<CheckDto>? checks)  pullRequestChecksAck,required TResult Function( List<ProjectPagePullRequestDto>? prs)  projectPullRequestsAck,required TResult Function( OpenInState state)  openInStateAck,required TResult Function( List<ProjectActionDto> actions)  projectActionsAck,required TResult Function( EnabledAgentsView view)  enabledAgentsAck,required TResult Function( AgentSettingsView view)  agentSettingsAck,required TResult Function( String tabId)  runProjectActionAck,required TResult Function( GitActionScriptsView view)  gitActionScriptsAck,required TResult Function( bool changed)  setGitCommitScriptAck,required TResult Function( bool changed)  resetGitCommitScriptAck,required TResult Function( bool changed)  setGitPrScriptAck,required TResult Function( bool changed)  resetGitPrScriptAck,required TResult Function( ShortcutSettingsView view)  shortcutSettingsAck,required TResult Function()  setShortcutBindingAck,required TResult Function()  resetShortcutBindingAck,required TResult Function( McpSettingsView view)  mcpSettingsAck,required TResult Function()  mcpAddFromCatalogAck,required TResult Function()  mcpToggleAck,required TResult Function()  mcpRemoveAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList():
 return projectList(_that.projects);case WorkerReply_ProjectAdded():
@@ -389,7 +389,7 @@ return mcpRemoveAck();}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( ProjectSummary project)?  projectAdded,TResult? Function( String projectId)?  projectRemoved,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String projectId,  TaskSummary task)?  taskCreated,TResult? Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult? Function( bool changed,  TaskSummary? task)?  taskPinned,TResult? Function( String projectId,  String taskId,  bool removed)?  taskRemoved,TResult? Function( String slug)?  slugifyBranchNameAck,TResult? Function( List<String> branches)?  projectBranchesAck,TResult? Function( String? branch)?  primaryBranchAck,TResult? Function( String? action)?  repoDefaultCommitActionAck,TResult? Function( ActiveGitStateWire? state)?  activeGitStateAck,TResult? Function( List<ChangedFileWire>? files)?  changedFilesAck,TResult? Function( String? url)?  projectGithubUrlAck,TResult? Function( RecentCommitsWire? view)?  recentCommitsAck,TResult? Function( List<BranchCompareFileWire>? files)?  commitFileChangesAck,TResult? Function( BranchCompareWire? view)?  branchCompareAck,TResult? Function( ResolvedBranchSettingsWire? settings)?  branchSettingsAck,TResult? Function( bool changed)?  setBranchSettingAck,TResult? Function( List<ChangedFileWire> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFileWire> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFileWire> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFileWire> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFileWire> changedFiles)?  discardChangedFileAck,TResult? Function( ToolbarActionOutcome outcome)?  toolbarActionOutcomeAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,TResult? Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult? Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult? Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,TResult? Function( OpenInState state)?  openInStateAck,TResult? Function( List<ProjectActionDto> actions)?  projectActionsAck,TResult? Function( EnabledAgentsView view)?  enabledAgentsAck,TResult? Function( AgentSettingsView view)?  agentSettingsAck,TResult? Function( String tabId)?  runProjectActionAck,TResult? Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult? Function( bool changed)?  setGitCommitScriptAck,TResult? Function( bool changed)?  resetGitCommitScriptAck,TResult? Function( bool changed)?  setGitPrScriptAck,TResult? Function( bool changed)?  resetGitPrScriptAck,TResult? Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult? Function()?  setShortcutBindingAck,TResult? Function()?  resetShortcutBindingAck,TResult? Function( McpSettingsView view)?  mcpSettingsAck,TResult? Function()?  mcpAddFromCatalogAck,TResult? Function()?  mcpToggleAck,TResult? Function()?  mcpRemoveAck,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<ProjectSummary> projects)?  projectList,TResult? Function( ProjectSummary project)?  projectAdded,TResult? Function( String projectId)?  projectRemoved,TResult? Function( String message,  ErrKind kind)?  err,TResult? Function( String projectId,  TaskSummary task)?  taskCreated,TResult? Function( bool changed,  TaskSummary? task)?  taskRenamed,TResult? Function( bool changed,  TaskSummary? task)?  taskPinned,TResult? Function( String projectId,  String taskId,  bool removed)?  taskRemoved,TResult? Function( String slug)?  slugifyBranchNameAck,TResult? Function( List<String> branches)?  projectBranchesAck,TResult? Function( String? branch)?  primaryBranchAck,TResult? Function( String? action)?  repoDefaultCommitActionAck,TResult? Function( ActiveGitStateDto? state)?  activeGitStateAck,TResult? Function( List<ChangedFileDto>? files)?  changedFilesAck,TResult? Function( String? url)?  projectGithubUrlAck,TResult? Function( RecentCommitsView? view)?  recentCommitsAck,TResult? Function( List<BranchCompareFileDto>? files)?  commitFileChangesAck,TResult? Function( BranchCompareView? view)?  branchCompareAck,TResult? Function( ResolvedProjectBranchSettingsDto? settings)?  branchSettingsAck,TResult? Function( bool changed)?  setBranchSettingAck,TResult? Function( List<ChangedFileDto> changedFiles)?  stageChangedFileAck,TResult? Function( List<ChangedFileDto> changedFiles)?  unstageChangedFileAck,TResult? Function( List<ChangedFileDto> changedFiles)?  stageAllChangesAck,TResult? Function( List<ChangedFileDto> changedFiles)?  unstageAllChangesAck,TResult? Function( List<ChangedFileDto> changedFiles)?  discardChangedFileAck,TResult? Function( ToolbarActionOutcomeDto outcome)?  toolbarActionOutcomeAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createBranchAck,TResult? Function( String sectionId,  List<ProjectSummary> projects)?  createReviewTaskAck,TResult? Function( PullRequestStatusDto? status)?  pullRequestStatusAck,TResult? Function( List<CheckDto>? checks)?  pullRequestChecksAck,TResult? Function( List<ProjectPagePullRequestDto>? prs)?  projectPullRequestsAck,TResult? Function( OpenInState state)?  openInStateAck,TResult? Function( List<ProjectActionDto> actions)?  projectActionsAck,TResult? Function( EnabledAgentsView view)?  enabledAgentsAck,TResult? Function( AgentSettingsView view)?  agentSettingsAck,TResult? Function( String tabId)?  runProjectActionAck,TResult? Function( GitActionScriptsView view)?  gitActionScriptsAck,TResult? Function( bool changed)?  setGitCommitScriptAck,TResult? Function( bool changed)?  resetGitCommitScriptAck,TResult? Function( bool changed)?  setGitPrScriptAck,TResult? Function( bool changed)?  resetGitPrScriptAck,TResult? Function( ShortcutSettingsView view)?  shortcutSettingsAck,TResult? Function()?  setShortcutBindingAck,TResult? Function()?  resetShortcutBindingAck,TResult? Function( McpSettingsView view)?  mcpSettingsAck,TResult? Function()?  mcpAddFromCatalogAck,TResult? Function()?  mcpToggleAck,TResult? Function()?  mcpRemoveAck,}) {final _that = this;
 switch (_that) {
 case WorkerReply_ProjectList() when projectList != null:
 return projectList(_that.projects);case WorkerReply_ProjectAdded() when projectAdded != null:
@@ -1270,7 +1270,7 @@ class WorkerReply_ActiveGitStateAck extends WorkerReply {
   const WorkerReply_ActiveGitStateAck({this.state}): super._();
   
 
- final  ActiveGitStateWire? state;
+ final  ActiveGitStateDto? state;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
@@ -1302,7 +1302,7 @@ abstract mixin class $WorkerReply_ActiveGitStateAckCopyWith<$Res> implements $Wo
   factory $WorkerReply_ActiveGitStateAckCopyWith(WorkerReply_ActiveGitStateAck value, $Res Function(WorkerReply_ActiveGitStateAck) _then) = _$WorkerReply_ActiveGitStateAckCopyWithImpl;
 @useResult
 $Res call({
- ActiveGitStateWire? state
+ ActiveGitStateDto? state
 });
 
 
@@ -1322,7 +1322,7 @@ class _$WorkerReply_ActiveGitStateAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? state = freezed,}) {
   return _then(WorkerReply_ActiveGitStateAck(
 state: freezed == state ? _self.state : state // ignore: cast_nullable_to_non_nullable
-as ActiveGitStateWire?,
+as ActiveGitStateDto?,
   ));
 }
 
@@ -1333,11 +1333,11 @@ as ActiveGitStateWire?,
 
 
 class WorkerReply_ChangedFilesAck extends WorkerReply {
-  const WorkerReply_ChangedFilesAck({final  List<ChangedFileWire>? files}): _files = files,super._();
+  const WorkerReply_ChangedFilesAck({final  List<ChangedFileDto>? files}): _files = files,super._();
   
 
- final  List<ChangedFileWire>? _files;
- List<ChangedFileWire>? get files {
+ final  List<ChangedFileDto>? _files;
+ List<ChangedFileDto>? get files {
   final value = _files;
   if (value == null) return null;
   if (_files is EqualUnmodifiableListView) return _files;
@@ -1376,7 +1376,7 @@ abstract mixin class $WorkerReply_ChangedFilesAckCopyWith<$Res> implements $Work
   factory $WorkerReply_ChangedFilesAckCopyWith(WorkerReply_ChangedFilesAck value, $Res Function(WorkerReply_ChangedFilesAck) _then) = _$WorkerReply_ChangedFilesAckCopyWithImpl;
 @useResult
 $Res call({
- List<ChangedFileWire>? files
+ List<ChangedFileDto>? files
 });
 
 
@@ -1396,7 +1396,7 @@ class _$WorkerReply_ChangedFilesAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? files = freezed,}) {
   return _then(WorkerReply_ChangedFilesAck(
 files: freezed == files ? _self._files : files // ignore: cast_nullable_to_non_nullable
-as List<ChangedFileWire>?,
+as List<ChangedFileDto>?,
   ));
 }
 
@@ -1476,7 +1476,7 @@ class WorkerReply_RecentCommitsAck extends WorkerReply {
   const WorkerReply_RecentCommitsAck({this.view}): super._();
   
 
- final  RecentCommitsWire? view;
+ final  RecentCommitsView? view;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
@@ -1508,7 +1508,7 @@ abstract mixin class $WorkerReply_RecentCommitsAckCopyWith<$Res> implements $Wor
   factory $WorkerReply_RecentCommitsAckCopyWith(WorkerReply_RecentCommitsAck value, $Res Function(WorkerReply_RecentCommitsAck) _then) = _$WorkerReply_RecentCommitsAckCopyWithImpl;
 @useResult
 $Res call({
- RecentCommitsWire? view
+ RecentCommitsView? view
 });
 
 
@@ -1528,7 +1528,7 @@ class _$WorkerReply_RecentCommitsAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? view = freezed,}) {
   return _then(WorkerReply_RecentCommitsAck(
 view: freezed == view ? _self.view : view // ignore: cast_nullable_to_non_nullable
-as RecentCommitsWire?,
+as RecentCommitsView?,
   ));
 }
 
@@ -1539,11 +1539,11 @@ as RecentCommitsWire?,
 
 
 class WorkerReply_CommitFileChangesAck extends WorkerReply {
-  const WorkerReply_CommitFileChangesAck({final  List<BranchCompareFileWire>? files}): _files = files,super._();
+  const WorkerReply_CommitFileChangesAck({final  List<BranchCompareFileDto>? files}): _files = files,super._();
   
 
- final  List<BranchCompareFileWire>? _files;
- List<BranchCompareFileWire>? get files {
+ final  List<BranchCompareFileDto>? _files;
+ List<BranchCompareFileDto>? get files {
   final value = _files;
   if (value == null) return null;
   if (_files is EqualUnmodifiableListView) return _files;
@@ -1582,7 +1582,7 @@ abstract mixin class $WorkerReply_CommitFileChangesAckCopyWith<$Res> implements 
   factory $WorkerReply_CommitFileChangesAckCopyWith(WorkerReply_CommitFileChangesAck value, $Res Function(WorkerReply_CommitFileChangesAck) _then) = _$WorkerReply_CommitFileChangesAckCopyWithImpl;
 @useResult
 $Res call({
- List<BranchCompareFileWire>? files
+ List<BranchCompareFileDto>? files
 });
 
 
@@ -1602,7 +1602,7 @@ class _$WorkerReply_CommitFileChangesAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? files = freezed,}) {
   return _then(WorkerReply_CommitFileChangesAck(
 files: freezed == files ? _self._files : files // ignore: cast_nullable_to_non_nullable
-as List<BranchCompareFileWire>?,
+as List<BranchCompareFileDto>?,
   ));
 }
 
@@ -1616,7 +1616,7 @@ class WorkerReply_BranchCompareAck extends WorkerReply {
   const WorkerReply_BranchCompareAck({this.view}): super._();
   
 
- final  BranchCompareWire? view;
+ final  BranchCompareView? view;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
@@ -1648,7 +1648,7 @@ abstract mixin class $WorkerReply_BranchCompareAckCopyWith<$Res> implements $Wor
   factory $WorkerReply_BranchCompareAckCopyWith(WorkerReply_BranchCompareAck value, $Res Function(WorkerReply_BranchCompareAck) _then) = _$WorkerReply_BranchCompareAckCopyWithImpl;
 @useResult
 $Res call({
- BranchCompareWire? view
+ BranchCompareView? view
 });
 
 
@@ -1668,7 +1668,7 @@ class _$WorkerReply_BranchCompareAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? view = freezed,}) {
   return _then(WorkerReply_BranchCompareAck(
 view: freezed == view ? _self.view : view // ignore: cast_nullable_to_non_nullable
-as BranchCompareWire?,
+as BranchCompareView?,
   ));
 }
 
@@ -1682,7 +1682,7 @@ class WorkerReply_BranchSettingsAck extends WorkerReply {
   const WorkerReply_BranchSettingsAck({this.settings}): super._();
   
 
- final  ResolvedBranchSettingsWire? settings;
+ final  ResolvedProjectBranchSettingsDto? settings;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
@@ -1714,7 +1714,7 @@ abstract mixin class $WorkerReply_BranchSettingsAckCopyWith<$Res> implements $Wo
   factory $WorkerReply_BranchSettingsAckCopyWith(WorkerReply_BranchSettingsAck value, $Res Function(WorkerReply_BranchSettingsAck) _then) = _$WorkerReply_BranchSettingsAckCopyWithImpl;
 @useResult
 $Res call({
- ResolvedBranchSettingsWire? settings
+ ResolvedProjectBranchSettingsDto? settings
 });
 
 
@@ -1734,7 +1734,7 @@ class _$WorkerReply_BranchSettingsAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? settings = freezed,}) {
   return _then(WorkerReply_BranchSettingsAck(
 settings: freezed == settings ? _self.settings : settings // ignore: cast_nullable_to_non_nullable
-as ResolvedBranchSettingsWire?,
+as ResolvedProjectBranchSettingsDto?,
   ));
 }
 
@@ -1811,11 +1811,11 @@ as bool,
 
 
 class WorkerReply_StageChangedFileAck extends WorkerReply {
-  const WorkerReply_StageChangedFileAck({required final  List<ChangedFileWire> changedFiles}): _changedFiles = changedFiles,super._();
+  const WorkerReply_StageChangedFileAck({required final  List<ChangedFileDto> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  List<ChangedFileWire> _changedFiles;
- List<ChangedFileWire> get changedFiles {
+ final  List<ChangedFileDto> _changedFiles;
+ List<ChangedFileDto> get changedFiles {
   if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
   // ignore: implicit_dynamic_type
   return EqualUnmodifiableListView(_changedFiles);
@@ -1852,7 +1852,7 @@ abstract mixin class $WorkerReply_StageChangedFileAckCopyWith<$Res> implements $
   factory $WorkerReply_StageChangedFileAckCopyWith(WorkerReply_StageChangedFileAck value, $Res Function(WorkerReply_StageChangedFileAck) _then) = _$WorkerReply_StageChangedFileAckCopyWithImpl;
 @useResult
 $Res call({
- List<ChangedFileWire> changedFiles
+ List<ChangedFileDto> changedFiles
 });
 
 
@@ -1872,7 +1872,7 @@ class _$WorkerReply_StageChangedFileAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
   return _then(WorkerReply_StageChangedFileAck(
 changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
-as List<ChangedFileWire>,
+as List<ChangedFileDto>,
   ));
 }
 
@@ -1883,11 +1883,11 @@ as List<ChangedFileWire>,
 
 
 class WorkerReply_UnstageChangedFileAck extends WorkerReply {
-  const WorkerReply_UnstageChangedFileAck({required final  List<ChangedFileWire> changedFiles}): _changedFiles = changedFiles,super._();
+  const WorkerReply_UnstageChangedFileAck({required final  List<ChangedFileDto> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  List<ChangedFileWire> _changedFiles;
- List<ChangedFileWire> get changedFiles {
+ final  List<ChangedFileDto> _changedFiles;
+ List<ChangedFileDto> get changedFiles {
   if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
   // ignore: implicit_dynamic_type
   return EqualUnmodifiableListView(_changedFiles);
@@ -1924,7 +1924,7 @@ abstract mixin class $WorkerReply_UnstageChangedFileAckCopyWith<$Res> implements
   factory $WorkerReply_UnstageChangedFileAckCopyWith(WorkerReply_UnstageChangedFileAck value, $Res Function(WorkerReply_UnstageChangedFileAck) _then) = _$WorkerReply_UnstageChangedFileAckCopyWithImpl;
 @useResult
 $Res call({
- List<ChangedFileWire> changedFiles
+ List<ChangedFileDto> changedFiles
 });
 
 
@@ -1944,7 +1944,7 @@ class _$WorkerReply_UnstageChangedFileAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
   return _then(WorkerReply_UnstageChangedFileAck(
 changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
-as List<ChangedFileWire>,
+as List<ChangedFileDto>,
   ));
 }
 
@@ -1955,11 +1955,11 @@ as List<ChangedFileWire>,
 
 
 class WorkerReply_StageAllChangesAck extends WorkerReply {
-  const WorkerReply_StageAllChangesAck({required final  List<ChangedFileWire> changedFiles}): _changedFiles = changedFiles,super._();
+  const WorkerReply_StageAllChangesAck({required final  List<ChangedFileDto> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  List<ChangedFileWire> _changedFiles;
- List<ChangedFileWire> get changedFiles {
+ final  List<ChangedFileDto> _changedFiles;
+ List<ChangedFileDto> get changedFiles {
   if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
   // ignore: implicit_dynamic_type
   return EqualUnmodifiableListView(_changedFiles);
@@ -1996,7 +1996,7 @@ abstract mixin class $WorkerReply_StageAllChangesAckCopyWith<$Res> implements $W
   factory $WorkerReply_StageAllChangesAckCopyWith(WorkerReply_StageAllChangesAck value, $Res Function(WorkerReply_StageAllChangesAck) _then) = _$WorkerReply_StageAllChangesAckCopyWithImpl;
 @useResult
 $Res call({
- List<ChangedFileWire> changedFiles
+ List<ChangedFileDto> changedFiles
 });
 
 
@@ -2016,7 +2016,7 @@ class _$WorkerReply_StageAllChangesAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
   return _then(WorkerReply_StageAllChangesAck(
 changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
-as List<ChangedFileWire>,
+as List<ChangedFileDto>,
   ));
 }
 
@@ -2027,11 +2027,11 @@ as List<ChangedFileWire>,
 
 
 class WorkerReply_UnstageAllChangesAck extends WorkerReply {
-  const WorkerReply_UnstageAllChangesAck({required final  List<ChangedFileWire> changedFiles}): _changedFiles = changedFiles,super._();
+  const WorkerReply_UnstageAllChangesAck({required final  List<ChangedFileDto> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  List<ChangedFileWire> _changedFiles;
- List<ChangedFileWire> get changedFiles {
+ final  List<ChangedFileDto> _changedFiles;
+ List<ChangedFileDto> get changedFiles {
   if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
   // ignore: implicit_dynamic_type
   return EqualUnmodifiableListView(_changedFiles);
@@ -2068,7 +2068,7 @@ abstract mixin class $WorkerReply_UnstageAllChangesAckCopyWith<$Res> implements 
   factory $WorkerReply_UnstageAllChangesAckCopyWith(WorkerReply_UnstageAllChangesAck value, $Res Function(WorkerReply_UnstageAllChangesAck) _then) = _$WorkerReply_UnstageAllChangesAckCopyWithImpl;
 @useResult
 $Res call({
- List<ChangedFileWire> changedFiles
+ List<ChangedFileDto> changedFiles
 });
 
 
@@ -2088,7 +2088,7 @@ class _$WorkerReply_UnstageAllChangesAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
   return _then(WorkerReply_UnstageAllChangesAck(
 changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
-as List<ChangedFileWire>,
+as List<ChangedFileDto>,
   ));
 }
 
@@ -2099,11 +2099,11 @@ as List<ChangedFileWire>,
 
 
 class WorkerReply_DiscardChangedFileAck extends WorkerReply {
-  const WorkerReply_DiscardChangedFileAck({required final  List<ChangedFileWire> changedFiles}): _changedFiles = changedFiles,super._();
+  const WorkerReply_DiscardChangedFileAck({required final  List<ChangedFileDto> changedFiles}): _changedFiles = changedFiles,super._();
   
 
- final  List<ChangedFileWire> _changedFiles;
- List<ChangedFileWire> get changedFiles {
+ final  List<ChangedFileDto> _changedFiles;
+ List<ChangedFileDto> get changedFiles {
   if (_changedFiles is EqualUnmodifiableListView) return _changedFiles;
   // ignore: implicit_dynamic_type
   return EqualUnmodifiableListView(_changedFiles);
@@ -2140,7 +2140,7 @@ abstract mixin class $WorkerReply_DiscardChangedFileAckCopyWith<$Res> implements
   factory $WorkerReply_DiscardChangedFileAckCopyWith(WorkerReply_DiscardChangedFileAck value, $Res Function(WorkerReply_DiscardChangedFileAck) _then) = _$WorkerReply_DiscardChangedFileAckCopyWithImpl;
 @useResult
 $Res call({
- List<ChangedFileWire> changedFiles
+ List<ChangedFileDto> changedFiles
 });
 
 
@@ -2160,7 +2160,7 @@ class _$WorkerReply_DiscardChangedFileAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? changedFiles = null,}) {
   return _then(WorkerReply_DiscardChangedFileAck(
 changedFiles: null == changedFiles ? _self._changedFiles : changedFiles // ignore: cast_nullable_to_non_nullable
-as List<ChangedFileWire>,
+as List<ChangedFileDto>,
   ));
 }
 
@@ -2174,7 +2174,7 @@ class WorkerReply_ToolbarActionOutcomeAck extends WorkerReply {
   const WorkerReply_ToolbarActionOutcomeAck({required this.outcome}): super._();
   
 
- final  ToolbarActionOutcome outcome;
+ final  ToolbarActionOutcomeDto outcome;
 
 /// Create a copy of WorkerReply
 /// with the given fields replaced by the non-null parameter values.
@@ -2206,7 +2206,7 @@ abstract mixin class $WorkerReply_ToolbarActionOutcomeAckCopyWith<$Res> implemen
   factory $WorkerReply_ToolbarActionOutcomeAckCopyWith(WorkerReply_ToolbarActionOutcomeAck value, $Res Function(WorkerReply_ToolbarActionOutcomeAck) _then) = _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl;
 @useResult
 $Res call({
- ToolbarActionOutcome outcome
+ ToolbarActionOutcomeDto outcome
 });
 
 
@@ -2226,7 +2226,7 @@ class _$WorkerReply_ToolbarActionOutcomeAckCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? outcome = null,}) {
   return _then(WorkerReply_ToolbarActionOutcomeAck(
 outcome: null == outcome ? _self.outcome : outcome // ignore: cast_nullable_to_non_nullable
-as ToolbarActionOutcome,
+as ToolbarActionOutcomeDto,
   ));
 }
 

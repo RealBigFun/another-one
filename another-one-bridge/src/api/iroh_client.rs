@@ -24,7 +24,6 @@ use flutter_rust_bridge::frb;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-use super::local_session::{AgentSettingsView, EnabledAgentsView, OpenInState};
 use crate::frb_generated::StreamSink;
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
@@ -427,31 +426,35 @@ pub enum WorkerReply {
     /// when the project id is unknown. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ActiveGitStateAck`.
     ActiveGitStateAck {
-        state: Option<ActiveGitStateWire>,
+        state: Option<crate::api::local_session::ActiveGitStateDto>,
     },
     /// Reply to [`Control::ReadChangedFiles`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ChangedFilesAck`.
     ChangedFilesAck {
-        files: Option<Vec<ChangedFileWire>>,
+        files: Option<Vec<crate::api::local_session::ChangedFileDto>>,
     },
     /// Reply to [`Control::ReadProjectGithubUrl`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ProjectGithubUrlAck`.
     ProjectGithubUrlAck { url: Option<String> },
     /// Reply to [`Control::ReadRecentCommits`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::RecentCommitsAck`.
-    RecentCommitsAck { view: Option<RecentCommitsWire> },
+    RecentCommitsAck {
+        view: Option<crate::api::local_session::RecentCommitsView>,
+    },
     /// Reply to [`Control::ReadCommitFileChanges`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::CommitFileChangesAck`.
     CommitFileChangesAck {
-        files: Option<Vec<BranchCompareFileWire>>,
+        files: Option<Vec<crate::api::local_session::BranchCompareFileDto>>,
     },
     /// Reply to [`Control::ReadBranchCompareState`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchCompareAck`.
-    BranchCompareAck { view: Option<BranchCompareWire> },
+    BranchCompareAck {
+        view: Option<crate::api::local_session::BranchCompareView>,
+    },
     /// Reply to [`Control::ReadBranchSettings`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchSettingsAck`.
     BranchSettingsAck {
-        settings: Option<ResolvedBranchSettingsWire>,
+        settings: Option<crate::api::local_session::ResolvedProjectBranchSettingsDto>,
     },
     /// Reply to [`Control::SetBranchSetting`]. Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::SetBranchSettingAck`.
@@ -462,30 +465,30 @@ pub enum WorkerReply {
     /// the issuing client refreshes the right-sidebar Changes pane
     /// without a follow-up `ReadChangedFiles` round-trip.
     StageChangedFileAck {
-        changed_files: Vec<ChangedFileWire>,
+        changed_files: Vec<crate::api::local_session::ChangedFileDto>,
     },
     /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
     /// Same inline-snapshot semantics as
     /// [`Self::StageChangedFileAck`].
     UnstageChangedFileAck {
-        changed_files: Vec<ChangedFileWire>,
+        changed_files: Vec<crate::api::local_session::ChangedFileDto>,
     },
     /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
     StageAllChangesAck {
-        changed_files: Vec<ChangedFileWire>,
+        changed_files: Vec<crate::api::local_session::ChangedFileDto>,
     },
     /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
     UnstageAllChangesAck {
-        changed_files: Vec<ChangedFileWire>,
+        changed_files: Vec<crate::api::local_session::ChangedFileDto>,
     },
     /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
     DiscardChangedFileAck {
-        changed_files: Vec<ChangedFileWire>,
+        changed_files: Vec<crate::api::local_session::ChangedFileDto>,
     },
     /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
     /// Mirror of
     /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
-    ToolbarActionOutcomeAck { outcome: ToolbarActionOutcome },
+    ToolbarActionOutcomeAck { outcome: crate::api::local_session::ToolbarActionOutcomeDto },
     /// `another-one-ojm.5` — ack for [`Control::CreateBranch`]. Mirror
     /// of `daemon-sandbox/src/frame.rs::WorkerReply::CreateBranchAck`.
     /// Carries the post-mutation `projects` snapshot inline so the
@@ -587,84 +590,17 @@ pub enum WorkerReply {
     McpRemoveAck,
 }
 
-/// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
-/// FRB-exposed via the `WorkerReply::ActiveGitStateAck` variant.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ActiveGitStateWire {
-    pub current_branch: Option<String>,
-    pub ahead_count: u32,
-    pub behind_count: u32,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::BranchCompareFileWire`.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct BranchCompareFileWire {
-    pub path: String,
-    pub original_path: Option<String>,
-    pub status: String,
-    pub additions: i32,
-    pub deletions: i32,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::BranchCompareWire`.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct BranchCompareWire {
-    pub current_branch: Option<String>,
-    pub target_branch: String,
-    pub files: Vec<BranchCompareFileWire>,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::ResolvedBranchSettingsWire`.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ResolvedBranchSettingsWire {
-    pub root_project_id: String,
-    pub available_branches: Vec<String>,
-    pub configured_default_branch: Option<String>,
-    pub effective_default_branch: Option<String>,
-    pub configured_default_target_branch: Option<String>,
-    pub effective_default_target_branch: Option<String>,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct CommitWire {
-    pub id: String,
-    pub short_id: String,
-    pub subject: String,
-    pub author_name: String,
-    pub authored_relative: String,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::RecentCommitsWire`.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct RecentCommitsWire {
-    pub current_branch: Option<String>,
-    pub has_more: bool,
-    pub commits: Vec<CommitWire>,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFileWire`.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ChangedFileWire {
-    pub path: String,
-    pub original_path: Option<String>,
-    pub staged_additions: i32,
-    pub staged_deletions: i32,
-    pub unstaged_additions: i32,
-    pub unstaged_deletions: i32,
-    pub index_status: String,
-    pub worktree_status: String,
-    pub untracked: bool,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
-/// FRB-exposed via the `WorkerReply::ToolbarActionOutcomeAck` variant.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ToolbarActionOutcome {
-    pub toast_message: String,
-    pub warning: bool,
-    pub refresh_git_state: bool,
-}
+// Wire-mirror structs that previously lived here (BranchCompareFileWire,
+// BranchCompareWire, ResolvedBranchSettingsWire, CommitWire,
+// RecentCommitsWire, ChangedFileWire, ToolbarActionOutcome,
+// ActiveGitStateWire) were deleted in `another-one-ojm.11`. The
+// FRB-side `WorkerReply::*Ack` variants now reference the
+// `crate::api::local_session` DTOs directly — same serde shape as the
+// daemon-sandbox wire types they decode from, so the wire stream
+// deserializes cleanly into a single Dart class per concept (no
+// parallel Wire/Dto pair). The daemon-sandbox-side wire types still
+// exist in `daemon_sandbox::frame::*Wire` for the daemon's own
+// serialization.
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
 /// snake_case; the Dart side gets a freezed enum via FRB.
@@ -2152,57 +2088,4 @@ impl IrohSession {
         let mut guard = self.pending.lock().unwrap_or_else(|p| p.into_inner());
         guard.waiters.clear();
     }
-}
-
-/// Decode a worker-reply JSON value as an Ack of the named `kind`,
-/// returning the strongly-typed payload nested at `field`.
-///
-/// Two failure modes:
-///   - The daemon emitted `WorkerReply::Err` instead of the expected
-///     ack: surface the message + classification as the Result error
-///     so the caller's UI can branch on retry vs. degrade.
-///   - The daemon emitted some unrelated variant or the payload
-///     shape doesn't match: surface a "verb_name: …" anyhow error
-///     for the call site's tracing layer to log.
-///
-/// `verb_name` is included in the error so a log line points at the
-/// originating call without the call site having to wrap on its own.
-fn decode_ack_field<T: for<'de> serde::Deserialize<'de>>(
-    value: serde_json::Value,
-    expected_kind: &str,
-    field: &str,
-    verb_name: &str,
-) -> anyhow::Result<T> {
-    let kind = value
-        .get("kind")
-        .and_then(|k| k.as_str())
-        .unwrap_or("<missing>");
-    if kind == "err" {
-        let message = value
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("daemon returned err with no message")
-            .to_string();
-        let err_kind = value
-            .get("err_kind")
-            .and_then(|k| k.as_str())
-            .unwrap_or("internal")
-            .to_string();
-        anyhow::bail!("{verb_name}: daemon err ({err_kind}): {message}");
-    }
-    if kind != expected_kind {
-        anyhow::bail!(
-            "{verb_name}: unexpected reply kind `{kind}` (expected `{expected_kind}`)"
-        );
-    }
-    let payload = value
-        .get(field)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "{verb_name}: missing `{field}` field on `{expected_kind}` reply"
-            )
-        })?
-        .clone();
-    serde_json::from_value::<T>(payload)
-        .with_context(|| format!("{verb_name}: decode `{expected_kind}.{field}`"))
 }

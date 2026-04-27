@@ -787,13 +787,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       ),
     );
     return switch (reply) {
-      WorkerReply_ActiveGitStateAck(:final state) => state == null
-          ? null
-          : ls.ActiveGitStateDto(
-              currentBranch: state.currentBranch,
-              aheadCount: state.aheadCount,
-              behindCount: state.behindCount,
-            ),
+      WorkerReply_ActiveGitStateAck(:final state) => state,
       WorkerReply_Err(:final message, :final kind) =>
         throw IrohWireException(message: message, kind: kind),
       _ => throw StateError(
@@ -812,7 +806,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     );
     return switch (reply) {
       WorkerReply_ChangedFilesAck(:final files) =>
-        files?.map(_changedFileWireToDto).toList(growable: false),
+        files?.cast<ls.ChangedFileDto>(),
       WorkerReply_Err(:final message, :final kind) =>
         throw IrohWireException(message: message, kind: kind),
       _ => throw StateError(
@@ -852,13 +846,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       ),
     );
     return switch (reply) {
-      WorkerReply_RecentCommitsAck(:final view) => view == null
-          ? null
-          : ls.RecentCommitsView(
-              currentBranch: view.currentBranch,
-              hasMore: view.hasMore,
-              commits: view.commits.map(_commitWireToDto).toList(growable: false),
-            ),
+      WorkerReply_RecentCommitsAck(:final view) => view,
       WorkerReply_Err(:final message, :final kind) =>
         throw IrohWireException(message: message, kind: kind),
       _ => throw StateError(
@@ -866,14 +854,6 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         ),
     };
   }
-
-  ls.CommitDto _commitWireToDto(CommitWire c) => ls.CommitDto(
-        id: c.id,
-        shortId: c.shortId,
-        subject: c.subject,
-        authorName: c.authorName,
-        authoredRelative: c.authoredRelative,
-      );
 
   @override
   Future<List<ls.BranchCompareFileDto>?> readCommitFileChanges({
@@ -889,7 +869,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     );
     return switch (reply) {
       WorkerReply_CommitFileChangesAck(:final files) =>
-          files?.map(_branchCompareFileWireToDto).toList(growable: false),
+          files?.cast<ls.BranchCompareFileDto>(),
       WorkerReply_Err(:final message, :final kind) =>
         throw IrohWireException(message: message, kind: kind),
       _ => throw StateError(
@@ -897,15 +877,6 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         ),
     };
   }
-
-  ls.BranchCompareFileDto _branchCompareFileWireToDto(BranchCompareFileWire f) =>
-      ls.BranchCompareFileDto(
-        path: f.path,
-        originalPath: f.originalPath,
-        status: f.status,
-        additions: f.additions,
-        deletions: f.deletions,
-      );
 
   @override
   Future<ls.BranchCompareView?> readBranchCompareState({
@@ -920,15 +891,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       ),
     );
     return switch (reply) {
-      WorkerReply_BranchCompareAck(:final view) => view == null
-          ? null
-          : ls.BranchCompareView(
-              currentBranch: view.currentBranch,
-              targetBranch: view.targetBranch,
-              files: view.files
-                  .map(_branchCompareFileWireToDto)
-                  .toList(growable: false),
-            ),
+      WorkerReply_BranchCompareAck(:final view) => view,
       WorkerReply_Err(:final message, :final kind) =>
         throw IrohWireException(message: message, kind: kind),
       _ => throw StateError(
@@ -948,18 +911,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       ),
     );
     return switch (reply) {
-      WorkerReply_BranchSettingsAck(:final settings) => settings == null
-          ? null
-          : ls.ResolvedProjectBranchSettingsDto(
-              rootProjectId: settings.rootProjectId,
-              availableBranches: settings.availableBranches,
-              configuredDefaultBranch: settings.configuredDefaultBranch,
-              effectiveDefaultBranch: settings.effectiveDefaultBranch,
-              configuredDefaultTargetBranch:
-                  settings.configuredDefaultTargetBranch,
-              effectiveDefaultTargetBranch:
-                  settings.effectiveDefaultTargetBranch,
-            ),
+      WorkerReply_BranchSettingsAck(:final settings) => settings,
       WorkerReply_Err(:final message, :final kind) =>
         throw IrohWireException(message: message, kind: kind),
       _ => throw StateError(
@@ -991,19 +943,6 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         ),
     };
   }
-
-  ls.ChangedFileDto _changedFileWireToDto(ChangedFileWire f) =>
-      ls.ChangedFileDto(
-        path: f.path,
-        originalPath: f.originalPath,
-        stagedAdditions: f.stagedAdditions,
-        stagedDeletions: f.stagedDeletions,
-        unstagedAdditions: f.unstagedAdditions,
-        unstagedDeletions: f.unstagedDeletions,
-        indexStatus: f.indexStatus,
-        worktreeStatus: f.worktreeStatus,
-        untracked: f.untracked,
-      );
 
   // ── Git mutation verbs (`another-one-ojm.5`) ───────────────────
   //

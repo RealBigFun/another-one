@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -2080331662;
+  int get rustContentHash => 2098408242;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -436,395 +436,8 @@ abstract class RustLibApi extends BaseApi {
     String? originalPath,
   });
 
-  Future<void> crateApiLocalSessionLocalSessionActivateSectionTab({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  });
-
-  Future<String> crateApiLocalSessionLocalSessionAddAgentToSection({
-    required LocalSession that,
-    required String sectionId,
-    required String agentId,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionAddProject({
-    required LocalSession that,
-    required String path,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionAttachTab({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionClose({
-    required LocalSession that,
-  });
-
-  Future<String> crateApiLocalSessionLocalSessionCloseSectionTab({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  });
-
-  Future<String> crateApiLocalSessionLocalSessionCreateBranch({
-    required LocalSession that,
-    required String projectId,
-    required String branchName,
-    required bool useCurrentTask,
-    required bool migrateChanges,
-  });
-
-  Future<String> crateApiLocalSessionLocalSessionCreateReviewTask({
-    required LocalSession that,
-    required String projectId,
-    required BigInt pullRequestNumber,
-    required String headBranch,
-    AgentProvider? agentProvider,
-  });
-
-  Future<String> crateApiLocalSessionLocalSessionCreateWorktreeTask({
-    required LocalSession that,
-    required String projectId,
-    required String taskName,
-    required String sourceBranch,
-    AgentProvider? agentProvider,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionDeleteProjectAction({
-    required LocalSession that,
-    required String projectId,
-    required String actionId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionDetachTab({
-    required LocalSession that,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionDiscardChangedFile({
-    required LocalSession that,
-    required String projectId,
-    required String path,
-    String? originalPath,
-    required bool untracked,
-  });
-
-  Future<List<ProjectPagePullRequestDto>?>
-  crateApiLocalSessionLocalSessionFindProjectPullRequests({
-    required LocalSession that,
-    required String projectId,
-    required int filterIndex,
-    required String query,
-  });
-
-  Future<PullRequestStatusDto?>
-  crateApiLocalSessionLocalSessionFindPullRequestStatus({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionLaunchTab({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  });
-
-  Future<List<ProjectActionDto>>
-  crateApiLocalSessionLocalSessionListProjectActions({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionListProjects({
-    required LocalSession that,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionMcpAddFromCatalog({
-    required LocalSession that,
-    required String catalogId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionMcpRemove({
-    required LocalSession that,
-    required String entryId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionMcpToggle({
-    required LocalSession that,
-    required String entryId,
-    required String providerId,
-    required bool enabled,
-  });
-
-  Future<OpenInState> crateApiLocalSessionLocalSessionOpenInState({
-    required LocalSession that,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionOpenProjectInApp({
-    required LocalSession that,
-    required String projectId,
-    required String appId,
-  });
-
-  Future<String?> crateApiLocalSessionLocalSessionPrimaryBranchForProject({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<ActiveGitStateDto?>
-  crateApiLocalSessionLocalSessionReadActiveGitState({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<AgentSettingsView> crateApiLocalSessionLocalSessionReadAgentSettings({
-    required LocalSession that,
-  });
-
-  Future<BranchCompareView?>
-  crateApiLocalSessionLocalSessionReadBranchCompareState({
-    required LocalSession that,
-    required String projectId,
-    required String targetBranch,
-  });
-
-  Future<List<ChangedFileDto>?>
-  crateApiLocalSessionLocalSessionReadChangedFiles({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<List<BranchCompareFileDto>?>
-  crateApiLocalSessionLocalSessionReadCommitFileChanges({
-    required LocalSession that,
-    required String projectId,
-    required String commitId,
-  });
-
-  Future<EnabledAgentsView> crateApiLocalSessionLocalSessionReadEnabledAgents({
-    required LocalSession that,
-  });
-
-  Future<GitActionScriptsView>
-  crateApiLocalSessionLocalSessionReadGitActionScripts({
-    required LocalSession that,
-  });
-
-  Future<McpSettingsView> crateApiLocalSessionLocalSessionReadMcpSettings({
-    required LocalSession that,
-  });
-
   Future<OpenInSettingsView>
-  crateApiLocalSessionLocalSessionReadOpenInSettings({
-    required LocalSession that,
-  });
-
-  Future<List<String>> crateApiLocalSessionLocalSessionReadProjectBranches({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<String?> crateApiLocalSessionLocalSessionReadProjectGithubUrl({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<List<CheckDto>?>
-  crateApiLocalSessionLocalSessionReadPullRequestChecks({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<RecentCommitsView?> crateApiLocalSessionLocalSessionReadRecentCommits({
-    required LocalSession that,
-    required String projectId,
-    required int limit,
-  });
-
-  Future<ShortcutSettingsView>
-  crateApiLocalSessionLocalSessionReadShortcutSettings({
-    required LocalSession that,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionRemoveProject({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionRemoveTask({
-    required LocalSession that,
-    required String projectId,
-    required String taskId,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionRenameTask({
-    required LocalSession that,
-    required String taskId,
-    required String newName,
-  });
-
-  Future<String?> crateApiLocalSessionLocalSessionRepoDefaultCommitAction({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionResetGitCommitScript({
-    required LocalSession that,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionResetGitPrScript({
-    required LocalSession that,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionResetShortcutBinding({
-    required LocalSession that,
-    required String actionId,
-  });
-
-  Future<ResolvedProjectBranchSettingsDto?>
-  crateApiLocalSessionLocalSessionResolvedBranchSettings({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<String> crateApiLocalSessionLocalSessionRunProjectAction({
-    required LocalSession that,
-    required String projectId,
-    required String sectionId,
-    required String actionId,
-  });
-
-  Future<ToolbarActionOutcomeDto>
-  crateApiLocalSessionLocalSessionRunToolbarGitAction({
-    required LocalSession that,
-    required String projectId,
-    required String actionId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionSaveProjectAction({
-    required LocalSession that,
-    required String projectId,
-    required ProjectActionDto action,
-    required bool saveGlobalCopy,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionSend({
-    required LocalSession that,
-    required List<int> bytes,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionSetAgentEnabled({
-    required LocalSession that,
-    required String agentId,
-    required bool enabled,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionSetAgentLaunchArgs({
-    required LocalSession that,
-    required String agentId,
-    required List<String> args,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionSetDefaultAgent({
-    required LocalSession that,
-    required String agentId,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionSetGitCommitScript({
-    required LocalSession that,
-    required String script,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionSetGitPrScript({
-    required LocalSession that,
-    required String script,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionSetOpenInAppEnabled({
-    required LocalSession that,
-    required String appId,
-    required bool enabled,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionSetProjectBranchSetting({
-    required LocalSession that,
-    required String projectId,
-    required String field,
-    String? branchName,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionSetShortcutBinding({
-    required LocalSession that,
-    required String actionId,
-    required String binding,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionSetTaskPinned({
-    required LocalSession that,
-    required String taskId,
-    required bool pinned,
-  });
-
-  Future<String> crateApiLocalSessionLocalSessionSlugifyBranchName({
-    required LocalSession that,
-    required String name,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionStageAllChanges({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionStageChangedFile({
-    required LocalSession that,
-    required String projectId,
-    required String path,
-    String? originalPath,
-  });
-
-  Future<String> crateApiLocalSessionLocalSessionSubmitNewTask({
-    required LocalSession that,
-    required String projectId,
-    required String taskName,
-    required String sourceBranch,
-    required List<String> agentIds,
-    required bool branchModeExisting,
-    required bool worktreeMode,
-  });
-
-  Stream<Uint8List> crateApiLocalSessionLocalSessionSubscribe({
-    required LocalSession that,
-  });
-
-  Stream<WorkerReply> crateApiLocalSessionLocalSessionSubscribeWorkerReplies({
-    required LocalSession that,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionTabResize({
-    required LocalSession that,
-    required int cols,
-    required int rows,
-  });
-
-  Future<bool> crateApiLocalSessionLocalSessionToggleSectionTabPinned({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionUnstageAllChanges({
-    required LocalSession that,
-    required String projectId,
-  });
-
-  Future<void> crateApiLocalSessionLocalSessionUnstageChangedFile({
-    required LocalSession that,
-    required String projectId,
-    required String path,
-    String? originalPath,
-  });
+  crateApiLocalSessionForceExportOpenInSettingsView();
 
   Future<LoopbackSessionAddr> crateApiEmbeddedDaemonAwaitLoopbackSessionAddr({
     required int timeoutMs,
@@ -884,8 +497,6 @@ abstract class RustLibApi extends BaseApi {
     String? pairToken,
   });
 
-  Future<LocalSession> crateApiLocalSessionLocalConnect();
-
   Future<LoopbackSessionAddr?> crateApiEmbeddedDaemonLoopbackSessionAddr();
 
   Future<PairingInfo?> crateApiPairPairingInfo();
@@ -908,14 +519,6 @@ abstract class RustLibApi extends BaseApi {
   get rust_arc_decrement_strong_count_IrohSession;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_IrohSessionPtr;
-
-  RustArcIncrementStrongCountFnType
-  get rust_arc_increment_strong_count_LocalSession;
-
-  RustArcDecrementStrongCountFnType
-  get rust_arc_decrement_strong_count_LocalSession;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_LocalSessionPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -3304,21 +2907,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<void> crateApiLocalSessionLocalSessionActivateSectionTab({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  }) {
+  Future<OpenInSettingsView>
+  crateApiLocalSessionForceExportOpenInSettingsView() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(sectionId, serializer);
-          sse_encode_String(tabId, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -3327,2769 +2921,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionActivateSectionTabConstMeta,
-        argValues: [that, sectionId, tabId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionActivateSectionTabConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_activate_section_tab",
-        argNames: ["that", "sectionId", "tabId"],
-      );
-
-  @override
-  Future<String> crateApiLocalSessionLocalSessionAddAgentToSection({
-    required LocalSession that,
-    required String sectionId,
-    required String agentId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(sectionId, serializer);
-          sse_encode_String(agentId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 59,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionAddAgentToSectionConstMeta,
-        argValues: [that, sectionId, agentId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionAddAgentToSectionConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_add_agent_to_section",
-        argNames: ["that", "sectionId", "agentId"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionAddProject({
-    required LocalSession that,
-    required String path,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(path, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 60,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionAddProjectConstMeta,
-        argValues: [that, path],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionAddProjectConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_add_project",
-        argNames: ["that", "path"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionAttachTab({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(sectionId, serializer);
-          sse_encode_String(tabId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 61,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionAttachTabConstMeta,
-        argValues: [that, sectionId, tabId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionAttachTabConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_attach_tab",
-        argNames: ["that", "sectionId", "tabId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionClose({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 62,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: null,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionCloseConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionCloseConstMeta =>
-      const TaskConstMeta(debugName: "LocalSession_close", argNames: ["that"]);
-
-  @override
-  Future<String> crateApiLocalSessionLocalSessionCloseSectionTab({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(sectionId, serializer);
-          sse_encode_String(tabId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 63,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionCloseSectionTabConstMeta,
-        argValues: [that, sectionId, tabId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionCloseSectionTabConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_close_section_tab",
-        argNames: ["that", "sectionId", "tabId"],
-      );
-
-  @override
-  Future<String> crateApiLocalSessionLocalSessionCreateBranch({
-    required LocalSession that,
-    required String projectId,
-    required String branchName,
-    required bool useCurrentTask,
-    required bool migrateChanges,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(branchName, serializer);
-          sse_encode_bool(useCurrentTask, serializer);
-          sse_encode_bool(migrateChanges, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 64,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionCreateBranchConstMeta,
-        argValues: [
-          that,
-          projectId,
-          branchName,
-          useCurrentTask,
-          migrateChanges,
-        ],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionCreateBranchConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_create_branch",
-        argNames: [
-          "that",
-          "projectId",
-          "branchName",
-          "useCurrentTask",
-          "migrateChanges",
-        ],
-      );
-
-  @override
-  Future<String> crateApiLocalSessionLocalSessionCreateReviewTask({
-    required LocalSession that,
-    required String projectId,
-    required BigInt pullRequestNumber,
-    required String headBranch,
-    AgentProvider? agentProvider,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_u_64(pullRequestNumber, serializer);
-          sse_encode_String(headBranch, serializer);
-          sse_encode_opt_box_autoadd_agent_provider(agentProvider, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 65,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionCreateReviewTaskConstMeta,
-        argValues: [
-          that,
-          projectId,
-          pullRequestNumber,
-          headBranch,
-          agentProvider,
-        ],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionCreateReviewTaskConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_create_review_task",
-        argNames: [
-          "that",
-          "projectId",
-          "pullRequestNumber",
-          "headBranch",
-          "agentProvider",
-        ],
-      );
-
-  @override
-  Future<String> crateApiLocalSessionLocalSessionCreateWorktreeTask({
-    required LocalSession that,
-    required String projectId,
-    required String taskName,
-    required String sourceBranch,
-    AgentProvider? agentProvider,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(taskName, serializer);
-          sse_encode_String(sourceBranch, serializer);
-          sse_encode_opt_box_autoadd_agent_provider(agentProvider, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 66,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionCreateWorktreeTaskConstMeta,
-        argValues: [that, projectId, taskName, sourceBranch, agentProvider],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionCreateWorktreeTaskConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_create_worktree_task",
-        argNames: [
-          "that",
-          "projectId",
-          "taskName",
-          "sourceBranch",
-          "agentProvider",
-        ],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionDeleteProjectAction({
-    required LocalSession that,
-    required String projectId,
-    required String actionId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(actionId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 67,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionDeleteProjectActionConstMeta,
-        argValues: [that, projectId, actionId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionDeleteProjectActionConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_delete_project_action",
-        argNames: ["that", "projectId", "actionId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionDetachTab({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 68,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionDetachTabConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionDetachTabConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_detach_tab",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionDiscardChangedFile({
-    required LocalSession that,
-    required String projectId,
-    required String path,
-    String? originalPath,
-    required bool untracked,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(path, serializer);
-          sse_encode_opt_String(originalPath, serializer);
-          sse_encode_bool(untracked, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 69,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionDiscardChangedFileConstMeta,
-        argValues: [that, projectId, path, originalPath, untracked],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionDiscardChangedFileConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_discard_changed_file",
-        argNames: ["that", "projectId", "path", "originalPath", "untracked"],
-      );
-
-  @override
-  Future<List<ProjectPagePullRequestDto>?>
-  crateApiLocalSessionLocalSessionFindProjectPullRequests({
-    required LocalSession that,
-    required String projectId,
-    required int filterIndex,
-    required String query,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_u_32(filterIndex, serializer);
-          sse_encode_String(query, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 70,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_list_project_page_pull_request_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionFindProjectPullRequestsConstMeta,
-        argValues: [that, projectId, filterIndex, query],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionFindProjectPullRequestsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_find_project_pull_requests",
-        argNames: ["that", "projectId", "filterIndex", "query"],
-      );
-
-  @override
-  Future<PullRequestStatusDto?>
-  crateApiLocalSessionLocalSessionFindPullRequestStatus({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 71,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_box_autoadd_pull_request_status_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionFindPullRequestStatusConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionFindPullRequestStatusConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_find_pull_request_status",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionLaunchTab({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(sectionId, serializer);
-          sse_encode_String(tabId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 72,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionLaunchTabConstMeta,
-        argValues: [that, sectionId, tabId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionLaunchTabConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_launch_tab",
-        argNames: ["that", "sectionId", "tabId"],
-      );
-
-  @override
-  Future<List<ProjectActionDto>>
-  crateApiLocalSessionLocalSessionListProjectActions({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 73,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_project_action_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionListProjectActionsConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionListProjectActionsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_list_project_actions",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionListProjects({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 74,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionListProjectsConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionListProjectsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_list_projects",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionMcpAddFromCatalog({
-    required LocalSession that,
-    required String catalogId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(catalogId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 75,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionMcpAddFromCatalogConstMeta,
-        argValues: [that, catalogId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionMcpAddFromCatalogConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_mcp_add_from_catalog",
-        argNames: ["that", "catalogId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionMcpRemove({
-    required LocalSession that,
-    required String entryId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(entryId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 76,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionMcpRemoveConstMeta,
-        argValues: [that, entryId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionMcpRemoveConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_mcp_remove",
-        argNames: ["that", "entryId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionMcpToggle({
-    required LocalSession that,
-    required String entryId,
-    required String providerId,
-    required bool enabled,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(entryId, serializer);
-          sse_encode_String(providerId, serializer);
-          sse_encode_bool(enabled, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 77,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionMcpToggleConstMeta,
-        argValues: [that, entryId, providerId, enabled],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionMcpToggleConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_mcp_toggle",
-        argNames: ["that", "entryId", "providerId", "enabled"],
-      );
-
-  @override
-  Future<OpenInState> crateApiLocalSessionLocalSessionOpenInState({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 78,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_open_in_state,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionOpenInStateConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionOpenInStateConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_open_in_state",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionOpenProjectInApp({
-    required LocalSession that,
-    required String projectId,
-    required String appId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(appId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 79,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionOpenProjectInAppConstMeta,
-        argValues: [that, projectId, appId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionOpenProjectInAppConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_open_project_in_app",
-        argNames: ["that", "projectId", "appId"],
-      );
-
-  @override
-  Future<String?> crateApiLocalSessionLocalSessionPrimaryBranchForProject({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 80,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionPrimaryBranchForProjectConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionPrimaryBranchForProjectConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_primary_branch_for_project",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<ActiveGitStateDto?>
-  crateApiLocalSessionLocalSessionReadActiveGitState({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 81,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_box_autoadd_active_git_state_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionReadActiveGitStateConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadActiveGitStateConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_active_git_state",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<AgentSettingsView> crateApiLocalSessionLocalSessionReadAgentSettings({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 82,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_agent_settings_view,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionReadAgentSettingsConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadAgentSettingsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_agent_settings",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<BranchCompareView?>
-  crateApiLocalSessionLocalSessionReadBranchCompareState({
-    required LocalSession that,
-    required String projectId,
-    required String targetBranch,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(targetBranch, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 83,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_box_autoadd_branch_compare_view,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionReadBranchCompareStateConstMeta,
-        argValues: [that, projectId, targetBranch],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadBranchCompareStateConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_branch_compare_state",
-        argNames: ["that", "projectId", "targetBranch"],
-      );
-
-  @override
-  Future<List<ChangedFileDto>?>
-  crateApiLocalSessionLocalSessionReadChangedFiles({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 84,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_list_changed_file_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionReadChangedFilesConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadChangedFilesConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_changed_files",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<List<BranchCompareFileDto>?>
-  crateApiLocalSessionLocalSessionReadCommitFileChanges({
-    required LocalSession that,
-    required String projectId,
-    required String commitId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(commitId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 85,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_list_branch_compare_file_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionReadCommitFileChangesConstMeta,
-        argValues: [that, projectId, commitId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadCommitFileChangesConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_commit_file_changes",
-        argNames: ["that", "projectId", "commitId"],
-      );
-
-  @override
-  Future<EnabledAgentsView> crateApiLocalSessionLocalSessionReadEnabledAgents({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 86,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_enabled_agents_view,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionReadEnabledAgentsConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadEnabledAgentsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_enabled_agents",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<GitActionScriptsView>
-  crateApiLocalSessionLocalSessionReadGitActionScripts({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 87,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_git_action_scripts_view,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionReadGitActionScriptsConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadGitActionScriptsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_git_action_scripts",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<McpSettingsView> crateApiLocalSessionLocalSessionReadMcpSettings({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 88,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_mcp_settings_view,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionReadMcpSettingsConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionReadMcpSettingsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_mcp_settings",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<OpenInSettingsView>
-  crateApiLocalSessionLocalSessionReadOpenInSettings({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 89,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
           decodeSuccessData: sse_decode_open_in_settings_view,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionReadOpenInSettingsConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadOpenInSettingsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_open_in_settings",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<List<String>> crateApiLocalSessionLocalSessionReadProjectBranches({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 90,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionReadProjectBranchesConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadProjectBranchesConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_project_branches",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<String?> crateApiLocalSessionLocalSessionReadProjectGithubUrl({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 91,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionReadProjectGithubUrlConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadProjectGithubUrlConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_project_github_url",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<List<CheckDto>?>
-  crateApiLocalSessionLocalSessionReadPullRequestChecks({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 92,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_list_check_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionReadPullRequestChecksConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadPullRequestChecksConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_pull_request_checks",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<RecentCommitsView?> crateApiLocalSessionLocalSessionReadRecentCommits({
-    required LocalSession that,
-    required String projectId,
-    required int limit,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_u_32(limit, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 93,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_box_autoadd_recent_commits_view,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionReadRecentCommitsConstMeta,
-        argValues: [that, projectId, limit],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadRecentCommitsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_recent_commits",
-        argNames: ["that", "projectId", "limit"],
-      );
-
-  @override
-  Future<ShortcutSettingsView>
-  crateApiLocalSessionLocalSessionReadShortcutSettings({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 94,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_shortcut_settings_view,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionReadShortcutSettingsConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionReadShortcutSettingsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_read_shortcut_settings",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionRemoveProject({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 95,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionRemoveProjectConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionRemoveProjectConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_remove_project",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionRemoveTask({
-    required LocalSession that,
-    required String projectId,
-    required String taskId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(taskId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 96,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionRemoveTaskConstMeta,
-        argValues: [that, projectId, taskId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionRemoveTaskConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_remove_task",
-        argNames: ["that", "projectId", "taskId"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionRenameTask({
-    required LocalSession that,
-    required String taskId,
-    required String newName,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(taskId, serializer);
-          sse_encode_String(newName, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 97,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionRenameTaskConstMeta,
-        argValues: [that, taskId, newName],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionRenameTaskConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_rename_task",
-        argNames: ["that", "taskId", "newName"],
-      );
-
-  @override
-  Future<String?> crateApiLocalSessionLocalSessionRepoDefaultCommitAction({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 98,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionRepoDefaultCommitActionConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionRepoDefaultCommitActionConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_repo_default_commit_action",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionResetGitCommitScript({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 99,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionResetGitCommitScriptConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionResetGitCommitScriptConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_reset_git_commit_script",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionResetGitPrScript({
-    required LocalSession that,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 100,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionResetGitPrScriptConstMeta,
-        argValues: [that],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionResetGitPrScriptConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_reset_git_pr_script",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionResetShortcutBinding({
-    required LocalSession that,
-    required String actionId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(actionId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 101,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionResetShortcutBindingConstMeta,
-        argValues: [that, actionId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionResetShortcutBindingConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_reset_shortcut_binding",
-        argNames: ["that", "actionId"],
-      );
-
-  @override
-  Future<ResolvedProjectBranchSettingsDto?>
-  crateApiLocalSessionLocalSessionResolvedBranchSettings({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 102,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_opt_box_autoadd_resolved_project_branch_settings_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionResolvedBranchSettingsConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionResolvedBranchSettingsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_resolved_branch_settings",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<String> crateApiLocalSessionLocalSessionRunProjectAction({
-    required LocalSession that,
-    required String projectId,
-    required String sectionId,
-    required String actionId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(sectionId, serializer);
-          sse_encode_String(actionId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 103,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionRunProjectActionConstMeta,
-        argValues: [that, projectId, sectionId, actionId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionRunProjectActionConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_run_project_action",
-        argNames: ["that", "projectId", "sectionId", "actionId"],
-      );
-
-  @override
-  Future<ToolbarActionOutcomeDto>
-  crateApiLocalSessionLocalSessionRunToolbarGitAction({
-    required LocalSession that,
-    required String projectId,
-    required String actionId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(actionId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 104,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_toolbar_action_outcome_dto,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionRunToolbarGitActionConstMeta,
-        argValues: [that, projectId, actionId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionRunToolbarGitActionConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_run_toolbar_git_action",
-        argNames: ["that", "projectId", "actionId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionSaveProjectAction({
-    required LocalSession that,
-    required String projectId,
-    required ProjectActionDto action,
-    required bool saveGlobalCopy,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_box_autoadd_project_action_dto(action, serializer);
-          sse_encode_bool(saveGlobalCopy, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 105,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSaveProjectActionConstMeta,
-        argValues: [that, projectId, action, saveGlobalCopy],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionSaveProjectActionConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_save_project_action",
-        argNames: ["that", "projectId", "action", "saveGlobalCopy"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionSend({
-    required LocalSession that,
-    required List<int> bytes,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_list_prim_u_8_loose(bytes, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 106,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSendConstMeta,
-        argValues: [that, bytes],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionSendConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_send",
-        argNames: ["that", "bytes"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionSetAgentEnabled({
-    required LocalSession that,
-    required String agentId,
-    required bool enabled,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(agentId, serializer);
-          sse_encode_bool(enabled, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 107,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSetAgentEnabledConstMeta,
-        argValues: [that, agentId, enabled],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionSetAgentEnabledConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_agent_enabled",
-        argNames: ["that", "agentId", "enabled"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionSetAgentLaunchArgs({
-    required LocalSession that,
-    required String agentId,
-    required List<String> args,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(agentId, serializer);
-          sse_encode_list_String(args, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 108,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSetAgentLaunchArgsConstMeta,
-        argValues: [that, agentId, args],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionSetAgentLaunchArgsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_agent_launch_args",
-        argNames: ["that", "agentId", "args"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionSetDefaultAgent({
-    required LocalSession that,
-    required String agentId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(agentId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 109,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSetDefaultAgentConstMeta,
-        argValues: [that, agentId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionSetDefaultAgentConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_default_agent",
-        argNames: ["that", "agentId"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionSetGitCommitScript({
-    required LocalSession that,
-    required String script,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(script, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 110,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSetGitCommitScriptConstMeta,
-        argValues: [that, script],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionSetGitCommitScriptConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_git_commit_script",
-        argNames: ["that", "script"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionSetGitPrScript({
-    required LocalSession that,
-    required String script,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(script, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 111,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSetGitPrScriptConstMeta,
-        argValues: [that, script],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionSetGitPrScriptConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_git_pr_script",
-        argNames: ["that", "script"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionSetOpenInAppEnabled({
-    required LocalSession that,
-    required String appId,
-    required bool enabled,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(appId, serializer);
-          sse_encode_bool(enabled, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 112,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionSetOpenInAppEnabledConstMeta,
-        argValues: [that, appId, enabled],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionSetOpenInAppEnabledConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_open_in_app_enabled",
-        argNames: ["that", "appId", "enabled"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionSetProjectBranchSetting({
-    required LocalSession that,
-    required String projectId,
-    required String field,
-    String? branchName,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(field, serializer);
-          sse_encode_opt_String(branchName, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 113,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionSetProjectBranchSettingConstMeta,
-        argValues: [that, projectId, field, branchName],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionSetProjectBranchSettingConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_project_branch_setting",
-        argNames: ["that", "projectId", "field", "branchName"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionSetShortcutBinding({
-    required LocalSession that,
-    required String actionId,
-    required String binding,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(actionId, serializer);
-          sse_encode_String(binding, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 114,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSetShortcutBindingConstMeta,
-        argValues: [that, actionId, binding],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionSetShortcutBindingConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_shortcut_binding",
-        argNames: ["that", "actionId", "binding"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionSetTaskPinned({
-    required LocalSession that,
-    required String taskId,
-    required bool pinned,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(taskId, serializer);
-          sse_encode_bool(pinned, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 115,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSetTaskPinnedConstMeta,
-        argValues: [that, taskId, pinned],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionSetTaskPinnedConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_set_task_pinned",
-        argNames: ["that", "taskId", "pinned"],
-      );
-
-  @override
-  Future<String> crateApiLocalSessionLocalSessionSlugifyBranchName({
-    required LocalSession that,
-    required String name,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(name, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 116,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiLocalSessionLocalSessionSlugifyBranchNameConstMeta,
-        argValues: [that, name],
+        constMeta: kCrateApiLocalSessionForceExportOpenInSettingsViewConstMeta,
+        argValues: [],
         apiImpl: this,
       ),
     );
   }
 
   TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionSlugifyBranchNameConstMeta =>
+  get kCrateApiLocalSessionForceExportOpenInSettingsViewConstMeta =>
       const TaskConstMeta(
-        debugName: "LocalSession_slugify_branch_name",
-        argNames: ["that", "name"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionStageAllChanges({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 117,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionStageAllChangesConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionStageAllChangesConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_stage_all_changes",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionStageChangedFile({
-    required LocalSession that,
-    required String projectId,
-    required String path,
-    String? originalPath,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(path, serializer);
-          sse_encode_opt_String(originalPath, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 118,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionStageChangedFileConstMeta,
-        argValues: [that, projectId, path, originalPath],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionStageChangedFileConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_stage_changed_file",
-        argNames: ["that", "projectId", "path", "originalPath"],
-      );
-
-  @override
-  Future<String> crateApiLocalSessionLocalSessionSubmitNewTask({
-    required LocalSession that,
-    required String projectId,
-    required String taskName,
-    required String sourceBranch,
-    required List<String> agentIds,
-    required bool branchModeExisting,
-    required bool worktreeMode,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(taskName, serializer);
-          sse_encode_String(sourceBranch, serializer);
-          sse_encode_list_String(agentIds, serializer);
-          sse_encode_bool(branchModeExisting, serializer);
-          sse_encode_bool(worktreeMode, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 119,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionSubmitNewTaskConstMeta,
-        argValues: [
-          that,
-          projectId,
-          taskName,
-          sourceBranch,
-          agentIds,
-          branchModeExisting,
-          worktreeMode,
-        ],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionSubmitNewTaskConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_submit_new_task",
-        argNames: [
-          "that",
-          "projectId",
-          "taskName",
-          "sourceBranch",
-          "agentIds",
-          "branchModeExisting",
-          "worktreeMode",
-        ],
-      );
-
-  @override
-  Stream<Uint8List> crateApiLocalSessionLocalSessionSubscribe({
-    required LocalSession that,
-  }) {
-    final sink = RustStreamSink<Uint8List>();
-    unawaited(
-      handler.executeNormal(
-        NormalTask(
-          callFfi: (port_) {
-            final serializer = SseSerializer(generalizedFrbRustBinding);
-            sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-              that,
-              serializer,
-            );
-            sse_encode_StreamSink_list_prim_u_8_strict_Sse(sink, serializer);
-            pdeCallFfi(
-              generalizedFrbRustBinding,
-              serializer,
-              funcId: 120,
-              port: port_,
-            );
-          },
-          codec: SseCodec(
-            decodeSuccessData: sse_decode_unit,
-            decodeErrorData: sse_decode_AnyhowException,
-          ),
-          constMeta: kCrateApiLocalSessionLocalSessionSubscribeConstMeta,
-          argValues: [that, sink],
-          apiImpl: this,
-        ),
-      ),
-    );
-    return sink.stream;
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionSubscribeConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_subscribe",
-        argNames: ["that", "sink"],
-      );
-
-  @override
-  Stream<WorkerReply> crateApiLocalSessionLocalSessionSubscribeWorkerReplies({
-    required LocalSession that,
-  }) {
-    final sink = RustStreamSink<WorkerReply>();
-    unawaited(
-      handler.executeNormal(
-        NormalTask(
-          callFfi: (port_) {
-            final serializer = SseSerializer(generalizedFrbRustBinding);
-            sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-              that,
-              serializer,
-            );
-            sse_encode_StreamSink_worker_reply_Sse(sink, serializer);
-            pdeCallFfi(
-              generalizedFrbRustBinding,
-              serializer,
-              funcId: 121,
-              port: port_,
-            );
-          },
-          codec: SseCodec(
-            decodeSuccessData: sse_decode_unit,
-            decodeErrorData: sse_decode_AnyhowException,
-          ),
-          constMeta:
-              kCrateApiLocalSessionLocalSessionSubscribeWorkerRepliesConstMeta,
-          argValues: [that, sink],
-          apiImpl: this,
-        ),
-      ),
-    );
-    return sink.stream;
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionSubscribeWorkerRepliesConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_subscribe_worker_replies",
-        argNames: ["that", "sink"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionTabResize({
-    required LocalSession that,
-    required int cols,
-    required int rows,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_u_16(cols, serializer);
-          sse_encode_u_16(rows, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 122,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionTabResizeConstMeta,
-        argValues: [that, cols, rows],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalSessionTabResizeConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_tab_resize",
-        argNames: ["that", "cols", "rows"],
-      );
-
-  @override
-  Future<bool> crateApiLocalSessionLocalSessionToggleSectionTabPinned({
-    required LocalSession that,
-    required String sectionId,
-    required String tabId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(sectionId, serializer);
-          sse_encode_String(tabId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 123,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta:
-            kCrateApiLocalSessionLocalSessionToggleSectionTabPinnedConstMeta,
-        argValues: [that, sectionId, tabId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionToggleSectionTabPinnedConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_toggle_section_tab_pinned",
-        argNames: ["that", "sectionId", "tabId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionUnstageAllChanges({
-    required LocalSession that,
-    required String projectId,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 124,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionUnstageAllChangesConstMeta,
-        argValues: [that, projectId],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionUnstageAllChangesConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_unstage_all_changes",
-        argNames: ["that", "projectId"],
-      );
-
-  @override
-  Future<void> crateApiLocalSessionLocalSessionUnstageChangedFile({
-    required LocalSession that,
-    required String projectId,
-    required String path,
-    String? originalPath,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-            that,
-            serializer,
-          );
-          sse_encode_String(projectId, serializer);
-          sse_encode_String(path, serializer);
-          sse_encode_opt_String(originalPath, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 125,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalSessionUnstageChangedFileConstMeta,
-        argValues: [that, projectId, path, originalPath],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionLocalSessionUnstageChangedFileConstMeta =>
-      const TaskConstMeta(
-        debugName: "LocalSession_unstage_changed_file",
-        argNames: ["that", "projectId", "path", "originalPath"],
+        debugName: "_force_export_open_in_settings_view",
+        argNames: [],
       );
 
   @override
@@ -6104,7 +2950,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 126,
+            funcId: 59,
             port: port_,
           );
         },
@@ -6134,7 +2980,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 127,
+            funcId: 60,
             port: port_,
           );
         },
@@ -6166,7 +3012,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 128,
+            funcId: 61,
             port: port_,
           );
         },
@@ -6203,7 +3049,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 129,
+            funcId: 62,
             port: port_,
           );
         },
@@ -6242,7 +3088,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 130,
+            funcId: 63,
             port: port_,
           );
         },
@@ -6281,7 +3127,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 131,
+            funcId: 64,
             port: port_,
           );
         },
@@ -6316,7 +3162,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 132,
+            funcId: 65,
             port: port_,
           );
         },
@@ -6355,7 +3201,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 133,
+            funcId: 66,
             port: port_,
           );
         },
@@ -6392,7 +3238,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 134,
+            funcId: 67,
             port: port_,
           );
         },
@@ -6422,7 +3268,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 135,
+            funcId: 68,
             port: port_,
           );
         },
@@ -6458,7 +3304,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 136,
+            funcId: 69,
             port: port_,
           );
         },
@@ -6481,34 +3327,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<LocalSession> crateApiLocalSessionLocalConnect() {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 137,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-        constMeta: kCrateApiLocalSessionLocalConnectConstMeta,
-        argValues: [],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiLocalSessionLocalConnectConstMeta =>
-      const TaskConstMeta(debugName: "local_connect", argNames: []);
-
-  @override
   Future<LoopbackSessionAddr?> crateApiEmbeddedDaemonLoopbackSessionAddr() {
     return handler.executeNormal(
       NormalTask(
@@ -6517,7 +3335,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 138,
+            funcId: 70,
             port: port_,
           );
         },
@@ -6544,7 +3362,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 139,
+            funcId: 71,
             port: port_,
           );
         },
@@ -6571,7 +3389,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 140,
+            funcId: 72,
             port: port_,
           );
         },
@@ -6598,7 +3416,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 141,
+            funcId: 73,
             port: port_,
           );
         },
@@ -6626,7 +3444,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 142,
+            funcId: 74,
             port: port_,
           );
         },
@@ -6657,7 +3475,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 143,
+            funcId: 75,
             port: port_,
           );
         },
@@ -6685,7 +3503,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 144,
+            funcId: 76,
             port: port_,
           );
         },
@@ -6711,14 +3529,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get rust_arc_decrement_strong_count_IrohSession => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession;
 
-  RustArcIncrementStrongCountFnType
-  get rust_arc_increment_strong_count_LocalSession => wire
-      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession;
-
-  RustArcDecrementStrongCountFnType
-  get rust_arc_decrement_strong_count_LocalSession => wire
-      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession;
-
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -6735,30 +3545,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  LocalSession
-  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LocalSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
   IrohSession
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return IrohSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LocalSession
-  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LocalSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -6771,24 +3563,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  LocalSession
-  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LocalSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
   RustStreamSink<Uint8List> dco_decode_StreamSink_list_prim_u_8_strict_Sse(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    throw UnimplementedError();
-  }
-
-  @protected
-  RustStreamSink<WorkerReply> dco_decode_StreamSink_worker_reply_Sse(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -6815,19 +3590,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 3)
       throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return ActiveGitStateDto(
-      currentBranch: dco_decode_opt_String(arr[0]),
-      aheadCount: dco_decode_u_32(arr[1]),
-      behindCount: dco_decode_u_32(arr[2]),
-    );
-  }
-
-  @protected
-  ActiveGitStateWire dco_decode_active_git_state_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
-    return ActiveGitStateWire(
       currentBranch: dco_decode_opt_String(arr[0]),
       aheadCount: dco_decode_u_32(arr[1]),
       behindCount: dco_decode_u_32(arr[2]),
@@ -6896,12 +3658,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire dco_decode_box_autoadd_active_git_state_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_active_git_state_wire(raw);
-  }
-
-  @protected
   AgentProvider dco_decode_box_autoadd_agent_provider(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_agent_provider(raw);
@@ -6917,12 +3673,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BranchCompareView dco_decode_box_autoadd_branch_compare_view(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_branch_compare_view(raw);
-  }
-
-  @protected
-  BranchCompareWire dco_decode_box_autoadd_branch_compare_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_branch_compare_wire(raw);
   }
 
   @protected
@@ -6972,12 +3722,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ProjectActionDto dco_decode_box_autoadd_project_action_dto(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_project_action_dto(raw);
-  }
-
-  @protected
   ProjectSummary dco_decode_box_autoadd_project_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_project_summary(raw);
@@ -6995,19 +3739,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RecentCommitsView dco_decode_box_autoadd_recent_commits_view(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_recent_commits_view(raw);
-  }
-
-  @protected
-  RecentCommitsWire dco_decode_box_autoadd_recent_commits_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_recent_commits_wire(raw);
-  }
-
-  @protected
-  ResolvedBranchSettingsWire
-  dco_decode_box_autoadd_resolved_branch_settings_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_resolved_branch_settings_wire(raw);
   }
 
   @protected
@@ -7040,11 +3771,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ToolbarActionOutcome dco_decode_box_autoadd_toolbar_action_outcome(
+  ToolbarActionOutcomeDto dco_decode_box_autoadd_toolbar_action_outcome_dto(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_toolbar_action_outcome(raw);
+    return dco_decode_toolbar_action_outcome_dto(raw);
   }
 
   @protected
@@ -7069,21 +3800,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  BranchCompareFileWire dco_decode_branch_compare_file_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
-    return BranchCompareFileWire(
-      path: dco_decode_String(arr[0]),
-      originalPath: dco_decode_opt_String(arr[1]),
-      status: dco_decode_String(arr[2]),
-      additions: dco_decode_i_32(arr[3]),
-      deletions: dco_decode_i_32(arr[4]),
-    );
-  }
-
-  @protected
   BranchCompareView dco_decode_branch_compare_view(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -7093,19 +3809,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       currentBranch: dco_decode_opt_String(arr[0]),
       targetBranch: dco_decode_String(arr[1]),
       files: dco_decode_list_branch_compare_file_dto(arr[2]),
-    );
-  }
-
-  @protected
-  BranchCompareWire dco_decode_branch_compare_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
-    return BranchCompareWire(
-      currentBranch: dco_decode_opt_String(arr[0]),
-      targetBranch: dco_decode_String(arr[1]),
-      files: dco_decode_list_branch_compare_file_wire(arr[2]),
     );
   }
 
@@ -7159,25 +3862,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ChangedFileWire dco_decode_changed_file_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
-    return ChangedFileWire(
-      path: dco_decode_String(arr[0]),
-      originalPath: dco_decode_opt_String(arr[1]),
-      stagedAdditions: dco_decode_i_32(arr[2]),
-      stagedDeletions: dco_decode_i_32(arr[3]),
-      unstagedAdditions: dco_decode_i_32(arr[4]),
-      unstagedDeletions: dco_decode_i_32(arr[5]),
-      indexStatus: dco_decode_String(arr[6]),
-      worktreeStatus: dco_decode_String(arr[7]),
-      untracked: dco_decode_bool(arr[8]),
-    );
-  }
-
-  @protected
   CheckBucket dco_decode_check_bucket(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return CheckBucket.values[raw as int];
@@ -7206,21 +3890,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 5)
       throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return CommitDto(
-      id: dco_decode_String(arr[0]),
-      shortId: dco_decode_String(arr[1]),
-      subject: dco_decode_String(arr[2]),
-      authorName: dco_decode_String(arr[3]),
-      authoredRelative: dco_decode_String(arr[4]),
-    );
-  }
-
-  @protected
-  CommitWire dco_decode_commit_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
-    return CommitWire(
       id: dco_decode_String(arr[0]),
       shortId: dco_decode_String(arr[1]),
       subject: dco_decode_String(arr[2]),
@@ -7314,16 +3983,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<BranchCompareFileWire> dco_decode_list_branch_compare_file_wire(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return (raw as List<dynamic>)
-        .map(dco_decode_branch_compare_file_wire)
-        .toList();
-  }
-
-  @protected
   List<CellDto> dco_decode_list_cell_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_cell_dto).toList();
@@ -7336,12 +3995,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<ChangedFileWire> dco_decode_list_changed_file_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return (raw as List<dynamic>).map(dco_decode_changed_file_wire).toList();
-  }
-
-  @protected
   List<CheckDto> dco_decode_list_check_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_check_dto).toList();
@@ -7351,12 +4004,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<CommitDto> dco_decode_list_commit_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_commit_dto).toList();
-  }
-
-  @protected
-  List<CommitWire> dco_decode_list_commit_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return (raw as List<dynamic>).map(dco_decode_commit_wire).toList();
   }
 
   @protected
@@ -7609,16 +4256,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire? dco_decode_opt_box_autoadd_active_git_state_wire(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null
-        ? null
-        : dco_decode_box_autoadd_active_git_state_wire(raw);
-  }
-
-  @protected
   AgentProvider? dco_decode_opt_box_autoadd_agent_provider(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_agent_provider(raw);
@@ -7630,14 +4267,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_branch_compare_view(raw);
-  }
-
-  @protected
-  BranchCompareWire? dco_decode_opt_box_autoadd_branch_compare_wire(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_branch_compare_wire(raw);
   }
 
   @protected
@@ -7672,23 +4301,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_recent_commits_view(raw);
-  }
-
-  @protected
-  RecentCommitsWire? dco_decode_opt_box_autoadd_recent_commits_wire(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_recent_commits_wire(raw);
-  }
-
-  @protected
-  ResolvedBranchSettingsWire?
-  dco_decode_opt_box_autoadd_resolved_branch_settings_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null
-        ? null
-        : dco_decode_box_autoadd_resolved_branch_settings_wire(raw);
   }
 
   @protected
@@ -7730,23 +4342,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<BranchCompareFileWire>? dco_decode_opt_list_branch_compare_file_wire(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_list_branch_compare_file_wire(raw);
-  }
-
-  @protected
   List<ChangedFileDto>? dco_decode_opt_list_changed_file_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_list_changed_file_dto(raw);
-  }
-
-  @protected
-  List<ChangedFileWire>? dco_decode_opt_list_changed_file_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_list_changed_file_wire(raw);
   }
 
   @protected
@@ -7905,37 +4503,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       currentBranch: dco_decode_opt_String(arr[0]),
       hasMore: dco_decode_bool(arr[1]),
       commits: dco_decode_list_commit_dto(arr[2]),
-    );
-  }
-
-  @protected
-  RecentCommitsWire dco_decode_recent_commits_wire(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
-    return RecentCommitsWire(
-      currentBranch: dco_decode_opt_String(arr[0]),
-      hasMore: dco_decode_bool(arr[1]),
-      commits: dco_decode_list_commit_wire(arr[2]),
-    );
-  }
-
-  @protected
-  ResolvedBranchSettingsWire dco_decode_resolved_branch_settings_wire(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
-    return ResolvedBranchSettingsWire(
-      rootProjectId: dco_decode_String(arr[0]),
-      availableBranches: dco_decode_list_String(arr[1]),
-      configuredDefaultBranch: dco_decode_opt_String(arr[2]),
-      effectiveDefaultBranch: dco_decode_opt_String(arr[3]),
-      configuredDefaultTargetBranch: dco_decode_opt_String(arr[4]),
-      effectiveDefaultTargetBranch: dco_decode_opt_String(arr[5]),
     );
   }
 
@@ -8114,19 +4681,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ToolbarActionOutcome dco_decode_toolbar_action_outcome(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
-    return ToolbarActionOutcome(
-      toastMessage: dco_decode_String(arr[0]),
-      warning: dco_decode_bool(arr[1]),
-      refreshGitState: dco_decode_bool(arr[2]),
-    );
-  }
-
-  @protected
   ToolbarActionOutcomeDto dco_decode_toolbar_action_outcome_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -8233,11 +4787,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         );
       case 12:
         return WorkerReply_ActiveGitStateAck(
-          state: dco_decode_opt_box_autoadd_active_git_state_wire(raw[1]),
+          state: dco_decode_opt_box_autoadd_active_git_state_dto(raw[1]),
         );
       case 13:
         return WorkerReply_ChangedFilesAck(
-          files: dco_decode_opt_list_changed_file_wire(raw[1]),
+          files: dco_decode_opt_list_changed_file_dto(raw[1]),
         );
       case 14:
         return WorkerReply_ProjectGithubUrlAck(
@@ -8245,21 +4799,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         );
       case 15:
         return WorkerReply_RecentCommitsAck(
-          view: dco_decode_opt_box_autoadd_recent_commits_wire(raw[1]),
+          view: dco_decode_opt_box_autoadd_recent_commits_view(raw[1]),
         );
       case 16:
         return WorkerReply_CommitFileChangesAck(
-          files: dco_decode_opt_list_branch_compare_file_wire(raw[1]),
+          files: dco_decode_opt_list_branch_compare_file_dto(raw[1]),
         );
       case 17:
         return WorkerReply_BranchCompareAck(
-          view: dco_decode_opt_box_autoadd_branch_compare_wire(raw[1]),
+          view: dco_decode_opt_box_autoadd_branch_compare_view(raw[1]),
         );
       case 18:
         return WorkerReply_BranchSettingsAck(
-          settings: dco_decode_opt_box_autoadd_resolved_branch_settings_wire(
-            raw[1],
-          ),
+          settings:
+              dco_decode_opt_box_autoadd_resolved_project_branch_settings_dto(
+                raw[1],
+              ),
         );
       case 19:
         return WorkerReply_SetBranchSettingAck(
@@ -8267,27 +4822,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         );
       case 20:
         return WorkerReply_StageChangedFileAck(
-          changedFiles: dco_decode_list_changed_file_wire(raw[1]),
+          changedFiles: dco_decode_list_changed_file_dto(raw[1]),
         );
       case 21:
         return WorkerReply_UnstageChangedFileAck(
-          changedFiles: dco_decode_list_changed_file_wire(raw[1]),
+          changedFiles: dco_decode_list_changed_file_dto(raw[1]),
         );
       case 22:
         return WorkerReply_StageAllChangesAck(
-          changedFiles: dco_decode_list_changed_file_wire(raw[1]),
+          changedFiles: dco_decode_list_changed_file_dto(raw[1]),
         );
       case 23:
         return WorkerReply_UnstageAllChangesAck(
-          changedFiles: dco_decode_list_changed_file_wire(raw[1]),
+          changedFiles: dco_decode_list_changed_file_dto(raw[1]),
         );
       case 24:
         return WorkerReply_DiscardChangedFileAck(
-          changedFiles: dco_decode_list_changed_file_wire(raw[1]),
+          changedFiles: dco_decode_list_changed_file_dto(raw[1]),
         );
       case 25:
         return WorkerReply_ToolbarActionOutcomeAck(
-          outcome: dco_decode_box_autoadd_toolbar_action_outcome(raw[1]),
+          outcome: dco_decode_box_autoadd_toolbar_action_outcome_dto(raw[1]),
         );
       case 26:
         return WorkerReply_CreateBranchAck(
@@ -8404,36 +4959,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  LocalSession
-  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LocalSessionImpl.frbInternalSseDecode(
-      sse_decode_usize(deserializer),
-      sse_decode_i_32(deserializer),
-    );
-  }
-
-  @protected
   IrohSession
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return IrohSessionImpl.frbInternalSseDecode(
-      sse_decode_usize(deserializer),
-      sse_decode_i_32(deserializer),
-    );
-  }
-
-  @protected
-  LocalSession
-  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LocalSessionImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -8452,27 +4983,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  LocalSession
-  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LocalSessionImpl.frbInternalSseDecode(
-      sse_decode_usize(deserializer),
-      sse_decode_i_32(deserializer),
-    );
-  }
-
-  @protected
   RustStreamSink<Uint8List> sse_decode_StreamSink_list_prim_u_8_strict_Sse(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    throw UnimplementedError('Unreachable ()');
-  }
-
-  @protected
-  RustStreamSink<WorkerReply> sse_decode_StreamSink_worker_reply_Sse(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -8502,21 +5013,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_aheadCount = sse_decode_u_32(deserializer);
     var var_behindCount = sse_decode_u_32(deserializer);
     return ActiveGitStateDto(
-      currentBranch: var_currentBranch,
-      aheadCount: var_aheadCount,
-      behindCount: var_behindCount,
-    );
-  }
-
-  @protected
-  ActiveGitStateWire sse_decode_active_git_state_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_currentBranch = sse_decode_opt_String(deserializer);
-    var var_aheadCount = sse_decode_u_32(deserializer);
-    var var_behindCount = sse_decode_u_32(deserializer);
-    return ActiveGitStateWire(
       currentBranch: var_currentBranch,
       aheadCount: var_aheadCount,
       behindCount: var_behindCount,
@@ -8594,14 +5090,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire sse_decode_box_autoadd_active_git_state_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_active_git_state_wire(deserializer));
-  }
-
-  @protected
   AgentProvider sse_decode_box_autoadd_agent_provider(
     SseDeserializer deserializer,
   ) {
@@ -8623,14 +5111,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_branch_compare_view(deserializer));
-  }
-
-  @protected
-  BranchCompareWire sse_decode_box_autoadd_branch_compare_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_branch_compare_wire(deserializer));
   }
 
   @protected
@@ -8690,14 +5170,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ProjectActionDto sse_decode_box_autoadd_project_action_dto(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_project_action_dto(deserializer));
-  }
-
-  @protected
   ProjectSummary sse_decode_box_autoadd_project_summary(
     SseDeserializer deserializer,
   ) {
@@ -8719,23 +5191,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_recent_commits_view(deserializer));
-  }
-
-  @protected
-  RecentCommitsWire sse_decode_box_autoadd_recent_commits_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_recent_commits_wire(deserializer));
-  }
-
-  @protected
-  ResolvedBranchSettingsWire
-  sse_decode_box_autoadd_resolved_branch_settings_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_resolved_branch_settings_wire(deserializer));
   }
 
   @protected
@@ -8772,11 +5227,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ToolbarActionOutcome sse_decode_box_autoadd_toolbar_action_outcome(
+  ToolbarActionOutcomeDto sse_decode_box_autoadd_toolbar_action_outcome_dto(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_toolbar_action_outcome(deserializer));
+    return (sse_decode_toolbar_action_outcome_dto(deserializer));
   }
 
   @protected
@@ -8805,25 +5260,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  BranchCompareFileWire sse_decode_branch_compare_file_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_path = sse_decode_String(deserializer);
-    var var_originalPath = sse_decode_opt_String(deserializer);
-    var var_status = sse_decode_String(deserializer);
-    var var_additions = sse_decode_i_32(deserializer);
-    var var_deletions = sse_decode_i_32(deserializer);
-    return BranchCompareFileWire(
-      path: var_path,
-      originalPath: var_originalPath,
-      status: var_status,
-      additions: var_additions,
-      deletions: var_deletions,
-    );
-  }
-
-  @protected
   BranchCompareView sse_decode_branch_compare_view(
     SseDeserializer deserializer,
   ) {
@@ -8832,21 +5268,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_targetBranch = sse_decode_String(deserializer);
     var var_files = sse_decode_list_branch_compare_file_dto(deserializer);
     return BranchCompareView(
-      currentBranch: var_currentBranch,
-      targetBranch: var_targetBranch,
-      files: var_files,
-    );
-  }
-
-  @protected
-  BranchCompareWire sse_decode_branch_compare_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_currentBranch = sse_decode_opt_String(deserializer);
-    var var_targetBranch = sse_decode_String(deserializer);
-    var var_files = sse_decode_list_branch_compare_file_wire(deserializer);
-    return BranchCompareWire(
       currentBranch: var_currentBranch,
       targetBranch: var_targetBranch,
       files: var_files,
@@ -8908,31 +5329,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ChangedFileWire sse_decode_changed_file_wire(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_path = sse_decode_String(deserializer);
-    var var_originalPath = sse_decode_opt_String(deserializer);
-    var var_stagedAdditions = sse_decode_i_32(deserializer);
-    var var_stagedDeletions = sse_decode_i_32(deserializer);
-    var var_unstagedAdditions = sse_decode_i_32(deserializer);
-    var var_unstagedDeletions = sse_decode_i_32(deserializer);
-    var var_indexStatus = sse_decode_String(deserializer);
-    var var_worktreeStatus = sse_decode_String(deserializer);
-    var var_untracked = sse_decode_bool(deserializer);
-    return ChangedFileWire(
-      path: var_path,
-      originalPath: var_originalPath,
-      stagedAdditions: var_stagedAdditions,
-      stagedDeletions: var_stagedDeletions,
-      unstagedAdditions: var_unstagedAdditions,
-      unstagedDeletions: var_unstagedDeletions,
-      indexStatus: var_indexStatus,
-      worktreeStatus: var_worktreeStatus,
-      untracked: var_untracked,
-    );
-  }
-
-  @protected
   CheckBucket sse_decode_check_bucket(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
@@ -8967,23 +5363,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_authorName = sse_decode_String(deserializer);
     var var_authoredRelative = sse_decode_String(deserializer);
     return CommitDto(
-      id: var_id,
-      shortId: var_shortId,
-      subject: var_subject,
-      authorName: var_authorName,
-      authoredRelative: var_authoredRelative,
-    );
-  }
-
-  @protected
-  CommitWire sse_decode_commit_wire(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_id = sse_decode_String(deserializer);
-    var var_shortId = sse_decode_String(deserializer);
-    var var_subject = sse_decode_String(deserializer);
-    var var_authorName = sse_decode_String(deserializer);
-    var var_authoredRelative = sse_decode_String(deserializer);
-    return CommitWire(
       id: var_id,
       shortId: var_shortId,
       subject: var_subject,
@@ -9104,20 +5483,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<BranchCompareFileWire> sse_decode_list_branch_compare_file_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var len_ = sse_decode_i_32(deserializer);
-    var ans_ = <BranchCompareFileWire>[];
-    for (var idx_ = 0; idx_ < len_; ++idx_) {
-      ans_.add(sse_decode_branch_compare_file_wire(deserializer));
-    }
-    return ans_;
-  }
-
-  @protected
   List<CellDto> sse_decode_list_cell_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -9144,20 +5509,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<ChangedFileWire> sse_decode_list_changed_file_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var len_ = sse_decode_i_32(deserializer);
-    var ans_ = <ChangedFileWire>[];
-    for (var idx_ = 0; idx_ < len_; ++idx_) {
-      ans_.add(sse_decode_changed_file_wire(deserializer));
-    }
-    return ans_;
-  }
-
-  @protected
   List<CheckDto> sse_decode_list_check_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -9177,18 +5528,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <CommitDto>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_commit_dto(deserializer));
-    }
-    return ans_;
-  }
-
-  @protected
-  List<CommitWire> sse_decode_list_commit_wire(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var len_ = sse_decode_i_32(deserializer);
-    var ans_ = <CommitWire>[];
-    for (var idx_ = 0; idx_ < len_; ++idx_) {
-      ans_.add(sse_decode_commit_wire(deserializer));
     }
     return ans_;
   }
@@ -9546,19 +5885,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ActiveGitStateWire? sse_decode_opt_box_autoadd_active_git_state_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_active_git_state_wire(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
   AgentProvider? sse_decode_opt_box_autoadd_agent_provider(
     SseDeserializer deserializer,
   ) {
@@ -9579,19 +5905,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_branch_compare_view(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
-  BranchCompareWire? sse_decode_opt_box_autoadd_branch_compare_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_branch_compare_wire(deserializer));
     } else {
       return null;
     }
@@ -9644,35 +5957,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_recent_commits_view(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
-  RecentCommitsWire? sse_decode_opt_box_autoadd_recent_commits_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_recent_commits_wire(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
-  ResolvedBranchSettingsWire?
-  sse_decode_opt_box_autoadd_resolved_branch_settings_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_resolved_branch_settings_wire(
-        deserializer,
-      ));
     } else {
       return null;
     }
@@ -9746,19 +6030,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<BranchCompareFileWire>? sse_decode_opt_list_branch_compare_file_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_list_branch_compare_file_wire(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
   List<ChangedFileDto>? sse_decode_opt_list_changed_file_dto(
     SseDeserializer deserializer,
   ) {
@@ -9766,19 +6037,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_list_changed_file_dto(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
-  List<ChangedFileWire>? sse_decode_opt_list_changed_file_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_list_changed_file_wire(deserializer));
     } else {
       return null;
     }
@@ -9989,42 +6247,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       currentBranch: var_currentBranch,
       hasMore: var_hasMore,
       commits: var_commits,
-    );
-  }
-
-  @protected
-  RecentCommitsWire sse_decode_recent_commits_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_currentBranch = sse_decode_opt_String(deserializer);
-    var var_hasMore = sse_decode_bool(deserializer);
-    var var_commits = sse_decode_list_commit_wire(deserializer);
-    return RecentCommitsWire(
-      currentBranch: var_currentBranch,
-      hasMore: var_hasMore,
-      commits: var_commits,
-    );
-  }
-
-  @protected
-  ResolvedBranchSettingsWire sse_decode_resolved_branch_settings_wire(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_rootProjectId = sse_decode_String(deserializer);
-    var var_availableBranches = sse_decode_list_String(deserializer);
-    var var_configuredDefaultBranch = sse_decode_opt_String(deserializer);
-    var var_effectiveDefaultBranch = sse_decode_opt_String(deserializer);
-    var var_configuredDefaultTargetBranch = sse_decode_opt_String(deserializer);
-    var var_effectiveDefaultTargetBranch = sse_decode_opt_String(deserializer);
-    return ResolvedBranchSettingsWire(
-      rootProjectId: var_rootProjectId,
-      availableBranches: var_availableBranches,
-      configuredDefaultBranch: var_configuredDefaultBranch,
-      effectiveDefaultBranch: var_effectiveDefaultBranch,
-      configuredDefaultTargetBranch: var_configuredDefaultTargetBranch,
-      effectiveDefaultTargetBranch: var_effectiveDefaultTargetBranch,
     );
   }
 
@@ -10245,21 +6467,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ToolbarActionOutcome sse_decode_toolbar_action_outcome(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_toastMessage = sse_decode_String(deserializer);
-    var var_warning = sse_decode_bool(deserializer);
-    var var_refreshGitState = sse_decode_bool(deserializer);
-    return ToolbarActionOutcome(
-      toastMessage: var_toastMessage,
-      warning: var_warning,
-      refreshGitState: var_refreshGitState,
-    );
-  }
-
-  @protected
   ToolbarActionOutcomeDto sse_decode_toolbar_action_outcome_dto(
     SseDeserializer deserializer,
   ) {
@@ -10365,34 +6572,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_action = sse_decode_opt_String(deserializer);
         return WorkerReply_RepoDefaultCommitActionAck(action: var_action);
       case 12:
-        var var_state = sse_decode_opt_box_autoadd_active_git_state_wire(
+        var var_state = sse_decode_opt_box_autoadd_active_git_state_dto(
           deserializer,
         );
         return WorkerReply_ActiveGitStateAck(state: var_state);
       case 13:
-        var var_files = sse_decode_opt_list_changed_file_wire(deserializer);
+        var var_files = sse_decode_opt_list_changed_file_dto(deserializer);
         return WorkerReply_ChangedFilesAck(files: var_files);
       case 14:
         var var_url = sse_decode_opt_String(deserializer);
         return WorkerReply_ProjectGithubUrlAck(url: var_url);
       case 15:
-        var var_view = sse_decode_opt_box_autoadd_recent_commits_wire(
+        var var_view = sse_decode_opt_box_autoadd_recent_commits_view(
           deserializer,
         );
         return WorkerReply_RecentCommitsAck(view: var_view);
       case 16:
-        var var_files = sse_decode_opt_list_branch_compare_file_wire(
+        var var_files = sse_decode_opt_list_branch_compare_file_dto(
           deserializer,
         );
         return WorkerReply_CommitFileChangesAck(files: var_files);
       case 17:
-        var var_view = sse_decode_opt_box_autoadd_branch_compare_wire(
+        var var_view = sse_decode_opt_box_autoadd_branch_compare_view(
           deserializer,
         );
         return WorkerReply_BranchCompareAck(view: var_view);
       case 18:
         var var_settings =
-            sse_decode_opt_box_autoadd_resolved_branch_settings_wire(
+            sse_decode_opt_box_autoadd_resolved_project_branch_settings_dto(
               deserializer,
             );
         return WorkerReply_BranchSettingsAck(settings: var_settings);
@@ -10400,26 +6607,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_changed = sse_decode_bool(deserializer);
         return WorkerReply_SetBranchSettingAck(changed: var_changed);
       case 20:
-        var var_changedFiles = sse_decode_list_changed_file_wire(deserializer);
+        var var_changedFiles = sse_decode_list_changed_file_dto(deserializer);
         return WorkerReply_StageChangedFileAck(changedFiles: var_changedFiles);
       case 21:
-        var var_changedFiles = sse_decode_list_changed_file_wire(deserializer);
+        var var_changedFiles = sse_decode_list_changed_file_dto(deserializer);
         return WorkerReply_UnstageChangedFileAck(
           changedFiles: var_changedFiles,
         );
       case 22:
-        var var_changedFiles = sse_decode_list_changed_file_wire(deserializer);
+        var var_changedFiles = sse_decode_list_changed_file_dto(deserializer);
         return WorkerReply_StageAllChangesAck(changedFiles: var_changedFiles);
       case 23:
-        var var_changedFiles = sse_decode_list_changed_file_wire(deserializer);
+        var var_changedFiles = sse_decode_list_changed_file_dto(deserializer);
         return WorkerReply_UnstageAllChangesAck(changedFiles: var_changedFiles);
       case 24:
-        var var_changedFiles = sse_decode_list_changed_file_wire(deserializer);
+        var var_changedFiles = sse_decode_list_changed_file_dto(deserializer);
         return WorkerReply_DiscardChangedFileAck(
           changedFiles: var_changedFiles,
         );
       case 25:
-        var var_outcome = sse_decode_box_autoadd_toolbar_action_outcome(
+        var var_outcome = sse_decode_box_autoadd_toolbar_action_outcome_dto(
           deserializer,
         );
         return WorkerReply_ToolbarActionOutcomeAck(outcome: var_outcome);
@@ -10539,19 +6746,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
-  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    LocalSession self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-      (self as LocalSessionImpl).frbInternalSseEncode(move: true),
-      serializer,
-    );
-  }
-
-  @protected
-  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
     IrohSession self,
     SseSerializer serializer,
@@ -10559,19 +6753,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as IrohSessionImpl).frbInternalSseEncode(move: false),
-      serializer,
-    );
-  }
-
-  @protected
-  void
-  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    LocalSession self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-      (self as LocalSessionImpl).frbInternalSseEncode(move: false),
       serializer,
     );
   }
@@ -10590,19 +6771,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void
-  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocalSession(
-    LocalSession self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-      (self as LocalSessionImpl).frbInternalSseEncode(move: null),
-      serializer,
-    );
-  }
-
-  @protected
   void sse_encode_StreamSink_list_prim_u_8_strict_Sse(
     RustStreamSink<Uint8List> self,
     SseSerializer serializer,
@@ -10612,23 +6780,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       self.setupAndSerialize(
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-      ),
-      serializer,
-    );
-  }
-
-  @protected
-  void sse_encode_StreamSink_worker_reply_Sse(
-    RustStreamSink<WorkerReply> self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(
-      self.setupAndSerialize(
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_worker_reply,
           decodeErrorData: sse_decode_AnyhowException,
         ),
       ),
@@ -10662,17 +6813,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_active_git_state_dto(
     ActiveGitStateDto self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_opt_String(self.currentBranch, serializer);
-    sse_encode_u_32(self.aheadCount, serializer);
-    sse_encode_u_32(self.behindCount, serializer);
-  }
-
-  @protected
-  void sse_encode_active_git_state_wire(
-    ActiveGitStateWire self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -10740,15 +6880,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_box_autoadd_active_git_state_wire(
-    ActiveGitStateWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_active_git_state_wire(self, serializer);
-  }
-
-  @protected
   void sse_encode_box_autoadd_agent_provider(
     AgentProvider self,
     SseSerializer serializer,
@@ -10773,15 +6904,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_branch_compare_view(self, serializer);
-  }
-
-  @protected
-  void sse_encode_box_autoadd_branch_compare_wire(
-    BranchCompareWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_branch_compare_wire(self, serializer);
   }
 
   @protected
@@ -10848,15 +6970,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_box_autoadd_project_action_dto(
-    ProjectActionDto self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_project_action_dto(self, serializer);
-  }
-
-  @protected
   void sse_encode_box_autoadd_project_summary(
     ProjectSummary self,
     SseSerializer serializer,
@@ -10881,24 +6994,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_recent_commits_view(self, serializer);
-  }
-
-  @protected
-  void sse_encode_box_autoadd_recent_commits_wire(
-    RecentCommitsWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_recent_commits_wire(self, serializer);
-  }
-
-  @protected
-  void sse_encode_box_autoadd_resolved_branch_settings_wire(
-    ResolvedBranchSettingsWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_resolved_branch_settings_wire(self, serializer);
   }
 
   @protected
@@ -10938,12 +7033,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_box_autoadd_toolbar_action_outcome(
-    ToolbarActionOutcome self,
+  void sse_encode_box_autoadd_toolbar_action_outcome_dto(
+    ToolbarActionOutcomeDto self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_toolbar_action_outcome(self, serializer);
+    sse_encode_toolbar_action_outcome_dto(self, serializer);
   }
 
   @protected
@@ -10966,19 +7061,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_branch_compare_file_wire(
-    BranchCompareFileWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(self.path, serializer);
-    sse_encode_opt_String(self.originalPath, serializer);
-    sse_encode_String(self.status, serializer);
-    sse_encode_i_32(self.additions, serializer);
-    sse_encode_i_32(self.deletions, serializer);
-  }
-
-  @protected
   void sse_encode_branch_compare_view(
     BranchCompareView self,
     SseSerializer serializer,
@@ -10987,17 +7069,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.currentBranch, serializer);
     sse_encode_String(self.targetBranch, serializer);
     sse_encode_list_branch_compare_file_dto(self.files, serializer);
-  }
-
-  @protected
-  void sse_encode_branch_compare_wire(
-    BranchCompareWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_opt_String(self.currentBranch, serializer);
-    sse_encode_String(self.targetBranch, serializer);
-    sse_encode_list_branch_compare_file_wire(self.files, serializer);
   }
 
   @protected
@@ -11038,23 +7109,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_changed_file_wire(
-    ChangedFileWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(self.path, serializer);
-    sse_encode_opt_String(self.originalPath, serializer);
-    sse_encode_i_32(self.stagedAdditions, serializer);
-    sse_encode_i_32(self.stagedDeletions, serializer);
-    sse_encode_i_32(self.unstagedAdditions, serializer);
-    sse_encode_i_32(self.unstagedDeletions, serializer);
-    sse_encode_String(self.indexStatus, serializer);
-    sse_encode_String(self.worktreeStatus, serializer);
-    sse_encode_bool(self.untracked, serializer);
-  }
-
-  @protected
   void sse_encode_check_bucket(CheckBucket self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
@@ -11073,16 +7127,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_commit_dto(CommitDto self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(self.id, serializer);
-    sse_encode_String(self.shortId, serializer);
-    sse_encode_String(self.subject, serializer);
-    sse_encode_String(self.authorName, serializer);
-    sse_encode_String(self.authoredRelative, serializer);
-  }
-
-  @protected
-  void sse_encode_commit_wire(CommitWire self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.id, serializer);
     sse_encode_String(self.shortId, serializer);
@@ -11187,18 +7231,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_list_branch_compare_file_wire(
-    List<BranchCompareFileWire> self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    for (final item in self) {
-      sse_encode_branch_compare_file_wire(item, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_list_cell_dto(List<CellDto> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
@@ -11216,18 +7248,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_changed_file_dto(item, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_list_changed_file_wire(
-    List<ChangedFileWire> self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    for (final item in self) {
-      sse_encode_changed_file_wire(item, serializer);
     }
   }
 
@@ -11252,18 +7272,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_commit_dto(item, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_list_commit_wire(
-    List<CommitWire> self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    for (final item in self) {
-      sse_encode_commit_wire(item, serializer);
     }
   }
 
@@ -11566,19 +7574,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_opt_box_autoadd_active_git_state_wire(
-    ActiveGitStateWire? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_active_git_state_wire(self, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_opt_box_autoadd_agent_provider(
     AgentProvider? self,
     SseSerializer serializer,
@@ -11601,19 +7596,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_branch_compare_view(self, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_opt_box_autoadd_branch_compare_wire(
-    BranchCompareWire? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_branch_compare_wire(self, serializer);
     }
   }
 
@@ -11666,32 +7648,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_recent_commits_view(self, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_opt_box_autoadd_recent_commits_wire(
-    RecentCommitsWire? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_recent_commits_wire(self, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_opt_box_autoadd_resolved_branch_settings_wire(
-    ResolvedBranchSettingsWire? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_resolved_branch_settings_wire(self, serializer);
     }
   }
 
@@ -11761,19 +7717,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_opt_list_branch_compare_file_wire(
-    List<BranchCompareFileWire>? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_list_branch_compare_file_wire(self, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_opt_list_changed_file_dto(
     List<ChangedFileDto>? self,
     SseSerializer serializer,
@@ -11783,19 +7726,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_list_changed_file_dto(self, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_opt_list_changed_file_wire(
-    List<ChangedFileWire>? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_list_changed_file_wire(self, serializer);
     }
   }
 
@@ -11973,31 +7903,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_recent_commits_wire(
-    RecentCommitsWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_opt_String(self.currentBranch, serializer);
-    sse_encode_bool(self.hasMore, serializer);
-    sse_encode_list_commit_wire(self.commits, serializer);
-  }
-
-  @protected
-  void sse_encode_resolved_branch_settings_wire(
-    ResolvedBranchSettingsWire self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(self.rootProjectId, serializer);
-    sse_encode_list_String(self.availableBranches, serializer);
-    sse_encode_opt_String(self.configuredDefaultBranch, serializer);
-    sse_encode_opt_String(self.effectiveDefaultBranch, serializer);
-    sse_encode_opt_String(self.configuredDefaultTargetBranch, serializer);
-    sse_encode_opt_String(self.effectiveDefaultTargetBranch, serializer);
-  }
-
-  @protected
   void sse_encode_resolved_project_branch_settings_dto(
     ResolvedProjectBranchSettingsDto self,
     SseSerializer serializer,
@@ -12140,17 +8045,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_toolbar_action_outcome(
-    ToolbarActionOutcome self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(self.toastMessage, serializer);
-    sse_encode_bool(self.warning, serializer);
-    sse_encode_bool(self.refreshGitState, serializer);
-  }
-
-  @protected
   void sse_encode_toolbar_action_outcome_dto(
     ToolbarActionOutcomeDto self,
     SseSerializer serializer,
@@ -12251,25 +8145,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_String(action, serializer);
       case WorkerReply_ActiveGitStateAck(state: final state):
         sse_encode_i_32(12, serializer);
-        sse_encode_opt_box_autoadd_active_git_state_wire(state, serializer);
+        sse_encode_opt_box_autoadd_active_git_state_dto(state, serializer);
       case WorkerReply_ChangedFilesAck(files: final files):
         sse_encode_i_32(13, serializer);
-        sse_encode_opt_list_changed_file_wire(files, serializer);
+        sse_encode_opt_list_changed_file_dto(files, serializer);
       case WorkerReply_ProjectGithubUrlAck(url: final url):
         sse_encode_i_32(14, serializer);
         sse_encode_opt_String(url, serializer);
       case WorkerReply_RecentCommitsAck(view: final view):
         sse_encode_i_32(15, serializer);
-        sse_encode_opt_box_autoadd_recent_commits_wire(view, serializer);
+        sse_encode_opt_box_autoadd_recent_commits_view(view, serializer);
       case WorkerReply_CommitFileChangesAck(files: final files):
         sse_encode_i_32(16, serializer);
-        sse_encode_opt_list_branch_compare_file_wire(files, serializer);
+        sse_encode_opt_list_branch_compare_file_dto(files, serializer);
       case WorkerReply_BranchCompareAck(view: final view):
         sse_encode_i_32(17, serializer);
-        sse_encode_opt_box_autoadd_branch_compare_wire(view, serializer);
+        sse_encode_opt_box_autoadd_branch_compare_view(view, serializer);
       case WorkerReply_BranchSettingsAck(settings: final settings):
         sse_encode_i_32(18, serializer);
-        sse_encode_opt_box_autoadd_resolved_branch_settings_wire(
+        sse_encode_opt_box_autoadd_resolved_project_branch_settings_dto(
           settings,
           serializer,
         );
@@ -12278,22 +8172,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_bool(changed, serializer);
       case WorkerReply_StageChangedFileAck(changedFiles: final changedFiles):
         sse_encode_i_32(20, serializer);
-        sse_encode_list_changed_file_wire(changedFiles, serializer);
+        sse_encode_list_changed_file_dto(changedFiles, serializer);
       case WorkerReply_UnstageChangedFileAck(changedFiles: final changedFiles):
         sse_encode_i_32(21, serializer);
-        sse_encode_list_changed_file_wire(changedFiles, serializer);
+        sse_encode_list_changed_file_dto(changedFiles, serializer);
       case WorkerReply_StageAllChangesAck(changedFiles: final changedFiles):
         sse_encode_i_32(22, serializer);
-        sse_encode_list_changed_file_wire(changedFiles, serializer);
+        sse_encode_list_changed_file_dto(changedFiles, serializer);
       case WorkerReply_UnstageAllChangesAck(changedFiles: final changedFiles):
         sse_encode_i_32(23, serializer);
-        sse_encode_list_changed_file_wire(changedFiles, serializer);
+        sse_encode_list_changed_file_dto(changedFiles, serializer);
       case WorkerReply_DiscardChangedFileAck(changedFiles: final changedFiles):
         sse_encode_i_32(24, serializer);
-        sse_encode_list_changed_file_wire(changedFiles, serializer);
+        sse_encode_list_changed_file_dto(changedFiles, serializer);
       case WorkerReply_ToolbarActionOutcomeAck(outcome: final outcome):
         sse_encode_i_32(25, serializer);
-        sse_encode_box_autoadd_toolbar_action_outcome(outcome, serializer);
+        sse_encode_box_autoadd_toolbar_action_outcome_dto(outcome, serializer);
       case WorkerReply_CreateBranchAck(
         sectionId: final sectionId,
         projects: final projects,
@@ -13024,951 +8918,6 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   }) => RustLib.instance.api.crateApiIrohClientIrohSessionUnstageChangedFile(
     that: this,
     requestId: requestId,
-    projectId: projectId,
-    path: path,
-    originalPath: originalPath,
-  );
-}
-
-@sealed
-class LocalSessionImpl extends RustOpaque implements LocalSession {
-  // Not to be used by end users
-  LocalSessionImpl.frbInternalDcoDecode(List<dynamic> wire)
-    : super.frbInternalDcoDecode(wire, _kStaticData);
-
-  // Not to be used by end users
-  LocalSessionImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
-    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
-
-  static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        RustLib.instance.api.rust_arc_increment_strong_count_LocalSession,
-    rustArcDecrementStrongCount:
-        RustLib.instance.api.rust_arc_decrement_strong_count_LocalSession,
-    rustArcDecrementStrongCountPtr:
-        RustLib.instance.api.rust_arc_decrement_strong_count_LocalSessionPtr,
-  );
-
-  /// Activate `tab_id` inside `section_id` — only updates the
-  /// section's persisted `active_tab_id`. Does not relaunch
-  /// (the Dart-side `selectedTabProvider` triggers attach via
-  /// `attach_tab`).
-  Future<void> activateSectionTab({
-    required String sectionId,
-    required String tabId,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionActivateSectionTab(
-    that: this,
-    sectionId: sectionId,
-    tabId: tabId,
-  );
-
-  /// Append an agent tab (or plain shell, when `agent_id` is
-  /// empty / the Terminal sentinel) to `section_id`'s task and
-  /// queue its PTY launch. Mirrors
-  /// `desktop/src/add_agent_modal.rs::submit_add_agent_modal`.
-  ///
-  /// Returns the new tab id so the UI can switch to it.
-  /// Empty `agent_id` is treated the same way as GPUI's
-  /// `terminal_launch_config_for_selected_agent(None)` —
-  /// i.e. opens a plain shell in the section's worktree.
-  Future<String> addAgentToSection({
-    required String sectionId,
-    required String agentId,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionAddAgentToSection(
-    that: this,
-    sectionId: sectionId,
-    agentId: agentId,
-  );
-
-  /// Add an existing on-disk project to the embedded daemon's
-  /// project store. Returns `Ok(true)` if the project was inserted,
-  /// `Ok(false)` if a project at the same path already existed
-  /// (idempotent — re-adding is a no-op, not an error).
-  ///
-  /// Heavy `prepare_project` work runs on a dedicated thread (see
-  /// [`another_one_core::project_service::spawn_project_add`]) so
-  /// the FRB caller doesn't block. On success, pushes a fresh
-  /// `ProjectList` reply so listeners refresh without a follow-up
-  /// `list_projects()` round-trip.
-  Future<bool> addProject({required String path}) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionAddProject(that: this, path: path);
-
-  /// Subscribe to live PTY bytes for `(section_id, tab_id)`.
-  ///
-  /// Replaces any previous attachment: aborts the previous
-  /// forwarder, clears this viewer's entry from the previous
-  /// tab's `active_viewers`, then subscribes to the new tab's
-  /// broadcast and spawns a forwarder that drains it into
-  /// `incoming_tx`. The new viewport size has to be set via
-  /// [`Self::tab_resize`] after attach — bytes start flowing
-  /// immediately, but no resize is implied.
-  ///
-  /// Errors if the tab isn't running (no `broadcasts` entry); the
-  /// caller should `launch_tab` first.
-  Future<void> attachTab({required String sectionId, required String tabId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionAttachTab(
-        that: this,
-        sectionId: sectionId,
-        tabId: tabId,
-      );
-
-  /// Close the session: detaches any attached tab, drops both
-  /// channel senders so active subscriptions exit, and clears
-  /// per-viewer state on the registry. Idempotent.
-  Future<void> close() =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionClose(that: this);
-
-  /// Remove a tab from `section_id`. If the closed tab was
-  /// active, the new active tab is the previous neighbour
-  /// (or the new last tab when closing the head). Returns the
-  /// new active tab id (empty when the section is now empty).
-  Future<String> closeSectionTab({
-    required String sectionId,
-    required String tabId,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionCloseSectionTab(
-    that: this,
-    sectionId: sectionId,
-    tabId: tabId,
-  );
-
-  /// Create a new branch from HEAD on `project_id`. When
-  /// `use_current_task` is true, switches the current checkout
-  /// (no new worktree). Otherwise a new worktree is created
-  /// next to the existing project, optionally migrating any
-  /// uncommitted changes.
-  ///
-  /// Returns the new task's `section_id` for the worktree case;
-  /// empty string for the current-task case (the caller's UI
-  /// just dismisses the modal). Routes
-  /// [`another_one_core::project_service::spawn_branch_creation`].
-  Future<String> createBranch({
-    required String projectId,
-    required String branchName,
-    required bool useCurrentTask,
-    required bool migrateChanges,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionCreateBranch(
-    that: this,
-    projectId: projectId,
-    branchName: branchName,
-    useCurrentTask: useCurrentTask,
-    migrateChanges: migrateChanges,
-  );
-
-  /// Spawn a review task for a pull request — clones into a
-  /// worktree at the PR's head branch, prepares the project,
-  /// inserts both into the daemon's store, and returns the new
-  /// section_id.
-  ///
-  /// Routes
-  /// [`another_one_core::project_service::spawn_review_task_creation`]
-  /// and mirrors the `create_worktree_task` pattern. Auto-runs
-  /// project actions and the configured agent CLI when
-  /// `agent_provider` is set.
-  Future<String> createReviewTask({
-    required String projectId,
-    required BigInt pullRequestNumber,
-    required String headBranch,
-    AgentProvider? agentProvider,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionCreateReviewTask(
-    that: this,
-    projectId: projectId,
-    pullRequestNumber: pullRequestNumber,
-    headBranch: headBranch,
-    agentProvider: agentProvider,
-  );
-
-  /// Create a worktree task on `project_id`. Spawns a fresh git
-  /// worktree from `source_branch` (the new branch is named after
-  /// the slugified `task_name`), prepares the project, and inserts
-  /// both the worktree project and the task into the daemon's
-  /// store. Returns the new task's `section_id` so the caller can
-  /// navigate to it.
-  ///
-  /// `agent_provider` is optional; `None` means launch a plain
-  /// shell (matches `TerminalLaunchConfig::default()`). When set,
-  /// future `launch_tab` calls on the new task's section spawn
-  /// the agent CLI with its standard arguments.
-  ///
-  /// Heavy filesystem work (`create_task_worktree` →
-  /// `prepare_project`) runs on a dedicated thread inside
-  /// `spawn_task_creation`. We await its broadcast channel reply,
-  /// then mutate the registry under one lock.
-  Future<String> createWorktreeTask({
-    required String projectId,
-    required String taskName,
-    required String sourceBranch,
-    AgentProvider? agentProvider,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionCreateWorktreeTask(
-    that: this,
-    projectId: projectId,
-    taskName: taskName,
-    sourceBranch: sourceBranch,
-    agentProvider: agentProvider,
-  );
-
-  /// Remove one custom action by id from both the project's own
-  /// list and `UiState::global_actions` (whichever currently holds
-  /// it). Returns `true` if anything was removed.
-  Future<bool> deleteProjectAction({
-    required String projectId,
-    required String actionId,
-  }) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionDeleteProjectAction(
-        that: this,
-        projectId: projectId,
-        actionId: actionId,
-      );
-
-  /// Stop forwarding PTY bytes for the currently-attached tab.
-  /// Idempotent.
-  Future<void> detachTab() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionDetachTab(that: this);
-
-  /// Discard one file's changes. Untracked files are deleted; tracked
-  /// files are restored from HEAD via `git restore` (with checkout
-  /// fallback for older git). Mirrors GPUI's `revert_changed_file`
-  /// behaviour: returns success even on no-op, errors only when
-  /// every git invocation fails.
-  Future<void> discardChangedFile({
-    required String projectId,
-    required String path,
-    String? originalPath,
-    required bool untracked,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionDiscardChangedFile(
-    that: this,
-    projectId: projectId,
-    path: path,
-    originalPath: originalPath,
-    untracked: untracked,
-  );
-
-  /// Fetch open pull requests for `project_id` filtered by
-  /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
-  /// 3=draft) plus an optional free-text `query`. Powers the
-  /// project page's Open PRs section.
-  ///
-  /// Routes [`another_one_core::git_actions::find_project_pull_requests`]
-  /// inside `spawn_blocking` (it shells out to `gh pr list`).
-  /// Returns `Ok(None)` for unknown projects; errors propagate
-  /// for gh CLI failures (CLI missing, auth, network).
-  Future<List<ProjectPagePullRequestDto>?> findProjectPullRequests({
-    required String projectId,
-    required int filterIndex,
-    required String query,
-  }) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionFindProjectPullRequests(
-        that: this,
-        projectId: projectId,
-        filterIndex: filterIndex,
-        query: query,
-      );
-
-  /// Resolve the latest PullRequest status for `project_id`'s
-  /// current branch (open PR's number + url + state). Powers the
-  /// titlebar git-actions dropdown's Create PR / Draft PR
-  /// enabledness gate.
-  ///
-  /// Routes [`another_one_core::git_actions::find_latest_pull_request_status`]
-  /// inside `spawn_blocking`. Returns `Ok(None)` when the project
-  /// is unknown or no PR exists for the branch.
-  Future<PullRequestStatusDto?> findPullRequestStatus({
-    required String projectId,
-  }) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionFindPullRequestStatus(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Ask the daemon to spawn the given tab's PTY if it isn't
-  /// already running. See [`Self`] doc for the launch flow.
-  Future<void> launchTab({required String sectionId, required String tabId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionLaunchTab(
-        that: this,
-        sectionId: sectionId,
-        tabId: tabId,
-      );
-
-  /// Project actions configured for `project_id` — the merged
-  /// list of per-project + global custom actions, in the same
-  /// order GPUI's titlebar split-button dropdown renders. Per-
-  /// project entries override global ones with the same id (so
-  /// "save global copy" can later be undone by deleting the
-  /// project entry).
-  ///
-  /// Returns an empty list when `project_id` is unknown — matches
-  /// `ProjectStore::project_actions` behaviour for that case.
-  Future<List<ProjectActionDto>> listProjectActions({
-    required String projectId,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionListProjectActions(
-    that: this,
-    projectId: projectId,
-  );
-
-  /// Push a project list through [`Self::subscribe_worker_replies`].
-  ///
-  /// Reads from the host-registered [`RegistryState::project_store`]
-  /// and flattens it into the bridge's `ProjectSummary` / `TaskSummary` /
-  /// `TabSummary` shape. Boot-order forgiving — if the registry
-  /// hasn't been registered yet, sends an empty list.
-  Future<void> listProjects() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionListProjects(that: this);
-
-  /// Add one catalog entry to the registry. No-op when the id
-  /// isn't a known catalog id or the entry's already in the
-  /// registry (mirrors `mcp_add_from_catalog`).
-  Future<void> mcpAddFromCatalog({required String catalogId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionMcpAddFromCatalog(
-        that: this,
-        catalogId: catalogId,
-      );
-
-  /// Remove one entry from the registry. Runs `sync_all` on
-  /// success so the harness's native config drops the row.
-  Future<void> mcpRemove({required String entryId}) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionMcpRemove(that: this, entryId: entryId);
-
-  /// Toggle one entry's enabled flag for a provider. Runs
-  /// `sync_all` on success so the harness's native config picks
-  /// up the change. Provider id is the kebab-case name —
-  /// `claude-code`, `cursor-agent`, etc.
-  Future<void> mcpToggle({
-    required String entryId,
-    required String providerId,
-    required bool enabled,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionMcpToggle(
-    that: this,
-    entryId: entryId,
-    providerId: providerId,
-    enabled: enabled,
-  );
-
-  /// Snapshot of the host's "Open In" configuration: which apps
-  /// are enabled (intersection of installed-on-host with the user's
-  /// configured set) and which one was last picked as the
-  /// preferred default.
-  ///
-  /// The titlebar split-button uses `preferred_app_id` for its
-  /// primary-action icon and `enabled_apps` for the chevron
-  /// dropdown. Both are global across projects — `project_id` only
-  /// matters when actually launching, not when rendering the
-  /// chrome.
-  ///
-  /// Cheap to call repeatedly: the install detection runs through
-  /// `<CurrentPlatform as HeadlessPlatform>::is_open_in_app_available`
-  /// (a `$PATH` walk on Linux/Windows, bundle existence on macOS),
-  /// and the project store read is a single mutex acquisition.
-  Future<OpenInState> openInState() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionOpenInState(that: this);
-
-  /// Open a project's directory in the named app and record it as
-  /// the user's preferred default. Mirrors GPUI's
-  /// `App::open_project_directory_in_app`: spawn the platform
-  /// command, then on success persist `preferred_open_in_app` so
-  /// the next titlebar click goes there directly.
-  ///
-  /// The "spawn first, save preferred only on success" ordering
-  /// matches GPUI — a failed spawn doesn't leave the preferred
-  /// pointing at a broken target.
-  Future<void> openProjectInApp({
-    required String projectId,
-    required String appId,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionOpenProjectInApp(
-    that: this,
-    projectId: projectId,
-    appId: appId,
-  );
-
-  /// Default branch GPUI seeds the new-task modal with for
-  /// `project_id`. Wraps `ProjectStore::primary_branch_for_project`
-  /// with `prefer_default=true`.
-  Future<String?> primaryBranchForProject({required String projectId}) =>
-      RustLib.instance.api
-          .crateApiLocalSessionLocalSessionPrimaryBranchForProject(
-            that: this,
-            projectId: projectId,
-          );
-
-  /// Snapshot the active project's branch metadata: current
-  /// branch, ahead/behind counts. Powers the titlebar git-actions
-  /// split-button's primary-action selection (Commit when there
-  /// are changes, Push when ahead, Pull when behind, Fetch
-  /// otherwise — the changes-vs-clean side comes from
-  /// `read_changed_files`).
-  ///
-  /// Reads through `read_project_git_state` with
-  /// `include_metadata=true` (so ahead/behind populate) inside
-  /// `spawn_blocking`. Returns `Ok(None)` for unknown projects.
-  Future<ActiveGitStateDto?> readActiveGitState({required String projectId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionReadActiveGitState(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Full agent registry — every agent in
-  /// [`another_one_core::agents::AGENTS`] paired with its
-  /// per-host enabled flag, default flag, and launch-args list.
-  /// Drives the Settings → Agents page; the new-task /
-  /// add-agent modals use the narrower `read_enabled_agents`.
-  Future<AgentSettingsView> readAgentSettings() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionReadAgentSettings(that: this);
-
-  /// Diff the project's current branch against `target_branch`
-  /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
-  /// Routes
-  /// [`another_one_core::project_store::read_project_branch_compare_state`]
-  /// inside `spawn_blocking`.
-  ///
-  /// Returns `Ok(None)` for unknown projects. Errors propagate
-  /// from git when the target branch doesn't exist or the diff
-  /// invocation fails.
-  Future<BranchCompareView?> readBranchCompareState({
-    required String projectId,
-    required String targetBranch,
-  }) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionReadBranchCompareState(
-        that: this,
-        projectId: projectId,
-        targetBranch: targetBranch,
-      );
-
-  /// Read the list of files with working-tree changes for
-  /// `project_id`, mirroring GPUI's right-sidebar Changes pane
-  /// data source. Calls into
-  /// [`another_one_core::project_store::read_project_git_state`]
-  /// with `include_metadata=false` (the right sidebar doesn't
-  /// need branch ahead/behind for this view) inside a
-  /// `spawn_blocking` so the FRB caller's tokio runtime stays
-  /// free.
-  ///
-  /// Returns `Ok(None)` when the project id is unknown — UI
-  /// renders an empty list rather than surfacing the lookup
-  /// failure as an error toast (matches GPUI's "no panel" gate).
-  Future<List<ChangedFileDto>?> readChangedFiles({required String projectId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionReadChangedFiles(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Per-commit file change list for `project_id` / `commit_id`.
-  /// Powers the right-sidebar Commits pane's expandable per-row
-  /// file list. Routes
-  /// [`another_one_core::project_store::read_project_commit_file_changes`]
-  /// inside `spawn_blocking` so the FRB caller's tokio runtime
-  /// stays free.
-  ///
-  /// Returns `Ok(None)` when the project id is unknown — UI shows
-  /// the "Couldn't load file changes" empty state in that case.
-  /// Errors propagate from git (commit not in tree, etc.).
-  Future<List<BranchCompareFileDto>?> readCommitFileChanges({
-    required String projectId,
-    required String commitId,
-  }) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionReadCommitFileChanges(
-        that: this,
-        projectId: projectId,
-        commitId: commitId,
-      );
-
-  /// Snapshot of agents the user has enabled on this host plus
-  /// the id of the one they've picked as default. Drives the
-  /// new-task modal's agent multi-select. The returned list is
-  /// in the canonical AGENTS order — UI renders it as is.
-  Future<EnabledAgentsView> readEnabledAgents() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionReadEnabledAgents(that: this);
-
-  /// Snapshot of the Settings → Git Actions page state. Returns
-  /// the user-customised commit + PR scripts if set, plus the
-  /// resolved-current text (built-in default when no override).
-  /// `using_default` reflects whether each script is using the
-  /// built-in template — drives the "Currently using the default
-  /// built-in template." vs "...custom template..." subtitle.
-  Future<GitActionScriptsView> readGitActionScripts() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionReadGitActionScripts(that: this);
-
-  /// Snapshot of the Settings → MCP page. Pairs the static
-  /// catalog entries with the on-disk registry so the UI can
-  /// flip catalog rows between "Add" prompts and live registry
-  /// rows in one render pass.
-  ///
-  /// `sync_errors` is empty in this first cut — sync state today
-  /// lives only in the desktop binary's GPUI app object. Once
-  /// `sync_all` runs through the bridge, the errors set will be
-  /// repopulated here for the per-provider danger tint.
-  Future<McpSettingsView> readMcpSettings() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionReadMcpSettings(that: this);
-
-  /// Snapshot of every detected Open-In app on this host paired
-  /// with its current enabled flag. Drives the Settings → Open
-  /// In page (the titlebar dropdown still uses the narrower
-  /// `open_in_state` for its primary-action lookup).
-  Future<OpenInSettingsView> readOpenInSettings() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionReadOpenInSettings(that: this);
-
-  /// List of available branches on `project_id`'s git repo.
-  /// Wraps `ProjectStore::branch_names`. Powers the new-task
-  /// modal's source-branch dropdown.
-  ///
-  /// Returns an empty list for unknown projects — same
-  /// behaviour the core helper has.
-  Future<List<String>> readProjectBranches({required String projectId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionReadProjectBranches(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Resolve the GitHub remote URL for a project by shelling out to
-  /// `git remote get-url origin` and normalising the result through
-  /// [`another_one_core::git_actions::find_github_repo_url`].
-  /// Returns `None` if the project isn't tracked, has no `origin`
-  /// remote, or the remote isn't a github.com URL.
-  ///
-  /// The blocking git invocation runs in `spawn_blocking` so the
-  /// FRB caller's tokio runtime stays free. Dart caches the
-  /// result per-project — there's no expectation of liveness if
-  /// the user changes the remote at runtime, matching the GPUI
-  /// build's "look up once at boot" behaviour
-  /// (`spawn_github_link_lookup` in `core::git_service`).
-  Future<String?> readProjectGithubUrl({required String projectId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionReadProjectGithubUrl(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Pull-request CI checks for `project_id`'s current branch.
-  /// Powers the right sidebar's Checks pane. Calls into
-  /// [`another_one_core::git_actions::find_pull_request_checks`]
-  /// (which shells out to `gh pr checks`) inside `spawn_blocking`.
-  ///
-  /// Three-state return:
-  ///   * `Ok(Some(list))` — the PR exists and these are its checks
-  ///     (may be empty when no checks are configured).
-  ///   * `Ok(None)` — no PR for the current branch, or the project
-  ///     id is unknown. UI shows the empty state.
-  ///   * `Err(_)` — gh CLI missing, network failure, or any other
-  ///     hard error. UI surfaces the message.
-  Future<List<CheckDto>?> readPullRequestChecks({required String projectId}) =>
-      RustLib.instance.api
-          .crateApiLocalSessionLocalSessionReadPullRequestChecks(
-            that: this,
-            projectId: projectId,
-          );
-
-  /// Recent commits on `project_id`'s current branch, capped at
-  /// `limit` entries. Powers the right sidebar's Commits pane —
-  /// reads through
-  /// [`another_one_core::project_store::read_project_branch_commit_state`]
-  /// inside `spawn_blocking` so the FRB caller's tokio runtime
-  /// stays free.
-  ///
-  /// `limit` mirrors GPUI's `commit_page_size_for_project` — the
-  /// caller picks the page size; here we don't enforce a default
-  /// so the UI can choose. Returns `Ok(None)` for unknown
-  /// projects (UI shows the empty state instead of an error).
-  Future<RecentCommitsView?> readRecentCommits({
-    required String projectId,
-    required int limit,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionReadRecentCommits(
-    that: this,
-    projectId: projectId,
-    limit: limit,
-  );
-
-  /// Snapshot of the Settings → Keybindings page. Every shortcut
-  /// action paired with its current + default binding strings
-  /// (kebab-case modifier names, e.g. `cmd-shift-]`).
-  Future<ShortcutSettingsView> readShortcutSettings() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionReadShortcutSettings(that: this);
-
-  /// Remove a project from the embedded daemon's store. Cascades
-  /// to the project's tasks + terminal sections (see
-  /// [`another_one_core::project_store::ProjectStore::remove_project`]).
-  /// Idempotent — passing an unknown id is silently a no-op.
-  /// Pushes a fresh `ProjectList` reply on completion so
-  /// subscribers refresh.
-  Future<void> removeProject({required String projectId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionRemoveProject(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Remove a task (and its terminal sections) from the embedded
-  /// daemon's store. The on-disk worktree branch is left
-  /// untouched — the GPUI side has the same semantics. Returns
-  /// `Ok(true)` if a task was removed, `Ok(false)` for an unknown
-  /// id (idempotent).
-  Future<bool> removeTask({
-    required String projectId,
-    required String taskId,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionRemoveTask(
-    that: this,
-    projectId: projectId,
-    taskId: taskId,
-  );
-
-  /// Rename a task. Empty / whitespace-only names are rejected so
-  /// the daemon never persists a blank label. Returns whether
-  /// anything was actually written (an unknown id or a no-op
-  /// rename returns `Ok(false)`). Pushes a fresh `ProjectList`
-  /// reply on success so the sidebar redraws.
-  Future<bool> renameTask({required String taskId, required String newName}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionRenameTask(
-        that: this,
-        taskId: taskId,
-        newName: newName,
-      );
-
-  /// User's preferred default commit action for the active
-  /// project's root repo (`"commit"` or `"commit-and-push"`).
-  /// `None` when no preference has been recorded — UI defaults to
-  /// `"commit"` in that case, matching GPUI's
-  /// `resolve_idle_primary_git_action` fallback.
-  Future<String?> repoDefaultCommitAction({required String projectId}) =>
-      RustLib.instance.api
-          .crateApiLocalSessionLocalSessionRepoDefaultCommitAction(
-            that: this,
-            projectId: projectId,
-          );
-
-  /// Drop the commit-message override and revert to the built-in
-  /// default. Returns whether anything was removed.
-  Future<bool> resetGitCommitScript() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionResetGitCommitScript(that: this);
-
-  /// Reset the PR script back to the built-in template.
-  Future<bool> resetGitPrScript() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionResetGitPrScript(that: this);
-
-  /// Reset one shortcut back to its default binding.
-  Future<void> resetShortcutBinding({required String actionId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionResetShortcutBinding(
-        that: this,
-        actionId: actionId,
-      );
-
-  /// Snapshot the resolved branch settings for `project_id` —
-  /// configured + effective values for default and target branch
-  /// plus the available branch list for the dropdown.
-  /// Returns `Ok(None)` when the project is unknown or has no
-  /// repo metadata yet.
-  Future<ResolvedProjectBranchSettingsDto?> resolvedBranchSettings({
-    required String projectId,
-  }) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionResolvedBranchSettings(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Run one custom action inside `section_id`'s task.
-  ///
-  /// Mirrors `desktop/src/app.rs::run_project_action_in_section`:
-  /// builds the launch config (shell or agent kind), appends a
-  /// fresh `PersistedTerminalTab` to the section, sets it as the
-  /// active tab, queues a `TabLaunchRequest` for the daemon's
-  /// drain to spawn, and (for shell actions) records `command\n`
-  /// in `pending_post_launch_input` so the drain writes it once
-  /// the PTY is up.
-  ///
-  /// Note (2026-04-25): the bridge's `embedded_daemon` does not
-  /// drain `pending_tab_launches` yet (tracked as `another-one-v0k`).
-  /// Every other call site already queues there; once the drain
-  /// lands, custom-action shell runs come up end-to-end. Until
-  /// then this verb commits the tab to the persistent store and
-  /// queues — visually correct, but no PTY spawns.
-  ///
-  /// Returns the new tab id so the caller can switch to it.
-  Future<String> runProjectAction({
-    required String projectId,
-    required String sectionId,
-    required String actionId,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionRunProjectAction(
-    that: this,
-    projectId: projectId,
-    sectionId: sectionId,
-    actionId: actionId,
-  );
-
-  /// Run a toolbar git action (Commit, Push, Pull, etc.) against
-  /// `project_id`. Routes
-  /// [`another_one_core::git_actions::execute_toolbar_git_action`]
-  /// via spawn_blocking.
-  ///
-  /// `action_id` is one of: `"commit"`, `"commit-and-push"`,
-  /// `"undo-last-commit"`, `"fetch"`, `"pull"`, `"push"`,
-  /// `"force-push"`, `"create-pr"`, `"create-draft-pr"`. Other
-  /// values error.
-  ///
-  /// Returns the toast message + warning/refresh flags so the UI
-  /// can surface a snackbar and decide whether to invalidate
-  /// changedFilesProvider / activeGitStateProvider.
-  Future<ToolbarActionOutcomeDto> runToolbarGitAction({
-    required String projectId,
-    required String actionId,
-  }) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionRunToolbarGitAction(
-        that: this,
-        projectId: projectId,
-        actionId: actionId,
-      );
-
-  /// Insert or update one custom action.
-  ///
-  /// `save_global_copy=true` saves to `UiState::global_actions`
-  /// (visible across every project on this host) and removes any
-  /// per-project copy with the same id. `false` saves to the
-  /// project's own `actions` list and removes any global copy with
-  /// the same id. Mirrors `ProjectStore::upsert_project_action`.
-  ///
-  /// `dto.id` may be empty when editing a brand-new action — the
-  /// bridge generates a uuid in that case so callers don't have to
-  /// reach for `uuid` from Dart.
-  Future<void> saveProjectAction({
-    required String projectId,
-    required ProjectActionDto action,
-    required bool saveGlobalCopy,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionSaveProjectAction(
-    that: this,
-    projectId: projectId,
-    action: action,
-    saveGlobalCopy: saveGlobalCopy,
-  );
-
-  /// Send raw PTY stdin bytes to the currently-attached tab.
-  ///
-  /// Looks up the tab's writer in `RegistryState::writers` and
-  /// writes synchronously. Errors if no tab is attached or the
-  /// writer has been dropped (tab exited / runtime gone).
-  Future<void> send({required List<int> bytes}) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionSend(that: this, bytes: bytes);
-
-  /// Toggle an agent's enabled flag. Returns whether the value
-  /// actually changed (a redundant set is a no-op + `false`).
-  Future<bool> setAgentEnabled({
-    required String agentId,
-    required bool enabled,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionSetAgentEnabled(
-    that: this,
-    agentId: agentId,
-    enabled: enabled,
-  );
-
-  /// Replace the launch-args list for `agent_id`. Empty `args`
-  /// removes the entry entirely (matches core's `set_agent_launch_args`
-  /// → `remove_agent_launch_args` short-circuit).
-  Future<bool> setAgentLaunchArgs({
-    required String agentId,
-    required List<String> args,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionSetAgentLaunchArgs(
-    that: this,
-    agentId: agentId,
-    args: args,
-  );
-
-  /// Mark `agent_id` as the default agent. Mirrors GPUI's
-  /// `set_default_agent`. Returns whether anything changed.
-  Future<bool> setDefaultAgent({required String agentId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionSetDefaultAgent(
-        that: this,
-        agentId: agentId,
-      );
-
-  /// Set the commit-message generation script. Empty / matching
-  /// the default reverts to the built-in template (matches the
-  /// short-circuit in core).
-  Future<bool> setGitCommitScript({required String script}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionSetGitCommitScript(
-        that: this,
-        script: script,
-      );
-
-  /// Set the PR title/body generation script. Same short-circuit
-  /// rules as `set_git_commit_script`.
-  Future<bool> setGitPrScript({required String script}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionSetGitPrScript(
-        that: this,
-        script: script,
-      );
-
-  /// Toggle one Open-In app's enabled flag in the user's Settings
-  /// → Open In page. Mirrors GPUI's `set_open_in_app_enabled`.
-  Future<void> setOpenInAppEnabled({
-    required String appId,
-    required bool enabled,
-  }) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionSetOpenInAppEnabled(
-        that: this,
-        appId: appId,
-        enabled: enabled,
-      );
-
-  /// Update the configured default branch or default-target branch
-  /// for `project_id`'s root project. `field` must be one of
-  /// `"default-branch"` or `"default-target-branch"`. `branch_name`
-  /// of `None` clears the configured override (resolved-effective
-  /// goes back to automatic).
-  ///
-  /// Returns `Ok(true)` when the persisted store changed,
-  /// `Ok(false)` for a no-op re-set. Errors when the branch isn't
-  /// in the available list (matches GPUI's validation), or when
-  /// the project lookup fails.
-  Future<bool> setProjectBranchSetting({
-    required String projectId,
-    required String field,
-    String? branchName,
-  }) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionSetProjectBranchSetting(
-        that: this,
-        projectId: projectId,
-        field: field,
-        branchName: branchName,
-      );
-
-  /// Set / clear / reset one shortcut binding. `binding` is the
-  /// kebab-case modifier string (e.g. `"cmd-shift-]"`); pass the
-  /// empty string to clear (the action becomes inert).
-  Future<void> setShortcutBinding({
-    required String actionId,
-    required String binding,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionSetShortcutBinding(
-    that: this,
-    actionId: actionId,
-    binding: binding,
-  );
-
-  /// Pin or unpin a task. Pinned tasks float to the top of their
-  /// project's task list (mirrors `child_entries.sort_by_key(!is_pinned)`
-  /// in the GPUI sidebar). Returns whether the pin state actually
-  /// changed; an idempotent re-set is `Ok(false)`. Pushes a fresh
-  /// `ProjectList` reply on every call so the sort updates
-  /// immediately.
-  Future<bool> setTaskPinned({required String taskId, required bool pinned}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionSetTaskPinned(
-        that: this,
-        taskId: taskId,
-        pinned: pinned,
-      );
-
-  /// Compute the canonical branch slug for a free-text input.
-  /// Mirrors GPUI's live preview that updates beneath the
-  /// branch-name input. Routes
-  /// [`another_one_core::project_store::slugify_branch_name`].
-  /// Takes `&self` only so FRB binds it as an instance method
-  /// on `LocalSession` — it doesn't actually read session state.
-  Future<String> slugifyBranchName({required String name}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionSlugifyBranchName(
-        that: this,
-        name: name,
-      );
-
-  /// `git add -A` on the project root — stage every change.
-  Future<void> stageAllChanges({required String projectId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionStageAllChanges(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Stage one changed file via `git add -A -- <path>`. `original_path`
-  /// is set only for renames/copies — the helper passes both
-  /// arguments so git can resolve the rename pair correctly.
-  /// Errors bubble up as anyhow with the git stderr appended,
-  /// matching what GPUI shows in toasts.
-  Future<void> stageChangedFile({
-    required String projectId,
-    required String path,
-    String? originalPath,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionStageChangedFile(
-    that: this,
-    projectId: projectId,
-    path: path,
-    originalPath: originalPath,
-  );
-
-  /// Submit the new-task modal: spawns a worktree task or a
-  /// direct-mode task depending on `worktree_mode`. Mirrors
-  /// `desktop/src/app.rs::submit_new_task_modal` +
-  /// `launch_task_request`.
-  ///
-  /// `agent_ids` is the new-task modal's multi-select picks; the
-  /// resulting `TerminalLaunchConfig` is built via
-  /// `terminal_launch_config_for_selected_agents` (so an empty
-  /// set + a `Shell` sentinel pass through to a default
-  /// `TerminalLaunchConfig` exactly the same way GPUI does).
-  ///
-  /// `branch_mode_existing=true` reuses an existing branch in
-  /// the worktree path; `false` cuts a new branch from
-  /// `source_branch`. Ignored when `worktree_mode=false`
-  /// (Direct mode always uses the project's current branch).
-  ///
-  /// Returns the new task's section_id so the UI can navigate.
-  Future<String> submitNewTask({
-    required String projectId,
-    required String taskName,
-    required String sourceBranch,
-    required List<String> agentIds,
-    required bool branchModeExisting,
-    required bool worktreeMode,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionSubmitNewTask(
-    that: this,
-    projectId: projectId,
-    taskName: taskName,
-    sourceBranch: sourceBranch,
-    agentIds: agentIds,
-    branchModeExisting: branchModeExisting,
-    worktreeMode: worktreeMode,
-  );
-
-  /// Stream PTY bytes for the attached tab into a Dart sink.
-  /// One-shot subscription; the second call returns
-  /// "already subscribed".
-  Stream<Uint8List> subscribe() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionSubscribe(that: this);
-
-  /// Stream worker replies into a Dart sink. One-shot.
-  Stream<WorkerReply> subscribeWorkerReplies() => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionSubscribeWorkerReplies(that: this);
-
-  /// Resize the currently-attached tab's PTY.
-  ///
-  /// Updates this viewer's entry in `RegistryState::active_viewers`
-  /// and asks the registry to recompute the effective
-  /// (min-across-viewers) size. The desktop UI render tick drains
-  /// the resulting `pending_resizes` queue.
-  Future<void> tabResize({required int cols, required int rows}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionTabResize(
-        that: this,
-        cols: cols,
-        rows: rows,
-      );
-
-  /// Flip the `pinned` flag on one tab. Mirrors GPUI's
-  /// `toggle_tab_pinned` — pinned tabs sort to the head of the
-  /// strip but the bridge stores them in insertion order; UI
-  /// re-orders pinned-first at render time.
-  Future<bool> toggleSectionTabPinned({
-    required String sectionId,
-    required String tabId,
-  }) => RustLib.instance.api
-      .crateApiLocalSessionLocalSessionToggleSectionTabPinned(
-        that: this,
-        sectionId: sectionId,
-        tabId: tabId,
-      );
-
-  /// Unstage every currently-staged change.
-  Future<void> unstageAllChanges({required String projectId}) =>
-      RustLib.instance.api.crateApiLocalSessionLocalSessionUnstageAllChanges(
-        that: this,
-        projectId: projectId,
-      );
-
-  /// Unstage one changed file via `git restore --staged -- <path>`,
-  /// falling back to `git reset HEAD -- <path>` if the repo is
-  /// pre-2.23 (matches `core::unstage_changed_file`).
-  Future<void> unstageChangedFile({
-    required String projectId,
-    required String path,
-    String? originalPath,
-  }) => RustLib.instance.api.crateApiLocalSessionLocalSessionUnstageChangedFile(
-    that: this,
     projectId: projectId,
     path: path,
     originalPath: originalPath,

@@ -11,7 +11,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `decode_ack_field`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`, `PendingTable`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 /// Record the application data directory Dart has chosen for us.
@@ -429,33 +429,6 @@ abstract class IrohSession implements RustOpaqueInterface {
   });
 }
 
-/// Mirror of `daemon-sandbox/src/frame.rs::ActiveGitStateWire`.
-/// FRB-exposed via the `WorkerReply::ActiveGitStateAck` variant.
-class ActiveGitStateWire {
-  final String? currentBranch;
-  final int aheadCount;
-  final int behindCount;
-
-  const ActiveGitStateWire({
-    this.currentBranch,
-    required this.aheadCount,
-    required this.behindCount,
-  });
-
-  @override
-  int get hashCode =>
-      currentBranch.hashCode ^ aheadCount.hashCode ^ behindCount.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ActiveGitStateWire &&
-          runtimeType == other.runtimeType &&
-          currentBranch == other.currentBranch &&
-          aheadCount == other.aheadCount &&
-          behindCount == other.behindCount;
-}
-
 /// Mirror of `daemon-sandbox/src/frame.rs::AgentProvider`. Wire form
 /// is snake_case: `"claude_code"`, `"cursor_agent"`, `"codex"`, etc.
 /// `Shell` is the catch-all for plain-PTY tabs with no agent
@@ -476,156 +449,6 @@ enum AgentProvider {
   rovoDev,
   forge,
   shell,
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::BranchCompareFileWire`.
-class BranchCompareFileWire {
-  final String path;
-  final String? originalPath;
-  final String status;
-  final int additions;
-  final int deletions;
-
-  const BranchCompareFileWire({
-    required this.path,
-    this.originalPath,
-    required this.status,
-    required this.additions,
-    required this.deletions,
-  });
-
-  @override
-  int get hashCode =>
-      path.hashCode ^
-      originalPath.hashCode ^
-      status.hashCode ^
-      additions.hashCode ^
-      deletions.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BranchCompareFileWire &&
-          runtimeType == other.runtimeType &&
-          path == other.path &&
-          originalPath == other.originalPath &&
-          status == other.status &&
-          additions == other.additions &&
-          deletions == other.deletions;
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::BranchCompareWire`.
-class BranchCompareWire {
-  final String? currentBranch;
-  final String targetBranch;
-  final List<BranchCompareFileWire> files;
-
-  const BranchCompareWire({
-    this.currentBranch,
-    required this.targetBranch,
-    required this.files,
-  });
-
-  @override
-  int get hashCode =>
-      currentBranch.hashCode ^ targetBranch.hashCode ^ files.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BranchCompareWire &&
-          runtimeType == other.runtimeType &&
-          currentBranch == other.currentBranch &&
-          targetBranch == other.targetBranch &&
-          files == other.files;
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::ChangedFileWire`.
-class ChangedFileWire {
-  final String path;
-  final String? originalPath;
-  final int stagedAdditions;
-  final int stagedDeletions;
-  final int unstagedAdditions;
-  final int unstagedDeletions;
-  final String indexStatus;
-  final String worktreeStatus;
-  final bool untracked;
-
-  const ChangedFileWire({
-    required this.path,
-    this.originalPath,
-    required this.stagedAdditions,
-    required this.stagedDeletions,
-    required this.unstagedAdditions,
-    required this.unstagedDeletions,
-    required this.indexStatus,
-    required this.worktreeStatus,
-    required this.untracked,
-  });
-
-  @override
-  int get hashCode =>
-      path.hashCode ^
-      originalPath.hashCode ^
-      stagedAdditions.hashCode ^
-      stagedDeletions.hashCode ^
-      unstagedAdditions.hashCode ^
-      unstagedDeletions.hashCode ^
-      indexStatus.hashCode ^
-      worktreeStatus.hashCode ^
-      untracked.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ChangedFileWire &&
-          runtimeType == other.runtimeType &&
-          path == other.path &&
-          originalPath == other.originalPath &&
-          stagedAdditions == other.stagedAdditions &&
-          stagedDeletions == other.stagedDeletions &&
-          unstagedAdditions == other.unstagedAdditions &&
-          unstagedDeletions == other.unstagedDeletions &&
-          indexStatus == other.indexStatus &&
-          worktreeStatus == other.worktreeStatus &&
-          untracked == other.untracked;
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::CommitWire`.
-class CommitWire {
-  final String id;
-  final String shortId;
-  final String subject;
-  final String authorName;
-  final String authoredRelative;
-
-  const CommitWire({
-    required this.id,
-    required this.shortId,
-    required this.subject,
-    required this.authorName,
-    required this.authoredRelative,
-  });
-
-  @override
-  int get hashCode =>
-      id.hashCode ^
-      shortId.hashCode ^
-      subject.hashCode ^
-      authorName.hashCode ^
-      authoredRelative.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CommitWire &&
-          runtimeType == other.runtimeType &&
-          id == other.id &&
-          shortId == other.shortId &&
-          subject == other.subject &&
-          authorName == other.authorName &&
-          authoredRelative == other.authoredRelative;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ErrKind`. Wire form is
@@ -676,73 +499,6 @@ class ProjectSummary {
           kind == other.kind &&
           currentBranch == other.currentBranch &&
           tasks == other.tasks;
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::RecentCommitsWire`.
-class RecentCommitsWire {
-  final String? currentBranch;
-  final bool hasMore;
-  final List<CommitWire> commits;
-
-  const RecentCommitsWire({
-    this.currentBranch,
-    required this.hasMore,
-    required this.commits,
-  });
-
-  @override
-  int get hashCode =>
-      currentBranch.hashCode ^ hasMore.hashCode ^ commits.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is RecentCommitsWire &&
-          runtimeType == other.runtimeType &&
-          currentBranch == other.currentBranch &&
-          hasMore == other.hasMore &&
-          commits == other.commits;
-}
-
-/// Mirror of `daemon-sandbox/src/frame.rs::ResolvedBranchSettingsWire`.
-class ResolvedBranchSettingsWire {
-  final String rootProjectId;
-  final List<String> availableBranches;
-  final String? configuredDefaultBranch;
-  final String? effectiveDefaultBranch;
-  final String? configuredDefaultTargetBranch;
-  final String? effectiveDefaultTargetBranch;
-
-  const ResolvedBranchSettingsWire({
-    required this.rootProjectId,
-    required this.availableBranches,
-    this.configuredDefaultBranch,
-    this.effectiveDefaultBranch,
-    this.configuredDefaultTargetBranch,
-    this.effectiveDefaultTargetBranch,
-  });
-
-  @override
-  int get hashCode =>
-      rootProjectId.hashCode ^
-      availableBranches.hashCode ^
-      configuredDefaultBranch.hashCode ^
-      effectiveDefaultBranch.hashCode ^
-      configuredDefaultTargetBranch.hashCode ^
-      effectiveDefaultTargetBranch.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ResolvedBranchSettingsWire &&
-          runtimeType == other.runtimeType &&
-          rootProjectId == other.rootProjectId &&
-          availableBranches == other.availableBranches &&
-          configuredDefaultBranch == other.configuredDefaultBranch &&
-          effectiveDefaultBranch == other.effectiveDefaultBranch &&
-          configuredDefaultTargetBranch ==
-              other.configuredDefaultTargetBranch &&
-          effectiveDefaultTargetBranch == other.effectiveDefaultTargetBranch;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
@@ -879,33 +635,6 @@ class TaskSummary {
           targetProjectId == other.targetProjectId;
 }
 
-/// Mirror of `daemon-sandbox/src/frame.rs::ToolbarActionOutcome`.
-/// FRB-exposed via the `WorkerReply::ToolbarActionOutcomeAck` variant.
-class ToolbarActionOutcome {
-  final String toastMessage;
-  final bool warning;
-  final bool refreshGitState;
-
-  const ToolbarActionOutcome({
-    required this.toastMessage,
-    required this.warning,
-    required this.refreshGitState,
-  });
-
-  @override
-  int get hashCode =>
-      toastMessage.hashCode ^ warning.hashCode ^ refreshGitState.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ToolbarActionOutcome &&
-          runtimeType == other.runtimeType &&
-          toastMessage == other.toastMessage &&
-          warning == other.warning &&
-          refreshGitState == other.refreshGitState;
-}
-
 @freezed
 sealed class WorkerReply with _$WorkerReply {
   const WorkerReply._();
@@ -990,12 +719,12 @@ sealed class WorkerReply with _$WorkerReply {
   /// Reply to [`Control::ReadActiveGitState`]. `state == None`
   /// when the project id is unknown. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::ActiveGitStateAck`.
-  const factory WorkerReply.activeGitStateAck({ActiveGitStateWire? state}) =
+  const factory WorkerReply.activeGitStateAck({ActiveGitStateDto? state}) =
       WorkerReply_ActiveGitStateAck;
 
   /// Reply to [`Control::ReadChangedFiles`]. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::ChangedFilesAck`.
-  const factory WorkerReply.changedFilesAck({List<ChangedFileWire>? files}) =
+  const factory WorkerReply.changedFilesAck({List<ChangedFileDto>? files}) =
       WorkerReply_ChangedFilesAck;
 
   /// Reply to [`Control::ReadProjectGithubUrl`]. Mirror of
@@ -1005,24 +734,24 @@ sealed class WorkerReply with _$WorkerReply {
 
   /// Reply to [`Control::ReadRecentCommits`]. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::RecentCommitsAck`.
-  const factory WorkerReply.recentCommitsAck({RecentCommitsWire? view}) =
+  const factory WorkerReply.recentCommitsAck({RecentCommitsView? view}) =
       WorkerReply_RecentCommitsAck;
 
   /// Reply to [`Control::ReadCommitFileChanges`]. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::CommitFileChangesAck`.
   const factory WorkerReply.commitFileChangesAck({
-    List<BranchCompareFileWire>? files,
+    List<BranchCompareFileDto>? files,
   }) = WorkerReply_CommitFileChangesAck;
 
   /// Reply to [`Control::ReadBranchCompareState`]. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchCompareAck`.
-  const factory WorkerReply.branchCompareAck({BranchCompareWire? view}) =
+  const factory WorkerReply.branchCompareAck({BranchCompareView? view}) =
       WorkerReply_BranchCompareAck;
 
   /// Reply to [`Control::ReadBranchSettings`]. Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::BranchSettingsAck`.
   const factory WorkerReply.branchSettingsAck({
-    ResolvedBranchSettingsWire? settings,
+    ResolvedProjectBranchSettingsDto? settings,
   }) = WorkerReply_BranchSettingsAck;
 
   /// Reply to [`Control::SetBranchSetting`]. Mirror of
@@ -1036,36 +765,36 @@ sealed class WorkerReply with _$WorkerReply {
   /// the issuing client refreshes the right-sidebar Changes pane
   /// without a follow-up `ReadChangedFiles` round-trip.
   const factory WorkerReply.stageChangedFileAck({
-    required List<ChangedFileWire> changedFiles,
+    required List<ChangedFileDto> changedFiles,
   }) = WorkerReply_StageChangedFileAck;
 
   /// `another-one-ojm.5` — ack for [`Control::UnstageChangedFile`].
   /// Same inline-snapshot semantics as
   /// [`Self::StageChangedFileAck`].
   const factory WorkerReply.unstageChangedFileAck({
-    required List<ChangedFileWire> changedFiles,
+    required List<ChangedFileDto> changedFiles,
   }) = WorkerReply_UnstageChangedFileAck;
 
   /// `another-one-ojm.5` — ack for [`Control::StageAllChanges`].
   const factory WorkerReply.stageAllChangesAck({
-    required List<ChangedFileWire> changedFiles,
+    required List<ChangedFileDto> changedFiles,
   }) = WorkerReply_StageAllChangesAck;
 
   /// `another-one-ojm.5` — ack for [`Control::UnstageAllChanges`].
   const factory WorkerReply.unstageAllChangesAck({
-    required List<ChangedFileWire> changedFiles,
+    required List<ChangedFileDto> changedFiles,
   }) = WorkerReply_UnstageAllChangesAck;
 
   /// `another-one-ojm.5` — ack for [`Control::DiscardChangedFile`].
   const factory WorkerReply.discardChangedFileAck({
-    required List<ChangedFileWire> changedFiles,
+    required List<ChangedFileDto> changedFiles,
   }) = WorkerReply_DiscardChangedFileAck;
 
   /// `another-one-ojm.5` — ack for [`Control::RunToolbarGitAction`].
   /// Mirror of
   /// `daemon-sandbox/src/frame.rs::WorkerReply::ToolbarActionOutcomeAck`.
   const factory WorkerReply.toolbarActionOutcomeAck({
-    required ToolbarActionOutcome outcome,
+    required ToolbarActionOutcomeDto outcome,
   }) = WorkerReply_ToolbarActionOutcomeAck;
 
   /// `another-one-ojm.5` — ack for [`Control::CreateBranch`]. Mirror

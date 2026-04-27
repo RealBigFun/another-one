@@ -1,30 +1,27 @@
 // End-to-end PTY throughput benchmark for `another-one-ojm.10`.
 //
-// Spawns a one-off `DaemonConnection` (iroh-loopback OR FFI direct),
-// finds the first project's first task's first tab in the daemon's
-// in-memory store, attaches, blasts a high-bandwidth producer
-// command into stdin, counts bytes received over a configurable
-// window, and renders sustained MB/s + total bytes + duration.
+// Spawns a one-off iroh-loopback `DaemonConnection`, finds the first
+// project's first shell tab in the daemon's in-memory store,
+// attaches, blasts a high-bandwidth producer command into stdin,
+// counts bytes received over a 1.5 s stall window, and renders
+// sustained MB/s + total bytes + duration.
 //
-// The point is to verify that the post-ojm.9 iroh path can sustain
-// the burst rate the legacy FFI path delivered, before the ADR's
-// step 4 (`ojm.11`) deletes LocalSession. Run both modes and
-// compare numbers — there is no machine assertion here, the
-// reviewer is the assertion.
+// Was originally a head-to-head iroh-vs-FFI comparison harness; the
+// FFI mode was removed in `ojm.11` along with LocalSession. The
+// reference numbers from the verification run live in commit
+// `de85b96`'s message and the ADR (~9.5 MB/s iroh release vs
+// ~10.6 MB/s local release on the dev workstation; iroh at 90% of
+// FFI baseline).
 //
 // Activation:
 //   * `--dart-define=ANOTHER_ONE_SURFACE=throughput-benchmark`
-//   * Optional `--dart-define=THROUGHPUT_BENCHMARK_MODE=iroh|local`
-//     (defaults to `iroh`; the path the desktop now ships with).
 //   * Optional `--dart-define=THROUGHPUT_BENCHMARK_BYTES=200000000`
 //     — total bytes the producer emits before quitting (default 200 MB).
 //   * Optional `--dart-define=THROUGHPUT_BENCHMARK_TIMEOUT_S=120`
 //     — wall-clock cap regardless of producer progress.
 //
 // Manual usage: launch the build with the surface flag, click
-// "Run benchmark", watch the readout. Re-run by clicking again
-// (each click constructs a fresh transport so the comparison is
-// not skewed by warmed caches).
+// "Run benchmark", watch the readout.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -40,16 +37,6 @@ import 'state/local_connection_provider.dart' show loopbackSessionAddrProvider;
 import 'tokens.dart';
 import 'transport.dart';
 import 'transport_iroh.dart';
-import 'transport_local.dart';
-
-/// Build-time mode toggle: `iroh` exercises the loopback iroh wire
-/// (the post-ojm.9 path the desktop ships with); `local` constructs
-/// a `LocalTransport` against the same daemon over FFI for the
-/// ojm.11-deletion baseline. Both share the same daemon process.
-const String kBenchmarkMode = String.fromEnvironment(
-  'THROUGHPUT_BENCHMARK_MODE',
-  defaultValue: 'iroh',
-);
 
 /// Total bytes the producer emits per run. 200 MB by default —
 /// enough to amortise startup + the first few `block_in_place`
@@ -211,7 +198,7 @@ class _ThroughputBenchmarkPageState
           ? 0.0
           : totalBytes / 1e6 / elapsed.inMilliseconds * 1000;
       _log.info('throughput benchmark complete', {
-        'mode': kBenchmarkMode,
+        'mode': 'iroh',
         'total_bytes': totalBytes,
         'elapsed_ms': elapsed.inMilliseconds,
         'mbps': mbps.toStringAsFixed(2),
@@ -220,7 +207,7 @@ class _ThroughputBenchmarkPageState
       });
       setState(() {
         _running = false;
-        _status = '$kBenchmarkMode mode: ${mbps.toStringAsFixed(1)} MB/s';
+        _status = 'iroh: ${mbps.toStringAsFixed(1)} MB/s';
         _details = '${_formatBytes(totalBytes)} in '
             '${elapsed.inMilliseconds} ms '
             '(target ${kBenchmarkBytes ~/ 1000000} MB; '
@@ -234,7 +221,7 @@ class _ThroughputBenchmarkPageState
       });
     } catch (e, s) {
       _log.error('throughput benchmark failed',
-          error: e, stackTrace: s, fields: {'mode': kBenchmarkMode});
+          error: e, stackTrace: s, fields: const {'mode': 'iroh'});
       setState(() {
         _running = false;
         _status = 'failed: $e';
@@ -267,9 +254,6 @@ class _ThroughputBenchmarkPageState
   }
 
   DaemonConnection _buildTransport() {
-    if (kBenchmarkMode == 'local') {
-      return LocalTransport();
-    }
     final addr = ref.read(loopbackSessionAddrProvider);
     return IrohTransport(
       addr.endpointId,
@@ -390,7 +374,7 @@ class _ThroughputBenchmarkPageState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Throughput benchmark ($kBenchmarkMode)',
+              'Throughput benchmark (iroh loopback)',
               style: const TextStyle(
                 fontFamily: AppTokens.fontFamilyMono,
                 color: AppTokens.textPrimary,
