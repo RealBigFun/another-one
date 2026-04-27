@@ -1700,7 +1700,8 @@ impl DaemonRegistry for BridgeDaemonRegistry {
     // ── Settings → MCP (`another-one-ojm.8`) ───────────────────────
 
     fn read_mcp_settings(&self) -> McpSettingsView {
-        let registry = another_one_core::mcp::registry::McpRegistry::load();
+        let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        ensure_builtin_daemon_mcp_entry(&mut registry);
         let catalog_entries = another_one_core::mcp::catalog::entries()
             .iter()
             .map(|entry| McpCatalogEntryDto {
@@ -1740,6 +1741,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         let provider = parse_provider_id(provider_id)
             .ok_or_else(|| format!("unknown provider id `{provider_id}`"))?;
         let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        ensure_builtin_daemon_mcp_entry(&mut registry);
         if !registry.toggle(entry_id, provider, enabled) {
             return Ok(());
         }
@@ -1753,6 +1755,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
 
     fn mcp_remove(&self, entry_id: &str) -> Result<(), String> {
         let mut registry = another_one_core::mcp::registry::McpRegistry::load();
+        ensure_builtin_daemon_mcp_entry(&mut registry);
         if !registry.remove(entry_id) {
             return Ok(());
         }
@@ -2009,6 +2012,45 @@ fn parse_provider_id(id: &str) -> Option<AgentProviderKind> {
         "forge" => Some(AgentProviderKind::Forge),
         _ => None,
     }
+}
+
+fn ensure_builtin_daemon_mcp_entry(registry: &mut another_one_core::mcp::registry::McpRegistry) {
+    let shim_path = resolve_builtin_daemon_mcp_shim_path();
+    let socket_path = daemon_sandbox::transport_mcp::default_socket_path();
+    registry.ensure_builtin(another_one_core::mcp::catalog::daemon_catalog_entry(
+        &shim_path,
+        &socket_path,
+    ));
+}
+
+fn resolve_builtin_daemon_mcp_shim_path() -> std::path::PathBuf {
+    let shim_name = if cfg!(target_os = "windows") {
+        "another-one-mcp-shim.exe"
+    } else {
+        "another-one-mcp-shim"
+    };
+
+    let Some(current_exe) = std::env::current_exe().ok() else {
+        return std::path::PathBuf::from(shim_name);
+    };
+
+    if let Some(parent) = current_exe.parent() {
+        let sibling = parent.join(shim_name);
+        if sibling.exists() {
+            return sibling;
+        }
+    }
+
+    for ancestor in current_exe.ancestors() {
+        for profile in ["debug", "release"] {
+            let candidate = ancestor.join("target").join(profile).join(shim_name);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    std::path::PathBuf::from(shim_name)
 }
 
 fn mcp_server_to_wire(server: &another_one_core::mcp::McpServer) -> McpServerDto {
