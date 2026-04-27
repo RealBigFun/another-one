@@ -135,117 +135,121 @@ class _CreateBranchModalState extends ConsumerState<_CreateBranchModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      insetPadding: EdgeInsets.zero,
-      child: Shortcuts(
-        shortcuts: const {
-          SingleActivator(LogicalKeyboardKey.escape):
-              _CreateBranchDismissIntent(),
-          SingleActivator(LogicalKeyboardKey.enter):
-              _CreateBranchSubmitIntent(),
-          SingleActivator(LogicalKeyboardKey.numpadEnter):
-              _CreateBranchSubmitIntent(),
-        },
-        child: Actions(
-          actions: {
-            _CreateBranchDismissIntent:
-                CallbackAction<_CreateBranchDismissIntent>(
-              onInvoke: (_) {
-                _cancel();
-                return null;
-              },
-            ),
-            _CreateBranchSubmitIntent:
-                CallbackAction<_CreateBranchSubmitIntent>(
-              onInvoke: (_) {
-                _submit();
-                return null;
-              },
-            ),
+    return PopScope(
+      canPop: !_submitting,
+      child: Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: EdgeInsets.zero,
+        child: Shortcuts(
+          shortcuts: const {
+            SingleActivator(LogicalKeyboardKey.escape):
+                _CreateBranchDismissIntent(),
+            SingleActivator(LogicalKeyboardKey.enter):
+                _CreateBranchSubmitIntent(),
+            SingleActivator(LogicalKeyboardKey.numpadEnter):
+                _CreateBranchSubmitIntent(),
           },
-          child: Focus(
-            autofocus: true,
-            child: Container(
-              width: 420,
-              decoration: BoxDecoration(
-                color: AppTokens.cardBg,
-                borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-                border: Border.all(color: AppTokens.border),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x66000000),
-                    blurRadius: 24,
-                    offset: Offset(0, 8),
+          child: Actions(
+            actions: {
+              _CreateBranchDismissIntent:
+                  CallbackAction<_CreateBranchDismissIntent>(
+                    onInvoke: (_) {
+                      _cancel();
+                      return null;
+                    },
                   ),
-                ],
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Header(submitting: _submitting, onClose: _cancel),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _BranchNameField(
-                          controller: _controller,
-                          focusNode: _focusNode,
-                          submitting: _submitting,
-                          onSubmitted: (_) => _submit(),
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          'Branch: ${_slug.isEmpty ? '—' : _slug}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppTokens.textMuted,
+              _CreateBranchSubmitIntent:
+                  CallbackAction<_CreateBranchSubmitIntent>(
+                    onInvoke: (_) {
+                      _submit();
+                      return null;
+                    },
+                  ),
+            },
+            child: Focus(
+              autofocus: true,
+              child: Container(
+                width: 420,
+                decoration: BoxDecoration(
+                  color: AppTokens.cardBg,
+                  borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+                  border: Border.all(color: AppTokens.border),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x66000000),
+                      blurRadius: 24,
+                      offset: Offset(0, 8),
+                    ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _Header(submitting: _submitting, onClose: _cancel),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _BranchNameField(
+                            controller: _controller,
+                            focusNode: _focusNode,
+                            submitting: _submitting,
+                            onSubmitted: (_) => _submit(),
                           ),
-                        ),
-                        const SizedBox(height: 14),
-                        _Toggle(
-                          label: 'Use current task',
-                          checked: _useCurrentTask,
-                          submitting: _submitting,
-                          disabled: false,
-                          onTap: () => setState(() {
-                            _useCurrentTask = !_useCurrentTask;
-                            if (_useCurrentTask) _migrateChanges = true;
-                          }),
-                        ),
-                        const SizedBox(height: 14),
-                        _Toggle(
-                          label: 'Migrate changes to new branch',
-                          checked: _migrateChanges || _useCurrentTask,
-                          submitting: _submitting,
-                          disabled: _useCurrentTask,
-                          onTap: () =>
-                              setState(() => _migrateChanges = !_migrateChanges),
-                        ),
-                        if (_error.isNotEmpty) ...[
                           const SizedBox(height: 14),
                           Text(
-                            _error,
+                            'Branch: ${_slug.isEmpty ? '—' : _slug}',
                             style: const TextStyle(
-                              fontSize: 11,
-                              color: AppTokens.errorText,
+                              fontSize: 12,
+                              color: AppTokens.textMuted,
                             ),
                           ),
+                          const SizedBox(height: 14),
+                          _Toggle(
+                            label: 'Use current task',
+                            checked: _useCurrentTask,
+                            submitting: _submitting,
+                            disabled: false,
+                            onTap: () => setState(() {
+                              _useCurrentTask = !_useCurrentTask;
+                              if (_useCurrentTask) _migrateChanges = true;
+                            }),
+                          ),
+                          const SizedBox(height: 14),
+                          _Toggle(
+                            label: 'Migrate changes to new branch',
+                            checked: _migrateChanges || _useCurrentTask,
+                            submitting: _submitting,
+                            disabled: _useCurrentTask,
+                            onTap: () => setState(
+                              () => _migrateChanges = !_migrateChanges,
+                            ),
+                          ),
+                          if (_error.isNotEmpty) ...[
+                            const SizedBox(height: 14),
+                            Text(
+                              _error,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppTokens.errorText,
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  _Footer(
-                    submitting: _submitting,
-                    canSubmit: _controller.text.trim().isNotEmpty,
-                    onCancel: _cancel,
-                    onSubmit: _submit,
-                  ),
-                ],
+                    _Footer(
+                      submitting: _submitting,
+                      canSubmit: _controller.text.trim().isNotEmpty,
+                      onCancel: _cancel,
+                      onSubmit: _submit,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -291,10 +295,7 @@ class _Header extends StatelessWidget {
                 SizedBox(height: 4),
                 Text(
                   'Create a branch here or in a separate worktree.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppTokens.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 12, color: AppTokens.textMuted),
                 ),
               ],
             ),
@@ -388,10 +389,7 @@ class _BranchNameField extends StatelessWidget {
             focusNode: focusNode,
             enabled: !submitting,
             onSubmitted: onSubmitted,
-            style: const TextStyle(
-              fontSize: 14,
-              color: AppTokens.textPrimary,
-            ),
+            style: const TextStyle(fontSize: 14, color: AppTokens.textPrimary),
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.zero,
@@ -466,10 +464,7 @@ class _ToggleState extends State<_Toggle> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                _ToggleSwitch(
-                  checked: widget.checked,
-                  onColor: _onColor,
-                ),
+                _ToggleSwitch(checked: widget.checked, onColor: _onColor),
               ],
             ),
           ),

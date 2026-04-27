@@ -27,19 +27,14 @@ Future<bool> showAddAgentModal({
   final result = await showDialog<bool>(
     context: context,
     barrierColor: AppTokens.scrimBg,
-    builder: (_) => _AddAgentModal(
-      sectionId: sectionId,
-      seededAgentId: seededAgentId,
-    ),
+    builder: (_) =>
+        _AddAgentModal(sectionId: sectionId, seededAgentId: seededAgentId),
   );
   return result ?? false;
 }
 
 class _AddAgentModal extends ConsumerStatefulWidget {
-  const _AddAgentModal({
-    required this.sectionId,
-    required this.seededAgentId,
-  });
+  const _AddAgentModal({required this.sectionId, required this.seededAgentId});
   final String sectionId;
   final String? seededAgentId;
 
@@ -77,7 +72,9 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
       _error = null;
     });
     try {
-      await ref.read(localConnectionProvider).addAgentToSection(
+      await ref
+          .read(localConnectionProvider)
+          .addAgentToSection(
             sectionId: widget.sectionId,
             agentId: _selectedAgentId ?? '',
           );
@@ -99,89 +96,93 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
     if (view != null) {
       _seedSelection(view.agents, view.defaultAgentId);
     }
-    return Shortcuts(
-      shortcuts: const <ShortcutActivator, Intent>{
-        SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
-        SingleActivator(LogicalKeyboardKey.enter): _SubmitIntent(),
-      },
-      child: Actions(
-        actions: <Type, Action<Intent>>{
-          _DismissIntent: CallbackAction<_DismissIntent>(
-            onInvoke: (_) {
-              if (!_submitting) Navigator.of(context).pop(false);
-              return null;
-            },
-          ),
-          _SubmitIntent: CallbackAction<_SubmitIntent>(
-            onInvoke: (_) {
-              unawaited(_submit());
-              return null;
-            },
-          ),
+    return PopScope(
+      canPop: !_submitting,
+      child: Shortcuts(
+        shortcuts: const <ShortcutActivator, Intent>{
+          SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
+          SingleActivator(LogicalKeyboardKey.enter): _SubmitIntent(),
         },
-        child: Focus(
-          autofocus: true,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: _cardW,
-                maxHeight: MediaQuery.of(context).size.height * 0.9,
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppTokens.cardBg,
-                    borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-                    border: Border.all(color: AppTokens.border),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x66000000),
-                        blurRadius: 20,
-                        offset: Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _Header(
-                        onClose: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(false),
-                      ),
-                      Flexible(
-                        child: SingleChildScrollView(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-                            child: _AgentPicker(
-                              agents: view?.agents ?? const [],
-                              selectedId: _selectedAgentId,
-                              dropdownOpen: _dropdownOpen,
-                              onToggleDropdown: _submitting
-                                  ? null
-                                  : () => setState(() =>
-                                      _dropdownOpen = !_dropdownOpen),
-                              onSelect: _submitting
-                                  ? null
-                                  : (id) => setState(() {
+        child: Actions(
+          actions: <Type, Action<Intent>>{
+            _DismissIntent: CallbackAction<_DismissIntent>(
+              onInvoke: (_) {
+                if (!_submitting) Navigator.of(context).pop(false);
+                return null;
+              },
+            ),
+            _SubmitIntent: CallbackAction<_SubmitIntent>(
+              onInvoke: (_) {
+                unawaited(_submit());
+                return null;
+              },
+            ),
+          },
+          child: Focus(
+            autofocus: true,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: _cardW,
+                  maxHeight: MediaQuery.of(context).size.height * 0.9,
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppTokens.cardBg,
+                      borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+                      border: Border.all(color: AppTokens.border),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x66000000),
+                          blurRadius: 20,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _Header(
+                          onClose: _submitting
+                              ? null
+                              : () => Navigator.of(context).pop(false),
+                        ),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+                              child: _AgentPicker(
+                                agents: view?.agents ?? const [],
+                                selectedId: _selectedAgentId,
+                                dropdownOpen: _dropdownOpen,
+                                onToggleDropdown: _submitting
+                                    ? null
+                                    : () => setState(
+                                        () => _dropdownOpen = !_dropdownOpen,
+                                      ),
+                                onSelect: _submitting
+                                    ? null
+                                    : (id) => setState(() {
                                         _selectedAgentId = id;
                                         _dropdownOpen = false;
                                       }),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      if (_error != null) _ErrorBanner(text: _error!),
-                      _Footer(
-                        submitting: _submitting,
-                        onCancel: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(false),
-                        onSubmit: _submitting ? null : _submit,
-                      ),
-                    ],
+                        if (_error != null) _ErrorBanner(text: _error!),
+                        _Footer(
+                          submitting: _submitting,
+                          onCancel: _submitting
+                              ? null
+                              : () => Navigator.of(context).pop(false),
+                          onSubmit: _submitting ? null : _submit,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -227,10 +228,7 @@ class _Header extends StatelessWidget {
                 SizedBox(height: 4),
                 Text(
                   'Open another agent chat in the same task without changing the worktree.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppTokens.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 12, color: AppTokens.textMuted),
                 ),
               ],
             ),
@@ -350,10 +348,7 @@ class _AgentPicker extends StatelessWidget {
           padding: const EdgeInsets.only(top: 6),
           child: Text(
             helpText,
-            style: const TextStyle(
-              fontSize: 11,
-              color: AppTokens.textMuted,
-            ),
+            style: const TextStyle(fontSize: 11, color: AppTokens.textMuted),
           ),
         ),
         if (dropdownOpen)
@@ -528,10 +523,7 @@ class _ErrorBanner extends StatelessWidget {
         ),
         child: Text(
           text,
-          style: const TextStyle(
-            fontSize: 12,
-            color: AppTokens.errorText,
-          ),
+          style: const TextStyle(fontSize: 12, color: AppTokens.errorText),
         ),
       ),
     );

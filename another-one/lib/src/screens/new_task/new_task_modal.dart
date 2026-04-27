@@ -96,8 +96,7 @@ class _NewTaskModalState extends ConsumerState<_NewTaskModal> {
   Future<void> _submit() async {
     if (_submitting) return;
     final taskName = _taskNameCtrl.text.trim();
-    final effectiveTaskName =
-        taskName.isEmpty ? _generatedTaskName : taskName;
+    final effectiveTaskName = taskName.isEmpty ? _generatedTaskName : taskName;
     if (_sourceBranch.trim().isEmpty) {
       setState(() => _error = 'Source branch is required');
       return;
@@ -118,9 +117,9 @@ class _NewTaskModalState extends ConsumerState<_NewTaskModal> {
       );
       // Refresh project list so the new task appears in the sidebar.
       await connection.listProjects();
-      ref.read(selectedTabProvider.notifier).set(
-            TabSelection(sectionId: sectionId, tabId: '0'),
-          );
+      ref
+          .read(selectedTabProvider.notifier)
+          .set(TabSelection(sectionId: sectionId, tabId: '0'));
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
@@ -134,8 +133,7 @@ class _NewTaskModalState extends ConsumerState<_NewTaskModal> {
 
   @override
   Widget build(BuildContext context) {
-    final branchesAsync =
-        ref.watch(projectBranchesProvider(widget.project.id));
+    final branchesAsync = ref.watch(projectBranchesProvider(widget.project.id));
     final agentsAsync = ref.watch(enabledAgentsProvider);
     final branches = branchesAsync.valueOrNull ?? const <String>[];
     final agents = agentsAsync.valueOrNull;
@@ -146,142 +144,138 @@ class _NewTaskModalState extends ConsumerState<_NewTaskModal> {
               (a) => a.id == agents.defaultAgentId,
               orElse: () => agents.agents.isNotEmpty
                   ? agents.agents.first
-                  : const AgentSummaryDto(
-                      id: '',
-                      label: '',
-                      iconPath: '',
-                    ),
+                  : const AgentSummaryDto(id: '', label: '', iconPath: ''),
             );
       _seedDefaults(branches, defaultAgent);
     }
 
-    return Shortcuts(
-      shortcuts: const <ShortcutActivator, Intent>{
-        SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
-      },
-      child: Actions(
-        actions: <Type, Action<Intent>>{
-          _DismissIntent: CallbackAction<_DismissIntent>(
-            onInvoke: (_) {
-              if (!_submitting) Navigator.of(context).pop();
-              return null;
-            },
-          ),
+    return PopScope(
+      canPop: !_submitting,
+      child: Shortcuts(
+        shortcuts: const <ShortcutActivator, Intent>{
+          SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
         },
-        child: Focus(
-          autofocus: true,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: _cardW,
-                maxHeight: MediaQuery.of(context).size.height * 0.9,
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppTokens.cardBg,
-                    borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-                    border: Border.all(color: AppTokens.border),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x66000000),
-                        blurRadius: 20,
-                        offset: Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _Header(
-                        projectName: widget.project.name,
-                        onClose: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(),
-                      ),
-                      Flexible(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _SourceBranchSection(
-                                branches: branches,
-                                currentBranch: widget.project.currentBranch,
-                                selected: _sourceBranch,
-                                branchMode: _branchMode,
-                                worktreeMode: _worktreeMode,
-                                dropdownOpen: _branchDropdownOpen,
-                                filterCtrl: _branchFilterCtrl,
-                                submitting: _submitting,
-                                onBranchSelected: (b) => setState(() {
-                                  _sourceBranch = b;
-                                  _branchDropdownOpen = false;
-                                }),
-                                onModeChanged: _submitting
-                                    ? null
-                                    : (m) =>
-                                        setState(() => _branchMode = m),
-                                onToggleDropdown: () => setState(() {
-                                  _branchDropdownOpen =
-                                      !_branchDropdownOpen;
-                                }),
-                                onTypeBranch: (text) {
-                                  if (_branchMode ==
-                                      _BranchMode.newBranch) {
-                                    setState(() => _sourceBranch = text);
-                                  }
-                                },
-                              ),
-                              _TaskNameField(
-                                controller: _taskNameCtrl,
-                                placeholder: _generatedTaskName,
-                                enabled: !_submitting,
-                              ),
-                              _AgentMultiSelect(
-                                agents: agents?.agents ?? const [],
-                                selected: _selectedAgents,
-                                submitting: _submitting,
-                                onToggle: (id) => setState(() {
-                                  if (_selectedAgents.contains(id)) {
-                                    _selectedAgents.remove(id);
-                                  } else {
-                                    _selectedAgents.add(id);
-                                  }
-                                }),
-                              ),
-                              _WorkspaceToggle(
-                                worktreeMode: _worktreeMode,
-                                submitting: _submitting,
-                                onChanged: (worktree) => setState(() {
-                                  _worktreeMode = worktree;
-                                  _branchDropdownOpen = false;
-                                }),
-                              ),
-                              _AdvancedOptions(
-                                expanded: _advancedExpanded,
-                                submitting: _submitting,
-                                onToggle: () => setState(() {
-                                  _advancedExpanded = !_advancedExpanded;
-                                  _branchDropdownOpen = false;
-                                }),
-                              ),
-                              if (_error != null) _ErrorBanner(text: _error!),
-                              const SizedBox(height: 12),
-                            ],
+        child: Actions(
+          actions: <Type, Action<Intent>>{
+            _DismissIntent: CallbackAction<_DismissIntent>(
+              onInvoke: (_) {
+                if (!_submitting) Navigator.of(context).pop();
+                return null;
+              },
+            ),
+          },
+          child: Focus(
+            autofocus: true,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: _cardW,
+                  maxHeight: MediaQuery.of(context).size.height * 0.9,
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppTokens.cardBg,
+                      borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+                      border: Border.all(color: AppTokens.border),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x66000000),
+                          blurRadius: 20,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _Header(
+                          projectName: widget.project.name,
+                          onClose: _submitting
+                              ? null
+                              : () => Navigator.of(context).pop(),
+                        ),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _SourceBranchSection(
+                                  branches: branches,
+                                  currentBranch: widget.project.currentBranch,
+                                  selected: _sourceBranch,
+                                  branchMode: _branchMode,
+                                  worktreeMode: _worktreeMode,
+                                  dropdownOpen: _branchDropdownOpen,
+                                  filterCtrl: _branchFilterCtrl,
+                                  submitting: _submitting,
+                                  onBranchSelected: (b) => setState(() {
+                                    _sourceBranch = b;
+                                    _branchDropdownOpen = false;
+                                  }),
+                                  onModeChanged: _submitting
+                                      ? null
+                                      : (m) => setState(() => _branchMode = m),
+                                  onToggleDropdown: () => setState(() {
+                                    _branchDropdownOpen = !_branchDropdownOpen;
+                                  }),
+                                  onTypeBranch: (text) {
+                                    if (_branchMode == _BranchMode.newBranch) {
+                                      setState(() => _sourceBranch = text);
+                                    }
+                                  },
+                                ),
+                                _TaskNameField(
+                                  controller: _taskNameCtrl,
+                                  placeholder: _generatedTaskName,
+                                  enabled: !_submitting,
+                                ),
+                                _AgentMultiSelect(
+                                  agents: agents?.agents ?? const [],
+                                  selected: _selectedAgents,
+                                  submitting: _submitting,
+                                  onToggle: (id) => setState(() {
+                                    if (_selectedAgents.contains(id)) {
+                                      _selectedAgents.remove(id);
+                                    } else {
+                                      _selectedAgents.add(id);
+                                    }
+                                  }),
+                                ),
+                                _WorkspaceToggle(
+                                  worktreeMode: _worktreeMode,
+                                  submitting: _submitting,
+                                  onChanged: (worktree) => setState(() {
+                                    _worktreeMode = worktree;
+                                    _branchDropdownOpen = false;
+                                  }),
+                                ),
+                                _AdvancedOptions(
+                                  expanded: _advancedExpanded,
+                                  submitting: _submitting,
+                                  onToggle: () => setState(() {
+                                    _advancedExpanded = !_advancedExpanded;
+                                    _branchDropdownOpen = false;
+                                  }),
+                                ),
+                                if (_error != null) _ErrorBanner(text: _error!),
+                                const SizedBox(height: 12),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                      _Footer(
-                        submitting: _submitting,
-                        onCancel: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(),
-                        onSubmit: _submitting ? null : _submit,
-                      ),
-                    ],
+                        _Footer(
+                          submitting: _submitting,
+                          onCancel: _submitting
+                              ? null
+                              : () => Navigator.of(context).pop(),
+                          onSubmit: _submitting ? null : _submit,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -506,8 +500,7 @@ class _ModeChip extends StatelessWidget {
           height: 28,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color:
-                selected ? AppTokens.overlayActive : Colors.transparent,
+            color: selected ? AppTokens.overlayActive : Colors.transparent,
             borderRadius: BorderRadius.circular(AppTokens.radiusXs + 1),
           ),
           child: Text(
@@ -638,8 +631,8 @@ class _BranchDropdownState extends State<_BranchDropdown> {
     final filtered = filterLower.isEmpty
         ? widget.branches
         : widget.branches
-            .where((b) => b.toLowerCase().contains(filterLower))
-            .toList();
+              .where((b) => b.toLowerCase().contains(filterLower))
+              .toList();
     return Container(
       decoration: BoxDecoration(
         color: AppTokens.cardBg,
@@ -704,10 +697,7 @@ class _BranchDropdownState extends State<_BranchDropdown> {
                   ),
                 if (filtered.isEmpty)
                   const Padding(
-                    padding: EdgeInsets.symmetric(
-                      vertical: 12,
-                      horizontal: 12,
-                    ),
+                    padding: EdgeInsets.symmetric(vertical: 12, horizontal: 12),
                     child: Text(
                       'No branches match.',
                       style: TextStyle(
@@ -872,8 +862,7 @@ class _AgentMultiSelect extends StatelessWidget {
                 _AgentChip(
                   agent: agent,
                   selected: selected.contains(agent.id),
-                  onTap:
-                      submitting ? null : () => onToggle(agent.id),
+                  onTap: submitting ? null : () => onToggle(agent.id),
                 ),
               _TerminalChip(
                 selected: selected.isEmpty,
@@ -917,13 +906,10 @@ class _AgentChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected
-              ? AppTokens.overlayActive
-              : AppTokens.overlayRest,
+          color: selected ? AppTokens.overlayActive : AppTokens.overlayRest,
           borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
-            color:
-                selected ? const Color(0xFF6F86CB) : AppTokens.border,
+            color: selected ? const Color(0xFF6F86CB) : AppTokens.border,
           ),
         ),
         child: Row(
@@ -940,7 +926,11 @@ class _AgentChip extends StatelessWidget {
                 ),
               )
             else
-              const Icon(Icons.smart_toy, size: 13, color: AppTokens.textPrimary),
+              const Icon(
+                Icons.smart_toy,
+                size: 13,
+                color: AppTokens.textPrimary,
+              ),
             const SizedBox(width: 6),
             Text(
               agent.label,
@@ -972,13 +962,10 @@ class _TerminalChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected
-              ? AppTokens.overlayActive
-              : AppTokens.overlayRest,
+          color: selected ? AppTokens.overlayActive : AppTokens.overlayRest,
           borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
-            color:
-                selected ? const Color(0xFF6F86CB) : AppTokens.border,
+            color: selected ? const Color(0xFF6F86CB) : AppTokens.border,
           ),
         ),
         child: const Row(
@@ -1034,8 +1021,7 @@ class _WorkspaceToggle extends StatelessWidget {
                     label: 'Worktree',
                     selected: worktreeMode,
                     enabled: !submitting,
-                    tooltip:
-                        'Create a sibling worktree for this task',
+                    tooltip: 'Create a sibling worktree for this task',
                     onTap: () => onChanged(true),
                   ),
                 ),
@@ -1046,8 +1032,7 @@ class _WorkspaceToggle extends StatelessWidget {
                     label: 'Direct',
                     selected: !worktreeMode,
                     enabled: !submitting,
-                    tooltip:
-                        'Open the original project directory directly',
+                    tooltip: 'Open the original project directory directly',
                     onTap: () => onChanged(false),
                   ),
                 ),
@@ -1099,8 +1084,7 @@ class _WorkspaceOption extends StatelessWidget {
           height: 32,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color:
-                selected ? AppTokens.overlayActive : Colors.transparent,
+            color: selected ? AppTokens.overlayActive : Colors.transparent,
             borderRadius: BorderRadius.circular(AppTokens.radiusXs + 1),
           ),
           child: Row(
@@ -1111,9 +1095,7 @@ class _WorkspaceOption extends StatelessWidget {
                 width: 14,
                 height: 14,
                 colorFilter: ColorFilter.mode(
-                  selected
-                      ? AppTokens.textPrimary
-                      : AppTokens.textMuted,
+                  selected ? AppTokens.textPrimary : AppTokens.textMuted,
                   BlendMode.srcIn,
                 ),
               ),
@@ -1123,9 +1105,7 @@ class _WorkspaceOption extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: selected
-                      ? AppTokens.textPrimary
-                      : AppTokens.textMuted,
+                  color: selected ? AppTokens.textPrimary : AppTokens.textMuted,
                 ),
               ),
             ],
@@ -1387,10 +1367,7 @@ class _ErrorBanner extends StatelessWidget {
         ),
         child: Text(
           text,
-          style: const TextStyle(
-            fontSize: 12,
-            color: AppTokens.errorText,
-          ),
+          style: const TextStyle(fontSize: 12, color: AppTokens.errorText),
         ),
       ),
     );
@@ -1426,10 +1403,7 @@ class _Footer extends StatelessWidget {
               alignment: Alignment.center,
               child: const Text(
                 'Cancel',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: AppTokens.textPrimary,
-                ),
+                style: TextStyle(fontSize: 13, color: AppTokens.textPrimary),
               ),
             ),
           ),
@@ -1451,8 +1425,7 @@ class _Footer extends StatelessWidget {
                       height: 14,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(Colors.white),
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
                     )
                   : const Text(
@@ -1478,34 +1451,120 @@ class _Footer extends StatelessWidget {
 // canned phrase. UUID-equivalent randomness comes from `Random()`.
 
 const _firstWords = <String>[
-  'quiet', 'silver', 'bright', 'steady', 'wild', 'mellow', 'brisk',
-  'neat', 'rad', 'fresh', 'fly', 'phat', 'pixel', 'neon', 'grunge',
-  'turbo', 'cosmic', 'mall', 'arcade', 'saturday', 'vhs', 'tamagotchi',
-  'zelda', 'sonic', 'clueless', 'spice', 'matrix', 'dialup',
+  'quiet',
+  'silver',
+  'bright',
+  'steady',
+  'wild',
+  'mellow',
+  'brisk',
+  'neat',
+  'rad',
+  'fresh',
+  'fly',
+  'phat',
+  'pixel',
+  'neon',
+  'grunge',
+  'turbo',
+  'cosmic',
+  'mall',
+  'arcade',
+  'saturday',
+  'vhs',
+  'tamagotchi',
+  'zelda',
+  'sonic',
+  'clueless',
+  'spice',
+  'matrix',
+  'dialup',
 ];
 
 const _secondWords = <String>[
-  'river', 'meadow', 'comet', 'signal', 'forest', 'ember', 'harbor',
-  'planet', 'sitcom', 'beeper', 'rewind', 'moonwalk', 'blockbuster',
-  'gameboy', 'dreamcast', 'trapper', 'windbreaker', 'discman',
-  'boyband', 'chatroom', 'supernova', 'slammer', 'ranger', 'tamagotchi',
-  'seinfeld', 'xfiles', 'jukebox', 'afterparty',
+  'river',
+  'meadow',
+  'comet',
+  'signal',
+  'forest',
+  'ember',
+  'harbor',
+  'planet',
+  'sitcom',
+  'beeper',
+  'rewind',
+  'moonwalk',
+  'blockbuster',
+  'gameboy',
+  'dreamcast',
+  'trapper',
+  'windbreaker',
+  'discman',
+  'boyband',
+  'chatroom',
+  'supernova',
+  'slammer',
+  'ranger',
+  'tamagotchi',
+  'seinfeld',
+  'xfiles',
+  'jukebox',
+  'afterparty',
 ];
 
 const _thirdWords = <String>[
-  'sparks', 'travels', 'builds', 'drifts', 'guides', 'moves', 'lands',
-  'echoes', 'remix', 'rewinds', 'glows', 'bounces', 'rips', 'slaps',
-  'glitches', 'downloads', 'pages', 'beams', 'boogies', 'radicals',
-  'jams', 'surfs', 'shuffles', 'blasts', 'hangs', 'grooves', 'rules',
+  'sparks',
+  'travels',
+  'builds',
+  'drifts',
+  'guides',
+  'moves',
+  'lands',
+  'echoes',
+  'remix',
+  'rewinds',
+  'glows',
+  'bounces',
+  'rips',
+  'slaps',
+  'glitches',
+  'downloads',
+  'pages',
+  'beams',
+  'boogies',
+  'radicals',
+  'jams',
+  'surfs',
+  'shuffles',
+  'blasts',
+  'hangs',
+  'grooves',
+  'rules',
   'zooms',
 ];
 
 const _phrases = <String>[
-  'you-sure-about-that', 'why-the-tables', 'coffin-flop', 'corncob-tv',
-  'sloppy-steaks', 'lets-slop-em-up', 'white-ferrari', 'ghost-tour',
-  'santa-brought-it-early', 'baby-of-the-year', 'karl-havoc', 'im-so-hot',
-  'dan-flashes', 'jamie-taco', 'gimme-dat', 'brians-hat', 'turbo-team',
-  'tc-tuggers', 'calico-cut-pants', 'its-not-a-joke', 'you-gotta-give',
+  'you-sure-about-that',
+  'why-the-tables',
+  'coffin-flop',
+  'corncob-tv',
+  'sloppy-steaks',
+  'lets-slop-em-up',
+  'white-ferrari',
+  'ghost-tour',
+  'santa-brought-it-early',
+  'baby-of-the-year',
+  'karl-havoc',
+  'im-so-hot',
+  'dan-flashes',
+  'jamie-taco',
+  'gimme-dat',
+  'brians-hat',
+  'turbo-team',
+  'tc-tuggers',
+  'calico-cut-pants',
+  'its-not-a-joke',
+  'you-gotta-give',
   'motorcycle-guys',
 ];
 
