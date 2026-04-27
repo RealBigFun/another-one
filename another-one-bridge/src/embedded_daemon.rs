@@ -24,6 +24,7 @@
 //! today. Phase 6 of the migration will move MCP wiring into core
 //! and fold it back in.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread;
@@ -66,6 +67,55 @@ use crate::local_registry::set_local_registry;
 /// process. `OnceLock` so two concurrent `boot_embedded_daemon`
 /// calls from Dart resolve to the same boot.
 static BOOTED: OnceLock<()> = OnceLock::new();
+
+/// Providers whose most recent MCP sync failed. Mirrors GPUI's
+/// `mcp_last_sync_errors` state so the Flutter MCP settings can tint
+/// the affected provider chips red until the next successful sync.
+static MCP_LAST_SYNC_ERRORS: OnceLock<Mutex<HashSet<AgentProviderKind>>> = OnceLock::new();
+
+fn with_mcp_last_sync_errors<R>(f: impl FnOnce(&mut HashSet<AgentProviderKind>) -> R) -> R {
+    let errors = MCP_LAST_SYNC_ERRORS.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut guard = errors
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f(&mut guard)
+}
+
+fn mcp_sync_error_provider_ids() -> Vec<String> {
+    with_mcp_last_sync_errors(|errors| {
+        let mut ids = errors
+            .iter()
+            .copied()
+            .map(provider_id_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    })
+}
+
+fn record_mcp_sync_errors(
+    report: &another_one_core::mcp::registry::SyncReport,
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    with_mcp_last_sync_errors(|errors| {
+        errors.clear();
+        for (provider, result) in report {
+            if let Err(err) = result {
+                errors.insert(*provider);
+                failures.push(format!(
+                    "MCP sync failed for {}: {err}",
+                    provider_id_str(*provider)
+                ));
+            }
+        }
+    });
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
 
 /// Build, register, and boot the embedded daemon. Idempotent: a
 /// second call no-ops. Returns as soon as the registry is wired and
@@ -1664,7 +1714,7 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         McpSettingsView {
             catalog_entries,
             registry_entries,
-            sync_error_provider_ids: Vec::new(),
+            sync_error_provider_ids: mcp_sync_error_provider_ids(),
         }
     }
 
@@ -1693,11 +1743,12 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         if !registry.toggle(entry_id, provider, enabled) {
             return Ok(());
         }
-        let _report = registry.sync_all();
+        let report = registry.sync_all();
+        let sync_result = record_mcp_sync_errors(&report);
         registry
             .save()
             .map_err(|e| format!("save mcp registry: {e}"))?;
-        Ok(())
+        sync_result
     }
 
     fn mcp_remove(&self, entry_id: &str) -> Result<(), String> {
@@ -1705,11 +1756,12 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         if !registry.remove(entry_id) {
             return Ok(());
         }
-        let _report = registry.sync_all();
+        let report = registry.sync_all();
+        let sync_result = record_mcp_sync_errors(&report);
         registry
             .save()
             .map_err(|e| format!("save mcp registry: {e}"))?;
-        Ok(())
+        sync_result
     }
 }
 

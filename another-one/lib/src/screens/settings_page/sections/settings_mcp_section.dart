@@ -20,6 +20,7 @@ import '../../../rust/api/local_session.dart'
         McpTransportKindDto;
 import '../../../state/local_connection_provider.dart';
 import '../../../tokens.dart';
+import '../../../widgets/app_toast.dart';
 import 'settings_async_state.dart';
 
 final _mcpSettingsProvider = FutureProvider.autoDispose<McpSettingsView?>((
@@ -224,12 +225,7 @@ class _CatalogPromptRowState extends ConsumerState<_CatalogPromptRow> {
       widget.onAdded();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not add MCP entry: $e'),
-          backgroundColor: AppTokens.errorBg,
-        ),
-      );
+      showAppToast(context, message: 'Could not add MCP entry: $e');
     }
     if (mounted) setState(() => _busy = false);
   }
@@ -346,12 +342,8 @@ class _RegistryRowState extends ConsumerState<_RegistryRow> {
       widget.onChanged();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not toggle: $e'),
-          backgroundColor: AppTokens.errorBg,
-        ),
-      );
+      widget.onChanged();
+      showAppToast(context, message: 'Could not toggle: $e');
     }
     if (mounted) setState(() => _busy = false);
   }
@@ -364,12 +356,8 @@ class _RegistryRowState extends ConsumerState<_RegistryRow> {
       widget.onChanged();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not remove: $e'),
-          backgroundColor: AppTokens.errorBg,
-        ),
-      );
+      widget.onChanged();
+      showAppToast(context, message: 'Could not remove: $e');
     }
     if (mounted) setState(() => _busy = false);
   }
