@@ -17,20 +17,15 @@
 // empty state on transports that do not expose Open-In, matching
 // GPUI's "hide the button when no apps are enabled" behaviour.
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../rust/api/local_session.dart' show OpenInState;
+import 'connection_future_provider.dart';
 import 'local_connection_provider.dart';
 
 /// Fetches a fresh `OpenInState` from the active daemon connection.
 /// Falls back to an empty state for transports that don't expose
 /// Open-In so consumers can render uniformly.
-final openInStateProvider = FutureProvider<OpenInState>((ref) async {
-  final connection = ref.watch(localConnectionProvider);
-  await waitForConnectedDaemon(connection);
-  try {
-    return await connection.openInState();
-  } on UnimplementedError {
-    return const OpenInState(enabledApps: [], preferredAppId: null);
-  }
-});
+final openInStateProvider = makeConnectionFutureProvider<OpenInState>(
+  read: (_, connection) => connection.openInState(),
+  fallback: const OpenInState(enabledApps: [], preferredAppId: null),
+  prepare: (_, connection) => waitForConnectedDaemon(connection),
+);

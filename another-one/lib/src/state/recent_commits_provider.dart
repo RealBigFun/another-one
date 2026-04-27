@@ -15,7 +15,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../rust/api/local_session.dart' show RecentCommitsView;
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 const int kRecentCommitsPageSize = 25;
 
@@ -24,15 +24,10 @@ final commitPageSizeProvider = StateProvider.family<int, String>(
 );
 
 final recentCommitsProvider =
-    FutureProvider.family<RecentCommitsView?, String>((ref, projectId) async {
-  final connection = ref.watch(localConnectionProvider);
-  final limit = ref.watch(commitPageSizeProvider(projectId));
-  try {
-    return await connection.readRecentCommits(
-      projectId: projectId,
-      limit: limit,
+    makeConnectionFutureProviderFamily<RecentCommitsView?, String>(
+      read: (ref, connection, projectId) {
+        final limit = ref.watch(commitPageSizeProvider(projectId));
+        return connection.readRecentCommits(projectId: projectId, limit: limit);
+      },
+      fallback: null,
     );
-  } on UnimplementedError {
-    return null;
-  }
-});

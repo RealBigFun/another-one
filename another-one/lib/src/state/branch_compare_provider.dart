@@ -4,16 +4,11 @@
 // flipping branches doesn't re-shell-out unless something
 // mutates and the caller invalidates explicitly.
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../rust/api/local_session.dart' show BranchCompareView;
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 class BranchCompareKey {
-  const BranchCompareKey({
-    required this.projectId,
-    required this.targetBranch,
-  });
+  const BranchCompareKey({required this.projectId, required this.targetBranch});
 
   final String projectId;
   final String targetBranch;
@@ -29,14 +24,10 @@ class BranchCompareKey {
 }
 
 final branchCompareProvider =
-    FutureProvider.family<BranchCompareView?, BranchCompareKey>((ref, key) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.readBranchCompareState(
-      projectId: key.projectId,
-      targetBranch: key.targetBranch,
+    makeConnectionFutureProviderFamily<BranchCompareView?, BranchCompareKey>(
+      read: (_, connection, key) => connection.readBranchCompareState(
+        projectId: key.projectId,
+        targetBranch: key.targetBranch,
+      ),
+      fallback: null,
     );
-  } on UnimplementedError {
-    return null;
-  }
-});

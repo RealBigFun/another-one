@@ -9,16 +9,11 @@
 // result indefinitely. The Riverpod cache here behaves the same
 // way for the session — `ref.invalidate` to force a refetch.
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../rust/api/local_session.dart' show BranchCompareFileDto;
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 class CommitFileChangesKey {
-  const CommitFileChangesKey({
-    required this.projectId,
-    required this.commitId,
-  });
+  const CommitFileChangesKey({required this.projectId, required this.commitId});
 
   final String projectId;
   final String commitId;
@@ -33,15 +28,14 @@ class CommitFileChangesKey {
   int get hashCode => Object.hash(projectId, commitId);
 }
 
-final commitFileChangesProvider = FutureProvider.family<
-    List<BranchCompareFileDto>?, CommitFileChangesKey>((ref, key) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.readCommitFileChanges(
-      projectId: key.projectId,
-      commitId: key.commitId,
+final commitFileChangesProvider =
+    makeConnectionFutureProviderFamily<
+      List<BranchCompareFileDto>?,
+      CommitFileChangesKey
+    >(
+      read: (_, connection, key) => connection.readCommitFileChanges(
+        projectId: key.projectId,
+        commitId: key.commitId,
+      ),
+      fallback: null,
     );
-  } on UnimplementedError {
-    return null;
-  }
-});

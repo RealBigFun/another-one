@@ -4,16 +4,11 @@
 // selection (when there are unstaged changes, GPUI picks Commit
 // vs Commit & Push by this preference).
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 final repoDefaultCommitActionProvider =
-    FutureProvider.family<String?, String>((ref, projectId) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.repoDefaultCommitAction(projectId);
-  } on UnimplementedError {
-    return null;
-  }
-});
+    makeConnectionFutureProviderFamily<String?, String>(
+      read: (_, connection, projectId) =>
+          connection.repoDefaultCommitAction(projectId),
+      fallback: null,
+    );

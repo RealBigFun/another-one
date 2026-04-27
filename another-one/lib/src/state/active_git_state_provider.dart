@@ -7,17 +7,12 @@
 // run_toolbar_git_action call when the outcome's
 // refresh_git_state flag is set.
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../rust/api/local_session.dart' show ActiveGitStateDto;
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 final activeGitStateProvider =
-    FutureProvider.family<ActiveGitStateDto?, String>((ref, projectId) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.readActiveGitState(projectId);
-  } on UnimplementedError {
-    return null;
-  }
-});
+    makeConnectionFutureProviderFamily<ActiveGitStateDto?, String>(
+      read: (_, connection, projectId) =>
+          connection.readActiveGitState(projectId),
+      fallback: null,
+    );

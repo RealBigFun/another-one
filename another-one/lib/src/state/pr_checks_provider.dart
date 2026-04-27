@@ -13,17 +13,12 @@
 // streaming/poll variant can land if the pane needs live status
 // without manual refresh.
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../rust/api/local_session.dart' show CheckDto;
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 final prChecksProvider =
-    FutureProvider.family<List<CheckDto>?, String>((ref, projectId) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.readPullRequestChecks(projectId);
-  } on UnimplementedError {
-    return null;
-  }
-});
+    makeConnectionFutureProviderFamily<List<CheckDto>?, String>(
+      read: (_, connection, projectId) =>
+          connection.readPullRequestChecks(projectId),
+      fallback: null,
+    );

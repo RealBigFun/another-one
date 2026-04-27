@@ -14,12 +14,11 @@
 // stale value persists; matches GPUI's "look up once at boot"
 // behaviour.
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 final projectGithubUrlProvider =
-    FutureProvider.family<String?, String>((ref, projectId) async {
-  final transport = ref.watch(localConnectionProvider);
-  return transport.readProjectGithubUrl(projectId);
-});
+    makeConnectionFutureProviderFamily<String?, String>(
+      read: (_, connection, projectId) =>
+          connection.readProjectGithubUrl(projectId),
+      fallback: null,
+    );

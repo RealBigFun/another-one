@@ -11,19 +11,17 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../rust/api/local_session.dart' show ResolvedProjectBranchSettingsDto;
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 final branchSettingsProvider =
-    FutureProvider.family<ResolvedProjectBranchSettingsDto?, String>(
-  (ref, projectId) async {
-    final connection = ref.watch(localConnectionProvider);
-    try {
-      return await connection.readBranchSettings(projectId);
-    } on UnimplementedError {
-      return null;
-    }
-  },
-);
+    makeConnectionFutureProviderFamily<
+      ResolvedProjectBranchSettingsDto?,
+      String
+    >(
+      read: (_, connection, projectId) =>
+          connection.readBranchSettings(projectId),
+      fallback: null,
+    );
 
 /// Whether the Configuration panel header is expanded. Mirrors
 /// GPUI's `project_page_config_panel_expanded` — initialised to
@@ -38,7 +36,8 @@ final configurationPanelExpandedProvider = StateProvider<bool>((_) => true);
 /// `Option<ProjectBranchSettingField>`.
 enum BranchSettingField { defaultBranch, defaultTargetBranch }
 
-class _BranchSettingDropdownNotifier extends StateNotifier<BranchSettingField?> {
+class _BranchSettingDropdownNotifier
+    extends StateNotifier<BranchSettingField?> {
   _BranchSettingDropdownNotifier() : super(null);
 
   void toggle(BranchSettingField field) {
@@ -48,7 +47,7 @@ class _BranchSettingDropdownNotifier extends StateNotifier<BranchSettingField?> 
   void close() => state = null;
 }
 
-final branchSettingDropdownProvider = StateNotifierProvider<
-    _BranchSettingDropdownNotifier, BranchSettingField?>(
-  (_) => _BranchSettingDropdownNotifier(),
-);
+final branchSettingDropdownProvider =
+    StateNotifierProvider<_BranchSettingDropdownNotifier, BranchSettingField?>(
+      (_) => _BranchSettingDropdownNotifier(),
+    );

@@ -12,17 +12,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../rust/api/local_session.dart' show ProjectActionDto;
-import 'local_connection_provider.dart';
+import 'connection_future_provider.dart';
 
 final projectActionsProvider =
-    FutureProvider.family<List<ProjectActionDto>, String>((ref, projectId) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.listProjectActions(projectId);
-  } on UnimplementedError {
-    return const [];
-  }
-});
+    makeConnectionFutureProviderFamily<List<ProjectActionDto>, String>(
+      read: (_, connection, projectId) =>
+          connection.listProjectActions(projectId),
+      fallback: const [],
+    );
 
 /// In-memory id of the last action the user ran from the
 /// titlebar split-button. The button uses this to pick a

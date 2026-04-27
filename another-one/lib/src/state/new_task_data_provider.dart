@@ -6,54 +6,35 @@
 // switch (rare) or never (the bridge holds the same store the
 // modal is reading from in-process).
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../rust/api/local_session.dart'
     show AgentSettingsView, EnabledAgentsView;
+import 'connection_future_provider.dart';
 import 'local_connection_provider.dart';
 
-final projectBranchesProvider = FutureProvider.family<List<String>, String>((
-  ref,
-  projectId,
-) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.readProjectBranches(projectId);
-  } on UnimplementedError {
-    return const [];
-  }
-});
+final projectBranchesProvider =
+    makeConnectionFutureProviderFamily<List<String>, String>(
+      read: (_, connection, projectId) =>
+          connection.readProjectBranches(projectId),
+      fallback: const [],
+    );
 
-final primaryBranchProvider = FutureProvider.family<String?, String>((
-  ref,
-  projectId,
-) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.primaryBranchForProject(projectId);
-  } on UnimplementedError {
-    return null;
-  }
-});
+final primaryBranchProvider =
+    makeConnectionFutureProviderFamily<String?, String>(
+      read: (_, connection, projectId) =>
+          connection.primaryBranchForProject(projectId),
+      fallback: null,
+    );
 
-final enabledAgentsProvider = FutureProvider<EnabledAgentsView>((ref) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.readEnabledAgents();
-  } on UnimplementedError {
-    return const EnabledAgentsView(agents: []);
-  }
-});
+final enabledAgentsProvider = makeConnectionFutureProvider<EnabledAgentsView>(
+  read: (_, connection) => connection.readEnabledAgents(),
+  fallback: const EnabledAgentsView(agents: []),
+);
 
 /// Full agent registry — Settings → Agents page reads from here.
 /// Refresh after every mutation (set_agent_enabled, etc.) by
 /// invalidating this provider.
-final agentSettingsProvider = FutureProvider<AgentSettingsView?>((ref) async {
-  final connection = ref.watch(localConnectionProvider);
-  await waitForConnectedDaemon(connection);
-  try {
-    return await connection.readAgentSettings();
-  } on UnimplementedError {
-    return null;
-  }
-});
+final agentSettingsProvider = makeConnectionFutureProvider<AgentSettingsView?>(
+  read: (_, connection) => connection.readAgentSettings(),
+  fallback: null,
+  prepare: (_, connection) => waitForConnectedDaemon(connection),
+);
