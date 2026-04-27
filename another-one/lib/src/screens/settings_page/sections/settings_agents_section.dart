@@ -19,6 +19,7 @@ import '../../../rust/api/local_session.dart' show AgentSettingsRow;
 import '../../../state/local_connection_provider.dart';
 import '../../../state/new_task_data_provider.dart';
 import '../../../tokens.dart';
+import '../../../widgets/app_toast.dart';
 import 'settings_async_state.dart';
 
 class SettingsAgentsSection extends ConsumerWidget {
@@ -230,6 +231,8 @@ class _AgentRow extends ConsumerStatefulWidget {
 }
 
 class _AgentRowState extends ConsumerState<_AgentRow> {
+  static final RegExp _whitespacePattern = RegExp(r'\s');
+
   late final TextEditingController _draft;
   bool _busy = false;
 
@@ -248,6 +251,10 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
   Future<void> _addArg() async {
     final value = _draft.text.trim();
     if (value.isEmpty || _busy) return;
+    if (_whitespacePattern.hasMatch(value)) {
+      _toast('Launch args must be a single token.');
+      return;
+    }
     final current = List<String>.from(widget.row.launchArgs);
     if (current.contains(value)) {
       _draft.clear();
@@ -316,9 +323,7 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
   }
 
   void _toast(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: AppTokens.errorBg),
-    );
+    showAppToast(context, message: message);
   }
 
   @override
@@ -446,7 +451,7 @@ class _ArgInput extends StatelessWidget {
           isDense: true,
           contentPadding: EdgeInsets.symmetric(vertical: 9),
           border: InputBorder.none,
-          hintText: '--flag value',
+          hintText: '--flag=value',
           hintStyle: TextStyle(fontSize: 12, color: AppTokens.textPlaceholder),
         ),
         onSubmitted: (_) => unawaited(onSubmit()),
