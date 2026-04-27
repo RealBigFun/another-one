@@ -229,6 +229,16 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     await session.listProjects();
   }
 
+  /// Project/task mutation acks only carry the changed entity, while
+  /// desktop state derives selection, sidebars, and active project
+  /// context from the full `ProjectList` snapshot. Queue a best-effort
+  /// refresh after successful mutations so those surfaces rehydrate
+  /// from authoritative daemon state without every widget having to
+  /// remember a follow-up `listProjects()` call.
+  void _queueProjectListRefresh() {
+    unawaited(listProjects().catchError((_) {}));
+  }
+
   /// Attach this session's PTY-byte stream to a specific live tab on
   /// the daemon. Replaces any previous attachment; daemon begins
   /// forwarding TY_DATA frames for `tabId` under section `sectionId`.
@@ -751,7 +761,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// other `Err` throws a `StateError` for the UI toast.
   @override
   Future<bool> addProject(String path) async {
-    return _callAck<bool, WorkerReply_ProjectAdded>(
+    final inserted = await _callAck<bool, WorkerReply_ProjectAdded>(
       verb: 'addProject',
       send: (id) =>
           _session!.addProject(requestId: BigInt.from(id), path: path),
@@ -761,13 +771,17 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
           ? false
           : throw StateError('addProject failed: ${err.message}'),
     );
+    if (inserted) {
+      _queueProjectListRefresh();
+    }
+    return inserted;
   }
 
   /// Remove a project from the daemon's store by id. Idempotent —
   /// unknown ids reply with `ProjectRemoved`, no error.
   @override
   Future<void> removeProject(String projectId) async {
-    return _callAck<void, WorkerReply_ProjectRemoved>(
+    await _callAck<void, WorkerReply_ProjectRemoved>(
       verb: 'removeProject',
       send: (id) => _session!.removeProject(
         requestId: BigInt.from(id),
@@ -776,6 +790,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       mapAck: (_) {},
       onErr: (err) => throw StateError('removeProject failed: ${err.message}'),
     );
+    _queueProjectListRefresh();
   }
 
   // ── Task mutation (another-one-ojm.3) ───────────────────────────
@@ -813,7 +828,7 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<bool> renameTask(String taskId, String newName) async {
-    return _callStateAck<bool, WorkerReply_TaskRenamed>(
+    final changed = await _callStateAck<bool, WorkerReply_TaskRenamed>(
       verb: 'renameTask',
       send: (id) async {
         final session = _session;
@@ -828,11 +843,15 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       },
       mapAck: (ack) => ack.changed,
     );
+    if (changed) {
+      _queueProjectListRefresh();
+    }
+    return changed;
   }
 
   @override
   Future<bool> setTaskPinned(String taskId, bool pinned) async {
-    return _callStateAck<bool, WorkerReply_TaskPinned>(
+    final changed = await _callStateAck<bool, WorkerReply_TaskPinned>(
       verb: 'setTaskPinned',
       send: (id) async {
         final session = _session;
@@ -847,11 +866,15 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       },
       mapAck: (ack) => ack.changed,
     );
+    if (changed) {
+      _queueProjectListRefresh();
+    }
+    return changed;
   }
 
   @override
   Future<bool> removeTask(String projectId, String taskId) async {
-    return _callStateAck<bool, WorkerReply_TaskRemoved>(
+    final removed = await _callStateAck<bool, WorkerReply_TaskRemoved>(
       verb: 'removeTask',
       send: (id) async {
         final session = _session;
@@ -866,6 +889,10 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
       },
       mapAck: (ack) => ack.removed,
     );
+    if (removed) {
+      _queueProjectListRefresh();
+    }
+    return removed;
   }
 
   // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
