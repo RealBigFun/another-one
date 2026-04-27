@@ -31,10 +31,10 @@ class AppTokens {
   static const Color scrimBg = Color(0x80000000);
 
   // ── Text colours (four brightness rungs) ──────────────────────────
-  static const Color textPrimary = Color(0xEBFFFFFF); // 0.92 alpha white
-  static const Color textSecondary = Color(0xC7FFFFFF); // 0.78
-  static const Color textMuted = Color(0x94FFFFFF); // 0.58
-  static const Color textPlaceholder = Color(0x61FFFFFF); // 0.38
+  static const Color textPrimary = Color(0xFFEBEBEB); // hsla(0,0,0.92,1)
+  static const Color textSecondary = Color(0xFFC7C7C7); // hsla(0,0,0.78,1)
+  static const Color textMuted = Color(0xFF949494); // hsla(0,0,0.58,1)
+  static const Color textPlaceholder = Color(0xFF616161); // hsla(0,0,0.38,1)
 
   // ── Borders & dividers ─────────────────────────────────────────────
   static const Color border = Color(0x14FFFFFF); // 0.08
@@ -69,16 +69,15 @@ class AppTokens {
   static const Color diffRemoved = Color(0xFFEBA8B0);
 
   // ── Semantic chrome (subset used by mobile) ────────────────────────
-  static Color successIcon =
-      HSLColor.fromAHSL(1.0, 138, 0.52, 0.66).toColor();
+  static Color successIcon = HSLColor.fromAHSL(1.0, 138, 0.52, 0.66).toColor();
   static Color errorIcon = HSLColor.fromAHSL(1.0, 0, 0.68, 0.72).toColor();
+
   /// Background + text for the TaskPage error banner. Muted so it
   /// doesn't clash with terminal output below but distinct enough
   /// that a dropped connection is obvious at a glance.
   static const Color errorBg = Color(0xFF5A2A2E);
   static const Color errorText = Color(0xFFFFD6DC);
-  static Color warningIcon =
-      HSLColor.fromAHSL(1.0, 42, 0.70, 0.68).toColor();
+  static Color warningIcon = HSLColor.fromAHSL(1.0, 42, 0.70, 0.68).toColor();
   static Color infoIcon = HSLColor.fromAHSL(1.0, 208, 0.62, 0.72).toColor();
 
   // ── Chevron / icon grey used by sidebar rows ──────────────────────

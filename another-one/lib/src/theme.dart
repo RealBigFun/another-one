@@ -126,8 +126,6 @@ ThemeData buildAppTheme() {
       hintStyle: const TextStyle(color: AppTokens.textPlaceholder),
       labelStyle: const TextStyle(color: AppTokens.textSecondary),
     ),
-    progressIndicatorTheme: ProgressIndicatorThemeData(
-      color: scheme.primary,
-    ),
+    progressIndicatorTheme: ProgressIndicatorThemeData(color: scheme.primary),
   );
 }
