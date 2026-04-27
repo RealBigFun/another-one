@@ -18,6 +18,7 @@ import '../../rust/api/local_session.dart' show AgentSummaryDto;
 import '../../state/local_connection_provider.dart';
 import '../../state/new_task_data_provider.dart';
 import '../../tokens.dart';
+import '../../widgets/app_toast.dart';
 
 Future<bool> showAddAgentModal({
   required BuildContext context,
@@ -48,35 +49,60 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
   String? _selectedAgentId;
   bool _dropdownOpen = false;
   bool _submitting = false;
-  String? _error;
   bool _seeded = false;
 
-  void _seedSelection(List<AgentSummaryDto> agents, String? defaultAgent) {
-    if (_seeded) return;
-    final seeded = widget.seededAgentId;
-    if (seeded != null && agents.any((a) => a.id == seeded)) {
-      _selectedAgentId = seeded;
-    } else if (defaultAgent != null &&
-        agents.any((a) => a.id == defaultAgent)) {
-      _selectedAgentId = defaultAgent;
-    } else {
-      _selectedAgentId = agents.isNotEmpty ? agents.first.id : null;
+  String? _resolvedSelection(
+    String? selectedAgentId,
+    String? fallbackAgentId,
+    List<AgentSummaryDto> agents,
+  ) {
+    if (selectedAgentId == null) return null;
+    if (agents.any((agent) => agent.id == selectedAgentId)) {
+      return selectedAgentId;
     }
+    if (fallbackAgentId != null &&
+        agents.any((agent) => agent.id == fallbackAgentId)) {
+      return fallbackAgentId;
+    }
+    return agents.isNotEmpty ? agents.first.id : null;
+  }
+
+  String? _initialSelection(
+    List<AgentSummaryDto> agents,
+    String? defaultAgentId,
+  ) {
+    final seeded = widget.seededAgentId;
+    return _resolvedSelection(seeded, defaultAgentId, agents);
+  }
+
+  void _syncSelection(List<AgentSummaryDto> agents, String? defaultAgentId) {
+    _selectedAgentId = _seeded
+        ? _resolvedSelection(_selectedAgentId, defaultAgentId, agents)
+        : _initialSelection(agents, defaultAgentId);
     _seeded = true;
   }
 
   Future<void> _submit() async {
     if (_submitting) return;
+    final agentsView = ref.read(enabledAgentsProvider).valueOrNull;
+    final selectedAgentId = agentsView == null
+        ? _selectedAgentId
+        : _resolvedSelection(
+            _selectedAgentId,
+            agentsView.defaultAgentId,
+            agentsView.agents,
+          );
+
     setState(() {
+      _selectedAgentId = selectedAgentId;
       _submitting = true;
-      _error = null;
     });
     try {
       await ref
           .read(localConnectionProvider)
           .addAgentToSection(
             sectionId: widget.sectionId,
-            agentId: _selectedAgentId ?? '',
+            agentId: selectedAgentId ?? '',
           );
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -84,8 +110,8 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _error = '$e';
       });
+      showAppToast(context, message: 'Could not add agent tab: $e');
     }
   }
 
@@ -94,7 +120,7 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
     final agentsAsync = ref.watch(enabledAgentsProvider);
     final view = agentsAsync.valueOrNull;
     if (view != null) {
-      _seedSelection(view.agents, view.defaultAgentId);
+      _syncSelection(view.agents, view.defaultAgentId);
     }
     return PopScope(
       canPop: !_submitting,
@@ -173,7 +199,6 @@ class _AddAgentModalState extends ConsumerState<_AddAgentModal> {
                             ),
                           ),
                         ),
-                        if (_error != null) _ErrorBanner(text: _error!),
                         _Footer(
                           submitting: _submitting,
                           onCancel: _submitting
@@ -275,14 +300,15 @@ class _AgentPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selected = selectedId == null
-        ? null
-        : agents.firstWhere(
-            (a) => a.id == selectedId,
-            orElse: () => agents.isEmpty
-                ? const AgentSummaryDto(id: '', label: '', iconPath: '')
-                : agents.first,
-          );
+    AgentSummaryDto? selected;
+    if (selectedId != null) {
+      for (final agent in agents) {
+        if (agent.id == selectedId) {
+          selected = agent;
+          break;
+        }
+      }
+    }
     final triggerLabel = selected?.label ?? 'Terminal';
     final triggerIcon = selected?.iconPath;
     final helpText = selected != null
@@ -501,29 +527,6 @@ class _AgentRowState extends State<_AgentRow> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.text});
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: AppTokens.errorBg,
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-        ),
-        child: Text(
-          text,
-          style: const TextStyle(fontSize: 12, color: AppTokens.errorText),
         ),
       ),
     );
