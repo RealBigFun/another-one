@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use crate::open_in::{command_exists, command_in_path, OpenInAppKind};
+use crate::open_in::{command_exists, OpenInAppKind};
 use crate::process::{RawProcessSample, TrackedProcess};
 
 use super::HeadlessPlatform;
@@ -48,99 +48,28 @@ impl HeadlessPlatform for MacosPlatform {
             OpenInAppKind::VsCode => {
                 macos_app_exists("Visual Studio Code") || command_exists(&["code"])
             }
-            OpenInAppKind::Ghostty => macos_app_exists("Ghostty") || command_exists(&["ghostty"]),
-            OpenInAppKind::WezTerm => {
-                macos_app_exists("WezTerm") || command_exists(&["wezterm", "wezterm-gui"])
-            }
             OpenInAppKind::FileManager => macos_app_exists("Finder"),
         }
     }
 
     fn command_for_open_in(app: OpenInAppKind, path: &Path) -> Command {
+        let mut command = Command::new("open");
         match app {
-            OpenInAppKind::Cursor => open_app_command("Cursor", path),
-            OpenInAppKind::Zed => open_app_command("Zed", path),
-            OpenInAppKind::VsCode => open_app_command("Visual Studio Code", path),
-            OpenInAppKind::Ghostty => ghostty_command(path),
-            OpenInAppKind::WezTerm => wezterm_command(path),
+            OpenInAppKind::Cursor => {
+                command.args(["-a", "Cursor"]).arg(path);
+            }
+            OpenInAppKind::Zed => {
+                command.args(["-a", "Zed"]).arg(path);
+            }
+            OpenInAppKind::VsCode => {
+                command.args(["-a", "Visual Studio Code"]).arg(path);
+            }
             OpenInAppKind::FileManager => {
-                let mut command = Command::new("open");
                 command.arg(path);
-                command
             }
         }
-    }
-}
-
-fn open_app_command(app_name: &str, path: &Path) -> Command {
-    let mut command = Command::new("open");
-    command.args(["-a", app_name]).arg(path);
-    command
-}
-
-fn ghostty_command(path: &Path) -> Command {
-    let working_directory = format!("--working-directory={}", path.display());
-
-    if let Some(binary) = command_in_path("ghostty") {
-        let mut command = Command::new(binary);
-        command.arg(working_directory);
-        return command;
-    }
-
-    let mut command = Command::new("open");
-    command
-        .args(["-na", "Ghostty", "--args"])
-        .arg(working_directory);
-    command
-}
-
-fn wezterm_command(path: &Path) -> Command {
-    if let Some(binary) = command_in_path("wezterm") {
-        let mut command = Command::new(binary);
         command
-            .arg("start")
-            .arg("--always-new-process")
-            .arg("--cwd")
-            .arg(path);
-        return command;
     }
-
-    if let Some(binary) = macos_app_bundle_executable("WezTerm", "wezterm-gui") {
-        let mut command = Command::new(binary);
-        command
-            .arg("start")
-            .arg("--always-new-process")
-            .arg("--cwd")
-            .arg(path);
-        return command;
-    }
-
-    let mut command = Command::new("open");
-    command
-        .args([
-            "-na",
-            "WezTerm",
-            "--args",
-            "start",
-            "--always-new-process",
-            "--cwd",
-        ])
-        .arg(path);
-    command
-}
-
-fn macos_app_bundle_executable(app_name: &str, executable_name: &str) -> Option<PathBuf> {
-    macos_app_bundle_executable_from_candidates(macos_app_candidates(app_name), executable_name)
-}
-
-fn macos_app_bundle_executable_from_candidates(
-    candidates: Vec<PathBuf>,
-    executable_name: &str,
-) -> Option<PathBuf> {
-    candidates
-        .into_iter()
-        .map(|bundle| bundle.join("Contents/MacOS").join(executable_name))
-        .find(|path| path.is_file())
 }
 
 fn macos_app_exists(app_name: &str) -> bool {
@@ -182,9 +111,9 @@ pub(super) fn sysctl_hw_memsize() -> Option<u64> {
     (result == 0).then_some(bytes)
 }
 
-/// Walk the descendants of `app_pid` + each tracked process root,
-/// returning a [`RawProcessSample`] per process the kernel will let
-/// us read. Shared with `IosPlatform` because the Darwin
+/// Sample `app_pid` itself plus the descendants of each tracked
+/// process root, returning a [`RawProcessSample`] per process the
+/// kernel will let us read. Shared with `IosPlatform` because the Darwin
 /// `proc_pidinfo` / `proc_pid_rusage` interfaces are identical on
 /// both — though iOS sandboxing may scope down which descendants are
 /// actually visible.
@@ -192,19 +121,28 @@ pub(super) fn darwin_read_process_samples(
     app_pid: u32,
     tracked_processes: &[TrackedProcess],
 ) -> Vec<RawProcessSample> {
-    let mut roots = Vec::with_capacity(1 + tracked_processes.len());
-    roots.push(app_pid);
-    roots.extend(
-        tracked_processes
-            .iter()
-            .map(|process| process.pid)
-            .filter(|pid| *pid != app_pid),
-    );
-
     let mut visited = HashSet::new();
-    let mut stack = roots;
     let mut samples = Vec::new();
 
+    if visited.insert(app_pid) {
+        if let Some(sample) = read_process_sample(app_pid) {
+            samples.push(sample);
+        }
+    }
+
+    for tracked in tracked_processes {
+        collect_darwin_process_tree(tracked.pid, &mut visited, &mut samples);
+    }
+
+    samples
+}
+
+fn collect_darwin_process_tree(
+    root_pid: u32,
+    visited: &mut HashSet<u32>,
+    samples: &mut Vec<RawProcessSample>,
+) {
+    let mut stack = vec![root_pid];
     while let Some(pid) = stack.pop() {
         if !visited.insert(pid) {
             continue;
@@ -215,8 +153,6 @@ pub(super) fn darwin_read_process_samples(
             samples.push(sample);
         }
     }
-
-    samples
 }
 
 fn read_process_sample(pid: u32) -> Option<RawProcessSample> {
@@ -450,23 +386,6 @@ mod tests {
             samples.iter().any(|s| s.pid == pid),
             "expected the process tree walk to include our own pid {}",
             pid
-        );
-    }
-
-    #[test]
-    fn macos_app_bundle_executable_appends_contents_macos_binary() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let bundle = temp.path().join("WezTerm.app");
-        let binary = bundle.join("Contents/MacOS/wezterm-gui");
-        std::fs::create_dir_all(binary.parent().expect("binary parent")).expect("mkdirs");
-        std::fs::write(&binary, "#!/bin/sh\n").expect("write binary");
-
-        assert_eq!(
-            macos_app_bundle_executable_from_candidates(
-                vec![bundle.clone(), temp.path().join("Other.app")],
-                "wezterm-gui"
-            ),
-            Some(binary)
         );
     }
 }

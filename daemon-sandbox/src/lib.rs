@@ -4,7 +4,7 @@
 //! PTY-shell-per-connection behavior for smoke testing.
 //!
 //! Public entry point for embedders: [`run_endpoint`]. The caller
-//! passes a [`TerminalRegistry`] trait object describing how to
+//! passes a [`DaemonRegistry`] trait object describing how to
 //! enumerate projects/tasks/tabs and attach to live PTYs. The
 //! library constructs an iroh `Endpoint`, performs TOFU pairing,
 //! and dispatches incoming control frames to the registry.
@@ -22,7 +22,8 @@ pub mod registry;
 pub mod transport_iroh;
 pub mod transport_mcp;
 
-pub use registry::{EndpointHandle, TerminalRegistry};
+pub use registry::{DaemonRegistry, EndpointHandle};
+pub use transport_iroh::persist_pairing;
 
 // These two are the sandbox binary's own helpers; re-exported so the
 // binary can call them via `daemon_sandbox::sandbox::*` without
@@ -41,7 +42,7 @@ pub mod transport_ws;
 /// desktop passes paths under the app's data dir; the sandbox
 /// binary passes `~/.local/share/another-one-sandbox/…`.
 pub async fn run_endpoint(
-    registry: Arc<dyn TerminalRegistry>,
+    registry: Arc<dyn DaemonRegistry>,
     secret_key_path: PathBuf,
     paired_peers_path: PathBuf,
 ) -> anyhow::Result<EndpointHandle> {

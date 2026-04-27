@@ -1,11 +1,11 @@
-//! `TerminalRegistry` impl used only by the standalone
+//! `DaemonRegistry` impl used only by the standalone
 //! `daemon-sandbox` binary. Fakes a single project with one task and
 //! one tab; the first `attach_tab` call spawns a bash PTY, subsequent
 //! attaches return a fresh receiver on the same broadcast. Useful
 //! for smoke-testing the iroh endpoint + mobile UI without running
 //! the full desktop app.
 //!
-//! The desktop crate supplies its *own* `TerminalRegistry` impl that
+//! The desktop crate supplies its *own* `DaemonRegistry` impl that
 //! wraps the running `AnotherOneApp`. This module is not linked into
 //! that path.
 
@@ -17,7 +17,7 @@ use tracing::{debug, warn};
 
 use crate::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
 use crate::pty::PtySession;
-use crate::registry::TerminalRegistry;
+use crate::registry::{DaemonRegistry, RegistryFuture};
 
 const SANDBOX_PROJECT_ID: &str = "sandbox";
 const SANDBOX_TASK_ID: &str = "sandbox-task";
@@ -75,7 +75,7 @@ impl Default for SandboxRegistry {
     }
 }
 
-impl TerminalRegistry for SandboxRegistry {
+impl DaemonRegistry for SandboxRegistry {
     fn list_projects(&self) -> Vec<ProjectSummary> {
         vec![ProjectSummary {
             id: SANDBOX_PROJECT_ID.to_string(),
@@ -96,8 +96,15 @@ impl TerminalRegistry for SandboxRegistry {
                     running: true,
                     pinned: false,
                     fixed_title: None,
+                    restore_status: another_one_core::agents::TerminalRestoreStatus::Ready,
+                    failure_message: None,
+                    failure_details: None,
                 }],
                 pinned: false,
+                last_commit_relative: String::new(),
+                lines_added: 0,
+                lines_removed: 0,
+                target_project_id: SANDBOX_PROJECT_ID.to_string(),
             }],
         }]
     }
@@ -142,5 +149,21 @@ impl TerminalRegistry for SandboxRegistry {
             pixel_width: 0,
             pixel_height: 0,
         });
+    }
+
+    // Project mutation isn't meaningful on the sandbox — there's a
+    // single hard-coded project (see `list_projects` above). The
+    // smoke-test binary can't add or remove anything because there's
+    // no backing store. Surface that as a typed error rather than a
+    // fake-success Ack so a misbehaving client gets a clear signal.
+    fn add_project<'a>(
+        &'a self,
+        _path: String,
+    ) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
+        Box::pin(async { Err(anyhow::anyhow!("add_project: not supported on sandbox")) })
+    }
+
+    fn remove_project(&self, _project_id: &str) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("remove_project: not supported on sandbox"))
     }
 }

@@ -1,0 +1,42 @@
+[package]
+name = "another_one_bridge"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Shared Rust bridge crate consumed by both desktop and mobile AnotherOne clients via flutter_rust_bridge"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# `another-one-core` is the leaf crate housing the headless half of
+# the desktop's domain logic. Bridge needs it for `RegistryState`
+# (the in-process daemon's project + tab state that
+# `LocalSession` reads), `ProjectStore`, and the `HeadlessPlatform`
+# trait. No cycle: core depends on neither bridge nor
+# daemon-sandbox.
+another-one-core = { path = "../core" }
+# Boot path: the bridge spawns `run_endpoint` in-process for desktop
+# Flutter, replacing the GPUI binary's `daemon_host`. daemon-sandbox
+# already depends on `another-one-core`, and the bridge does too —
+# they're sibling leaves on the same trunk, no cycle.
+daemon-sandbox = { path = "../daemon-sandbox" }
+flutter_rust_bridge = "=2.12.0"
+iroh = "0.98.1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Used to mint task ids inside `create_worktree_task`. Same v4 UUID
+# shape the GPUI desktop generates so persisted tasks round-trip
+# across the two clients.
+uuid = { version = "1", features = ["v4"] }
+
+# Android-only log bridge for our tracing events.
+[target.'cfg(target_os = "android")'.dependencies]
+tracing-android = "0.2"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -31,10 +32,10 @@ impl HeadlessPlatform for LinuxPlatform {
     }
 
     fn read_process_samples(
-        _app_pid: u32,
-        _tracked_processes: &[TrackedProcess],
+        app_pid: u32,
+        tracked_processes: &[TrackedProcess],
     ) -> Vec<RawProcessSample> {
-        procfs_read_process_samples()
+        procfs_read_process_samples(app_pid, tracked_processes)
     }
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool {
@@ -50,18 +51,17 @@ impl HeadlessPlatform for LinuxPlatform {
             command.arg(path);
             return command;
         }
-
         let launcher = find_launcher_on_host(app);
         let mut command = match launcher {
             Some(LinuxLauncher::Binary(bin)) => Command::new(bin),
             Some(LinuxLauncher::Flatpak(app_id)) => {
-                let mut command = Command::new("flatpak");
-                command.args(["run", app_id.as_str()]);
-                command
+                let mut c = Command::new("flatpak");
+                c.args(["run", app_id.as_str()]);
+                c
             }
             None => Command::new(default_binary_name(app)),
         };
-        apply_open_in_args(&mut command, app, path);
+        command.arg(path);
         command
     }
 }
@@ -77,8 +77,6 @@ fn default_binary_name(app: OpenInAppKind) -> &'static str {
         OpenInAppKind::Cursor => "cursor",
         OpenInAppKind::Zed => "zed",
         OpenInAppKind::VsCode => "code",
-        OpenInAppKind::Ghostty => "ghostty",
-        OpenInAppKind::WezTerm => "wezterm",
         OpenInAppKind::FileManager => "xdg-open",
     }
 }
@@ -88,8 +86,6 @@ fn binary_candidates(app: OpenInAppKind) -> &'static [&'static str] {
         OpenInAppKind::Cursor => &["cursor"],
         OpenInAppKind::Zed => &["zed", "zeditor"],
         OpenInAppKind::VsCode => &["code", "code-insiders"],
-        OpenInAppKind::Ghostty => &["ghostty"],
-        OpenInAppKind::WezTerm => &["wezterm", "wezterm-gui"],
         OpenInAppKind::FileManager => &["xdg-open"],
     }
 }
@@ -99,32 +95,7 @@ fn flatpak_candidates(app: OpenInAppKind) -> &'static [&'static str] {
         OpenInAppKind::Cursor => &[],
         OpenInAppKind::Zed => &["dev.zed.Zed"],
         OpenInAppKind::VsCode => &["com.visualstudio.code"],
-        OpenInAppKind::Ghostty => &["com.mitchellh.ghostty"],
-        OpenInAppKind::WezTerm => &["org.wezfurlong.wezterm"],
         OpenInAppKind::FileManager => &[],
-    }
-}
-
-fn apply_open_in_args(command: &mut Command, app: OpenInAppKind, path: &Path) {
-    match app {
-        OpenInAppKind::Cursor | OpenInAppKind::Zed | OpenInAppKind::VsCode => {
-            command.arg(path);
-        }
-        OpenInAppKind::Ghostty => {
-            command
-                .arg("+new-window")
-                .arg(format!("--working-directory={}", path.display()));
-        }
-        OpenInAppKind::WezTerm => {
-            command
-                .arg("start")
-                .arg("--always-new-process")
-                .arg("--cwd")
-                .arg(path);
-        }
-        OpenInAppKind::FileManager => {
-            command.arg(path);
-        }
     }
 }
 
@@ -195,16 +166,19 @@ pub(super) fn proc_meminfo_total_bytes() -> Option<u64> {
     Some(kib.saturating_mul(1024))
 }
 
-/// Walk every PID under `/proc`, parsing `stat` for CPU + RSS.
+/// Sample the app PID plus tracked process trees from procfs.
 /// Shared with `AndroidPlatform`, which has the same procfs layout
 /// (though sandboxing may hide descendants outside the app's own
 /// tree — `Option`s in the caller absorb that gracefully).
 ///
-/// Note: unlike the Darwin impl, this doesn't take `app_pid` /
-/// `tracked_processes` because `/proc` enumeration already
-/// surfaces every readable process; the caller filters down by
-/// PID match.
-pub(super) fn procfs_read_process_samples() -> Vec<RawProcessSample> {
+/// `smaps_rollup` is accurate but expensive; reading it for every
+/// readable process was enough to create visible idle CPU spikes on
+/// desktops with many processes. Keep app-window memory on cheap RSS
+/// and limit PSS reads to tracked subprocess trees shown in the UI.
+pub(super) fn procfs_read_process_samples(
+    app_pid: u32,
+    tracked_processes: &[TrackedProcess],
+) -> Vec<RawProcessSample> {
     let clock_ticks_per_second = match sysconf_u64(libc::_SC_CLK_TCK) {
         Some(value) if value > 0 => value,
         _ => return Vec::new(),
@@ -214,48 +188,165 @@ pub(super) fn procfs_read_process_samples() -> Vec<RawProcessSample> {
         _ => return Vec::new(),
     };
 
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
+    if tracked_processes.is_empty() {
+        return read_procfs_stat_sample(app_pid, clock_ticks_per_second, page_size)
+            .map(|sample| sample.into_raw_sample(LinuxMemoryMode::Rss))
+            .into_iter()
+            .collect();
+    }
 
-    entries
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let file_name = entry.file_name();
-            let file_name = file_name.to_str()?;
-            let pid = file_name.parse::<u32>().ok()?;
-            let stat_path = entry.path().join("stat");
-            let stat = std::fs::read_to_string(stat_path).ok()?;
-            parse_linux_process_sample(&stat, pid, clock_ticks_per_second, page_size)
+    let mut sample_by_pid = HashMap::new();
+    if let Some(sample) = read_procfs_stat_sample(app_pid, clock_ticks_per_second, page_size) {
+        sample_by_pid.insert(app_pid, sample);
+    }
+    for tracked in tracked_processes {
+        collect_procfs_process_tree(
+            tracked.pid,
+            clock_ticks_per_second,
+            page_size,
+            &mut sample_by_pid,
+        );
+    }
+
+    sample_by_pid
+        .into_values()
+        .map(|sample| {
+            let memory_mode = if sample.pid == app_pid {
+                LinuxMemoryMode::Rss
+            } else {
+                LinuxMemoryMode::Pss
+            };
+            sample.into_raw_sample(memory_mode)
         })
         .collect()
 }
 
-pub(super) fn parse_linux_process_sample(
+fn read_procfs_stat_sample(
+    pid: u32,
+    clock_ticks_per_second: u64,
+    page_size: u64,
+) -> Option<LinuxStatSample> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    parse_linux_stat_sample(&stat, pid, clock_ticks_per_second, page_size)
+}
+
+fn collect_procfs_process_tree(
+    root_pid: u32,
+    clock_ticks_per_second: u64,
+    page_size: u64,
+    samples_by_pid: &mut HashMap<u32, LinuxStatSample>,
+) {
+    let mut visited = HashSet::new();
+    let mut stack = vec![root_pid];
+    while let Some(pid) = stack.pop() {
+        if !visited.insert(pid) {
+            continue;
+        }
+        if let Some(sample) = read_procfs_stat_sample(pid, clock_ticks_per_second, page_size) {
+            samples_by_pid.entry(pid).or_insert(sample);
+            stack.extend(procfs_child_pids(pid));
+        }
+    }
+}
+
+fn procfs_child_pids(pid: u32) -> Vec<u32> {
+    let Ok(task_entries) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+        return read_procfs_task_children(pid, pid);
+    };
+
+    let mut children = HashSet::new();
+    for entry in task_entries.flatten() {
+        let Some(file_name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Ok(tid) = file_name.parse::<u32>() else {
+            continue;
+        };
+        children.extend(read_procfs_task_children(pid, tid));
+    }
+    children.into_iter().collect()
+}
+
+fn read_procfs_task_children(pid: u32, tid: u32) -> Vec<u32> {
+    let Ok(children) = std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/children")) else {
+        return Vec::new();
+    };
+    children
+        .split_whitespace()
+        .filter_map(|child| child.parse::<u32>().ok())
+        .collect()
+}
+
+fn parse_linux_stat_sample(
     stat_line: &str,
     pid: u32,
     clock_ticks_per_second: u64,
     page_size: u64,
-) -> Option<RawProcessSample> {
+) -> Option<LinuxStatSample> {
     let comm_end = stat_line.rfind(") ")?;
-    let fields = stat_line
-        .get(comm_end + 2..)?
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    let ppid = fields.get(1)?.parse::<u32>().ok()?;
-    let utime_ticks = fields.get(11)?.parse::<u64>().ok()?;
-    let stime_ticks = fields.get(12)?.parse::<u64>().ok()?;
-    let rss_pages = fields.get(21)?.parse::<i64>().ok()?.max(0) as u64;
+    let mut fields = stat_line.get(comm_end + 2..)?.split_whitespace();
+    fields.next()?;
+    let ppid = fields.next()?.parse::<u32>().ok()?;
+    let utime_ticks = fields.nth(9)?.parse::<u64>().ok()?;
+    let stime_ticks = fields.next()?.parse::<u64>().ok()?;
+    let rss_pages = fields.nth(8)?.parse::<i64>().ok()?.max(0) as u64;
 
-    Some(RawProcessSample {
+    Some(LinuxStatSample {
         pid,
         ppid,
         total_cpu_time_ns: ticks_to_nanos(
             utime_ticks.saturating_add(stime_ticks),
             clock_ticks_per_second,
         ),
-        memory_bytes: rss_pages.saturating_mul(page_size),
+        rss_memory_bytes: rss_pages.saturating_mul(page_size),
     })
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LinuxStatSample {
+    pid: u32,
+    ppid: u32,
+    total_cpu_time_ns: u64,
+    rss_memory_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LinuxMemoryMode {
+    Rss,
+    Pss,
+}
+
+impl LinuxStatSample {
+    fn into_raw_sample(self, memory_mode: LinuxMemoryMode) -> RawProcessSample {
+        let memory_bytes = match memory_mode {
+            // App-window memory is a single PID, so RSS is cheap and
+            // does not risk double-counting a subprocess tree.
+            LinuxMemoryMode::Rss => self.rss_memory_bytes,
+            // Tracked subprocess rows can include multiple child
+            // processes. PSS avoids double-counting shared library
+            // pages when those trees are summed in the UI.
+            LinuxMemoryMode::Pss => read_smaps_pss_bytes(self.pid).unwrap_or(self.rss_memory_bytes),
+        };
+        RawProcessSample {
+            pid: self.pid,
+            ppid: self.ppid,
+            total_cpu_time_ns: self.total_cpu_time_ns,
+            memory_bytes,
+        }
+    }
+}
+
+fn read_smaps_pss_bytes(pid: u32) -> Option<u64> {
+    let rollup = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")).ok()?;
+    for line in rollup.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("Pss:") {
+            // "Pss:    1234 kB" → 1234. Always reported in kB.
+            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb.saturating_mul(1024));
+        }
+    }
+    None
 }
 
 pub(super) fn ticks_to_nanos(ticks: u64, clock_ticks_per_second: u64) -> u64 {
@@ -311,6 +402,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn read_process_samples_excludes_untracked_children() {
+        let mut tracked_child = std::process::Command::new("sleep")
+            .arg("2")
+            .spawn()
+            .unwrap();
+        let mut untracked_child = std::process::Command::new("sleep")
+            .arg("2")
+            .spawn()
+            .unwrap();
+
+        let app_pid = std::process::id();
+        let tracked_pid = tracked_child.id();
+        let untracked_pid = untracked_child.id();
+        let tracked = [tracked_process(tracked_pid)];
+        let samples = LinuxPlatform::read_process_samples(app_pid, &tracked);
+
+        let _ = tracked_child.kill();
+        let _ = tracked_child.wait();
+        let _ = untracked_child.kill();
+        let _ = untracked_child.wait();
+
+        assert!(
+            samples.iter().any(|sample| sample.pid == app_pid),
+            "expected samples to include the app pid {app_pid}"
+        );
+        assert!(
+            samples.iter().any(|sample| sample.pid == tracked_pid),
+            "expected samples to include tracked child pid {tracked_pid}"
+        );
+        assert!(
+            !samples.iter().any(|sample| sample.pid == untracked_pid),
+            "expected samples to exclude untracked child pid {untracked_pid}"
+        );
+    }
+
+    fn tracked_process(pid: u32) -> TrackedProcess {
+        TrackedProcess {
+            pid,
+            key: format!("session-{pid}"),
+            label: format!("Session {pid}"),
+            project_key: "project".to_string(),
+            project_label: "Project".to_string(),
+            task_key: "task".to_string(),
+            task_label: "Task".to_string(),
+            icon_path: "",
+        }
+    }
+
     mod find_launcher_in_dirs_tests {
         use super::super::{find_launcher_in_dirs, LinuxLauncher};
         use crate::open_in::OpenInAppKind;
@@ -362,30 +502,6 @@ mod tests {
             let empty = tmp.path().join("empty");
             fs::create_dir_all(&empty).unwrap();
             assert!(find_launcher_in_dirs(OpenInAppKind::Cursor, &[empty]).is_none());
-        }
-
-        #[test]
-        fn finds_ghostty_flatpak_wrapper_by_app_id() {
-            let tmp = tempfile::tempdir().unwrap();
-            let flatpak_dir = tmp.path().join("flatpak-exports-bin");
-            make_exec(&flatpak_dir, "com.mitchellh.ghostty");
-            let launcher = find_launcher_in_dirs(OpenInAppKind::Ghostty, &[flatpak_dir]);
-            assert_eq!(
-                launcher,
-                Some(LinuxLauncher::Flatpak("com.mitchellh.ghostty".into()))
-            );
-        }
-
-        #[test]
-        fn finds_wezterm_binary_by_gui_name() {
-            let tmp = tempfile::tempdir().unwrap();
-            let bin_dir = tmp.path().join("bin");
-            make_exec(&bin_dir, "wezterm-gui");
-            let launcher = find_launcher_in_dirs(OpenInAppKind::WezTerm, &[bin_dir.clone()]);
-            assert_eq!(
-                launcher,
-                Some(LinuxLauncher::Binary(bin_dir.join("wezterm-gui")))
-            );
         }
     }
 }

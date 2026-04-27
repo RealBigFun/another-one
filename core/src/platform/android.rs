@@ -43,16 +43,16 @@ impl HeadlessPlatform for AndroidPlatform {
     }
 
     fn read_process_samples(
-        _app_pid: u32,
-        _tracked_processes: &[crate::process::TrackedProcess],
+        app_pid: u32,
+        tracked_processes: &[crate::process::TrackedProcess],
     ) -> Vec<crate::process::RawProcessSample> {
         // Same procfs layout as Linux. Note that on modern Android
         // the SELinux policy + per-app sandboxing severely restricts
         // which `/proc/<pid>` directories the app can read — the
-        // returned vec on Android will typically only contain the
-        // app's own process and its descendants, which is exactly
+        // returned vec on Android will typically only contain the app
+        // process plus requested tracked descendants, which is exactly
         // what the resource indicator wants anyway.
-        super::linux::procfs_read_process_samples()
+        super::linux::procfs_read_process_samples(app_pid, tracked_processes)
     }
 
     fn is_open_in_app_available(_app: OpenInAppKind) -> bool {

@@ -169,19 +169,18 @@ fn launch_terminal(
     let process_id = child.process_id();
     let child_killer = child.clone_killer();
 
-    // Broadcast tee — see `PreparedTerminalRuntime::output_broadcast`.
-    // Capacity 512 absorbs a burst of ~4 MB (8 KiB reads × 512) —
-    // roughly one full alt-screen repaint from Claude Code's
-    // status-panel rewrite storms without the subscriber hitting
-    // `RecvError::Lagged` and skipping rows.
+    // Live-output sender owned by the embedder's PTY drain. The
+    // reader thread emits `TerminalLaunchReply::Output`; the drain
+    // records replay and forwards live bytes through this sender under
+    // one registry lock so attach replay cannot race live delivery.
+    // Capacity 512 absorbs a burst of ~4 MB (8 KiB reads × 512).
     let (output_broadcast, _initial_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(512);
-    let broadcast_for_reader = output_broadcast.clone();
 
-    // Only clone the 8 KiB chunk when there's actually a subscriber —
-    // zero-subscriber `send()` returns Err and we were cloning for
-    // nothing before. `receiver_count()` is atomic, so this is cheap.
-    let has_subscribers = move || broadcast_for_reader.receiver_count() > 0;
-    let broadcast_for_reader_send = output_broadcast.clone();
+    // Snapshot the provider before the launch_config moves into the
+    // `Launched` reply — the Claude session watcher below needs it
+    // to gate on the Claude case, and `TerminalLaunchConfig` isn't
+    // `Copy`.
+    let launch_provider = launch_config.provider;
 
     sender
         .send(TerminalLaunchReply::Launched {
@@ -208,14 +207,6 @@ fn launch_terminal(
                 Ok(count) => {
                     crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
-                    // Only clone + broadcast when a mobile viewer is
-                    // actually subscribed. Zero-subscriber send()
-                    // would return Err, but the `.clone()` of the
-                    // Vec runs unconditionally — wasted at ~hundreds
-                    // of chunks/sec under chatty agents.
-                    if has_subscribers() {
-                        let _ = broadcast_for_reader_send.send(bytes.clone());
-                    }
                     let _ = output_sender.send(TerminalLaunchReply::Output {
                         key: output_key.clone(),
                         bytes,
@@ -255,6 +246,24 @@ fn launch_terminal(
                 });
             }
         });
+    }
+
+    // Long-running Claude session watcher — separate from the
+    // codex/pi `discover_session` loop because Claude doesn't fit
+    // its one-shot model. The agent rotates its active session id
+    // every time the user types `/resume <id>` (or any other
+    // session-switching command) from inside the running CLI; the
+    // active jsonl in `~/.claude/projects/<sanitised-cwd>/` simply
+    // changes underneath us. Polling the dir here every couple of
+    // seconds and emitting on transition keeps `tab.launch_config
+    // .session` aligned with whatever conversation is currently
+    // streaming, so the next launch resumes that one rather than
+    // dropping back to the original.
+    if matches!(launch_provider, Some(AgentProviderKind::ClaudeCode)) {
+        let watch_sender = sender.clone();
+        let watch_key = key.clone();
+        let watch_cwd = cwd.clone();
+        thread::spawn(move || claude_session_watch_loop(watch_sender, watch_key, watch_cwd));
     }
 
     Ok(())
@@ -580,12 +589,92 @@ fn claude_project_dir_name(cwd: &Path) -> String {
         .collect()
 }
 
+/// How often the Claude session watcher polls the projects dir.
+/// 2s is well under the typical user-response cadence inside a
+/// `/resume` flow but cheap enough to run forever per live tab —
+/// the body is a single `read_dir` + a few stat calls.
+const CLAUDE_SESSION_WATCH_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Drive a tab's persisted `launch_config.session` from whichever
+/// Claude conversation jsonl is currently being streamed. Picks the
+/// newest-mtime `<id>.jsonl` under the cwd's sanitised project dir;
+/// emits `SessionDiscovered` whenever the active id changes; exits
+/// when the launch reply channel closes (i.e. the runtime is being
+/// torn down with the tab).
+fn claude_session_watch_loop(
+    sender: mpsc::SyncSender<TerminalLaunchReply>,
+    key: TerminalRuntimeKey,
+    cwd: PathBuf,
+) {
+    let mut last_id: Option<String> = None;
+    loop {
+        if let Some(active_id) = newest_claude_session_id(&cwd) {
+            if last_id.as_deref() != Some(active_id.as_str()) {
+                let send_result = sender.send(TerminalLaunchReply::SessionDiscovered {
+                    key: key.clone(),
+                    session: TerminalSessionRef {
+                        kind: TerminalSessionKind::ClaudeSession,
+                        id: active_id.clone(),
+                    },
+                });
+                if send_result.is_err() {
+                    return;
+                }
+                last_id = Some(active_id);
+            }
+        }
+        thread::sleep(CLAUDE_SESSION_WATCH_INTERVAL);
+    }
+}
+
+/// Walk `~/.claude/projects/<sanitised-cwd>/` and return the id of
+/// the newest-mtime `.jsonl`. That's the conversation Claude is
+/// currently writing to — equal to the original session id while
+/// the user hasn't typed `/resume`, and the resumed id afterward.
+/// `None` when the dir doesn't exist yet (still in the launch
+/// window) or the home dir can't be resolved.
+fn newest_claude_session_id(cwd: &Path) -> Option<String> {
+    let projects_root = dirs::home_dir().map(|home| home.join(".claude/projects"))?;
+    let dir = projects_root.join(claude_project_dir_name(cwd));
+    let entries = fs::read_dir(dir).ok()?;
+
+    let mut newest: Option<(SystemTime, String)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(modified_at) = entry.metadata().ok().and_then(|m| m.modified().ok()) else {
+            continue;
+        };
+        if newest
+            .as_ref()
+            .map(|(when, _)| modified_at > *when)
+            .unwrap_or(true)
+        {
+            newest = Some((modified_at, stem));
+        }
+    }
+    newest.map(|(_, id)| id)
+}
+
 fn apply_terminal_environment(builder: &mut CommandBuilder, cwd: &Path) {
     builder.env("TERM", "xterm-256color");
     builder.env("COLORTERM", "truecolor");
     builder.env("COLORTERM_BCE", "1");
     builder.env("TERM_PROGRAM", "WezTerm");
     builder.env("TERM_PROGRAM_VERSION", "20240203");
+    builder.env_remove("NO_COLOR");
+    builder.env("CLICOLOR", "1");
+    builder.env("CLICOLOR_FORCE", "1");
+    builder.env("FORCE_COLOR", "1");
     apply_agent_command_path(builder, cwd);
 }
 

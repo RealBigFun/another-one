@@ -422,6 +422,10 @@ pub struct PersistedTerminalTab {
     pub launch_config: Option<TerminalLaunchConfig>,
     #[serde(default)]
     pub restore_status: TerminalRestoreStatus,
+    #[serde(default)]
+    pub failure_message: Option<String>,
+    #[serde(default)]
+    pub failure_details: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1106,34 +1110,61 @@ impl ProjectStore {
 
     #[allow(dead_code)]
     pub fn remove_project(&mut self, project_id: &str) {
-        let Some(project) = self.projects_by_id.remove(project_id) else {
+        let Some(repo_id) = self
+            .projects_by_id
+            .get(project_id)
+            .map(|project| project.repo_id.clone())
+        else {
             return;
         };
-        self.project_order.retain(|id| id != project_id);
+        let removed_project_ids = self
+            .projects_by_id
+            .iter()
+            .filter_map(|(candidate_id, candidate)| {
+                (candidate.repo_id == repo_id).then(|| candidate_id.clone())
+            })
+            .collect::<HashSet<_>>();
+        let removed_section_prefixes = removed_project_ids
+            .iter()
+            .map(|removed_project_id| format!("{removed_project_id}::"))
+            .collect::<Vec<_>>();
+
+        for removed_project_id in &removed_project_ids {
+            self.projects_by_id.remove(removed_project_id);
+        }
+        self.project_order
+            .retain(|candidate_id| !removed_project_ids.contains(candidate_id));
 
         let removed_task_ids = self
             .tasks_by_id
             .values()
             .filter(|task| {
-                task.root_project_id == project_id || task.target_project_id == project_id
+                removed_project_ids.contains(&task.root_project_id)
+                    || removed_project_ids.contains(&task.target_project_id)
             })
             .map(|task| task.id.clone())
             .collect::<Vec<_>>();
         for task_id in removed_task_ids {
             let _ = self.remove_task_by_id(&task_id);
         }
-        self.terminal_sections
-            .retain(|section_id, _| !section_id.starts_with(&format!("{project_id}::")));
+        self.terminal_sections.retain(|section_id, _| {
+            !removed_section_prefixes
+                .iter()
+                .any(|prefix| section_id.starts_with(prefix))
+        });
         if self
             .ui
             .last_active_section_id
             .as_ref()
-            .is_some_and(|section_id| section_id.starts_with(&format!("{project_id}::")))
+            .is_some_and(|section_id| {
+                removed_section_prefixes
+                    .iter()
+                    .any(|prefix| section_id.starts_with(prefix))
+            })
         {
             self.ui.last_active_section_id = None;
         }
 
-        let repo_id = project.repo_id.clone();
         if !self
             .projects_by_id
             .values()
@@ -1770,6 +1801,66 @@ impl ProjectStore {
             self.rebuild_runtime_views();
             self.save();
         }
+    }
+
+    /// Persist the agent session id discovered after a successful
+    /// PTY launch (e.g. Claude Code wrote `<id>.jsonl` under
+    /// `~/.claude/projects/<sanitised-cwd>/`). On the next launch
+    /// of this tab `resolve_claude_session` finds the existing
+    /// JSONL and the agent resumes its conversation instead of
+    /// minting a fresh one. No-op if the section / tab no longer
+    /// exists (the user closed the tab between launch and discovery)
+    /// or if the persisted session is already this exact ref.
+    pub fn set_tab_session(
+        &mut self,
+        section_key: &str,
+        tab_id: &str,
+        session: crate::agents::TerminalSessionRef,
+    ) {
+        let section = match self.terminal_sections.get_mut(section_key) {
+            Some(s) => s,
+            None => return,
+        };
+        let tab = match section.tabs.iter_mut().find(|t| t.id == tab_id) {
+            Some(t) => t,
+            None => return,
+        };
+        let mut config = tab.launch_config.clone().unwrap_or_default();
+        if config.session.as_ref() == Some(&session) {
+            return;
+        }
+        config.session = Some(session);
+        tab.launch_config = Some(config);
+        self.save();
+    }
+
+    pub fn set_tab_restore_status(
+        &mut self,
+        section_key: &str,
+        tab_id: &str,
+        status: TerminalRestoreStatus,
+        failure_message: Option<String>,
+        failure_details: Option<String>,
+    ) {
+        let section = match self.terminal_sections.get_mut(section_key) {
+            Some(s) => s,
+            None => return,
+        };
+        let tab = match section.tabs.iter_mut().find(|t| t.id == tab_id) {
+            Some(t) => t,
+            None => return,
+        };
+        if tab.restore_status == status
+            && tab.failure_message == failure_message
+            && tab.failure_details == failure_details
+        {
+            return;
+        }
+        tab.restore_status = status;
+        tab.failure_message = failure_message;
+        tab.failure_details = failure_details;
+        self.rebuild_runtime_views();
+        self.save();
     }
 }
 
@@ -3429,6 +3520,8 @@ mod tests {
             provider: None,
             launch_config: None,
             restore_status: Default::default(),
+            failure_message: None,
+            failure_details: None,
         };
 
         let json = serde_json::to_string(&tab).expect("serialize persisted tab");
@@ -3448,6 +3541,8 @@ mod tests {
             provider: None,
             launch_config: None,
             restore_status: Default::default(),
+            failure_message: None,
+            failure_details: None,
         };
 
         let json = serde_json::to_string(&tab).expect("serialize persisted tab");
@@ -3466,6 +3561,8 @@ mod tests {
 
         assert!(!restored.pinned);
         assert_eq!(restored.fixed_title, None);
+        assert_eq!(restored.failure_message, None);
+        assert_eq!(restored.failure_details, None);
     }
 
     fn sample_project_store(root_project: Project) -> super::ProjectStore {
@@ -4053,6 +4150,8 @@ mod tests {
                                 provider: None,
                                 launch_config: Some(TerminalLaunchConfig::default()),
                                 restore_status: TerminalRestoreStatus::NotStarted,
+                                failure_message: None,
+                                failure_details: None,
                             },
                             PersistedTerminalTab {
                                 id: "1".to_string(),
@@ -4072,6 +4171,8 @@ mod tests {
                                     )),
                                 ),
                                 restore_status: TerminalRestoreStatus::Ready,
+                                failure_message: None,
+                                failure_details: None,
                             },
                         ],
                         active_tab_id: "1".to_string(),
@@ -4104,6 +4205,8 @@ mod tests {
                                     })),
                             ),
                             restore_status: TerminalRestoreStatus::Launching,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
@@ -4131,6 +4234,8 @@ mod tests {
                                 provider: None,
                                 launch_config: Some(TerminalLaunchConfig::default()),
                                 restore_status: TerminalRestoreStatus::NotStarted,
+                                failure_message: None,
+                                failure_details: None,
                             },
                             PersistedTerminalTab {
                                 id: "1".to_string(),
@@ -4150,6 +4255,8 @@ mod tests {
                                     )),
                                 ),
                                 restore_status: TerminalRestoreStatus::Ready,
+                                failure_message: None,
+                                failure_details: None,
                             },
                         ],
                     },
@@ -4174,6 +4281,8 @@ mod tests {
                                     })),
                             ),
                             restore_status: TerminalRestoreStatus::Launching,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                 ),
@@ -4336,6 +4445,162 @@ mod tests {
             store.root_project_id_for_project("wt").as_deref(),
             Some("root")
         );
+    }
+
+    #[test]
+    fn remove_project_should_remove_worktree_siblings_in_same_repo_group() {
+        let mut root_project = sample_project("root", None);
+        root_project.repo_id = "repo".to_string();
+        let mut worktree_project = sample_project("wt", Some("wt"));
+        worktree_project.repo_id = "repo".to_string();
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    branch_order: vec!["main".to_string(), "feature/worktree".to_string()],
+                    branches_by_name: HashMap::new(),
+                },
+            )]),
+            projects_by_id: HashMap::from([
+                ("root".to_string(), root_project),
+                ("wt".to_string(), worktree_project),
+            ]),
+            projects: Vec::new(),
+            project_order: vec!["root".to_string(), "wt".to_string()],
+            tasks_by_id: HashMap::from([
+                (
+                    "task-root".to_string(),
+                    Task {
+                        id: "task-root".to_string(),
+                        name: "Root task".to_string(),
+                        kind: TaskKind::Direct,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "root".to_string(),
+                        branch_name: "main".to_string(),
+                        section_id: "root::main::task-root".to_string(),
+                        worktree_project_id: None,
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                    },
+                ),
+                (
+                    "task-worktree".to_string(),
+                    Task {
+                        id: "task-worktree".to_string(),
+                        name: "Worktree task".to_string(),
+                        kind: TaskKind::Worktree,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "wt".to_string(),
+                        branch_name: "feature/worktree".to_string(),
+                        section_id: "wt::feature/worktree::task-worktree".to_string(),
+                        worktree_project_id: Some("wt".to_string()),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Claude Code".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt")),
+                    },
+                ),
+            ]),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::from([(
+                "root".to_string(),
+                vec!["task-root".to_string(), "task-worktree".to_string()],
+            )]),
+            terminal_sections: HashMap::from([
+                (
+                    "root::main::task-root".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                    },
+                ),
+                (
+                    "wt::feature/worktree::task-worktree".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Claude Code".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                    },
+                ),
+            ]),
+            ui: UiState {
+                expanded_repo_ids: HashSet::from(["repo".to_string()]),
+                repo_default_commit_actions: HashMap::from([(
+                    "repo".to_string(),
+                    RepoDefaultCommitAction::CommitAndPush,
+                )]),
+                last_active_section_id: Some("wt::feature/worktree::task-worktree".to_string()),
+                ..UiState::default()
+            },
+            file_path: PathBuf::from("/tmp/projects.json"),
+        };
+        store.refresh_runtime_views();
+
+        store.remove_project("root");
+
+        assert!(store.projects_by_id.is_empty());
+        assert!(store.projects.is_empty());
+        assert!(store.project_order.is_empty());
+        assert!(store.tasks_by_id.is_empty());
+        assert!(store.tasks.is_empty());
+        assert!(store.task_ids_by_root_project.is_empty());
+        assert!(store.terminal_sections.is_empty());
+        assert!(store.repos.is_empty());
+        assert!(store.ui.expanded_repo_ids.is_empty());
+        assert!(store.ui.repo_default_commit_actions.is_empty());
+        assert_eq!(store.ui.last_active_section_id, None);
     }
 
     #[test]

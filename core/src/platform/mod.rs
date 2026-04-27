@@ -36,7 +36,14 @@
 mod android;
 #[cfg(target_os = "ios")]
 mod ios;
-#[cfg(target_os = "linux")]
+// Compile the Linux module on Android too — `AndroidPlatform`
+// reuses `proc_meminfo_total_bytes` + `procfs_read_process_samples`
+// from it (Android's procfs layout matches Linux's). Keeps the
+// memory + sample helpers in a single place rather than duplicating
+// them across two `target_os` impls. The `LinuxPlatform` re-export
+// below stays gated to `target_os = "linux"`, so Android still
+// resolves `CurrentPlatform` to `AndroidPlatform`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -146,4 +153,19 @@ pub trait HeadlessPlatform {
         app: crate::open_in::OpenInAppKind,
         path: &std::path::Path,
     ) -> std::process::Command;
+
+    /// Construct a [`TerminalEngine`] for a freshly-opened tab.
+    ///
+    /// Defaults to `alacritty_terminal` everywhere; the Phase 0
+    /// spike validates this on Linux only. iOS / Android / macOS /
+    /// Windows inherit the default until link verification clears
+    /// them — overrides land then.
+    fn create_terminal_engine(
+        cols: u16,
+        rows: u16,
+    ) -> Box<dyn crate::terminal_engine::TerminalEngine> {
+        Box::new(crate::terminal_engine::alacritty::AlacrittyEngine::new(
+            cols, rows,
+        ))
+    }
 }
