@@ -136,6 +136,7 @@ jobs:
           TARGET_TRIPLE: ${{ matrix.target }}
           OUTPUT_DIR: ${{ github.workspace }}/dist/macos-${{ matrix.arch }}
           MACOS_SIGN_IDENTITY: ${{ secrets.ANOTHER_ONE_MACOS_SIGN_IDENTITY }}
+          MACOS_SIGN_KEYCHAIN: ${{ runner.temp }}/another-one-signing.keychain-db
           MACOS_NOTARIZE: ${{ secrets.ANOTHER_ONE_MACOS_NOTARIZE || '0' }}
           MACOS_NOTARY_PROFILE: ${{ secrets.ANOTHER_ONE_MACOS_NOTARY_PROFILE }}
           APPLE_ID: ${{ secrets.ANOTHER_ONE_APPLE_ID }}

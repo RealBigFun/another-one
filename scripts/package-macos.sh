@@ -85,6 +85,10 @@ BUILD_NUMBER="${BUILD_NUMBER:-1}"
 TARGET_TRIPLE="${TARGET_TRIPLE:-}"
 ARTIFACT_PREFIX="${ARTIFACT_PREFIX:-}"
 MACOS_SIGN_IDENTITY="${MACOS_SIGN_IDENTITY:-}"
+# Strip stray whitespace that creeps in when secrets are populated
+# via `echo value | gh secret set ...` (echo appends a newline).
+MACOS_SIGN_IDENTITY="$(printf %s "$MACOS_SIGN_IDENTITY" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+MACOS_SIGN_KEYCHAIN="${MACOS_SIGN_KEYCHAIN:-}"
 MACOS_NOTARIZE="${MACOS_NOTARIZE:-0}"
 MACOS_NOTARY_PROFILE="${MACOS_NOTARY_PROFILE:-}"
 APPLE_ID="${APPLE_ID:-}"
@@ -164,7 +168,11 @@ fi
 sign_file() {
   local path="$1"
   if [[ -n "$MACOS_SIGN_IDENTITY" ]]; then
-    codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$path"
+    local args=(--force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY")
+    if [[ -n "$MACOS_SIGN_KEYCHAIN" ]]; then
+      args+=(--keychain "$MACOS_SIGN_KEYCHAIN")
+    fi
+    codesign "${args[@]}" "$path"
   else
     codesign --force --sign - "$path"
   fi
@@ -277,7 +285,11 @@ rm -rf "$STAGING_DIR"
 
 if [[ -n "$MACOS_SIGN_IDENTITY" ]]; then
   echo "Signing $APP_NAME.dmg with Developer ID identity..."
-  codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG_PATH"
+  dmg_sign_args=(--force --timestamp --sign "$MACOS_SIGN_IDENTITY")
+  if [[ -n "$MACOS_SIGN_KEYCHAIN" ]]; then
+    dmg_sign_args+=(--keychain "$MACOS_SIGN_KEYCHAIN")
+  fi
+  codesign "${dmg_sign_args[@]}" "$DMG_PATH"
   codesign --verify --verbose=2 "$DMG_PATH"
 fi
 
