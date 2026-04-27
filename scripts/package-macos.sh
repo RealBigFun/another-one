@@ -106,8 +106,10 @@ install -m 755 "$SHIM_BINARY_PATH" "$APP_BUNDLE/Contents/MacOS/$SHIM_NAME"
 echo "==> signing $APP_NAME.app with an ad-hoc identity"
 # --deep re-signs every nested bundle (Frameworks/FlutterMacOS.framework,
 # the embedded helpers Flutter ships, and the shim we just dropped in)
-# so Gatekeeper doesn't flag the inner artefacts as untrusted.
-codesign --force --deep --sign - "$APP_BUNDLE"
+# so Gatekeeper doesn't flag the inner artefacts as untrusted. Preserve
+# the Xcode-built entitlements on the top-level app binary so the signed
+# package can still boot and dial the embedded loopback daemon.
+codesign --force --deep --sign - --preserve-metadata=entitlements "$APP_BUNDLE"
 
 echo "==> creating $APP_NAME.dmg"
 mkdir -p "$STAGING_DIR"
