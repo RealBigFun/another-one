@@ -203,10 +203,11 @@ abstract class DaemonConnection {
   /// to render its primary icon and the chevron dropdown.
   ///
   /// Per ADR another-one-67l this is a remote-able read: the *display*
-  /// of installed apps is fine to surface against any daemon, only
-  /// the actual launch ([openProjectInApp]) stays host-local. Both
-  /// `IrohTransport` and `LocalTransport` implement this; the default
-  /// here only fires for connection types that haven't overridden it.
+  /// of installed apps is fine to surface against any daemon. The
+  /// launch itself still happens on the daemon host, not the caller's
+  /// device. Both `IrohTransport` and `LocalTransport` implement
+  /// this; the default here only fires for connection types that
+  /// haven't overridden it.
   Future<OpenInState> openInState() {
     throw UnimplementedError(
       'openInState: this DaemonConnection variant has not implemented '
@@ -224,8 +225,8 @@ abstract class DaemonConnection {
     required String appId,
   }) {
     throw UnimplementedError(
-      'openProjectInApp: Open-In is host-local; remote daemons do '
-      'not launch apps on a remote host (out of migration scope).',
+      'openProjectInApp: requires Control::OpenProjectInApp wire '
+      'variant on the active transport.',
     );
   }
 
@@ -672,11 +673,13 @@ abstract class DaemonConnection {
 
   /// Snapshot of every detected Open-In app on this host paired
   /// with its enabled flag. Empty list when no supported app is
-  /// installed.
+  /// installed. Implemented by transports that can talk to a desktop
+  /// daemon; the default here only fires for connection types that
+  /// have not overridden it.
   Future<OpenInSettingsView> readOpenInSettings() {
     throw UnimplementedError(
       'readOpenInSettings: requires Control::ReadOpenInSettings wire '
-      'variant on the iroh transport (not yet implemented).',
+      'variant on the active transport.',
     );
   }
 
@@ -687,7 +690,7 @@ abstract class DaemonConnection {
   }) {
     throw UnimplementedError(
       'setOpenInAppEnabled: requires Control::SetOpenInAppEnabled wire '
-      'variant on the iroh transport (not yet implemented).',
+      'variant on the active transport.',
     );
   }
 

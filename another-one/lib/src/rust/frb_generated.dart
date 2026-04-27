@@ -436,9 +436,6 @@ abstract class RustLibApi extends BaseApi {
     String? originalPath,
   });
 
-  Future<OpenInSettingsView>
-  crateApiLocalSessionForceExportOpenInSettingsView();
-
   Future<LoopbackSessionAddr> crateApiEmbeddedDaemonAwaitLoopbackSessionAddr({
     required int timeoutMs,
   });
@@ -2904,38 +2901,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "IrohSession_unstage_changed_file",
         argNames: ["that", "requestId", "projectId", "path", "originalPath"],
-      );
-
-  @override
-  Future<OpenInSettingsView>
-  crateApiLocalSessionForceExportOpenInSettingsView() {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 58,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_open_in_settings_view,
-          decodeErrorData: null,
-        ),
-        constMeta: kCrateApiLocalSessionForceExportOpenInSettingsViewConstMeta,
-        argValues: [],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta
-  get kCrateApiLocalSessionForceExportOpenInSettingsViewConstMeta =>
-      const TaskConstMeta(
-        debugName: "_force_export_open_in_settings_view",
-        argNames: [],
       );
 
   @override

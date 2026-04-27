@@ -11,17 +11,6 @@ part 'local_session.freezed.dart';
 
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
-/// Placeholder reference so FRB's parser keeps [`OpenInSettingsView`]
-/// + [`OpenInAppSettingsRow`] in the generated Dart bindings even
-/// though no `pub fn` / `WorkerReply` variant currently consumes
-/// them. The Settings → Open In page imports the types; the
-/// underlying `Control::ReadOpenInSettings` wire variant is
-/// follow-up work (not yet wired). Returns a default empty view so
-/// the Dart side doesn't see `null` from a partially-implemented
-/// daemon.
-Future<OpenInSettingsView> forceExportOpenInSettingsView() =>
-    RustLib.instance.api.crateApiLocalSessionForceExportOpenInSettingsView();
-
 /// Branch metadata snapshot for the active project — current branch
 /// name plus ahead/behind counts. Drives the titlebar's
 /// idle-primary-action selection.
@@ -645,11 +634,9 @@ class OpenInAppDto {
 
 /// One row of the Settings → Open In page. Carries everything the
 /// page renders (label + icon + description + per-host enabled
-/// flag). UI maps these to clickable rows that toggle through
-/// `Control::SetOpenInAppEnabled` (placeholder — wire variant not
-/// yet implemented; the Settings → Open In page throws
-/// `UnimplementedError` from the [`crate::api::iroh_client::IrohSession`]
-/// override until the daemon side lands).
+/// flag). Reused directly by
+/// [`crate::api::iroh_client::WorkerReply::OpenInSettingsAck`] so
+/// the local and iroh paths land on the same Dart DTO.
 class OpenInAppSettingsRow {
   /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
   /// `"zed"`, `"vscode"`, `"file-manager"`.
@@ -687,9 +674,9 @@ class OpenInAppSettingsRow {
           enabled == other.enabled;
 }
 
-/// Snapshot of the Settings → Open In page. Same placeholder note
-/// as [`OpenInAppSettingsRow`] — wire variant not yet implemented
-/// post-`ojm.11`.
+/// Snapshot of the Settings → Open In page. Reused directly by
+/// [`crate::api::iroh_client::WorkerReply::OpenInSettingsAck`] so
+/// the daemon-host read path stays transport-agnostic in Dart.
 class OpenInSettingsView {
   /// Every Open-In app the host detected as installed, in
   /// canonical order. Empty when no supported app is on the

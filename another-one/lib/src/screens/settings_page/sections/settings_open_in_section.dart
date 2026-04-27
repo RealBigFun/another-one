@@ -12,13 +12,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import '../../../rust/api/local_session.dart'
-    show OpenInAppSettingsRow;
+import '../../../rust/api/local_session.dart' show OpenInAppSettingsRow;
 import '../../../state/local_connection_provider.dart';
+import '../../../state/open_in_provider.dart';
 import '../../../tokens.dart';
+import '../../../widgets/app_toast.dart';
 
 final _openInSettingsProvider = FutureProvider.autoDispose((ref) async {
   final connection = ref.watch(localConnectionProvider);
+  await waitForConnectedDaemon(connection);
   try {
     return await connection.readOpenInSettings();
   } on UnimplementedError {
@@ -88,8 +90,7 @@ class SettingsOpenInSection extends ConsumerWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 860),
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
               decoration: BoxDecoration(
                 color: _panelBg,
                 borderRadius: BorderRadius.circular(12),
@@ -123,8 +124,10 @@ class SettingsOpenInSection extends ConsumerWidget {
                       isFirst: i == 0,
                       rowBg: _rowBg,
                       activeBg: _activeBg,
-                      onChanged: () =>
-                          ref.invalidate(_openInSettingsProvider),
+                      onChanged: () {
+                        ref.invalidate(_openInSettingsProvider);
+                        ref.invalidate(openInStateProvider);
+                      },
                     ),
                 ],
               ),
@@ -221,19 +224,16 @@ class _OpenInRowState extends ConsumerState<_OpenInRow> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await ref.read(localConnectionProvider).setOpenInAppEnabled(
+      await ref
+          .read(localConnectionProvider)
+          .setOpenInAppEnabled(
             appId: widget.row.id,
             enabled: !widget.row.enabled,
           );
       widget.onChanged();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not toggle: $e'),
-          backgroundColor: AppTokens.errorBg,
-        ),
-      );
+      showAppToast(context, message: 'Could not toggle: $e');
     }
     if (mounted) setState(() => _busy = false);
   }
@@ -253,9 +253,7 @@ class _OpenInRowState extends ConsumerState<_OpenInRow> {
             color: _hover ? AppTokens.overlayHover : widget.rowBg,
             border: widget.isFirst
                 ? null
-                : const Border(
-                    top: BorderSide(color: AppTokens.border),
-                  ),
+                : const Border(top: BorderSide(color: AppTokens.border)),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
           child: Row(
@@ -299,9 +297,7 @@ class _OpenInRowState extends ConsumerState<_OpenInRow> {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
-                  color: row.enabled
-                      ? Colors.white
-                      : AppTokens.textSecondary,
+                  color: row.enabled ? Colors.white : AppTokens.textSecondary,
                 ),
               ),
               const SizedBox(width: 10),
@@ -310,9 +306,7 @@ class _OpenInRowState extends ConsumerState<_OpenInRow> {
                 height: 18,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: row.enabled
-                      ? widget.activeBg
-                      : AppTokens.overlayHover,
+                  color: row.enabled ? widget.activeBg : AppTokens.overlayHover,
                   borderRadius: BorderRadius.circular(5),
                   border: Border.all(
                     color: row.enabled
