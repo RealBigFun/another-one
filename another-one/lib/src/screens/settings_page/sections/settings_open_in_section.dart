@@ -12,21 +12,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import '../../../rust/api/local_session.dart' show OpenInAppSettingsRow;
+import '../../../rust/api/local_session.dart'
+    show OpenInAppSettingsRow, OpenInSettingsView;
 import '../../../state/local_connection_provider.dart';
 import '../../../state/open_in_provider.dart';
 import '../../../tokens.dart';
 import '../../../widgets/app_toast.dart';
+import 'settings_async_state.dart';
 
-final _openInSettingsProvider = FutureProvider.autoDispose((ref) async {
-  final connection = ref.watch(localConnectionProvider);
-  await waitForConnectedDaemon(connection);
-  try {
-    return await connection.readOpenInSettings();
-  } on UnimplementedError {
-    return null;
-  }
-});
+final _openInSettingsProvider = FutureProvider.autoDispose<OpenInSettingsView?>(
+  (ref) async {
+    final connection = ref.watch(localConnectionProvider);
+    await waitForConnectedDaemon(connection);
+    try {
+      return await connection.readOpenInSettings();
+    } on UnimplementedError {
+      return null;
+    }
+  },
+);
 
 class SettingsOpenInSection extends ConsumerWidget {
   const SettingsOpenInSection({super.key});
@@ -38,10 +42,96 @@ class SettingsOpenInSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settingsAsync = ref.watch(_openInSettingsProvider);
-    final view = settingsAsync.valueOrNull;
-    final apps = view?.availableApps ?? const <OpenInAppSettingsRow>[];
-    final enabledCount = apps.where((a) => a.enabled).length;
-    final hasAny = apps.isNotEmpty;
+    final body = settingsAsync.when<Widget>(
+      data: (view) {
+        if (view == null) {
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: const SettingsSectionStatePanel(
+              panelBg: _panelBg,
+              title: 'Not available on this connection',
+              message: 'This daemon does not expose Open In settings yet.',
+            ),
+          );
+        }
+        final apps = view.availableApps;
+        final enabledCount = apps.where((a) => a.enabled).length;
+        final hasAny = apps.isNotEmpty;
+        return Column(
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 860),
+              child: _DetectedPanel(
+                enabledCount: enabledCount,
+                hasAny: hasAny,
+                panelBg: _panelBg,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (!hasAny)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 860),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 18,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _panelBg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTokens.border),
+                  ),
+                  child: const Text(
+                    'Install Cursor, Zed, VS Code, or use your system file manager, then restart the app to refresh the menu.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.5,
+                      color: AppTokens.textSecondary,
+                    ),
+                  ),
+                ),
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 860),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _panelBg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTokens.border),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < apps.length; i++)
+                        _OpenInRow(
+                          row: apps[i],
+                          isFirst: i == 0,
+                          rowBg: _rowBg,
+                          activeBg: _activeBg,
+                          onChanged: () {
+                            ref.invalidate(_openInSettingsProvider);
+                            ref.invalidate(openInStateProvider);
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+      error: (error, _) => ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: SettingsSectionStatePanel(
+          panelBg: _panelBg,
+          title: 'Could not load Open In settings',
+          message: '$error',
+          error: true,
+        ),
+      ),
+      loading: SettingsSectionLoading.new,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -66,73 +156,7 @@ class SettingsOpenInSection extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 24),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 860),
-          child: _DetectedPanel(
-            enabledCount: enabledCount,
-            hasAny: hasAny,
-            panelBg: _panelBg,
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (view == null)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          )
-        else if (!hasAny)
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-              decoration: BoxDecoration(
-                color: _panelBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTokens.border),
-              ),
-              child: const Text(
-                'Install Cursor, Zed, VS Code, or use your system file manager, then restart the app to refresh the menu.',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.5,
-                  color: AppTokens.textSecondary,
-                ),
-              ),
-            ),
-          )
-        else
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
-            child: Container(
-              decoration: BoxDecoration(
-                color: _panelBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTokens.border),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  for (var i = 0; i < apps.length; i++)
-                    _OpenInRow(
-                      row: apps[i],
-                      isFirst: i == 0,
-                      rowBg: _rowBg,
-                      activeBg: _activeBg,
-                      onChanged: () {
-                        ref.invalidate(_openInSettingsProvider);
-                        ref.invalidate(openInStateProvider);
-                      },
-                    ),
-                ],
-              ),
-            ),
-          ),
+        body,
       ],
     );
   }

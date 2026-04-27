@@ -20,9 +20,13 @@ import '../../../rust/api/local_session.dart'
         McpTransportKindDto;
 import '../../../state/local_connection_provider.dart';
 import '../../../tokens.dart';
+import 'settings_async_state.dart';
 
-final _mcpSettingsProvider = FutureProvider.autoDispose((ref) async {
+final _mcpSettingsProvider = FutureProvider.autoDispose<McpSettingsView?>((
+  ref,
+) async {
   final connection = ref.watch(localConnectionProvider);
+  await waitForConnectedDaemon(connection);
   try {
     return await connection.readMcpSettings();
   } on UnimplementedError {
@@ -51,7 +55,45 @@ class SettingsMcpSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final viewAsync = ref.watch(_mcpSettingsProvider);
-    final view = viewAsync.valueOrNull;
+    final body = viewAsync.when<Widget>(
+      data: (view) {
+        if (view == null) {
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: const SettingsSectionStatePanel(
+              panelBg: _panelBg,
+              title: 'Not available on this connection',
+              message: 'This daemon does not expose MCP settings yet.',
+            ),
+          );
+        }
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Container(
+            decoration: BoxDecoration(
+              color: _panelBg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTokens.border),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [..._buildRows(view, ref), const _FooterNote()],
+            ),
+          ),
+        );
+      },
+      error: (error, _) => ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: SettingsSectionStatePanel(
+          panelBg: _panelBg,
+          title: 'Could not load MCP settings',
+          message: '$error',
+          error: true,
+        ),
+      ),
+      loading: SettingsSectionLoading.new,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -76,36 +118,7 @@ class SettingsMcpSection extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 24),
-        if (view == null)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          )
-        else
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
-            child: Container(
-              decoration: BoxDecoration(
-                color: _panelBg,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppTokens.border),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ..._buildRows(view, ref),
-                  const _FooterNote(),
-                ],
-              ),
-            ),
-          ),
+        body,
       ],
     );
   }
@@ -120,23 +133,27 @@ class SettingsMcpSection extends ConsumerWidget {
     for (final catalog in view.catalogEntries) {
       final inRegistry = registryById[catalog.id];
       if (inRegistry != null) {
-        rows.add(_RegistryRow(
-          server: inRegistry,
-          isFirst: index == 0,
-          providers: _providers,
-          syncErrors: view.syncErrorProviderIds,
-          rowBg: _rowBg,
-          activeBg: _activeBg,
-          danger: _danger,
-          onChanged: () => ref.invalidate(_mcpSettingsProvider),
-        ));
+        rows.add(
+          _RegistryRow(
+            server: inRegistry,
+            isFirst: index == 0,
+            providers: _providers,
+            syncErrors: view.syncErrorProviderIds,
+            rowBg: _rowBg,
+            activeBg: _activeBg,
+            danger: _danger,
+            onChanged: () => ref.invalidate(_mcpSettingsProvider),
+          ),
+        );
       } else {
-        rows.add(_CatalogPromptRow(
-          entry: catalog,
-          isFirst: index == 0,
-          rowBg: _rowBg,
-          onAdded: () => ref.invalidate(_mcpSettingsProvider),
-        ));
+        rows.add(
+          _CatalogPromptRow(
+            entry: catalog,
+            isFirst: index == 0,
+            rowBg: _rowBg,
+            onAdded: () => ref.invalidate(_mcpSettingsProvider),
+          ),
+        );
       }
       index++;
     }
@@ -144,16 +161,18 @@ class SettingsMcpSection extends ConsumerWidget {
       (e) => e.source != McpSourceDto.catalog,
     );
     for (final custom in customs) {
-      rows.add(_RegistryRow(
-        server: custom,
-        isFirst: index == 0,
-        providers: _providers,
-        syncErrors: view.syncErrorProviderIds,
-        rowBg: _rowBg,
-        activeBg: _activeBg,
-        danger: _danger,
-        onChanged: () => ref.invalidate(_mcpSettingsProvider),
-      ));
+      rows.add(
+        _RegistryRow(
+          server: custom,
+          isFirst: index == 0,
+          providers: _providers,
+          syncErrors: view.syncErrorProviderIds,
+          rowBg: _rowBg,
+          activeBg: _activeBg,
+          danger: _danger,
+          onChanged: () => ref.invalidate(_mcpSettingsProvider),
+        ),
+      );
       index++;
     }
     return rows;
@@ -169,10 +188,7 @@ class _HeaderRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
       child: const Text(
         "Toggle MCP servers on per harness. Toggling syncs the registry into each agent's native config (preserving entries AnotherOne doesn't own).",
-        style: TextStyle(
-          fontSize: 12,
-          color: AppTokens.textSecondary,
-        ),
+        style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
       ),
     );
   }
@@ -192,8 +208,7 @@ class _CatalogPromptRow extends ConsumerStatefulWidget {
   final VoidCallback onAdded;
 
   @override
-  ConsumerState<_CatalogPromptRow> createState() =>
-      _CatalogPromptRowState();
+  ConsumerState<_CatalogPromptRow> createState() => _CatalogPromptRowState();
 }
 
 class _CatalogPromptRowState extends ConsumerState<_CatalogPromptRow> {
@@ -258,10 +273,7 @@ class _CatalogPromptRowState extends ConsumerState<_CatalogPromptRow> {
             borderRadius: BorderRadius.circular(6),
             onTap: _busy ? null : _add,
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 6,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: AppTokens.overlayHover,
                 borderRadius: BorderRadius.circular(6),
@@ -324,7 +336,9 @@ class _RegistryRowState extends ConsumerState<_RegistryRow> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await ref.read(localConnectionProvider).mcpToggle(
+      await ref
+          .read(localConnectionProvider)
+          .mcpToggle(
             entryId: widget.server.id,
             providerId: providerId,
             enabled: enabled,
@@ -346,9 +360,7 @@ class _RegistryRowState extends ConsumerState<_RegistryRow> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await ref
-          .read(localConnectionProvider)
-          .mcpRemove(widget.server.id);
+      await ref.read(localConnectionProvider).mcpRemove(widget.server.id);
       widget.onChanged();
     } catch (e) {
       if (!mounted) return;
@@ -418,9 +430,9 @@ class _RegistryRowState extends ConsumerState<_RegistryRow> {
                   errored: widget.syncErrors.contains(p.id),
                   // Codex is stdio-only — gate Codex off for HTTP
                   // entries. Mirrors the GPUI logic.
-                  unsupported: p.id == 'codex' &&
-                      server.transportKind ==
-                          McpTransportKindDto.http,
+                  unsupported:
+                      p.id == 'codex' &&
+                      server.transportKind == McpTransportKindDto.http,
                   activeBg: widget.activeBg,
                   danger: widget.danger,
                   onTap: (enabled) => _toggle(p.id, enabled),
@@ -433,10 +445,7 @@ class _RegistryRowState extends ConsumerState<_RegistryRow> {
               borderRadius: BorderRadius.circular(5),
               onTap: _busy ? null : _remove,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppTokens.overlayRest,
                   borderRadius: BorderRadius.circular(5),
@@ -490,21 +499,16 @@ class _ProviderToggle extends StatelessWidget {
     } else {
       bg = AppTokens.overlayHover;
     }
-    final textColor =
-        unsupported ? AppTokens.textSecondary : AppTokens.textPrimary;
+    final textColor = unsupported
+        ? AppTokens.textSecondary
+        : AppTokens.textPrimary;
     final inner = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(5),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          color: textColor,
-        ),
-      ),
+      child: Text(label, style: TextStyle(fontSize: 11, color: textColor)),
     );
     if (unsupported) {
       return Tooltip(
@@ -532,10 +536,7 @@ class _FooterNote extends StatelessWidget {
       ),
       child: const Text(
         'Custom transports, env, and headers: edit ~/.config/another-one/mcp.json. Inline editor is a follow-up.',
-        style: TextStyle(
-          fontSize: 11,
-          color: AppTokens.textSecondary,
-        ),
+        style: TextStyle(fontSize: 11, color: AppTokens.textSecondary),
       ),
     );
   }

@@ -12,8 +12,10 @@ import '../rust/api/local_session.dart'
     show AgentSettingsView, EnabledAgentsView;
 import 'local_connection_provider.dart';
 
-final projectBranchesProvider =
-    FutureProvider.family<List<String>, String>((ref, projectId) async {
+final projectBranchesProvider = FutureProvider.family<List<String>, String>((
+  ref,
+  projectId,
+) async {
   final connection = ref.watch(localConnectionProvider);
   try {
     return await connection.readProjectBranches(projectId);
@@ -22,8 +24,10 @@ final projectBranchesProvider =
   }
 });
 
-final primaryBranchProvider =
-    FutureProvider.family<String?, String>((ref, projectId) async {
+final primaryBranchProvider = FutureProvider.family<String?, String>((
+  ref,
+  projectId,
+) async {
   final connection = ref.watch(localConnectionProvider);
   try {
     return await connection.primaryBranchForProject(projectId);
@@ -32,8 +36,7 @@ final primaryBranchProvider =
   }
 });
 
-final enabledAgentsProvider =
-    FutureProvider<EnabledAgentsView>((ref) async {
+final enabledAgentsProvider = FutureProvider<EnabledAgentsView>((ref) async {
   final connection = ref.watch(localConnectionProvider);
   try {
     return await connection.readEnabledAgents();
@@ -45,12 +48,12 @@ final enabledAgentsProvider =
 /// Full agent registry — Settings → Agents page reads from here.
 /// Refresh after every mutation (set_agent_enabled, etc.) by
 /// invalidating this provider.
-final agentSettingsProvider =
-    FutureProvider<AgentSettingsView>((ref) async {
+final agentSettingsProvider = FutureProvider<AgentSettingsView?>((ref) async {
   final connection = ref.watch(localConnectionProvider);
+  await waitForConnectedDaemon(connection);
   try {
     return await connection.readAgentSettings();
   } on UnimplementedError {
-    return const AgentSettingsView(agents: []);
+    return null;
   }
 });

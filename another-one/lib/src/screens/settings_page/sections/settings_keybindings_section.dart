@@ -14,18 +14,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../rust/api/local_session.dart' show ShortcutSettingsRow;
+import '../../../rust/api/local_session.dart'
+    show ShortcutSettingsRow, ShortcutSettingsView;
 import '../../../state/local_connection_provider.dart';
 import '../../../tokens.dart';
+import 'settings_async_state.dart';
 
-final _shortcutSettingsProvider = FutureProvider.autoDispose((ref) async {
-  final connection = ref.watch(localConnectionProvider);
-  try {
-    return await connection.readShortcutSettings();
-  } on UnimplementedError {
-    return null;
-  }
-});
+final _shortcutSettingsProvider =
+    FutureProvider.autoDispose<ShortcutSettingsView?>((ref) async {
+      final connection = ref.watch(localConnectionProvider);
+      await waitForConnectedDaemon(connection);
+      try {
+        return await connection.readShortcutSettings();
+      } on UnimplementedError {
+        return null;
+      }
+    });
 
 class SettingsKeybindingsSection extends ConsumerStatefulWidget {
   const SettingsKeybindingsSection({super.key});
@@ -69,10 +73,9 @@ class _SettingsKeybindingsSectionState
 
   Future<void> _setBinding(String actionId, String binding) async {
     try {
-      await ref.read(localConnectionProvider).setShortcutBinding(
-            actionId: actionId,
-            binding: binding,
-          );
+      await ref
+          .read(localConnectionProvider)
+          .setShortcutBinding(actionId: actionId, binding: binding);
       ref.invalidate(_shortcutSettingsProvider);
     } catch (e) {
       if (!mounted) return;
@@ -87,9 +90,7 @@ class _SettingsKeybindingsSectionState
 
   Future<void> _resetBinding(String actionId) async {
     try {
-      await ref
-          .read(localConnectionProvider)
-          .resetShortcutBinding(actionId);
+      await ref.read(localConnectionProvider).resetShortcutBinding(actionId);
       ref.invalidate(_shortcutSettingsProvider);
     } catch (e) {
       if (!mounted) return;
@@ -104,10 +105,9 @@ class _SettingsKeybindingsSectionState
 
   Future<void> _clearBinding(String actionId) async {
     try {
-      await ref.read(localConnectionProvider).setShortcutBinding(
-            actionId: actionId,
-            binding: '',
-          );
+      await ref
+          .read(localConnectionProvider)
+          .setShortcutBinding(actionId: actionId, binding: '');
       ref.invalidate(_shortcutSettingsProvider);
     } catch (e) {
       if (!mounted) return;
@@ -128,9 +128,57 @@ class _SettingsKeybindingsSectionState
   @override
   Widget build(BuildContext context) {
     final settingsAsync = ref.watch(_shortcutSettingsProvider);
-    final view = settingsAsync.valueOrNull;
-    final actions =
-        view?.actions ?? const <ShortcutSettingsRow>[];
+    final body = settingsAsync.when<Widget>(
+      data: (view) {
+        if (view == null) {
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: const SettingsSectionStatePanel(
+              panelBg: _panelBg,
+              title: 'Not available on this connection',
+              message: 'This daemon does not expose shortcut settings yet.',
+            ),
+          );
+        }
+        final actions = view.actions;
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Container(
+            decoration: BoxDecoration(
+              color: _rowBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTokens.border),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                for (var i = 0; i < actions.length; i++)
+                  _ShortcutRow(
+                    row: actions[i],
+                    isFirst: i == 0,
+                    capturing: actions[i].id == _capturingActionId,
+                    activeBg: _activeBg,
+                    panelBg: _panelBg,
+                    onCapture: () => _startCapture(actions[i].id),
+                    onReset: () => _resetBinding(actions[i].id),
+                    onClear: () => _clearBinding(actions[i].id),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+      error: (error, _) => ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: SettingsSectionStatePanel(
+          panelBg: _panelBg,
+          title: 'Could not load shortcut settings',
+          message: '$error',
+          error: true,
+        ),
+      ),
+      loading: SettingsSectionLoading.new,
+    );
     return Focus(
       focusNode: _focusNode,
       onKeyEvent: _onKey,
@@ -158,45 +206,7 @@ class _SettingsKeybindingsSectionState
             ),
           ),
           const SizedBox(height: 24),
-          if (view == null)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            )
-          else
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 860),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: _rowBg,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTokens.border),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  children: [
-                    for (var i = 0; i < actions.length; i++)
-                      _ShortcutRow(
-                        row: actions[i],
-                        isFirst: i == 0,
-                        capturing:
-                            actions[i].id == _capturingActionId,
-                        activeBg: _activeBg,
-                        panelBg: _panelBg,
-                        onCapture: () => _startCapture(actions[i].id),
-                        onReset: () => _resetBinding(actions[i].id),
-                        onClear: () => _clearBinding(actions[i].id),
-                      ),
-                  ],
-                ),
-              ),
-            ),
+          body,
         ],
       ),
     );
@@ -220,14 +230,14 @@ class _SettingsKeybindingsSectionState
   String? _bindingString(KeyEvent event) {
     final modifiers = <String>[];
     if (HardwareKeyboard.instance.isMetaPressed) {
-      modifiers.add(defaultTargetPlatform == TargetPlatform.macOS
-          ? 'cmd'
-          : 'super');
+      modifiers.add(
+        defaultTargetPlatform == TargetPlatform.macOS ? 'cmd' : 'super',
+      );
     }
     if (HardwareKeyboard.instance.isControlPressed) {
-      modifiers.add(defaultTargetPlatform == TargetPlatform.macOS
-          ? 'control'
-          : 'cmd'); // GPUI uses cmd for control on macOS
+      modifiers.add(
+        defaultTargetPlatform == TargetPlatform.macOS ? 'control' : 'cmd',
+      ); // GPUI uses cmd for control on macOS
     }
     if (HardwareKeyboard.instance.isAltPressed) modifiers.add('alt');
     if (HardwareKeyboard.instance.isShiftPressed) modifiers.add('shift');
@@ -305,8 +315,7 @@ class _ShortcutRowState extends State<_ShortcutRow> {
             ? null
             : const Border(top: BorderSide(color: AppTokens.border)),
       ),
-      padding:
-          const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
       child: MouseRegion(
         onEnter: (_) => setState(() => _hover = true),
         onExit: (_) => setState(() => _hover = false),
@@ -404,10 +413,7 @@ class _BindingPills extends StatelessWidget {
         for (var i = 0; i < parts.length; i++) ...[
           if (i > 0) const SizedBox(width: 4),
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 6,
-              vertical: 2,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
               color: const Color(0xFF2A2D33),
               borderRadius: BorderRadius.circular(4),
@@ -477,9 +483,7 @@ class _IconActionState extends State<_IconAction> {
             height: 24,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: _hover
-                  ? AppTokens.overlayHoverStrong
-                  : Colors.transparent,
+              color: _hover ? AppTokens.overlayHoverStrong : Colors.transparent,
               borderRadius: BorderRadius.circular(5),
             ),
             child: Text(

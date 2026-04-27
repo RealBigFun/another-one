@@ -87,6 +87,26 @@ final localConnectionProvider = Provider<DaemonConnection>((ref) {
   return transport;
 });
 
+/// Wait for a daemon connection to leave the initial connecting
+/// state before issuing a one-shot read. This lets settings surfaces
+/// render a real loading state while the loopback iroh transport
+/// comes up instead of immediately surfacing a disconnected error.
+Future<void> waitForConnectedDaemon(DaemonConnection connection) async {
+  final current = connection.currentStatus;
+  if (current.isConnected) {
+    return;
+  }
+  if (current.state != TransportState.connecting) {
+    throw StateError('Daemon not connected: ${current.label}');
+  }
+  final status = await connection.status.firstWhere(
+    (status) => status.state != TransportState.connecting,
+  );
+  if (!status.isConnected) {
+    throw StateError('Daemon not connected: ${status.label}');
+  }
+}
+
 /// Stream of project lists as they arrive from the local daemon.
 /// Re-emits whenever the daemon publishes a new `ProjectList`
 /// (after a `listProjects()` call, or as projects mutate). Returns

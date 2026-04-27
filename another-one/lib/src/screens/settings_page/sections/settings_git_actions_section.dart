@@ -22,10 +22,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../rust/api/local_session.dart' show GitActionScriptsView;
 import '../../../state/local_connection_provider.dart';
 import '../../../tokens.dart';
+import 'settings_async_state.dart';
 
-final _gitScriptsProvider =
-    FutureProvider.autoDispose<GitActionScriptsView?>((ref) async {
+final _gitScriptsProvider = FutureProvider.autoDispose<GitActionScriptsView?>((
+  ref,
+) async {
   final connection = ref.watch(localConnectionProvider);
+  await waitForConnectedDaemon(connection);
   try {
     return await connection.readGitActionScripts();
   } on UnimplementedError {
@@ -41,7 +44,51 @@ class SettingsGitActionsSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final viewAsync = ref.watch(_gitScriptsProvider);
-    final view = viewAsync.valueOrNull;
+    final body = viewAsync.when<Widget>(
+      data: (view) {
+        if (view == null) {
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 960),
+            child: const SettingsSectionStatePanel(
+              panelBg: _ScriptPanelState._panelBg,
+              title: 'Not available on this connection',
+              message: 'This daemon does not expose Git Actions settings yet.',
+            ),
+          );
+        }
+        return Column(
+          children: [
+            _ScriptPanel(
+              kind: _GitScriptKind.commit,
+              title: 'Commit message instructions',
+              placeholder: 'Paste commit generation instructions here.',
+              initialScript: view.commitScript,
+              usingDefault: view.commitUsingDefault,
+              onChanged: () => ref.invalidate(_gitScriptsProvider),
+            ),
+            const SizedBox(height: 24),
+            _ScriptPanel(
+              kind: _GitScriptKind.pr,
+              title: 'PR title/body instructions',
+              placeholder: 'Paste PR title/body instructions here.',
+              initialScript: view.prScript,
+              usingDefault: view.prUsingDefault,
+              onChanged: () => ref.invalidate(_gitScriptsProvider),
+            ),
+          ],
+        );
+      },
+      error: (error, _) => ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 960),
+        child: SettingsSectionStatePanel(
+          panelBg: _ScriptPanelState._panelBg,
+          title: 'Could not load Git Actions settings',
+          message: '$error',
+          error: true,
+        ),
+      ),
+      loading: SettingsSectionLoading.new,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -66,36 +113,7 @@ class SettingsGitActionsSection extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 24),
-        if (view == null)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          )
-        else ...[
-          _ScriptPanel(
-            kind: _GitScriptKind.commit,
-            title: 'Commit message instructions',
-            placeholder: 'Paste commit generation instructions here.',
-            initialScript: view.commitScript,
-            usingDefault: view.commitUsingDefault,
-            onChanged: () => ref.invalidate(_gitScriptsProvider),
-          ),
-          const SizedBox(height: 24),
-          _ScriptPanel(
-            kind: _GitScriptKind.pr,
-            title: 'PR title/body instructions',
-            placeholder: 'Paste PR title/body instructions here.',
-            initialScript: view.prScript,
-            usingDefault: view.prUsingDefault,
-            onChanged: () => ref.invalidate(_gitScriptsProvider),
-          ),
-        ],
+        body,
       ],
     );
   }
@@ -228,12 +246,9 @@ class _ScriptPanelState extends ConsumerState<_ScriptPanel> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
               decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(color: AppTokens.border),
-                ),
+                border: Border(bottom: BorderSide(color: AppTokens.border)),
               ),
               child: Row(
                 children: [

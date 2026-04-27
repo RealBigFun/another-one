@@ -19,30 +19,12 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../connection.dart';
 import '../rust/api/local_session.dart' show OpenInState;
-import '../transport.dart';
 import 'local_connection_provider.dart';
 
 /// Fetches a fresh `OpenInState` from the active daemon connection.
 /// Falls back to an empty state for transports that don't expose
 /// Open-In so consumers can render uniformly.
-Future<void> waitForConnectedDaemon(DaemonConnection connection) async {
-  final current = connection.currentStatus;
-  if (current.isConnected) {
-    return;
-  }
-  if (current.state != TransportState.connecting) {
-    throw StateError('Daemon not connected: ${current.label}');
-  }
-  final status = await connection.status.firstWhere(
-    (status) => status.state != TransportState.connecting,
-  );
-  if (!status.isConnected) {
-    throw StateError('Daemon not connected: ${status.label}');
-  }
-}
-
 final openInStateProvider = FutureProvider<OpenInState>((ref) async {
   final connection = ref.watch(localConnectionProvider);
   await waitForConnectedDaemon(connection);

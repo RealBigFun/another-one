@@ -19,6 +19,7 @@ import '../../../rust/api/local_session.dart' show AgentSettingsRow;
 import '../../../state/local_connection_provider.dart';
 import '../../../state/new_task_data_provider.dart';
 import '../../../tokens.dart';
+import 'settings_async_state.dart';
 
 class SettingsAgentsSection extends ConsumerWidget {
   const SettingsAgentsSection({super.key});
@@ -30,9 +31,70 @@ class SettingsAgentsSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settingsAsync = ref.watch(agentSettingsProvider);
-    final view = settingsAsync.valueOrNull;
-    final enabledCount =
-        view?.agents.where((a) => a.enabled).length ?? 0;
+    final body = settingsAsync.when<Widget>(
+      data: (view) {
+        if (view == null) {
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: const SettingsSectionStatePanel(
+              panelBg: _panelBg,
+              title: 'Not available on this connection',
+              message: 'This daemon does not expose agent settings yet.',
+            ),
+          );
+        }
+        final enabledCount = view.agents.where((a) => a.enabled).length;
+        return Column(
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 860),
+              child: _AvailabilityPanel(
+                enabledCount: enabledCount,
+                panelBg: _panelBg,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 860),
+              child: _TokenRulesPanel(panelBg: _panelBg),
+            ),
+            const SizedBox(height: 16),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 860),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _rowBg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTokens.border),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    for (var i = 0; i < view.agents.length; i++)
+                      _AgentRow(
+                        row: view.agents[i],
+                        isFirst: i == 0,
+                        activeBg: _activeBg,
+                        onChanged: () => ref.invalidate(agentSettingsProvider),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+      error: (error, _) => ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: SettingsSectionStatePanel(
+          panelBg: _panelBg,
+          title: 'Could not load agent settings',
+          message: '$error',
+          error: true,
+        ),
+      ),
+      loading: SettingsSectionLoading.new,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -57,64 +119,14 @@ class SettingsAgentsSection extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 24),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 860),
-          child: _AvailabilityPanel(
-            enabledCount: enabledCount,
-            panelBg: _panelBg,
-          ),
-        ),
-        const SizedBox(height: 12),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 860),
-          child: _TokenRulesPanel(panelBg: _panelBg),
-        ),
-        const SizedBox(height: 16),
-        if (view == null)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          )
-        else
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
-            child: Container(
-              decoration: BoxDecoration(
-                color: _rowBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTokens.border),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  for (var i = 0; i < view.agents.length; i++)
-                    _AgentRow(
-                      row: view.agents[i],
-                      isFirst: i == 0,
-                      activeBg: _activeBg,
-                      onChanged: () =>
-                          ref.invalidate(agentSettingsProvider),
-                    ),
-                ],
-              ),
-            ),
-          ),
+        body,
       ],
     );
   }
 }
 
 class _AvailabilityPanel extends StatelessWidget {
-  const _AvailabilityPanel({
-    required this.enabledCount,
-    required this.panelBg,
-  });
+  const _AvailabilityPanel({required this.enabledCount, required this.panelBg});
   final int enabledCount;
   final Color panelBg;
 
@@ -193,10 +205,7 @@ class _TokenRulesPanel extends StatelessWidget {
           SizedBox(height: 4),
           Text(
             'Whitespace is rejected because spaces would create multiple argv tokens. Reorder by removing and re-adding.',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppTokens.textSecondary,
-            ),
+            style: TextStyle(fontSize: 11, color: AppTokens.textSecondary),
           ),
         ],
       ),
@@ -247,10 +256,9 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
     current.add(value);
     setState(() => _busy = true);
     try {
-      await ref.read(localConnectionProvider).setAgentLaunchArgs(
-            agentId: widget.row.id,
-            args: current,
-          );
+      await ref
+          .read(localConnectionProvider)
+          .setAgentLaunchArgs(agentId: widget.row.id, args: current);
       _draft.clear();
       widget.onChanged();
     } catch (e) {
@@ -262,14 +270,12 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
 
   Future<void> _removeArg(int index) async {
     if (_busy) return;
-    final current = List<String>.from(widget.row.launchArgs)
-      ..removeAt(index);
+    final current = List<String>.from(widget.row.launchArgs)..removeAt(index);
     setState(() => _busy = true);
     try {
-      await ref.read(localConnectionProvider).setAgentLaunchArgs(
-            agentId: widget.row.id,
-            args: current,
-          );
+      await ref
+          .read(localConnectionProvider)
+          .setAgentLaunchArgs(agentId: widget.row.id, args: current);
       widget.onChanged();
     } catch (e) {
       if (!mounted) return;
@@ -282,7 +288,9 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await ref.read(localConnectionProvider).setAgentEnabled(
+      await ref
+          .read(localConnectionProvider)
+          .setAgentEnabled(
             agentId: widget.row.id,
             enabled: !widget.row.enabled,
           );
@@ -298,9 +306,7 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
     if (_busy || widget.row.isDefault || !widget.row.enabled) return;
     setState(() => _busy = true);
     try {
-      await ref
-          .read(localConnectionProvider)
-          .setDefaultAgent(widget.row.id);
+      await ref.read(localConnectionProvider).setDefaultAgent(widget.row.id);
       widget.onChanged();
     } catch (e) {
       if (!mounted) return;
@@ -311,10 +317,7 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
 
   void _toast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppTokens.errorBg,
-      ),
+      SnackBar(content: Text(message), backgroundColor: AppTokens.errorBg),
     );
   }
 
@@ -382,10 +385,7 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
                       enabled: !_busy,
                       onSubmit: _addArg,
                     ),
-                    _AddButton(
-                      busy: _busy,
-                      onTap: _addArg,
-                    ),
+                    _AddButton(busy: _busy, onTap: _addArg),
                     _DefaultPill(
                       isDefault: row.isDefault,
                       enabled: row.enabled && !_busy,
@@ -404,10 +404,7 @@ class _AgentRowState extends ConsumerState<_AgentRow> {
             ],
           ),
           const SizedBox(height: 12),
-          _ArgPills(
-            args: row.launchArgs,
-            onRemove: _removeArg,
-          ),
+          _ArgPills(args: row.launchArgs, onRemove: _removeArg),
         ],
       ),
     );
@@ -450,10 +447,7 @@ class _ArgInput extends StatelessWidget {
           contentPadding: EdgeInsets.symmetric(vertical: 9),
           border: InputBorder.none,
           hintText: '--flag value',
-          hintStyle: TextStyle(
-            fontSize: 12,
-            color: AppTokens.textPlaceholder,
-          ),
+          hintStyle: TextStyle(fontSize: 12, color: AppTokens.textPlaceholder),
         ),
         onSubmitted: (_) => unawaited(onSubmit()),
       ),
@@ -508,8 +502,7 @@ class _DefaultPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg = isDefault ? activeBg : AppTokens.overlayHover;
-    final textColor =
-        isDefault ? Colors.white : AppTokens.textSecondary;
+    final textColor = isDefault ? Colors.white : AppTokens.textSecondary;
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: enabled ? () => unawaited(onTap()) : null,
@@ -673,10 +666,7 @@ class _ArgPills extends StatelessWidget {
       runSpacing: 8,
       children: [
         for (var i = 0; i < args.length; i++)
-          _ArgPill(
-            value: args[i],
-            onRemove: () => onRemove(i),
-          ),
+          _ArgPill(value: args[i], onRemove: () => onRemove(i)),
       ],
     );
   }
@@ -717,10 +707,7 @@ class _ArgPill extends StatelessWidget {
               alignment: Alignment.center,
               child: const Text(
                 'x',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTokens.textSecondary,
-                ),
+                style: TextStyle(fontSize: 11, color: AppTokens.textSecondary),
               ),
             ),
           ),
