@@ -253,7 +253,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// success (so the iroh handler can emit it inline per the
     /// mutator-snapshot contract); errors are surfaced as
     /// `WorkerReply::Err` by the caller. Async because
-    /// `prepare_project` does heavy disk + git work — bridging
+    /// `prepare_project` does heavy disk + git work — production
     /// implementations dispatch to a background thread and `await`
     /// the result here.
     ///
@@ -261,8 +261,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// (`anyhow!("project at {path} already exists")`), not a
     /// silent no-op: the issuing client tried to add the same
     /// directory twice, so a typed failure is more honest than a
-    /// fake-success Ack would be. Mirror of
-    /// `another-one-bridge/src/api/local_session.rs::add_project`.
+    /// fake-success Ack would be.
     fn add_project<'a>(
         &'a self,
         _path: String,
@@ -278,7 +277,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// the project's tasks + terminal sections (see
     /// [`another_one_core::project_store::ProjectStore::remove_project`]).
     /// Idempotent — passing an unknown id is silently a no-op, just
-    /// like [`LocalSession::remove_project`]. Sync because the
+    /// like the original local desktop path. Sync because the
     /// underlying store mutation doesn't touch the network or run
     /// any subprocess; the iroh handler can call this directly off
     /// its dispatch loop.
@@ -290,12 +289,11 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     // ── Task mutation (another-one-ojm.3) ─────────────────────────
     //
-    // Mirror of `LocalSession`'s task mutation methods. Heavy ones
+    // Mirror of the UI-facing task mutation methods. Heavy ones
     // return `RegistryFuture` so the embedder can spawn worker
     // threads and `.await` them; the lightweight ones (`rename`,
-    // `set_pinned`, `remove`) are sync because the FRB caller's
-    // implementations are also sync after the registry lock is
-    // taken.
+    // `set_pinned`, `remove`) are sync because the implementations
+    // are also sync after the registry lock is taken.
 
     /// Create a worktree task on `project_id`. Returns the inserted
     /// task's [`TaskSummary`] — the caller wraps it in
@@ -343,14 +341,13 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
     //
-    // Sister methods to the per-verb signatures in
-    // `another-one-bridge::api::local_session::LocalSession::*`. Each
-    // returns the same shape (ignoring FRB-vs-wire DTO differences)
-    // and follows the same `Ok(None) ⇒ unknown project` contract.
+    // Sister methods to the UI-facing project/git operations. Each
+    // returns the same shape and follows the same `Ok(None) ⇒ unknown
+    // project` contract.
     //
     // Default impls forward to plumbing that doesn't need a real
     // project store (slugify) or return empty for sandbox registries
-    // that can't answer. The bridge's `BridgeDaemonRegistry` overrides
+    // that can't answer. Production registry implementations override
     // each method with a real delegation as the verbs land.
 
     /// Compute the canonical branch slug for a free-text input.
@@ -361,30 +358,26 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     }
 
     /// Branch names available on `project_id`'s git repo. Empty
-    /// list for unknown projects. Sister to
-    /// `LocalSession::read_project_branches`.
+    /// list for unknown projects.
     fn read_project_branches(&self, _project_id: &str) -> Vec<String> {
         Vec::new()
     }
 
     /// Default branch the new-task modal seeds for `project_id`.
     /// Returns `None` when the project has no current branch yet
-    /// (fresh repo). Sister to
-    /// `LocalSession::primary_branch_for_project`.
+    /// (fresh repo).
     fn primary_branch_for_project(&self, _project_id: &str) -> Option<String> {
         None
     }
 
     /// User's preferred default commit action for `project_id`'s
     /// root repo. Returns `"commit"` / `"commit-and-push"` / `None`.
-    /// Sister to `LocalSession::repo_default_commit_action`.
     fn repo_default_commit_action(&self, _project_id: &str) -> Option<String> {
         None
     }
 
     /// Snapshot the active project's branch metadata — current
-    /// branch name + ahead / behind counts. Sister to
-    /// `LocalSession::read_active_git_state`. May shell out to git;
+    /// branch name + ahead / behind counts. May shell out to git;
     /// implementations should arrange for `block_in_place` or
     /// `spawn_blocking` so the daemon's tokio worker isn't held
     /// across the syscalls.
@@ -392,8 +385,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         None
     }
 
-    /// Working-tree changes for `project_id`. Sister to
-    /// `LocalSession::read_changed_files`. Returns `None` for
+    /// Working-tree changes for `project_id`. Returns `None` for
     /// unknown project ids.
     fn read_changed_files(&self, _project_id: &str) -> Option<Vec<ChangedFileWire>> {
         None
@@ -401,16 +393,14 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     /// Resolve `project_id`'s GitHub remote URL. Returns `None` for
     /// unknown projects, projects without an `origin`, or non-
-    /// github.com remotes. Sister to
-    /// `LocalSession::read_project_github_url`.
+    /// github.com remotes.
     fn read_project_github_url(&self, _project_id: &str) -> Option<String> {
         None
     }
 
     /// Recent commits on `project_id`'s current branch, capped at
     /// `limit`. Returns `None` for unknown project ids; `Err` for
-    /// git failures (commit pruned, etc.). Sister to
-    /// `LocalSession::read_recent_commits`. May shell out to git.
+    /// git failures (commit pruned, etc.). May shell out to git.
     fn read_recent_commits(
         &self,
         _project_id: &str,
@@ -421,7 +411,6 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     /// Per-commit file-change list. Returns `None` for unknown
     /// project ids; `Err` for git failures (commit pruned, etc.).
-    /// Sister to `LocalSession::read_commit_file_changes`.
     fn read_commit_file_changes(
         &self,
         _project_id: &str,
@@ -432,8 +421,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     /// Diff `project_id`'s current branch against `target_branch`
     /// (= `target..HEAD`). Returns `None` for unknown projects;
-    /// `Err` for git failures (target branch missing, etc.). Sister
-    /// to `LocalSession::read_branch_compare_state`.
+    /// `Err` for git failures (target branch missing, etc.).
     fn read_branch_compare_state(
         &self,
         _project_id: &str,
@@ -443,8 +431,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     }
 
     /// Snapshot the resolved branch settings for `project_id`'s
-    /// root project. Returns `None` for unknown / repo-less
-    /// projects. Sister to `LocalSession::resolved_branch_settings`.
+    /// root project. Returns `None` for unknown / repo-less projects.
     fn read_branch_settings(&self, _project_id: &str) -> Option<ResolvedBranchSettingsWire> {
         None
     }
@@ -452,7 +439,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// Update one branch-setting field. `field` is `"default-branch"`
     /// or `"default-target-branch"`; `branch_name` of `None` clears
     /// the override. Returns `Ok(true)` when the persisted store
-    /// changed. Sister to `LocalSession::set_project_branch_setting`.
+    /// changed.
     fn set_branch_setting(
         &self,
         _project_id: &str,
@@ -614,8 +601,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// surfaces as [`crate::frame::WorkerReply::Err`].
     ///
     /// Default impl returns `Ok(None)` so the standalone sandbox
-    /// can keep its in-memory shape (no real git host). The bridge
-    /// override delegates to
+    /// can keep its in-memory shape (no real git host). Production
+    /// implementations delegate to
     /// `another_one_core::git_actions::find_latest_pull_request_status`.
     fn find_pull_request_status(
         &self,
@@ -636,8 +623,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     ///     a toast instead of a silent empty state.
     ///
     /// Default impl returns `Ok(None)` so the standalone sandbox's
-    /// in-memory shape stays self-contained. The bridge override
-    /// delegates to `another_one_core::git_actions::find_pull_request_checks`.
+    /// in-memory shape stays self-contained. Production implementations
+    /// delegate to `another_one_core::git_actions::find_pull_request_checks`.
     fn read_pull_request_checks(&self, _project_id: &str) -> Result<Option<Vec<Check>>, String> {
         Ok(None)
     }
@@ -651,7 +638,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// [`crate::frame::WorkerReply::Err`]).
     ///
     /// Default impl returns `Ok(None)` so the sandbox keeps its
-    /// in-memory shape. The bridge override delegates to
+    /// in-memory shape. Production implementations delegate to
     /// `another_one_core::git_actions::find_project_pull_requests`
     /// (which shells out to `gh pr list`).
     fn find_project_pull_requests(
@@ -782,8 +769,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// Run one custom action inside `section_id`'s task. Returns
     /// the freshly-minted tab id on success, or a human-readable
     /// error on failure (unknown project / action id, malformed
-    /// section id, empty shell command, etc. — matches
-    /// `LocalSession::run_project_action`).
+    /// section id, empty shell command, etc.).
     ///
     /// Single-shot Ack semantics: the action's PTY output flows
     /// over the existing `Control::AttachTab` pipeline; this verb
@@ -816,9 +802,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     // ── Settings → Git Actions (`another-one-ojm.8`) ───────────────
 
-    /// Snapshot of the Settings → Git Actions page state. Mirrors
-    /// `LocalSession::read_git_action_scripts`. Default returns an
-    /// empty/default view for registries that don't surface settings
+    /// Snapshot of the Settings → Git Actions page state. Default
+    /// returns an empty/default view for registries that don't surface settings
     /// (the standalone sandbox).
     fn read_git_action_scripts(&self) -> GitActionScriptsView {
         GitActionScriptsView {
@@ -856,9 +841,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     // ── Settings → Keybindings (`another-one-ojm.8`) ───────────────
 
-    /// Snapshot of the Settings → Keybindings page. Mirrors
-    /// `LocalSession::read_shortcut_settings`. Default returns an
-    /// empty list for registries that don't surface settings.
+    /// Snapshot of the Settings → Keybindings page. Default returns
+    /// an empty list for registries that don't surface settings.
     fn read_shortcut_settings(&self) -> ShortcutSettingsView {
         ShortcutSettingsView {
             actions: Vec::new(),
@@ -879,9 +863,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     // ── Settings → MCP (`another-one-ojm.8`) ───────────────────────
 
-    /// Snapshot of the catalog + on-disk MCP registry. Mirrors
-    /// `LocalSession::read_mcp_settings`. Default returns empty lists
-    /// for registries that don't surface settings.
+    /// Snapshot of the catalog + on-disk MCP registry. Default
+    /// returns empty lists for registries that don't surface settings.
     fn read_mcp_settings(&self) -> McpSettingsView {
         McpSettingsView {
             catalog_entries: Vec::new(),

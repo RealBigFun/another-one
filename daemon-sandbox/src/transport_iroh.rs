@@ -650,11 +650,9 @@ async fn handle_control(
                     message,
                     // `Internal` covers the diverse failure surface
                     // (unknown ids, malformed section, command
-                    // empty, project store mutex poisoned). The
-                    // bridge already classifies "unknown id" cases
-                    // by message wording; we keep the wire kind
-                    // coarse here rather than threading a parsed
-                    // failure type all the way through. UI should
+                    // empty, project store mutex poisoned). We keep
+                    // the wire kind coarse here rather than threading
+                    // a parsed failure type all the way through. UI should
                     // surface the message verbatim in a toast.
                     kind: ErrKind::Internal,
                 },
@@ -811,7 +809,7 @@ async fn handle_control(
         }
         Control::AddProject { path } => {
             // `add_project` is async — `prepare_project` runs on a
-            // background thread inside the bridge impl. We await
+            // background thread inside the registry impl. We await
             // the result here on the per-connection task; the
             // outbound writer task is a separate task and keeps
             // pumping any other queued frames in the meantime.

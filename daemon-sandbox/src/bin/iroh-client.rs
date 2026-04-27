@@ -1,7 +1,7 @@
 //! Sandbox client for the daemon's Iroh endpoint. Dials a NodeId, opens a
 //! bidirectional stream, sends a line of input, prints the PTY output for a
-//! few seconds, then exits. Smoke test only — the real mobile client will
-//! eventually use a flutter_rust_bridge wrapper around this pattern.
+//! few seconds, then exits. Smoke test only — real clients should wrap this
+//! pattern rather than duplicating transport details.
 //!
 //! Usage:
 //!   cargo run -p daemon-sandbox --bin iroh-client

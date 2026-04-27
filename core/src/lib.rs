@@ -16,7 +16,6 @@
 //! zero-intra-crate-dep files.
 
 pub mod agents;
-pub mod daemon_embed;
 pub mod git_actions;
 pub mod git_service;
 pub mod leakscope;
@@ -26,11 +25,9 @@ pub mod platform;
 pub mod process;
 pub mod project_service;
 pub mod project_store;
-pub mod resource_usage;
 pub mod section;
 pub mod shortcuts;
 pub mod task_launcher;
-pub mod terminal_engine;
 pub mod terminal_launch;
 pub mod terminal_manager;
 pub mod terminal_types;

@@ -135,7 +135,6 @@ pub enum Control {
     /// store already knows replies with [`WorkerReply::Err`] of
     /// kind [`ErrKind::Internal`] (this is the rare "user added the
     /// same dir twice" case; not worth a dedicated `err_kind`).
-    /// Mirror of `another-one-bridge/src/api/local_session.rs::add_project`.
     AddProject { path: String },
     /// Remove a project from the daemon's store by id. Cascades to
     /// the project's tasks + terminal sections via
@@ -143,8 +142,7 @@ pub enum Control {
     /// Idempotent — passing an unknown id is a silent no-op on the
     /// store side, but the daemon still replies with
     /// [`WorkerReply::ProjectRemoved`] echoing the id so the issuer
-    /// can drop any stale UI rows. Mirror of
-    /// `another-one-bridge/src/api/local_session.rs::remove_project`.
+    /// can drop any stale UI rows.
     RemoveProject { project_id: String },
     /// Snapshot of the host's "Open In" config — installed-and-enabled
     /// apps + the user's preferred default. Drives the mobile titlebar
@@ -233,10 +231,10 @@ pub enum Control {
     /// per-step progress channel here; if a future iteration ever
     /// needs one, it lands as a separate `Control::Subscribe` verb
     /// per the foundation task's push-channel hatch (`request_id == 0`).
-    /// Today this matches `LocalSession::run_project_action`'s shape
-    /// 1:1 — the GPUI desktop has lived with single-shot for the
-    /// life of the feature without a streaming requirement
-    /// surfacing. Reply: [`WorkerReply::RunProjectActionAck`].
+    /// This matches the existing desktop action runner shape 1:1:
+    /// the GPUI desktop has lived with single-shot for the life of
+    /// the feature without a streaming requirement surfacing. Reply:
+    /// [`WorkerReply::RunProjectActionAck`].
     RunProjectAction {
         project_id: String,
         section_id: String,
@@ -355,15 +353,13 @@ pub enum Control {
     /// when behind, Fetch otherwise — Commit comes from the
     /// changes-vs-clean side via `ReadChangedFiles`).
     ///
-    /// Sister verb to `LocalSession::read_active_git_state`. Reads
-    /// through `core::project_store::read_project_git_state` with
+    /// Reads through `core::project_store::read_project_git_state` with
     /// `include_metadata=true` on the daemon's project root path.
     /// Reply is [`WorkerReply::ActiveGitStateAck`] with a `None`
     /// payload when the project id is unknown.
     ReadActiveGitState { project_id: String },
     /// Working-tree changes for `project_id`. Powers the right
-    /// sidebar's Changes pane. Sister to
-    /// `LocalSession::read_changed_files`. Reply is
+    /// sidebar's Changes pane. Reply is
     /// [`WorkerReply::ChangedFilesAck`] with a `None` payload when
     /// the project id is unknown.
     ReadChangedFiles { project_id: String },
@@ -538,8 +534,7 @@ pub enum Control {
     },
     /// Settings → Git Actions: snapshot the commit + PR LLM scripts
     /// (resolved-current text plus a `using_default` flag per script).
-    /// Reply: [`WorkerReply::GitActionScriptsAck`]. Mirrors
-    /// `LocalSession::read_git_action_scripts`.
+    /// Reply: [`WorkerReply::GitActionScriptsAck`].
     ReadGitActionScripts,
     /// Settings → Git Actions: replace the commit-message generation
     /// script. Empty / matching the default reverts to the built-in
@@ -689,8 +684,7 @@ pub enum WorkerReply {
     /// issuer can drop the matching tree row even if its local
     /// cache had already been pruned. Idempotent on the daemon
     /// side: an unknown id still produces this reply rather than an
-    /// `Err` (mirrors `LocalSession::remove_project`'s anyhow-Ok-
-    /// even-on-unknown-id semantics).
+    /// `Err`.
     ProjectRemoved { project_id: String },
     /// Reply to [`Control::OpenInState`]. `state.enabled_apps` is in
     /// canonical `OpenInAppKind::all()` order; `preferred_app_id`
@@ -939,15 +933,9 @@ pub enum WorkerReply {
     McpRemoveAck,
 }
 
-/// Wire mirror of the bridge's `ActiveGitStateDto` (FRB-bound) and
-/// the underlying `core::project_store::ProjectGitState`. Carries the
-/// metadata the titlebar's idle-primary-action selection needs.
-///
-/// Defined as a wire-side mirror rather than reusing the FRB DTO
-/// because daemon-sandbox can't depend on the bridge crate (cycle —
-/// the bridge embeds daemon-sandbox). The bridge's `embedded_daemon`
-/// converts between this shape and the FRB DTO; the field set
-/// matches one-for-one so the conversion is mechanical.
+/// Wire mirror of the active git-state view and the underlying
+/// `core::project_store::ProjectGitState`. Carries the metadata the
+/// titlebar's idle-primary-action selection needs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
@@ -955,7 +943,7 @@ pub struct ActiveGitStateWire {
     pub behind_count: u32,
 }
 
-/// Wire mirror of the bridge's `BranchCompareFileDto` (FRB-bound).
+/// Wire mirror of one branch-compare file row.
 /// One entry per file changed inside a commit (or branch compare).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchCompareFileWire {
@@ -968,7 +956,7 @@ pub struct BranchCompareFileWire {
     pub deletions: i32,
 }
 
-/// Wire mirror of the bridge's `BranchCompareView` (FRB-bound).
+/// Wire mirror of the branch-compare view.
 /// Powers the right sidebar's Compare pane.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchCompareWire {
@@ -977,8 +965,8 @@ pub struct BranchCompareWire {
     pub files: Vec<BranchCompareFileWire>,
 }
 
-/// Wire mirror of the bridge's `ResolvedProjectBranchSettingsDto`
-/// (FRB-bound). Powers the project page's Configuration panel.
+/// Wire mirror of resolved project branch settings. Powers the project
+/// page's Configuration panel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedBranchSettingsWire {
     pub root_project_id: String,
@@ -989,7 +977,7 @@ pub struct ResolvedBranchSettingsWire {
     pub effective_default_target_branch: Option<String>,
 }
 
-/// Wire mirror of the bridge's `CommitDto` (FRB-bound). Carries
+/// Wire mirror of one recent commit row. Carries
 /// pre-computed display strings — the daemon does the rendering work
 /// (chrono is already a dep there) so the UI doesn't need a
 /// humanise-duration package on the client side.
@@ -1002,7 +990,7 @@ pub struct CommitWire {
     pub authored_relative: String,
 }
 
-/// Wire mirror of the bridge's `RecentCommitsView` (FRB-bound).
+/// Wire mirror of the recent commits view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecentCommitsWire {
     pub current_branch: Option<String>,
@@ -1010,7 +998,7 @@ pub struct RecentCommitsWire {
     pub commits: Vec<CommitWire>,
 }
 
-/// Wire mirror of the bridge's `ChangedFileDto` (FRB-bound). Carries
+/// Wire mirror of one changed-file row. Carries
 /// the raw `git status` chars + diff counts; UI maps them to glyphs
 /// per the desktop's existing `changed_file_status_*` tables.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1022,8 +1010,7 @@ pub struct ChangedFileWire {
     pub unstaged_additions: i32,
     pub unstaged_deletions: i32,
     /// Single-char index status, encoded as a 1-char `String` so
-    /// JSON wire and FRB conversion are uniform (FRB doesn't expose
-    /// `char` directly).
+    /// JSON wire remains uniform across clients.
     pub index_status: String,
     /// Single-char worktree status, same encoding as
     /// `index_status`.
@@ -1033,10 +1020,10 @@ pub struct ChangedFileWire {
 
 /// Lossy wire projection of
 /// `core::git_actions::ToolbarActionOutcome`. Same field shape as the
-/// FRB-side `ToolbarActionOutcomeDto`; `warning` distinguishes the
+/// client-side toolbar action outcome; `warning` distinguishes the
 /// snackbar palette and `refresh_git_state` tells the issuing client
-/// to invalidate the active changed-files / git-state providers
-/// after the call.
+/// to invalidate the active changed-files / git-state providers after
+/// the call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolbarActionOutcome {
     pub toast_message: String,
@@ -1277,10 +1264,8 @@ pub enum AgentProvider {
 /// is one round-trip — mobile never needs to re-derive label/icon
 /// from the id.
 ///
-/// Field-for-field compatible with
-/// `another_one_bridge::api::local_session::OpenInAppDto` so the
-/// bridge can pass these straight through to its FRB-exposed DTO
-/// without a mapping layer per field.
+/// Field-for-field compatible with the client DTO shape so adapters
+/// can decode the wire payload without a mapping layer per field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenInAppWire {
     /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
@@ -1291,7 +1276,7 @@ pub struct OpenInAppWire {
     pub icon_path: String,
 }
 
-/// Wire projection of [`another_one_bridge::api::local_session::OpenInState`].
+/// Wire projection of the host's Open In state.
 /// Mobile's titlebar uses `preferred_app_id` for its primary-action
 /// icon and `enabled_apps` for the chevron dropdown. Actual app
 /// launch stays host-local on the daemon (see `openProjectInApp`'s
@@ -1306,8 +1291,7 @@ pub struct OpenInStateWire {
     pub preferred_app_id: Option<String>,
 }
 
-/// Wire projection of one row from Settings → Open In. Same fields as
-/// `another_one_bridge::api::local_session::OpenInAppSettingsRow`.
+/// Wire projection of one row from Settings → Open In.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenInAppSettingsRowWire {
     pub id: String,
@@ -1324,11 +1308,8 @@ pub struct OpenInSettingsViewWire {
 }
 
 /// Wire projection of `another_one_core::project_store::ProjectAction`.
-/// Field-for-field compatible with
-/// `another_one_bridge::api::local_session::ProjectActionDto` so the
-/// bridge can deserialize the wire JSON straight into the FRB-exposed
-/// DTO without a mapping pass — same reason `OpenInAppWire` mirrors
-/// `OpenInAppDto`.
+/// Field-for-field compatible with the client project-action DTO so
+/// adapters can decode the wire JSON without a mapping pass.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectActionWire {
     pub id: String,
@@ -1379,15 +1360,8 @@ pub enum ProjectActionAccessWire {
 /// union — `kind: "shell"` carries `command`, `kind: "agent"`
 /// carries the prompt + provider-specific knobs.
 ///
-/// This has to use the same `#[serde(tag = ...)]` discriminator that
-/// the FRB-bound `ProjectActionKindDto` uses on the Dart side; FRB
-/// emits a sealed-class hierarchy, and serde decodes it from the
-/// internally-tagged shape produced by the daemon.
-///
-/// FRB-bound mirror uses an externally-tagged shape (the default for
-/// Rust enums without serde annotations); we match that here so the
-/// bridge-side `ProjectActionKindDto` decodes the same JSON without
-/// needing a separate intermediate.
+/// This uses the externally-tagged shape expected by existing client
+/// project-action decoders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProjectActionKindWire {
     Shell {
@@ -1407,9 +1381,8 @@ pub enum ProjectActionKindWire {
 }
 
 /// Wire projection of one entry in `another_one_core::agents::AGENTS`.
-/// Field-for-field compatible with
-/// `another_one_bridge::api::local_session::AgentSummaryDto` so the
-/// bridge decodes wire JSON straight into the FRB-exposed DTO.
+/// Field-for-field compatible with the client agent-summary DTO so
+/// adapters can decode wire JSON directly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSummaryWire {
     /// Stable id used by `submit_new_task` and the agent settings
@@ -1420,8 +1393,7 @@ pub struct AgentSummaryWire {
     pub provider: Option<AgentProvider>,
 }
 
-/// Wire projection of
-/// [`another_one_bridge::api::local_session::EnabledAgentsView`].
+/// Wire projection of the enabled-agents view.
 /// Pairs the enabled-agents list with the user's preferred default
 /// (the chip the new-task modal pre-checks on open).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1430,11 +1402,10 @@ pub struct EnabledAgentsViewWire {
     pub default_agent_id: Option<String>,
 }
 
-/// Wire projection of
-/// [`another_one_bridge::api::local_session::AgentSettingsRow`].
+/// Wire projection of the agent settings row.
 /// One row of the Settings → Agents page — label + icon paired with
 /// per-host enabled / default flags and the per-agent launch-args
-/// list. Field-compatible with the FRB DTO.
+/// list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSettingsRowWire {
     pub id: String,
@@ -1446,8 +1417,7 @@ pub struct AgentSettingsRowWire {
     pub launch_args: Vec<String>,
 }
 
-/// Wire projection of
-/// [`another_one_bridge::api::local_session::AgentSettingsView`].
+/// Wire projection of the agent settings view.
 /// Drives the Settings → Agents page; rows are in the canonical
 /// `core::agents::AGENTS` order so the page renders without
 /// re-sorting after each toggle.
@@ -1459,7 +1429,7 @@ pub struct AgentSettingsViewWire {
 
 // ── Settings → Git Actions wire types ────────────────────────────
 
-/// Wire mirror of `another_one_bridge::api::local_session::GitActionScriptsView`.
+/// Wire mirror of the client Git action scripts view.
 /// Snapshot of both LLM scripts the Settings → Git Actions page edits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitActionScriptsView {
@@ -1471,8 +1441,7 @@ pub struct GitActionScriptsView {
 
 // ── Settings → Keybindings wire types ────────────────────────────
 
-/// Wire mirror of
-/// `another_one_bridge::api::local_session::ShortcutSettingsRow`.
+/// Wire mirror of the client shortcut settings row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShortcutSettingsRow {
     /// Stable kebab-case action id (`new-task`, `cycle-projects`,
@@ -1486,8 +1455,7 @@ pub struct ShortcutSettingsRow {
     pub default_binding: String,
 }
 
-/// Wire mirror of
-/// `another_one_bridge::api::local_session::ShortcutSettingsView`.
+/// Wire mirror of the client shortcut settings view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShortcutSettingsView {
     pub actions: Vec<ShortcutSettingsRow>,
@@ -1495,8 +1463,7 @@ pub struct ShortcutSettingsView {
 
 // ── Settings → MCP wire types ────────────────────────────────────
 
-/// Wire mirror of
-/// `another_one_bridge::api::local_session::McpSourceDto`.
+/// Wire mirror of the client MCP source DTO.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpSourceDto {
@@ -1505,8 +1472,7 @@ pub enum McpSourceDto {
     BuiltInDaemon,
 }
 
-/// Wire mirror of
-/// `another_one_bridge::api::local_session::McpTransportKindDto`.
+/// Wire mirror of the client MCP transport-kind DTO.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpTransportKindDto {
@@ -1514,8 +1480,7 @@ pub enum McpTransportKindDto {
     Http,
 }
 
-/// Wire mirror of
-/// `another_one_bridge::api::local_session::McpServerDto`. One row of
+/// Wire mirror of the client MCP server DTO. One row of
 /// the Settings → MCP page's registry section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerDto {
@@ -1527,8 +1492,7 @@ pub struct McpServerDto {
     pub enabled_for: Vec<String>,
 }
 
-/// Wire mirror of
-/// `another_one_bridge::api::local_session::McpCatalogEntryDto`. One
+/// Wire mirror of the client MCP catalog-entry DTO. One
 /// row of the Settings → MCP page's catalog section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpCatalogEntryDto {
@@ -1538,14 +1502,13 @@ pub struct McpCatalogEntryDto {
     pub docs_url: String,
 }
 
-/// Wire mirror of
-/// `another_one_bridge::api::local_session::McpSettingsView`.
+/// Wire mirror of the client MCP settings view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpSettingsView {
     pub catalog_entries: Vec<McpCatalogEntryDto>,
     pub registry_entries: Vec<McpServerDto>,
     /// Providers whose last sync failed — UI tints their toggle red.
-    /// Empty when there's no recorded sync error (matches LocalSession).
+    /// Empty when there's no recorded sync error.
     pub sync_error_provider_ids: Vec<String>,
 }
 

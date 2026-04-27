@@ -22,9 +22,7 @@
 //!   cost — same shape the desktop crate has today.
 //!
 //! Each `*.rs` is a stub at this commit; subsequent PRs migrate the
-//! actual methods out of `desktop/src/platform/` and add
-//! [`HeadlessPlatform::terminal_engine`] for the alacritty/xterm
-//! per-platform render-engine choice.
+//! actual methods out of `desktop/src/platform/`.
 
 // Each `mod` declaration is cfg-gated to its own target so unused
 // platforms don't trigger dead-code warnings during normal builds.
@@ -153,19 +151,4 @@ pub trait HeadlessPlatform {
         app: crate::open_in::OpenInAppKind,
         path: &std::path::Path,
     ) -> std::process::Command;
-
-    /// Construct a [`TerminalEngine`] for a freshly-opened tab.
-    ///
-    /// Defaults to `alacritty_terminal` everywhere; the Phase 0
-    /// spike validates this on Linux only. iOS / Android / macOS /
-    /// Windows inherit the default until link verification clears
-    /// them — overrides land then.
-    fn create_terminal_engine(
-        cols: u16,
-        rows: u16,
-    ) -> Box<dyn crate::terminal_engine::TerminalEngine> {
-        Box::new(crate::terminal_engine::alacritty::AlacrittyEngine::new(
-            cols, rows,
-        ))
-    }
 }
