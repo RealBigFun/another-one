@@ -104,10 +104,15 @@ jobs:
           fi
           KEYCHAIN_PATH="$RUNNER_TEMP/another-one-signing.keychain-db"
           CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          INTERMEDIATE_PATH="$RUNNER_TEMP/DeveloperIDG2CA.cer"
           echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          curl -sSfL -o "$INTERMEDIATE_PATH" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
           security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$INTERMEDIATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -T /usr/bin/codesign
           security import "$CERTIFICATE_PATH" \
             -P "$MACOS_CERTIFICATE_PASSWORD" \
             -A \
@@ -115,11 +120,14 @@ jobs:
             -T /usr/bin/security \
             -k "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/[ "]//g')
+          security default-keychain -s "$KEYCHAIN_PATH"
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s \
             -k "$MACOS_KEYCHAIN_PASSWORD" \
             "$KEYCHAIN_PATH"
+          echo "Codesigning identities visible after import:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
       - name: Run macOS packaging script
         env:
           CARGO_VERSION: ${{ needs.identity.outputs.cargo_version }}
