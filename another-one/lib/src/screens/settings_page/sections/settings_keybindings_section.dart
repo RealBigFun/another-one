@@ -434,15 +434,25 @@ class _BindingPills extends StatelessWidget {
   }
 
   String _displayKey(String part) {
-    return switch (part) {
-      'cmd' => '⌘',
-      'control' => '⌃',
-      'ctrl' => '⌃',
-      'alt' => '⌥',
-      'option' => '⌥',
-      'shift' => '⇧',
+    final normalized = part.toLowerCase();
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      return switch (normalized) {
+        'cmd' => '⌘',
+        'control' => '⌃',
+        'ctrl' => '⌃',
+        'alt' => '⌥',
+        'option' => '⌥',
+        'shift' => '⇧',
+        'super' => 'Super',
+        _ => normalized.toUpperCase(),
+      };
+    }
+    return switch (normalized) {
+      'cmd' || 'control' || 'ctrl' => 'Ctrl',
+      'alt' || 'option' => 'Alt',
+      'shift' => 'Shift',
       'super' => 'Super',
-      _ => part.toUpperCase(),
+      _ => normalized.toUpperCase(),
     };
   }
 }
