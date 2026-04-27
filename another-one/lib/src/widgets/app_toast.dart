@@ -14,7 +14,7 @@ void showAppToast(
   messenger.showSnackBar(
     SnackBar(
       content: Text(message),
-      backgroundColor: warning ? AppTokens.errorBg : null,
+      backgroundColor: warning ? AppTokens.errorBg : AppTokens.successBg,
     ),
   );
 }

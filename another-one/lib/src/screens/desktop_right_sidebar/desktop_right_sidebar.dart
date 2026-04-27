@@ -1412,7 +1412,9 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
         messenger?.showSnackBar(
           SnackBar(
             content: Text(outcome.toastMessage),
-            backgroundColor: outcome.warning ? AppTokens.errorBg : null,
+            backgroundColor: outcome.warning
+                ? AppTokens.warningBg
+                : AppTokens.successBg,
           ),
         );
       }
