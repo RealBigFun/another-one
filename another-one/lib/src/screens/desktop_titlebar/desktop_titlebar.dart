@@ -42,6 +42,7 @@ import '../../state/active_project_provider.dart';
 import '../../state/build_info_provider.dart';
 import '../../state/changed_files_provider.dart';
 import '../../state/github_url_provider.dart';
+import '../../state/git_refresh_invalidation.dart';
 import '../../state/left_sidebar_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/open_in_provider.dart';

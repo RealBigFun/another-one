@@ -32,7 +32,6 @@ import '../../connection.dart' show DiscardAllChangesResult;
 import '../../rust/api/local_session.dart'
     show BranchCompareFileDto, ChangedFileDto, CheckBucket, CheckDto, CommitDto;
 import '../../state/active_git_action_provider.dart';
-import '../../state/active_git_state_provider.dart';
 import '../../state/active_project_provider.dart';
 import '../../state/branch_compare_provider.dart';
 import '../../state/branch_settings_provider.dart';
@@ -41,9 +40,9 @@ import '../../state/changed_files_provider.dart';
 import '../../state/changes_section_collapse_provider.dart';
 import '../../state/commit_file_changes_provider.dart';
 import '../../state/commit_row_expanded_provider.dart';
+import '../../state/git_refresh_invalidation.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/pr_checks_provider.dart';
-import '../../state/pull_request_status_provider.dart';
 import '../../state/recent_commits_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
@@ -1419,10 +1418,7 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
         );
       }
       if (outcome.refreshGitState) {
-        ref.invalidate(changedFilesProvider(widget.projectId));
-        ref.invalidate(recentCommitsProvider(widget.projectId));
-        ref.invalidate(activeGitStateProvider(widget.projectId));
-        ref.invalidate(pullRequestStatusProvider(widget.projectId));
+        invalidateGitRefreshState(ref, widget.projectId);
       }
     } catch (e) {
       if (mounted) {
