@@ -56,6 +56,8 @@ Future<bool> showCustomActionModal({
 
 enum _Kind { shell, agent }
 
+enum _CustomActionDropdown { provider, model, traits, mode, access }
+
 // Match GPUI's pre-save UUID allocation without pulling in a new package.
 final Random _actionIdRandom = Random.secure();
 
@@ -100,6 +102,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
   bool _runOnWorktreeCreate = false;
   bool _saveGlobalCopy = false;
   bool _busy = false;
+  _CustomActionDropdown? _openDropdown;
 
   @override
   void initState() {
@@ -161,6 +164,10 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
         actions: <Type, Action<Intent>>{
           _DismissIntent: CallbackAction<_DismissIntent>(
             onInvoke: (_) {
+              if (_openDropdown != null) {
+                setState(() => _openDropdown = null);
+                return null;
+              }
               Navigator.of(context).pop(false);
               return null;
             },
@@ -293,10 +300,13 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
           _DropdownPicker<AgentProvider>(
             value: _provider,
             label: _providerLabel(_provider),
+            open: _openDropdown == _CustomActionDropdown.provider,
+            onToggle: () => _toggleDropdown(_CustomActionDropdown.provider),
             options: const [AgentProvider.codex, AgentProvider.claudeCode],
             optionLabel: _providerLabel,
             onChanged: (next) {
               setState(() {
+                _openDropdown = null;
                 if (_provider != next) {
                   _provider = next;
                   _model = '';
@@ -319,6 +329,8 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
           _DropdownPicker<String>(
             value: _model,
             label: _modelLabel(_provider, _model),
+            open: _openDropdown == _CustomActionDropdown.model,
+            onToggle: () => _toggleDropdown(_CustomActionDropdown.model),
             options: _modelOptions(
               _provider,
               _model,
@@ -326,6 +338,7 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
             optionLabel: (v) => _modelLabel(_provider, v),
             onChanged: (next) {
               setState(() {
+                _openDropdown = null;
                 _model = next;
                 _traits = '';
               });
@@ -335,26 +348,38 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
           _DropdownPicker<String>(
             value: _traits,
             label: _traitsLabel(_provider, _model, _traits),
+            open: _openDropdown == _CustomActionDropdown.traits,
+            onToggle: () => _toggleDropdown(_CustomActionDropdown.traits),
             options: _traitsOptions(
               _provider,
               _model,
               _traits,
             ).map((o) => o.value).toList(),
             optionLabel: (v) => _traitsLabel(_provider, _model, v),
-            onChanged: (next) => setState(() => _traits = next),
+            onChanged: (next) => setState(() {
+              _openDropdown = null;
+              _traits = next;
+            }),
           ),
           _FieldLabel('Mode'),
           _DropdownPicker<String>(
             value: _mode,
             label: _modeLabel(_mode),
+            open: _openDropdown == _CustomActionDropdown.mode,
+            onToggle: () => _toggleDropdown(_CustomActionDropdown.mode),
             options: const ['', 'default', 'plan'],
             optionLabel: _modeLabel,
-            onChanged: (next) => setState(() => _mode = next),
+            onChanged: (next) => setState(() {
+              _openDropdown = null;
+              _mode = next;
+            }),
           ),
           _FieldLabel('Access'),
           _DropdownPicker<ProjectActionAccessDto>(
             value: _access,
             label: _accessLabel(_access),
+            open: _openDropdown == _CustomActionDropdown.access,
+            onToggle: () => _toggleDropdown(_CustomActionDropdown.access),
             options: const [
               ProjectActionAccessDto.default_,
               ProjectActionAccessDto.readOnly,
@@ -362,7 +387,10 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
               ProjectActionAccessDto.fullAccess,
             ],
             optionLabel: _accessLabel,
-            onChanged: (next) => setState(() => _access = next),
+            onChanged: (next) => setState(() {
+              _openDropdown = null;
+              _access = next;
+            }),
           ),
         ],
         const SizedBox(height: 16),
@@ -402,7 +430,10 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
     final selected = _kind == option;
     return Expanded(
       child: InkWell(
-        onTap: () => setState(() => _kind = option),
+        onTap: () => setState(() {
+          _kind = option;
+          _openDropdown = null;
+        }),
         borderRadius: BorderRadius.circular(AppTokens.radiusXs + 1),
         child: Container(
           height: 32,
@@ -553,6 +584,12 @@ class _CustomActionModalState extends ConsumerState<_CustomActionModal> {
     showAppToast(context, message: message, warning: warning);
   }
 
+  void _toggleDropdown(_CustomActionDropdown dropdown) {
+    setState(() {
+      _openDropdown = _openDropdown == dropdown ? null : dropdown;
+    });
+  }
+
   void _toastError(String message) {
     _toast(message);
   }
@@ -679,10 +716,12 @@ class _IconPickerButton extends StatelessWidget {
   }
 }
 
-class _DropdownPicker<T> extends StatefulWidget {
+class _DropdownPicker<T> extends StatelessWidget {
   const _DropdownPicker({
     required this.value,
     required this.label,
+    required this.open,
+    required this.onToggle,
     required this.options,
     required this.optionLabel,
     required this.onChanged,
@@ -691,17 +730,12 @@ class _DropdownPicker<T> extends StatefulWidget {
 
   final T value;
   final String label;
+  final bool open;
+  final VoidCallback onToggle;
   final List<T> options;
   final String Function(T) optionLabel;
   final ValueChanged<T> onChanged;
   final Widget Function(BuildContext, T, bool)? optionBuilder;
-
-  @override
-  State<_DropdownPicker<T>> createState() => _DropdownPickerState<T>();
-}
-
-class _DropdownPickerState<T> extends State<_DropdownPicker<T>> {
-  bool _open = false;
 
   @override
   Widget build(BuildContext context) {
@@ -711,7 +745,7 @@ class _DropdownPickerState<T> extends State<_DropdownPicker<T>> {
       children: [
         InkWell(
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          onTap: () => setState(() => _open = !_open),
+          onTap: onToggle,
           child: Container(
             height: 38,
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -719,14 +753,14 @@ class _DropdownPickerState<T> extends State<_DropdownPicker<T>> {
               color: AppTokens.overlayHover,
               borderRadius: BorderRadius.circular(AppTokens.radiusMd),
               border: Border.all(
-                color: _open ? const Color(0xFF6F86CB) : AppTokens.border,
+                color: open ? const Color(0xFF6F86CB) : AppTokens.border,
               ),
             ),
             child: Row(
               children: [
                 Expanded(
                   child: Text(
-                    widget.label,
+                    label,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 13,
@@ -747,7 +781,7 @@ class _DropdownPickerState<T> extends State<_DropdownPicker<T>> {
             ),
           ),
         ),
-        if (_open)
+        if (open)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Container(
@@ -767,27 +801,22 @@ class _DropdownPickerState<T> extends State<_DropdownPicker<T>> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final option in widget.options)
+                  for (final option in options)
                     InkWell(
                       onTap: () {
-                        setState(() => _open = false);
-                        widget.onChanged(option);
+                        onChanged(option);
                       },
                       child: Container(
-                        height: widget.optionBuilder != null ? 36 : 32,
+                        height: optionBuilder != null ? 36 : 32,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         alignment: Alignment.centerLeft,
-                        color: option == widget.value
+                        color: option == value
                             ? AppTokens.overlayActive
                             : Colors.transparent,
-                        child: widget.optionBuilder != null
-                            ? widget.optionBuilder!(
-                                context,
-                                option,
-                                option == widget.value,
-                              )
+                        child: optionBuilder != null
+                            ? optionBuilder!(context, option, option == value)
                             : Text(
-                                widget.optionLabel(option),
+                                optionLabel(option),
                                 style: const TextStyle(
                                   fontSize: 13,
                                   color: AppTokens.textPrimary,
