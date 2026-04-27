@@ -28,14 +28,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../connection.dart' show DiscardAllChangesResult;
 import '../../rust/api/local_session.dart'
-    show
-        BranchCompareFileDto,
-        ChangedFileDto,
-        CheckBucket,
-        CheckDto,
-        CommitDto;
+    show BranchCompareFileDto, ChangedFileDto, CheckBucket, CheckDto, CommitDto;
 import '../../state/active_git_action_provider.dart';
+import '../../state/active_git_state_provider.dart';
 import '../../state/active_project_provider.dart';
 import '../../state/branch_compare_provider.dart';
 import '../../state/branch_settings_provider.dart';
@@ -46,6 +43,7 @@ import '../../state/commit_file_changes_provider.dart';
 import '../../state/commit_row_expanded_provider.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/pr_checks_provider.dart';
+import '../../state/pull_request_status_provider.dart';
 import '../../state/recent_commits_provider.dart';
 import '../../state/right_sidebar_provider.dart';
 import '../../tokens.dart';
@@ -79,9 +77,7 @@ class DesktopRightSidebar extends ConsumerWidget {
       width: _rightSidebarWidth,
       decoration: const BoxDecoration(
         color: AppTokens.chromeBg,
-        border: Border(
-          left: BorderSide(color: AppTokens.divider, width: 0.5),
-        ),
+        border: Border(left: BorderSide(color: AppTokens.divider, width: 0.5)),
       ),
       child: Column(
         children: [
@@ -92,9 +88,9 @@ class DesktopRightSidebar extends ConsumerWidget {
               RightSidebarTab.commits => const _CommitsPane(),
               RightSidebarTab.checks => const _ChecksPane(),
               RightSidebarTab.compare => _ComparePane(
-                  projectId: projectId!,
-                  targetBranch: compareTarget!,
-                ),
+                projectId: projectId!,
+                targetBranch: compareTarget!,
+              ),
             },
           ),
         ],
@@ -271,17 +267,24 @@ class _ChangedFilesSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final additions = files.fold<int>(
       0,
-      (a, f) => a +
-          (group == _ChangeGroup.staged ? f.stagedAdditions : f.unstagedAdditions),
+      (a, f) =>
+          a +
+          (group == _ChangeGroup.staged
+              ? f.stagedAdditions
+              : f.unstagedAdditions),
     );
     final deletions = files.fold<int>(
       0,
-      (a, f) => a +
-          (group == _ChangeGroup.staged ? f.stagedDeletions : f.unstagedDeletions),
+      (a, f) =>
+          a +
+          (group == _ChangeGroup.staged
+              ? f.stagedDeletions
+              : f.unstagedDeletions),
     );
     final collapseKey = '$projectId:$sectionKey';
-    final collapsed =
-        ref.watch(changesSectionCollapseProvider).contains(collapseKey);
+    final collapsed = ref
+        .watch(changesSectionCollapseProvider)
+        .contains(collapseKey);
     final pending = ref.watch(changedFilesPendingProvider(projectId));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -293,12 +296,15 @@ class _ChangedFilesSection extends ConsumerWidget {
           deletions: deletions,
           collapsed: collapsed,
           actionsBusy: pending.actionsBusy,
-          stageAllPending:
-              pending.isProjectActionPending(ProjectAction.stageAll),
-          unstageAllPending:
-              pending.isProjectActionPending(ProjectAction.unstageAll),
-          discardAllPending:
-              pending.isProjectActionPending(ProjectAction.discardAll),
+          stageAllPending: pending.isProjectActionPending(
+            ProjectAction.stageAll,
+          ),
+          unstageAllPending: pending.isProjectActionPending(
+            ProjectAction.unstageAll,
+          ),
+          discardAllPending: pending.isProjectActionPending(
+            ProjectAction.discardAll,
+          ),
           onToggleCollapse: () => ref
               .read(changesSectionCollapseProvider.notifier)
               .toggle(collapseKey),
@@ -314,11 +320,7 @@ class _ChangedFilesSection extends ConsumerWidget {
         ),
         if (!collapsed)
           for (final file in files)
-            _ChangedFileRow(
-              projectId: projectId,
-              file: file,
-              group: group,
-            ),
+            _ChangedFileRow(projectId: projectId, file: file, group: group),
       ],
     );
   }
@@ -326,31 +328,33 @@ class _ChangedFilesSection extends ConsumerWidget {
   Future<void> _stageAll(BuildContext context, WidgetRef ref) async {
     await _withProjectPending(ref, ProjectAction.stageAll, () async {
       final connection = ref.read(localConnectionProvider);
-      await runMutation<bool>(
+      final files = await runMutation<List<ChangedFileDto>>(
         context,
-        () async {
-          await connection.stageAllChanges(projectId);
-          return true;
-        },
+        () => connection.stageAllChanges(projectId),
         errorPrefix: 'Could not stage all changes',
       );
+      if (files != null) {
+        ref
+            .read(changedFilesProvider(projectId).notifier)
+            .replaceSnapshot(files);
+      }
     });
-    ref.invalidate(changedFilesProvider(projectId));
   }
 
   Future<void> _unstageAll(BuildContext context, WidgetRef ref) async {
     await _withProjectPending(ref, ProjectAction.unstageAll, () async {
       final connection = ref.read(localConnectionProvider);
-      await runMutation<bool>(
+      final files = await runMutation<List<ChangedFileDto>>(
         context,
-        () async {
-          await connection.unstageAllChanges(projectId);
-          return true;
-        },
+        () => connection.unstageAllChanges(projectId),
         errorPrefix: 'Could not unstage all changes',
       );
+      if (files != null) {
+        ref
+            .read(changedFilesProvider(projectId).notifier)
+            .replaceSnapshot(files);
+      }
     });
-    ref.invalidate(changedFilesProvider(projectId));
   }
 
   Future<void> _discardAll(BuildContext context, WidgetRef ref) async {
@@ -358,33 +362,28 @@ class _ChangedFilesSection extends ConsumerWidget {
     if (!ok || !context.mounted) return;
     await _withProjectPending(ref, ProjectAction.discardAll, () async {
       final connection = ref.read(localConnectionProvider);
-      // Loop the per-file discard verb because core has no
-      // discard-all primitive (revert_changed_file is per-path).
-      // Partial discard is still useful, so collect failures and
-      // surface them at the end rather than aborting on first error.
-      final List<String> failures = [];
-      for (final f in files) {
-        try {
-          await connection.discardChangedFile(
-            projectId: projectId,
-            path: f.path,
-            originalPath: f.originalPath,
-            untracked: f.untracked,
-          );
-        } catch (e) {
-          failures.add('${f.path}: $e');
-        }
+      final result = await runMutation<DiscardAllChangesResult>(
+        context,
+        () => connection.discardAllChanges(projectId: projectId, files: files),
+        errorPrefix: 'Could not discard all changes',
+      );
+      if (result == null) {
+        return;
       }
-      if (failures.isNotEmpty && context.mounted) {
+      ref
+          .read(changedFilesProvider(projectId).notifier)
+          .replaceSnapshot(result.changedFiles);
+      if (result.failures.isNotEmpty && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Could not discard ${failures.length} file(s)'),
+            content: Text(
+              'Could not discard ${result.failures.length} file(s)',
+            ),
             backgroundColor: AppTokens.errorBg,
           ),
         );
       }
     });
-    ref.invalidate(changedFilesProvider(projectId));
   }
 
   Future<void> _withProjectPending(
@@ -616,8 +615,7 @@ class _ChangedFileRow extends ConsumerWidget {
               ),
             ),
             const SizedBox(width: 12),
-            if (additions > 0)
-              _DiffBadge(value: additions, positive: true),
+            if (additions > 0) _DiffBadge(value: additions, positive: true),
             if (deletions > 0) ...[
               const SizedBox(width: 8),
               _DiffBadge(value: deletions, positive: false),
@@ -657,59 +655,62 @@ class _ChangedFileRow extends ConsumerWidget {
     if (!ok || !context.mounted) return;
     await _withFilePending(ref, () async {
       final connection = ref.read(localConnectionProvider);
-      await runMutation<bool>(
+      final files = await runMutation<List<ChangedFileDto>>(
         context,
-        () async {
-          await connection.discardChangedFile(
-            projectId: projectId,
-            path: file.path,
-            originalPath: file.originalPath,
-            untracked: file.untracked,
-          );
-          return true;
-        },
+        () => connection.discardChangedFile(
+          projectId: projectId,
+          path: file.path,
+          originalPath: file.originalPath,
+          untracked: file.untracked,
+        ),
         errorPrefix: 'Could not discard ${file.path}',
       );
+      if (files != null) {
+        ref
+            .read(changedFilesProvider(projectId).notifier)
+            .replaceSnapshot(files);
+      }
     });
-    ref.invalidate(changedFilesProvider(projectId));
   }
 
   Future<void> _stage(BuildContext context, WidgetRef ref) async {
     await _withFilePending(ref, () async {
       final connection = ref.read(localConnectionProvider);
-      await runMutation<bool>(
+      final files = await runMutation<List<ChangedFileDto>>(
         context,
-        () async {
-          await connection.stageChangedFile(
-            projectId: projectId,
-            path: file.path,
-            originalPath: file.originalPath,
-          );
-          return true;
-        },
+        () => connection.stageChangedFile(
+          projectId: projectId,
+          path: file.path,
+          originalPath: file.originalPath,
+        ),
         errorPrefix: 'Could not stage ${file.path}',
       );
+      if (files != null) {
+        ref
+            .read(changedFilesProvider(projectId).notifier)
+            .replaceSnapshot(files);
+      }
     });
-    ref.invalidate(changedFilesProvider(projectId));
   }
 
   Future<void> _unstage(BuildContext context, WidgetRef ref) async {
     await _withFilePending(ref, () async {
       final connection = ref.read(localConnectionProvider);
-      await runMutation<bool>(
+      final files = await runMutation<List<ChangedFileDto>>(
         context,
-        () async {
-          await connection.unstageChangedFile(
-            projectId: projectId,
-            path: file.path,
-            originalPath: file.originalPath,
-          );
-          return true;
-        },
+        () => connection.unstageChangedFile(
+          projectId: projectId,
+          path: file.path,
+          originalPath: file.originalPath,
+        ),
         errorPrefix: 'Could not unstage ${file.path}',
       );
+      if (files != null) {
+        ref
+            .read(changedFilesProvider(projectId).notifier)
+            .replaceSnapshot(files);
+      }
     });
-    ref.invalidate(changedFilesProvider(projectId));
   }
 
   Future<void> _withFilePending(
@@ -801,9 +802,7 @@ class _IconActionButtonState extends State<_IconActionButton> {
       return const SizedBox(
         width: 28,
         height: 28,
-        child: Center(
-          child: ToolbarSpinner(size: 14, color: _iconColor),
-        ),
+        child: Center(child: ToolbarSpinner(size: 14, color: _iconColor)),
       );
     }
     final container = Opacity(
@@ -818,11 +817,7 @@ class _IconActionButtonState extends State<_IconActionButton> {
               : Colors.transparent,
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         ),
-        child: AppIcon(
-          widget.icon,
-          size: 16,
-          color: _iconColor,
-        ),
+        child: AppIcon(widget.icon, size: 16, color: _iconColor),
       ),
     );
     if (!widget.enabled) return container;
@@ -922,10 +917,8 @@ Future<bool> showDiscardConfirmDialog(
       insetPadding: EdgeInsets.zero,
       child: Shortcuts(
         shortcuts: const {
-          SingleActivator(LogicalKeyboardKey.escape):
-              _DiscardDismissIntent(),
-          SingleActivator(LogicalKeyboardKey.enter):
-              _DiscardConfirmIntent(),
+          SingleActivator(LogicalKeyboardKey.escape): _DiscardDismissIntent(),
+          SingleActivator(LogicalKeyboardKey.enter): _DiscardConfirmIntent(),
           SingleActivator(LogicalKeyboardKey.numpadEnter):
               _DiscardConfirmIntent(),
         },
@@ -944,10 +937,7 @@ Future<bool> showDiscardConfirmDialog(
               },
             ),
           },
-          child: Focus(
-            autofocus: true,
-            child: _DiscardCard(message: message),
-          ),
+          child: Focus(autofocus: true, child: _DiscardCard(message: message)),
         ),
       ),
     ),
@@ -1013,10 +1003,7 @@ class _DiscardCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 const Text(
                   'This action cannot be undone.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppTokens.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 11, color: AppTokens.textMuted),
                 ),
               ],
             ),
@@ -1277,9 +1264,9 @@ class _LoadMoreCommitsRow extends ConsumerWidget {
           label: 'Load more',
           tooltip: 'Show 20 more recent commits',
           onPressed: () {
-            ref.read(commitPageSizeProvider(projectId).notifier).update(
-                  (state) => state + kRecentCommitsPageSize,
-                );
+            ref
+                .read(commitPageSizeProvider(projectId).notifier)
+                .update((state) => state + kRecentCommitsPageSize);
             ref.invalidate(recentCommitsProvider(projectId));
           },
         ),
@@ -1321,10 +1308,7 @@ class _CommitRow extends ConsumerWidget {
               ref.read(commitRowExpandedProvider.notifier).toggle(_expandKey),
         ),
         if (expanded)
-          _CommitExpandedPanel(
-            projectId: projectId,
-            commit: commit,
-          ),
+          _CommitExpandedPanel(projectId: projectId, commit: commit),
       ],
     );
   }
@@ -1354,8 +1338,7 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
 
   @override
   Widget build(BuildContext context) {
-    final activeAction =
-        ref.watch(activeGitActionProvider(widget.projectId));
+    final activeAction = ref.watch(activeGitActionProvider(widget.projectId));
     final undoPending = activeAction == 'undo-last-commit';
     final actionsBusy = activeAction != null;
     return MouseRegion(
@@ -1414,8 +1397,9 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
   }
 
   Future<void> _undoLastCommit() async {
-    final notifier =
-        ref.read(activeGitActionProvider(widget.projectId).notifier);
+    final notifier = ref.read(
+      activeGitActionProvider(widget.projectId).notifier,
+    );
     notifier.start('undo-last-commit');
     final connection = ref.read(localConnectionProvider);
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -1435,6 +1419,8 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
       if (outcome.refreshGitState) {
         ref.invalidate(changedFilesProvider(widget.projectId));
         ref.invalidate(recentCommitsProvider(widget.projectId));
+        ref.invalidate(activeGitStateProvider(widget.projectId));
+        ref.invalidate(pullRequestStatusProvider(widget.projectId));
       }
     } catch (e) {
       if (mounted) {
@@ -1452,10 +1438,7 @@ class _CommitRowHeaderState extends ConsumerState<_CommitRowHeader> {
 }
 
 class _CommitExpandedPanel extends ConsumerWidget {
-  const _CommitExpandedPanel({
-    required this.projectId,
-    required this.commit,
-  });
+  const _CommitExpandedPanel({required this.projectId, required this.commit});
 
   final String projectId;
   final CommitDto commit;
@@ -1496,10 +1479,7 @@ class _CommitExpandedPanel extends ConsumerWidget {
                 const SizedBox(width: 8),
                 const Text(
                   '·',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Color(0x94FFFFFF),
-                  ),
+                  style: TextStyle(fontSize: 11, color: Color(0x94FFFFFF)),
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -1525,18 +1505,12 @@ class _CommitExpandedPanel extends ConsumerWidget {
                   SizedBox(
                     width: 12,
                     height: 12,
-                    child: ToolbarSpinner(
-                      size: 12,
-                      color: Color(0x94FFFFFF),
-                    ),
+                    child: ToolbarSpinner(size: 12, color: Color(0x94FFFFFF)),
                   ),
                   SizedBox(width: 8),
                   Text(
                     'Loading file changes...',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Color(0x94FFFFFF),
-                    ),
+                    style: TextStyle(fontSize: 11, color: Color(0x94FFFFFF)),
                   ),
                 ],
               ),
@@ -1545,10 +1519,7 @@ class _CommitExpandedPanel extends ConsumerWidget {
               padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
               child: Text(
                 "Couldn't load file changes.",
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Color(0x94FFFFFF),
-                ),
+                style: TextStyle(fontSize: 11, color: Color(0x94FFFFFF)),
               ),
             ),
           ),
@@ -1577,10 +1548,7 @@ class _CommitFileList extends StatelessWidget {
         padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
         child: Text(
           "Couldn't load file changes.",
-          style: TextStyle(
-            fontSize: 11,
-            color: Color(0x94FFFFFF),
-          ),
+          style: TextStyle(fontSize: 11, color: Color(0x94FFFFFF)),
         ),
       );
     }
@@ -1589,10 +1557,7 @@ class _CommitFileList extends StatelessWidget {
         padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
         child: Text(
           'No file changes in this commit.',
-          style: TextStyle(
-            fontSize: 11,
-            color: Color(0x94FFFFFF),
-          ),
+          style: TextStyle(fontSize: 11, color: Color(0x94FFFFFF)),
         ),
       );
     }
@@ -1618,8 +1583,7 @@ class _CommitFileList extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (final file in list)
-                _BranchCompareFileRow(file: file),
+              for (final file in list) _BranchCompareFileRow(file: file),
             ],
           ),
         ),
@@ -1640,10 +1604,11 @@ class _ComparePane extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final fallbackBranch = ref.watch(activeBranchNameProvider);
-    final state = ref.watch(branchCompareProvider(BranchCompareKey(
-      projectId: projectId,
-      targetBranch: targetBranch,
-    )));
+    final state = ref.watch(
+      branchCompareProvider(
+        BranchCompareKey(projectId: projectId, targetBranch: targetBranch),
+      ),
+    );
     return state.when(
       data: (view) {
         final currentBranch = view?.currentBranch ?? fallbackBranch ?? '';
@@ -1655,14 +1620,10 @@ class _ComparePane extends ConsumerWidget {
               targetBranch: targetBranch,
             ),
             if (view == null)
-              const Expanded(
-                child: EmptyState(text: 'Loading compare view...'),
-              )
+              const Expanded(child: EmptyState(text: 'Loading compare view...'))
             else if (view.files.isEmpty)
               Expanded(
-                child: EmptyState(
-                  text: 'No differences from $targetBranch.',
-                ),
+                child: EmptyState(text: 'No differences from $targetBranch.'),
               )
             else
               Expanded(
@@ -1672,8 +1633,7 @@ class _ComparePane extends ConsumerWidget {
                     vertical: 8,
                   ),
                   itemCount: view.files.length,
-                  itemBuilder: (_, i) =>
-                      _BranchCompareRow(file: view.files[i]),
+                  itemBuilder: (_, i) => _BranchCompareRow(file: view.files[i]),
                 ),
               ),
           ],
@@ -1686,9 +1646,7 @@ class _ComparePane extends ConsumerWidget {
             currentBranch: fallbackBranch ?? '',
             targetBranch: targetBranch,
           ),
-          const Expanded(
-            child: EmptyState(text: 'Loading compare view...'),
-          ),
+          const Expanded(child: EmptyState(text: 'Loading compare view...')),
         ],
       ),
       error: (e, _) => Column(
@@ -1737,10 +1695,7 @@ class _CompareHeader extends StatelessWidget {
           const Text(
             'Read-only branch diff. Stage, unstage, and discard '
             'actions are unavailable in compare mode.',
-            style: TextStyle(
-              fontSize: 11,
-              color: Color(0x94FFFFFF),
-            ),
+            style: TextStyle(fontSize: 11, color: Color(0x94FFFFFF)),
           ),
         ],
       ),
@@ -1932,10 +1887,7 @@ class _BranchCompareFileRow extends StatelessWidget {
               child: Text(
                 'Renamed from ${file.originalPath}',
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0x8FFFFFFF),
-                ),
+                style: const TextStyle(fontSize: 11, color: Color(0x8FFFFFFF)),
               ),
             ),
         ],
@@ -1973,9 +1925,7 @@ class _ChecksBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final l = list;
     if (l == null) {
-      return const EmptyState(
-        text: 'No pull request exists for this branch.',
-      );
+      return const EmptyState(text: 'No pull request exists for this branch.');
     }
     if (l.isEmpty) {
       return const EmptyState(
@@ -1984,7 +1934,8 @@ class _ChecksBody extends StatelessWidget {
     }
     // Sort by bucket priority (Fail, Pending, Pass, Skipping/Cancel)
     // then case-insensitive name. Mirrors GPUI's sort.
-    final sorted = [...l]..sort((a, b) {
+    final sorted = [...l]
+      ..sort((a, b) {
         final pa = _bucketPriority(a.bucket);
         final pb = _bucketPriority(b.bucket);
         if (pa != pb) return pa.compareTo(pb);
@@ -1992,11 +1943,13 @@ class _ChecksBody extends StatelessWidget {
       });
     final passed = sorted.where((c) => c.bucket == CheckBucket.pass).length;
     final failed = sorted.where((c) => c.bucket == CheckBucket.fail).length;
-    final pending =
-        sorted.where((c) => c.bucket == CheckBucket.pending).length;
+    final pending = sorted.where((c) => c.bucket == CheckBucket.pending).length;
     final skipped = sorted
-        .where((c) =>
-            c.bucket == CheckBucket.skipping || c.bucket == CheckBucket.cancel)
+        .where(
+          (c) =>
+              c.bucket == CheckBucket.skipping ||
+              c.bucket == CheckBucket.cancel,
+        )
         .length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2023,11 +1976,11 @@ class _ChecksBody extends StatelessWidget {
 /// then Pass, then Skipping/Cancel. Lower number = higher
 /// priority.
 int _bucketPriority(CheckBucket bucket) => switch (bucket) {
-      CheckBucket.fail => 0,
-      CheckBucket.pending => 1,
-      CheckBucket.pass => 2,
-      CheckBucket.skipping || CheckBucket.cancel => 3,
-    };
+  CheckBucket.fail => 0,
+  CheckBucket.pending => 1,
+  CheckBucket.pass => 2,
+  CheckBucket.skipping || CheckBucket.cancel => 3,
+};
 
 /// HSL-derived sRGB constants, computed once. Matches GPUI's
 /// `check_run_visual` colors so the badge glyphs and the summary
@@ -2039,18 +1992,18 @@ const Color _bucketColorMuted = Color(0xFF9E9E9E); // hsla(0, 0, 0.62) — summa
 const Color _bucketIconMuted = Color(0xFF8F8F8F); // hsla(0, 0, 0.56) — row icon
 
 Color _bucketColor(CheckBucket bucket) => switch (bucket) {
-      CheckBucket.pass => _bucketColorPass,
-      CheckBucket.fail => _bucketColorFail,
-      CheckBucket.pending => _bucketColorPending,
-      CheckBucket.skipping || CheckBucket.cancel => _bucketIconMuted,
-    };
+  CheckBucket.pass => _bucketColorPass,
+  CheckBucket.fail => _bucketColorFail,
+  CheckBucket.pending => _bucketColorPending,
+  CheckBucket.skipping || CheckBucket.cancel => _bucketIconMuted,
+};
 
 String _bucketIconName(CheckBucket bucket) => switch (bucket) {
-      CheckBucket.pass => 'badge-check',
-      CheckBucket.fail => 'badge-x',
-      CheckBucket.pending => 'badge-clock',
-      CheckBucket.skipping || CheckBucket.cancel => 'minus',
-    };
+  CheckBucket.pass => 'badge-check',
+  CheckBucket.fail => 'badge-x',
+  CheckBucket.pending => 'badge-clock',
+  CheckBucket.skipping || CheckBucket.cancel => 'minus',
+};
 
 class _ChecksSummaryBar extends StatelessWidget {
   const _ChecksSummaryBar({
@@ -2079,9 +2032,15 @@ class _ChecksSummaryBar extends StatelessWidget {
         runSpacing: 6,
         children: [
           if (passed > 0)
-            _CheckSummaryBadge(label: '$passed passed', color: _bucketColorPass),
+            _CheckSummaryBadge(
+              label: '$passed passed',
+              color: _bucketColorPass,
+            ),
           if (failed > 0)
-            _CheckSummaryBadge(label: '$failed failed', color: _bucketColorFail),
+            _CheckSummaryBadge(
+              label: '$failed failed',
+              color: _bucketColorFail,
+            ),
           if (pending > 0)
             _CheckSummaryBadge(
               label: '$pending pending',
@@ -2241,4 +2200,3 @@ class _CheckRowState extends State<_CheckRow> {
     );
   }
 }
-
