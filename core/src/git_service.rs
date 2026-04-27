@@ -28,9 +28,10 @@ use crate::git_actions::{
     ToolbarActionOutcome, ToolbarGitAction,
 };
 use crate::project_store::{
-    read_project_branch_commit_state, read_project_branch_compare_state, read_project_git_state,
-    stage_all_changes, stage_changed_file, unstage_all_changes, unstage_changed_file, ChangedFile,
-    ProjectBranchCommitState, ProjectBranchCompareState, ProjectGitState,
+    fetch_project_git_state, read_project_branch_commit_state, read_project_branch_compare_state,
+    read_project_git_state, stage_all_changes, stage_changed_file, unstage_all_changes,
+    unstage_changed_file, ChangedFile, ProjectBranchCommitState, ProjectBranchCompareState,
+    ProjectGitState,
 };
 
 /// Result payload from `spawn_refresh` — one message per refresh call.
@@ -41,6 +42,12 @@ pub struct GitRefreshReply {
     pub state: ProjectGitState,
     pub commit_state: Option<Result<ProjectBranchCommitState, String>>,
     pub compare_state: Option<Result<ProjectBranchCompareState, String>>,
+}
+
+#[derive(Clone)]
+pub struct RemoteBranchRefreshReply {
+    pub project_id: String,
+    pub result: Result<ProjectGitState, String>,
 }
 
 /// Spawn a background git-status / metadata / commit / compare read for
@@ -82,6 +89,24 @@ pub fn spawn_refresh(
             commit_state,
             compare_state,
         });
+    });
+    rx
+}
+
+/// Fetch remote refs and return fresh branch metadata for a project.
+///
+/// This is intentionally separate from the automatic metadata refresh:
+/// the periodic path must stay local-only, while branch-picking UI can
+/// opt into a network fetch when the user is actively looking for a
+/// branch that may only exist on a remote.
+pub fn spawn_remote_branch_refresh(
+    project_id: String,
+    project_path: PathBuf,
+) -> broadcast::Receiver<RemoteBranchRefreshReply> {
+    let (tx, rx) = broadcast::channel(1);
+    thread::spawn(move || {
+        let result = fetch_project_git_state(&project_path);
+        let _ = tx.send(RemoteBranchRefreshReply { project_id, result });
     });
     rx
 }

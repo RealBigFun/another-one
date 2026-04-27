@@ -1828,6 +1828,21 @@ pub fn read_project_git_state(path: &Path, include_metadata: bool) -> ProjectGit
     }
 }
 
+pub fn fetch_project_git_state(path: &Path) -> Result<ProjectGitState, String> {
+    let output = git_command(path)
+        .args(["fetch", "--all", "--prune"])
+        .output()
+        .map_err(|error| format!("Could not refresh remote branches: {error}"))?;
+    if !output.status.success() {
+        return Err(format_git_command_failure(
+            "Could not refresh remote branches",
+            &output,
+        ));
+    }
+
+    Ok(read_project_git_state(path, true))
+}
+
 pub fn read_project_branch_compare_state(
     path: &Path,
     target_branch: &str,
@@ -3388,16 +3403,16 @@ mod tests {
 
     use super::{
         app_worktrees_root, combine_commit_file_changes, create_branch_from_head,
-        create_task_worktree, current_branch, format_git_command_error, git_stdout,
-        parse_branch_commit_entries, parse_branch_compare_name_status_entries,
+        create_task_worktree, current_branch, fetch_project_git_state, format_git_command_error,
+        git_stdout, parse_branch_commit_entries, parse_branch_compare_name_status_entries,
         parse_branch_compare_numstat_entries, parse_recent_branch_commit_page,
-        project_action_agent_launch_args, review_worktree_slug, slugify_branch_name,
-        unique_branch_name_for_repo, worktree_parent_dir_with_root, BranchCompareNameStatusEntry,
-        BranchCompareNumStatEntry, CreateBranchMode, PersistedSectionState, PersistedTerminalTab,
-        Project, ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind,
-        ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings, ProjectCheckoutState,
-        ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task, TaskKind,
-        TaskWorktreeBranchMode, UiState,
+        project_action_agent_launch_args, read_project_git_state, review_worktree_slug,
+        slugify_branch_name, unique_branch_name_for_repo, worktree_parent_dir_with_root,
+        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, CreateBranchMode,
+        PersistedSectionState, PersistedTerminalTab, Project, ProjectAction, ProjectActionAccess,
+        ProjectActionIcon, ProjectActionKind, ProjectActionScope, ProjectBranchSettingField,
+        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
+        RepoRecord, StoreFile, Task, TaskKind, TaskWorktreeBranchMode, UiState,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -3703,6 +3718,50 @@ mod tests {
             )
             .as_deref(),
             Some("origin/feature/remote-only")
+        );
+    }
+
+    #[test]
+    fn fetch_project_git_state_refreshes_remote_only_branch_catalog() {
+        let repo = init_repo();
+        let origin = tempfile::tempdir().expect("origin dir should exist");
+        run_git(origin.path(), &["init", "--bare"]);
+        let origin_url = origin.path().to_string_lossy().to_string();
+        run_git(repo.path(), &["remote", "add", "origin", &origin_url]);
+
+        run_git(repo.path(), &["switch", "-c", "feature/latest-remote"]);
+        fs::write(repo.path().join("file.txt"), "base\nremote\n").expect("file should write");
+        run_git(repo.path(), &["add", "."]);
+        run_git(repo.path(), &["commit", "-m", "remote feature"]);
+        run_git(repo.path(), &["push", "origin", "feature/latest-remote"]);
+        run_git(repo.path(), &["switch", "main"]);
+        run_git(repo.path(), &["branch", "-D", "feature/latest-remote"]);
+        run_git(
+            repo.path(),
+            &[
+                "update-ref",
+                "-d",
+                "refs/remotes/origin/feature/latest-remote",
+            ],
+        );
+
+        let before = read_project_git_state(repo.path(), true);
+        assert!(
+            !before.metadata.as_ref().is_some_and(|metadata| metadata
+                .branch_order
+                .iter()
+                .any(|branch| branch == "origin/feature/latest-remote")),
+            "test setup should start without the remote-tracking branch"
+        );
+
+        let after =
+            fetch_project_git_state(repo.path()).expect("remote branch refresh should succeed");
+        assert!(
+            after.metadata.as_ref().is_some_and(|metadata| metadata
+                .branch_order
+                .iter()
+                .any(|branch| branch == "origin/feature/latest-remote")),
+            "fetch should refresh the branch catalog with remote-only branches"
         );
     }
 

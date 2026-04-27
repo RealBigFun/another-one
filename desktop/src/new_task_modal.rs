@@ -182,6 +182,8 @@ impl AnotherOneApp {
         else {
             return;
         };
+        let refresh_project_id = project.id.clone();
+        let project_path = project.path.clone();
 
         let mut selected_agents = HashSet::new();
         if let Some(default_agent_id) =
@@ -211,6 +213,7 @@ impl AnotherOneApp {
             advanced_expanded: false,
             submitting: false,
         });
+        self.start_new_task_branch_refresh(refresh_project_id, project_path);
         self.sync_new_task_modal_prewarm(cx);
     }
 

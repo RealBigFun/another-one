@@ -419,7 +419,7 @@ fn fixed_title_for_project_action(action: &ProjectAction) -> Option<String> {
 // Moved to `another_one_core::git_service::GitRefreshReply`; the
 // struct stays named the same at this path so existing call sites
 // keep compiling, but the body + the spawn worker now live in core.
-use another_one_core::git_service::GitRefreshReply;
+use another_one_core::git_service::{GitRefreshReply, RemoteBranchRefreshReply};
 
 enum GitActionReply {
     Progress {
@@ -1245,6 +1245,8 @@ pub struct AnotherOneApp {
     pub(crate) git_refresh_in_flight: bool,
     /// Receiver for the in-flight automatic git refresh result.
     git_refresh_receiver: Option<broadcast::Receiver<GitRefreshReply>>,
+    /// Receiver for refreshing remote refs while the new-task modal is open.
+    new_task_branch_refresh_receiver: Option<broadcast::Receiver<RemoteBranchRefreshReply>>,
     /// Receiver for the in-flight new task worktree creation result.
     task_creation_receiver: Option<broadcast::Receiver<TaskCreationReply>>,
     /// Receiver for the in-flight create-branch operation.
@@ -3758,6 +3760,7 @@ impl AnotherOneApp {
             changed_files_git_mutation_receiver,
             git_refresh_in_flight: false,
             git_refresh_receiver: None,
+            new_task_branch_refresh_receiver: None,
             task_creation_receiver: None,
             branch_creation_receiver: None,
             pending_task_launch: None,
@@ -6215,6 +6218,55 @@ impl AnotherOneApp {
             Err(broadcast::error::TryRecvError::Closed) => {
                 self.git_refresh_in_flight = false;
                 self.git_refresh_receiver = None;
+                false
+            }
+        }
+    }
+
+    pub(crate) fn start_new_task_branch_refresh(
+        &mut self,
+        project_id: String,
+        project_path: std::path::PathBuf,
+    ) {
+        self.new_task_branch_refresh_receiver = Some(
+            another_one_core::git_service::spawn_remote_branch_refresh(project_id, project_path),
+        );
+    }
+
+    fn drain_new_task_branch_refresh(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(receiver) = self.new_task_branch_refresh_receiver.as_mut() else {
+            return false;
+        };
+
+        match receiver.try_recv() {
+            Ok(reply) => {
+                self.new_task_branch_refresh_receiver = None;
+                match reply.result {
+                    Ok(state) => {
+                        let mut changed = self.apply_project_git_state(&reply.project_id, state);
+                        let invalid_settings = self
+                            .project_store
+                            .clear_missing_branch_settings(&reply.project_id);
+                        changed |= self.handle_invalid_project_branch_settings(
+                            &reply.project_id,
+                            invalid_settings,
+                            cx,
+                        );
+                        changed
+                    }
+                    Err(error) => {
+                        self.show_warning_toast(error, cx);
+                        true
+                    }
+                }
+            }
+            Err(broadcast::error::TryRecvError::Empty) => false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                log::warn!("new task branch refresh drain lagged {n} messages");
+                false
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
+                self.new_task_branch_refresh_receiver = None;
                 false
             }
         }
@@ -11326,6 +11378,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_git_action(cx);
                             should_notify |= this.drain_changed_files_git_mutations(cx);
                             should_notify |= this.drain_git_refresh(cx);
+                            should_notify |= this.drain_new_task_branch_refresh(cx);
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_branch_creation(cx);
                             should_notify |= this.drain_project_add(cx);
