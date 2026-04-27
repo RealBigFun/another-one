@@ -48,6 +48,7 @@ class _TaskPageState extends State<TaskPage> {
   StreamSubscription<Uint8List>? _bytesSub;
   StreamSubscription<TransportStatus>? _statusSub;
   int _instanceKey = 0;
+
   /// Timestamp before which we drop incoming bytes instead of writing
   /// them to the Terminal. Set 200ms into the future whenever we
   /// switch tabs so any in-flight bytes from the *previous* tab —
@@ -68,16 +69,19 @@ class _TaskPageState extends State<TaskPage> {
   /// since there are no new bytes to prove the attach succeeded.
   bool _awaitingFirstByte = true;
   Timer? _spinnerTimeout;
+
   /// The "did the daemon actually spawn yet?" retry, fired 400ms
   /// after the initial AttachTab. Kept as a Timer (not Future.delayed)
   /// so the first inbound byte can cancel it — otherwise the delayed
   /// closure would fire a redundant second AttachTab that the daemon
   /// processes fine but wastes a round-trip.
   Timer? _attachRetry;
+
   /// Set when the user triggers a tab switch or first open. The
   /// inbound-bytes listener clears this on first byte, which lets
   /// [_attachRetry] cancel itself.
   bool _gotFirstByte = false;
+
   /// Any in-flight transport error surfaced via [TransportStatus].
   /// Drives a banner above the terminal; null means "no error to
   /// show". Cleared on any subsequent connected status.
@@ -197,17 +201,27 @@ class _TaskPageState extends State<TaskPage> {
         tabId: tabId,
       ),
     );
-    await widget.transport.attachTab(
-      sectionId: widget.task.sectionId,
-      tabId: tabId,
-    );
-    _attachRetry?.cancel();
-    _attachRetry = Timer(const Duration(milliseconds: 400), () async {
-      if (!mounted || tabId != _activeTabId || _gotFirstByte) return;
+    // First attach: tolerate "tab not running yet" — LaunchTab
+    // populates the broadcast asynchronously, and on the local FFI
+    // path the race window is real (no QUIC RTT to absorb it). The
+    // 400ms retry below catches up. iroh's wire-level attach drops
+    // the race silently, so this matches desktop's effective
+    // behaviour.
+    try {
       await widget.transport.attachTab(
         sectionId: widget.task.sectionId,
         tabId: tabId,
       );
+    } catch (_) {}
+    _attachRetry?.cancel();
+    _attachRetry = Timer(const Duration(milliseconds: 400), () async {
+      if (!mounted || tabId != _activeTabId || _gotFirstByte) return;
+      try {
+        await widget.transport.attachTab(
+          sectionId: widget.task.sectionId,
+          tabId: tabId,
+        );
+      } catch (_) {}
     });
   }
 
@@ -391,9 +405,7 @@ class _TabStrip extends StatelessWidget {
       height: AppTokens.tabStripHeight,
       decoration: const BoxDecoration(
         color: AppTokens.chromeBg,
-        border: Border(
-          bottom: BorderSide(color: AppTokens.border, width: 1),
-        ),
+        border: Border(bottom: BorderSide(color: AppTokens.border, width: 1)),
       ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -432,16 +444,16 @@ class _TabChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg = active ? AppTokens.terminalBg : AppTokens.cardBg;
-    final textColor =
-        active ? AppTokens.textPrimary : AppTokens.textMuted;
+    final textColor = active ? AppTokens.textPrimary : AppTokens.textMuted;
 
     // Prefer the user-set `fixed_title` (mirrors desktop: `fixed_title`
     // on `PersistedTerminalTab` overrides the agent-provided label).
     // Otherwise: when there's more than one tab, desktop suffixes the
     // index — mirror that here.
     final baseTitle = tab.fixedTitle ?? tab.title;
-    final title =
-        (tab.fixedTitle == null && total > 1) ? '$baseTitle ${index + 1}' : baseTitle;
+    final title = (tab.fixedTitle == null && total > 1)
+        ? '$baseTitle ${index + 1}'
+        : baseTitle;
 
     return InkWell(
       onTap: onTap,
