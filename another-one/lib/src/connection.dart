@@ -63,6 +63,40 @@ class DiscardAllChangesResult {
   final List<String> failures;
 }
 
+Never _unsupportedTransportMessage(String method, String message) {
+  throw UnimplementedError('$method: $message');
+}
+
+Never _requiresControlVariant(
+  String method,
+  String controlVariant, {
+  String transport = 'iroh transport',
+}) {
+  return _unsupportedTransportMessage(
+    method,
+    'requires Control::$controlVariant wire variant on the $transport '
+    '(not yet implemented).',
+  );
+}
+
+Never _requiresTransportFeature(
+  String method,
+  String feature, {
+  String transport = 'iroh transport',
+}) {
+  return _unsupportedTransportMessage(
+    method,
+    'requires $feature on the $transport (not yet implemented).',
+  );
+}
+
+Never _missingConnectionCapability(String method, String capability) {
+  return _unsupportedTransportMessage(
+    method,
+    'this DaemonConnection variant has not implemented $capability.',
+  );
+}
+
 /// Unified interface for any daemon — local FFI or remote iroh —
 /// the UI can hold and drive. One connection corresponds to one
 /// daemon endpoint.
@@ -144,21 +178,13 @@ abstract class DaemonConnection {
   /// Add an on-disk project directory to the daemon's project store.
   /// Returns whether a new project was inserted (`false` means the
   /// path was already known — idempotent).
-  Future<bool> addProject(String path) {
-    throw UnimplementedError(
-      'addProject: requires Control::AddProject wire variant on the '
-      'iroh transport (not yet implemented).',
-    );
-  }
+  Future<bool> addProject(String path) =>
+      _requiresControlVariant('addProject', 'AddProject');
 
   /// Remove a project from the daemon's store. Cascades to the
   /// project's tasks + terminal sections.
-  Future<void> removeProject(String projectId) {
-    throw UnimplementedError(
-      'removeProject: requires Control::RemoveProject wire variant '
-      'on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<void> removeProject(String projectId) =>
+      _requiresControlVariant('removeProject', 'RemoveProject');
 
   /// Create a worktree task on `projectId`. Returns the new task's
   /// `sectionId` so callers can navigate to it. Heavy on the daemon
@@ -201,12 +227,11 @@ abstract class DaemonConnection {
   /// Resolve a project's GitHub remote URL (`git remote get-url
   /// origin`, normalised). Returns `null` when not a github.com
   /// remote.
-  Future<String?> readProjectGithubUrl(String projectId) {
-    throw UnimplementedError(
-      'readProjectGithubUrl: requires the iroh transport to expose '
-      'the project github link cache (not yet implemented).',
-    );
-  }
+  Future<String?> readProjectGithubUrl(String projectId) =>
+      _requiresTransportFeature(
+        'readProjectGithubUrl',
+        'the project github link cache',
+      );
 
   /// Snapshot of the host's "Open In" config — installed-and-enabled
   /// apps + the preferred default. Used by the titlebar split-button
@@ -218,12 +243,8 @@ abstract class DaemonConnection {
   /// device. Both `IrohTransport` and `LocalTransport` implement
   /// this; the default here only fires for connection types that
   /// haven't overridden it.
-  Future<OpenInState> openInState() {
-    throw UnimplementedError(
-      'openInState: this DaemonConnection variant has not implemented '
-      'open_in_state.',
-    );
-  }
+  Future<OpenInState> openInState() =>
+      _missingConnectionCapability('openInState', 'open_in_state');
 
   /// Open `projectId`'s directory in the named app and persist that
   /// app as the user's preferred default. `appId` matches
@@ -233,12 +254,11 @@ abstract class DaemonConnection {
   Future<void> openProjectInApp({
     required String projectId,
     required String appId,
-  }) {
-    throw UnimplementedError(
-      'openProjectInApp: requires Control::OpenProjectInApp wire '
-      'variant on the active transport.',
-    );
-  }
+  }) => _requiresControlVariant(
+    'openProjectInApp',
+    'OpenProjectInApp',
+    transport: 'active transport',
+  );
 
   /// One-shot read of working-tree changes for `projectId`. Powers
   /// the right sidebar's Changes pane. Returns `null` when the
@@ -249,12 +269,8 @@ abstract class DaemonConnection {
   /// `ref.invalidate` after a known-mutation (commit, switch
   /// branch, stage) or on a coarse interval. A streaming variant
   /// can land later if the polling loop becomes a bottleneck.
-  Future<List<ChangedFileDto>?> readChangedFiles(String projectId) {
-    throw UnimplementedError(
-      'readChangedFiles: requires Control::ReadChangedFiles wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<List<ChangedFileDto>?> readChangedFiles(String projectId) =>
+      _requiresControlVariant('readChangedFiles', 'ReadChangedFiles');
 
   /// Recent commits on `projectId`'s current branch, capped at
   /// `limit`. Powers the right sidebar's Commits pane. Returns
@@ -262,12 +278,7 @@ abstract class DaemonConnection {
   Future<RecentCommitsView?> readRecentCommits({
     required String projectId,
     required int limit,
-  }) {
-    throw UnimplementedError(
-      'readRecentCommits: requires Control::ReadRecentCommits wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('readRecentCommits', 'ReadRecentCommits');
 
   /// Per-commit file change list — powers the expandable rows of
   /// the Commits pane. Returns `null` for an unknown project id;
@@ -275,12 +286,8 @@ abstract class DaemonConnection {
   Future<List<BranchCompareFileDto>?> readCommitFileChanges({
     required String projectId,
     required String commitId,
-  }) {
-    throw UnimplementedError(
-      'readCommitFileChanges: requires Control::ReadCommitFileChanges '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) =>
+      _requiresControlVariant('readCommitFileChanges', 'ReadCommitFileChanges');
 
   /// Create a new branch from HEAD on `projectId`. When
   /// `useCurrentTask` is true the existing checkout switches in
@@ -297,32 +304,23 @@ abstract class DaemonConnection {
 
   /// Compute the canonical branch slug for a free-text input.
   /// Powers the Create Branch modal's live `Branch: …` preview.
-  Future<String> slugifyBranchName(String name) {
-    throw UnimplementedError(
-      'slugifyBranchName: requires Control::SlugifyBranchName wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<String> slugifyBranchName(String name) =>
+      _requiresControlVariant('slugifyBranchName', 'SlugifyBranchName');
 
   /// User's preferred default commit action for the active
   /// project's root repo. Returns `"commit"`, `"commit-and-push"`,
   /// or `null` when no preference has been recorded.
-  Future<String?> repoDefaultCommitAction(String projectId) {
-    throw UnimplementedError(
-      'repoDefaultCommitAction: requires Control::RepoDefaultCommitAction '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<String?> repoDefaultCommitAction(String projectId) =>
+      _requiresControlVariant(
+        'repoDefaultCommitAction',
+        'RepoDefaultCommitAction',
+      );
 
   /// Snapshot the active project's branch metadata: current branch
   /// name, ahead/behind counts. Powers the titlebar git-actions
   /// split-button's primary-action selection.
-  Future<ActiveGitStateDto?> readActiveGitState(String projectId) {
-    throw UnimplementedError(
-      'readActiveGitState: requires Control::ReadActiveGitState wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<ActiveGitStateDto?> readActiveGitState(String projectId) =>
+      _requiresControlVariant('readActiveGitState', 'ReadActiveGitState');
 
   /// Latest pull-request status for `projectId`'s current branch.
   /// Returns `null` when the project has no open PR. Drives the
@@ -353,12 +351,10 @@ abstract class DaemonConnection {
   Future<BranchCompareView?> readBranchCompareState({
     required String projectId,
     required String targetBranch,
-  }) {
-    throw UnimplementedError(
-      'readBranchCompareState: requires Control::ReadBranchCompareState '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant(
+    'readBranchCompareState',
+    'ReadBranchCompareState',
+  );
 
   /// Resolve the project's branch settings — configured + effective
   /// values for default and target branch, plus the available
@@ -367,12 +363,7 @@ abstract class DaemonConnection {
   /// unknown project ids or projects without repo metadata.
   Future<ResolvedProjectBranchSettingsDto?> readBranchSettings(
     String projectId,
-  ) {
-    throw UnimplementedError(
-      'readBranchSettings: requires Control::ReadBranchSettings wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  ) => _requiresControlVariant('readBranchSettings', 'ReadBranchSettings');
 
   /// Fetch open pull requests for `projectId` filtered by
   /// `filterIndex` (0=all, 1=needs my review, 2=author:@me, 3=draft)
@@ -414,12 +405,7 @@ abstract class DaemonConnection {
     required String projectId,
     required String field,
     String? branchName,
-  }) {
-    throw UnimplementedError(
-      'setBranchSetting: requires Control::SetBranchSetting wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('setBranchSetting', 'SetBranchSetting');
 
   /// CI check runs for `projectId`'s current PR. Powers the right
   /// sidebar's Checks pane.
@@ -487,24 +473,22 @@ abstract class DaemonConnection {
   Future<DiscardAllChangesResult> discardAllChanges({
     required String projectId,
     required List<ChangedFileDto> files,
-  }) {
-    throw UnimplementedError(
-      'discardAllChanges: requires Control::DiscardAllChanges wire '
-      'variant on the active transport.',
-    );
-  }
+  }) => _requiresControlVariant(
+    'discardAllChanges',
+    'DiscardAllChanges',
+    transport: 'active transport',
+  );
 
   // ── Custom actions (titlebar split-button + modal editor) ───────
 
   /// List the merged project + global custom actions for `project_id`,
   /// in dropdown order. Empty list when no actions exist or the
   /// project is unknown — matches `ProjectStore::project_actions`.
-  Future<List<ProjectActionDto>> listProjectActions(String projectId) {
-    throw UnimplementedError(
-      'listProjectActions: this DaemonConnection variant has not '
-      'implemented list_project_actions.',
-    );
-  }
+  Future<List<ProjectActionDto>> listProjectActions(String projectId) =>
+      _missingConnectionCapability(
+        'listProjectActions',
+        'list_project_actions',
+      );
 
   /// Insert or update a custom action. `saveGlobalCopy=true` saves
   /// to global UI state (visible across every project on the host)
@@ -514,24 +498,14 @@ abstract class DaemonConnection {
     required String projectId,
     required ProjectActionDto action,
     required bool saveGlobalCopy,
-  }) {
-    throw UnimplementedError(
-      'saveProjectAction: requires Control::SaveProjectAction wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('saveProjectAction', 'SaveProjectAction');
 
   /// Delete a custom action by id from both project and global
   /// lists. Returns whether anything was removed.
   Future<bool> deleteProjectAction({
     required String projectId,
     required String actionId,
-  }) {
-    throw UnimplementedError(
-      'deleteProjectAction: requires Control::DeleteProjectAction wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('deleteProjectAction', 'DeleteProjectAction');
 
   /// Run a custom action inside `sectionId`'s task: appends a fresh
   /// terminal tab, queues its PTY launch, and (for shell actions)
@@ -548,41 +522,27 @@ abstract class DaemonConnection {
     required String projectId,
     required String sectionId,
     required String actionId,
-  }) {
-    throw UnimplementedError(
-      'runProjectAction: this DaemonConnection variant has not '
-      'implemented run_project_action.',
-    );
-  }
+  }) => _missingConnectionCapability('runProjectAction', 'run_project_action');
 
   // ── New-task modal data ──────────────────────────────────────────
 
   /// Branch names available for `projectId`. Powers the new-task
   /// modal's source-branch dropdown.
-  Future<List<String>> readProjectBranches(String projectId) {
-    throw UnimplementedError(
-      'readProjectBranches: requires Control::ReadProjectBranches wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<List<String>> readProjectBranches(String projectId) =>
+      _requiresControlVariant('readProjectBranches', 'ReadProjectBranches');
 
   /// Default branch the new-task modal seeds for `projectId`.
   /// `null` when the project has no current branch (fresh repo).
-  Future<String?> primaryBranchForProject(String projectId) {
-    throw UnimplementedError(
-      'primaryBranchForProject: requires Control::PrimaryBranchForProject '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<String?> primaryBranchForProject(String projectId) =>
+      _requiresControlVariant(
+        'primaryBranchForProject',
+        'PrimaryBranchForProject',
+      );
 
   /// Snapshot of the user-enabled agents on this host plus the
   /// preferred default. Drives the new-task modal's multi-select.
-  Future<EnabledAgentsView> readEnabledAgents() {
-    throw UnimplementedError(
-      'readEnabledAgents: this DaemonConnection variant has not '
-      'implemented read_enabled_agents.',
-    );
-  }
+  Future<EnabledAgentsView> readEnabledAgents() =>
+      _missingConnectionCapability('readEnabledAgents', 'read_enabled_agents');
 
   /// Submit the new-task modal. Routes to either the worktree or
   /// direct path based on `worktreeMode`. Returns the new task's
@@ -594,12 +554,7 @@ abstract class DaemonConnection {
     required List<String> agentIds,
     required bool branchModeExisting,
     required bool worktreeMode,
-  }) {
-    throw UnimplementedError(
-      'submitNewTask: requires Control::SubmitNewTask wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('submitNewTask', 'SubmitNewTask');
 
   /// Append an agent tab (or plain shell when `agentId` is empty)
   /// to an existing task's section. Returns the new tab id so the
@@ -607,91 +562,56 @@ abstract class DaemonConnection {
   Future<String> addAgentToSection({
     required String sectionId,
     required String agentId,
-  }) {
-    throw UnimplementedError(
-      'addAgentToSection: requires Control::AddAgentToSection wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('addAgentToSection', 'AddAgentToSection');
 
   /// Set the active tab for a section. Persists the choice; does
   /// not relaunch (Dart-side `selectedTabProvider` triggers attach).
   Future<void> activateSectionTab({
     required String sectionId,
     required String tabId,
-  }) {
-    throw UnimplementedError(
-      'activateSectionTab: requires Control::ActivateSectionTab wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('activateSectionTab', 'ActivateSectionTab');
 
   /// Remove a tab from a section. Returns the new active tab id
   /// (empty when the section is now empty).
   Future<String> closeSectionTab({
     required String sectionId,
     required String tabId,
-  }) {
-    throw UnimplementedError(
-      'closeSectionTab: requires Control::CloseSectionTab wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('closeSectionTab', 'CloseSectionTab');
 
   /// Flip the `pinned` flag on a tab. Returns the new pinned state.
   Future<bool> toggleSectionTabPinned({
     required String sectionId,
     required String tabId,
-  }) {
-    throw UnimplementedError(
-      'toggleSectionTabPinned: requires Control::ToggleSectionTabPinned '
-      'wire variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant(
+    'toggleSectionTabPinned',
+    'ToggleSectionTabPinned',
+  );
 
   // ── Settings → Agents ────────────────────────────────────────────
 
   /// Full agent registry — every entry in `core::agents::AGENTS`
   /// paired with per-host enabled/default flags + launch args.
   /// Drives the Settings → Agents page.
-  Future<AgentSettingsView> readAgentSettings() {
-    throw UnimplementedError(
-      'readAgentSettings: this DaemonConnection variant has not '
-      'implemented read_agent_settings.',
-    );
-  }
+  Future<AgentSettingsView> readAgentSettings() =>
+      _missingConnectionCapability('readAgentSettings', 'read_agent_settings');
 
   /// Toggle an agent's enabled flag. Returns whether anything
   /// changed.
   Future<bool> setAgentEnabled({
     required String agentId,
     required bool enabled,
-  }) {
-    throw UnimplementedError(
-      'setAgentEnabled: requires Control::SetAgentEnabled wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('setAgentEnabled', 'SetAgentEnabled');
 
   /// Mark an agent as the default. Returns whether anything changed.
-  Future<bool> setDefaultAgent(String agentId) {
-    throw UnimplementedError(
-      'setDefaultAgent: requires Control::SetDefaultAgent wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  Future<bool> setDefaultAgent(String agentId) =>
+      _requiresControlVariant('setDefaultAgent', 'SetDefaultAgent');
 
   /// Replace the launch-args list for an agent. Returns whether
   /// the value actually changed.
   Future<bool> setAgentLaunchArgs({
     required String agentId,
     required List<String> args,
-  }) {
-    throw UnimplementedError(
-      'setAgentLaunchArgs: requires Control::SetAgentLaunchArgs wire '
-      'variant on the iroh transport (not yet implemented).',
-    );
-  }
+  }) => _requiresControlVariant('setAgentLaunchArgs', 'SetAgentLaunchArgs');
 
   // ── Settings → Open In ───────────────────────────────────────────
 
@@ -700,23 +620,21 @@ abstract class DaemonConnection {
   /// installed. Implemented by transports that can talk to a desktop
   /// daemon; the default here only fires for connection types that
   /// have not overridden it.
-  Future<OpenInSettingsView> readOpenInSettings() {
-    throw UnimplementedError(
-      'readOpenInSettings: requires Control::ReadOpenInSettings wire '
-      'variant on the active transport.',
-    );
-  }
+  Future<OpenInSettingsView> readOpenInSettings() => _requiresControlVariant(
+    'readOpenInSettings',
+    'ReadOpenInSettings',
+    transport: 'active transport',
+  );
 
   /// Toggle an Open-In app's enabled flag.
   Future<void> setOpenInAppEnabled({
     required String appId,
     required bool enabled,
-  }) {
-    throw UnimplementedError(
-      'setOpenInAppEnabled: requires Control::SetOpenInAppEnabled wire '
-      'variant on the active transport.',
-    );
-  }
+  }) => _requiresControlVariant(
+    'setOpenInAppEnabled',
+    'SetOpenInAppEnabled',
+    transport: 'active transport',
+  );
 
   // ── Settings → Git Actions ───────────────────────────────────────
   //
