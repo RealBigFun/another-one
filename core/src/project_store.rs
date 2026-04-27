@@ -1103,34 +1103,61 @@ impl ProjectStore {
 
     #[allow(dead_code)]
     pub fn remove_project(&mut self, project_id: &str) {
-        let Some(project) = self.projects_by_id.remove(project_id) else {
+        let Some(repo_id) = self
+            .projects_by_id
+            .get(project_id)
+            .map(|project| project.repo_id.clone())
+        else {
             return;
         };
-        self.project_order.retain(|id| id != project_id);
+        let removed_project_ids = self
+            .projects_by_id
+            .iter()
+            .filter_map(|(candidate_id, candidate)| {
+                (candidate.repo_id == repo_id).then(|| candidate_id.clone())
+            })
+            .collect::<HashSet<_>>();
+        let removed_section_prefixes = removed_project_ids
+            .iter()
+            .map(|removed_project_id| format!("{removed_project_id}::"))
+            .collect::<Vec<_>>();
+
+        for removed_project_id in &removed_project_ids {
+            self.projects_by_id.remove(removed_project_id);
+        }
+        self.project_order
+            .retain(|candidate_id| !removed_project_ids.contains(candidate_id));
 
         let removed_task_ids = self
             .tasks_by_id
             .values()
             .filter(|task| {
-                task.root_project_id == project_id || task.target_project_id == project_id
+                removed_project_ids.contains(&task.root_project_id)
+                    || removed_project_ids.contains(&task.target_project_id)
             })
             .map(|task| task.id.clone())
             .collect::<Vec<_>>();
         for task_id in removed_task_ids {
             let _ = self.remove_task_by_id(&task_id);
         }
-        self.terminal_sections
-            .retain(|section_id, _| !section_id.starts_with(&format!("{project_id}::")));
+        self.terminal_sections.retain(|section_id, _| {
+            !removed_section_prefixes
+                .iter()
+                .any(|prefix| section_id.starts_with(prefix))
+        });
         if self
             .ui
             .last_active_section_id
             .as_ref()
-            .is_some_and(|section_id| section_id.starts_with(&format!("{project_id}::")))
+            .is_some_and(|section_id| {
+                removed_section_prefixes
+                    .iter()
+                    .any(|prefix| section_id.starts_with(prefix))
+            })
         {
             self.ui.last_active_section_id = None;
         }
 
-        let repo_id = project.repo_id.clone();
         if !self
             .projects_by_id
             .values()
@@ -4355,6 +4382,154 @@ mod tests {
             store.root_project_id_for_project("wt").as_deref(),
             Some("root")
         );
+    }
+
+    #[test]
+    fn remove_project_should_remove_worktree_siblings_in_same_repo_group() {
+        let mut root_project = sample_project("root", None);
+        root_project.repo_id = "repo".to_string();
+        let mut worktree_project = sample_project("wt", Some("wt"));
+        worktree_project.repo_id = "repo".to_string();
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    branch_order: vec!["main".to_string(), "feature/worktree".to_string()],
+                    branches_by_name: HashMap::new(),
+                },
+            )]),
+            projects_by_id: HashMap::from([
+                ("root".to_string(), root_project),
+                ("wt".to_string(), worktree_project),
+            ]),
+            projects: Vec::new(),
+            project_order: vec!["root".to_string(), "wt".to_string()],
+            tasks_by_id: HashMap::from([
+                (
+                    "task-root".to_string(),
+                    Task {
+                        id: "task-root".to_string(),
+                        name: "Root task".to_string(),
+                        kind: TaskKind::Direct,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "root".to_string(),
+                        branch_name: "main".to_string(),
+                        section_id: "root::main::task-root".to_string(),
+                        worktree_project_id: None,
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                        }],
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                    },
+                ),
+                (
+                    "task-worktree".to_string(),
+                    Task {
+                        id: "task-worktree".to_string(),
+                        name: "Worktree task".to_string(),
+                        kind: TaskKind::Worktree,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "wt".to_string(),
+                        branch_name: "feature/worktree".to_string(),
+                        section_id: "wt::feature/worktree::task-worktree".to_string(),
+                        worktree_project_id: Some("wt".to_string()),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Claude Code".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::Ready,
+                        }],
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt")),
+                    },
+                ),
+            ]),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::from([(
+                "root".to_string(),
+                vec!["task-root".to_string(), "task-worktree".to_string()],
+            )]),
+            terminal_sections: HashMap::from([
+                (
+                    "root::main::task-root".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                        }],
+                    },
+                ),
+                (
+                    "wt::feature/worktree::task-worktree".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Claude Code".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::Ready,
+                        }],
+                    },
+                ),
+            ]),
+            ui: UiState {
+                expanded_repo_ids: HashSet::from(["repo".to_string()]),
+                repo_default_commit_actions: HashMap::from([(
+                    "repo".to_string(),
+                    RepoDefaultCommitAction::CommitAndPush,
+                )]),
+                last_active_section_id: Some("wt::feature/worktree::task-worktree".to_string()),
+                ..UiState::default()
+            },
+            file_path: PathBuf::from("/tmp/projects.json"),
+        };
+        store.refresh_runtime_views();
+
+        store.remove_project("root");
+
+        assert!(store.projects_by_id.is_empty());
+        assert!(store.projects.is_empty());
+        assert!(store.project_order.is_empty());
+        assert!(store.tasks_by_id.is_empty());
+        assert!(store.tasks.is_empty());
+        assert!(store.task_ids_by_root_project.is_empty());
+        assert!(store.terminal_sections.is_empty());
+        assert!(store.repos.is_empty());
+        assert!(store.ui.expanded_repo_ids.is_empty());
+        assert!(store.ui.repo_default_commit_actions.is_empty());
+        assert_eq!(store.ui.last_active_section_id, None);
     }
 
     #[test]
