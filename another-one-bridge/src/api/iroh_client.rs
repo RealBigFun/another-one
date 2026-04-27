@@ -180,6 +180,15 @@ enum Control {
     /// `WorkerReply::AgentSettingsAck`. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadAgentSettings`.
     ReadAgentSettings,
+    /// Toggle one agent's enabled flag. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::SetAgentEnabled`.
+    SetAgentEnabled { agent_id: String, enabled: bool },
+    /// Mark an enabled agent as the default. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::SetDefaultAgent`.
+    SetDefaultAgent { agent_id: String },
+    /// Replace one agent's launch args. Mirror of
+    /// `daemon-sandbox/src/frame.rs::Control::SetAgentLaunchArgs`.
+    SetAgentLaunchArgs { agent_id: String, args: Vec<String> },
     /// Snapshot of Settings → Open In on the daemon host. Mirror of
     /// `daemon-sandbox/src/frame.rs::Control::ReadOpenInSettings`.
     ReadOpenInSettings,
@@ -628,6 +637,12 @@ pub enum WorkerReply {
     AgentSettingsAck {
         view: crate::api::local_session::AgentSettingsView,
     },
+    /// Reply to [`Control::SetAgentEnabled`].
+    SetAgentEnabledAck { changed: bool },
+    /// Reply to [`Control::SetDefaultAgent`].
+    SetDefaultAgentAck { changed: bool },
+    /// Reply to [`Control::SetAgentLaunchArgs`].
+    SetAgentLaunchArgsAck { changed: bool },
     /// Reply to [`Control::ReadOpenInSettings`]. Reuses
     /// `local_session::OpenInSettingsView` directly.
     OpenInSettingsAck {
@@ -773,6 +788,18 @@ pub struct TaskSummary {
     pub target_project_id: String,
 }
 
+/// Mirror of `core::agents::TerminalRestoreStatus`. Wire form is
+/// kebab-case so it matches persisted tab JSON and daemon frames.
+#[derive(Debug, Clone, Copy, Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalRestoreStatus {
+    #[default]
+    NotStarted,
+    Launching,
+    Ready,
+    Failed,
+}
+
 /// Mirror of `daemon-sandbox/src/frame.rs::TabSummary`. `running`
 /// reflects whether the desktop has a live `LiveTerminalRuntime` for
 /// this tab right now; `AttachTab` on a non-running tab yields no
@@ -789,6 +816,14 @@ pub struct TabSummary {
     /// Matches `PersistedTerminalTab::fixed_title`. When `Some(_)`,
     /// render this instead of [`TabSummary::title`].
     pub fixed_title: Option<String>,
+    /// Persisted launch/restore state. `Failed` means callers should
+    /// surface the failure fields instead of retrying attach loops.
+    #[serde(default)]
+    pub restore_status: TerminalRestoreStatus,
+    #[serde(default)]
+    pub failure_message: Option<String>,
+    #[serde(default)]
+    pub failure_details: Option<String>,
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::ProjectKind`.
@@ -2092,6 +2127,34 @@ impl IrohSession {
     /// Issue [`Control::ReadAgentSettings`] under `request_id`.
     pub async fn read_agent_settings(&self, request_id: u64) -> anyhow::Result<()> {
         self.send_control(request_id, Control::ReadAgentSettings)
+            .await
+    }
+
+    /// Issue [`Control::SetAgentEnabled`] under `request_id`.
+    pub async fn set_agent_enabled(
+        &self,
+        request_id: u64,
+        agent_id: String,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetAgentEnabled { agent_id, enabled })
+            .await
+    }
+
+    /// Issue [`Control::SetDefaultAgent`] under `request_id`.
+    pub async fn set_default_agent(&self, request_id: u64, agent_id: String) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetDefaultAgent { agent_id })
+            .await
+    }
+
+    /// Issue [`Control::SetAgentLaunchArgs`] under `request_id`.
+    pub async fn set_agent_launch_args(
+        &self,
+        request_id: u64,
+        agent_id: String,
+        args: Vec<String>,
+    ) -> anyhow::Result<()> {
+        self.send_control(request_id, Control::SetAgentLaunchArgs { agent_id, args })
             .await
     }
 

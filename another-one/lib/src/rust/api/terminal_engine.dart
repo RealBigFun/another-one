@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `lookup`, `registry`, `snapshot_to_dto`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `EngineKey`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `eq`, `fmt`, `hash`
 
 /// Allocate a terminal engine for `(section_id, tab_id)`. Idempotent:
 /// reopening with new dimensions resizes the existing engine rather
@@ -49,7 +49,7 @@ Future<void> engineResize({
 
 /// Cheap per-frame poll for the renderer. Returns just the engine's
 /// revision counter (`u64` round-trip) so the Flutter Ticker can
-/// skip the full `engine_snapshot` (`Vec<CellDto>` serialise across
+/// skip the full `engine_snapshot` cell vector serialise across
 /// FRB) when the cell grid is unchanged. Without this fast path an
 /// idle terminal burns ~2 cores at 60 Hz on a typical 80×24 grid.
 Future<BigInt> engineRevision({

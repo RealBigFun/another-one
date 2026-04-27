@@ -18,7 +18,8 @@
 //   8.   `awaitLoopbackSessionAddr()` — desktop only. Blocks until
 //        the daemon's iroh endpoint binds, then hands back its
 //        address. The loopback `DaemonConnection` dials this addr.
-//   9.   `runApp(ProviderScope(overrides: [...], …))`.
+//   9.   `runApp(ProviderScope(overrides: [...], …))`, or a
+//        daemon boot failure screen if desktop cannot bind loopback.
 
 import 'dart:io' show Platform;
 import 'dart:ui' show PlatformDispatcher;
@@ -34,7 +35,8 @@ import 'src/log.dart';
 import 'src/rust/api/embedded_daemon.dart' as embedded_daemon;
 import 'src/rust/api/iroh_client.dart';
 import 'src/rust/frb_generated.dart';
-import 'src/state/local_connection_provider.dart' show loopbackSessionAddrProvider;
+import 'src/state/local_connection_provider.dart'
+    show loopbackSessionAddrProvider;
 import 'src/surface_router.dart';
 import 'src/theme.dart';
 
@@ -69,8 +71,7 @@ void main() {
       stackTrace: details.stack,
       fields: {
         if (details.library != null) 'library': details.library!,
-        if (details.context != null)
-          'context': details.context.toString(),
+        if (details.context != null) 'context': details.context.toString(),
         'tree': diag,
       },
     );
@@ -107,6 +108,7 @@ void main() {
     // an embedded daemon there would just chew battery for no
     // consumer.
     embedded_daemon.LoopbackSessionAddr? loopbackAddr;
+    Object? embeddedDaemonBootError;
     if (_isDesktop) {
       try {
         await embedded_daemon.bootEmbeddedDaemon();
@@ -122,18 +124,23 @@ void main() {
           'direct_addrs': loopbackAddr.directAddrs.join(','),
         });
       } catch (e, s) {
-        // Surface but don't block UI — the pair-mobile modal will
-        // show its empty state until a retry succeeds. Without a
-        // loopback addr the desktop UI has no DaemonConnection to
-        // talk to its own daemon, so most screens will fail to load
-        // — that's a deliberate failure mode rather than a silent
-        // half-broken UI.
+        embeddedDaemonBootError = e;
         _bootLog.error(
           'embedded daemon boot or loopback addr resolution failed',
           error: e,
           stackTrace: s,
         );
       }
+    }
+    if (_isDesktop && loopbackAddr == null) {
+      runApp(
+        EmbeddedDaemonBootFailureApp(
+          message:
+              embeddedDaemonBootError?.toString() ??
+              'Embedded daemon did not publish a loopback address.',
+        ),
+      );
+      return;
     }
     runApp(
       ProviderScope(
@@ -152,6 +159,69 @@ bool get _isDesktop {
   return Platform.isLinux || Platform.isMacOS || Platform.isWindows;
 }
 
+class EmbeddedDaemonBootFailureApp extends StatelessWidget {
+  const EmbeddedDaemonBootFailureApp({required this.message, super.key});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'AnotherOne',
+      theme: buildAppTheme(),
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: SelectionArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Embedded daemon failed to start',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'AnotherOne cannot open the desktop shell without its '
+                      'local daemon loopback connection.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainer,
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(message),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Fix the startup error and restart the app. Detailed '
+                      'boot logs are in /tmp/aone-debug.log.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class AnotherOneApp extends StatelessWidget {
   const AnotherOneApp({super.key});
 
@@ -161,8 +231,8 @@ class AnotherOneApp extends StatelessWidget {
     // exists for visual review, so a typo failing through to the
     // shell would defeat the point.
     final surface = surfaceFor(kSurface);
-    final home = surface ??
-        (kBenchmarkMode ? const BenchmarkPage() : const AppRoot());
+    final home =
+        surface ?? (kBenchmarkMode ? const BenchmarkPage() : const AppRoot());
     return MaterialApp(
       title: 'AnotherOne',
       theme: buildAppTheme(),

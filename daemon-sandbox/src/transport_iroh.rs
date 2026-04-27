@@ -413,6 +413,13 @@ async fn handle_control(
     attached: &mut Option<Attached>,
     viewer_id: &str,
 ) -> anyhow::Result<()> {
+    if !matches!(ctrl, Control::Hello { .. }) {
+        if let Err(message) = registry.health() {
+            send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
+            return Ok(());
+        }
+    }
+
     match ctrl {
         Control::Resize { cols, rows } | Control::TabResize { cols, rows } => {
             if let Some(att) = attached.as_ref() {
@@ -551,6 +558,52 @@ async fn handle_control(
             let view = registry.read_agent_settings();
             let reply = WorkerReply::AgentSettingsAck { view };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
+        Control::SetAgentEnabled { agent_id, enabled } => {
+            match registry.set_agent_enabled(&agent_id, enabled) {
+                Ok(changed) => {
+                    let reply = WorkerReply::SetAgentEnabledAck { changed };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(message) => {
+                    let kind = if message.contains("unknown agent") {
+                        ErrKind::UnknownId
+                    } else {
+                        ErrKind::Internal
+                    };
+                    send_err(outbound_tx, request_id, kind, message).await?;
+                }
+            }
+        }
+        Control::SetDefaultAgent { agent_id } => match registry.set_default_agent(&agent_id) {
+            Ok(changed) => {
+                let reply = WorkerReply::SetDefaultAgentAck { changed };
+                send_worker_reply(outbound_tx, request_id, &reply).await?;
+            }
+            Err(message) => {
+                let kind = if message.contains("unknown agent") {
+                    ErrKind::UnknownId
+                } else {
+                    ErrKind::Internal
+                };
+                send_err(outbound_tx, request_id, kind, message).await?;
+            }
+        },
+        Control::SetAgentLaunchArgs { agent_id, args } => {
+            match registry.set_agent_launch_args(&agent_id, args) {
+                Ok(changed) => {
+                    let reply = WorkerReply::SetAgentLaunchArgsAck { changed };
+                    send_worker_reply(outbound_tx, request_id, &reply).await?;
+                }
+                Err(message) => {
+                    let kind = if message.contains("unknown agent") {
+                        ErrKind::UnknownId
+                    } else {
+                        ErrKind::Internal
+                    };
+                    send_err(outbound_tx, request_id, kind, message).await?;
+                }
+            }
         }
         Control::ReadOpenInSettings => {
             let reply = match registry.read_open_in_settings() {
@@ -1676,6 +1729,38 @@ mod tests {
         }
     }
 
+    struct UnhealthyRegistry;
+
+    impl DaemonRegistry for UnhealthyRegistry {
+        fn health(&self) -> Result<(), String> {
+            Err("registry unavailable".to_string())
+        }
+
+        fn list_projects(&self) -> Vec<crate::frame::ProjectSummary> {
+            panic!("list_projects should not be called when health fails");
+        }
+
+        fn attach_tab(
+            &self,
+            _section_id: &str,
+            _tab_id: &str,
+        ) -> Option<broadcast::Receiver<Vec<u8>>> {
+            None
+        }
+
+        fn tab_input(&self, _section_id: &str, _tab_id: &str, _bytes: &[u8]) {}
+
+        fn tab_resize(
+            &self,
+            _viewer_id: &str,
+            _section_id: &str,
+            _tab_id: &str,
+            _cols: u16,
+            _rows: u16,
+        ) {
+        }
+    }
+
     fn test_pair_state(nonce: &str) -> Arc<Mutex<PairState>> {
         Arc::new(Mutex::new(PairState {
             nonce: Some(nonce.to_string()),
@@ -1711,6 +1796,39 @@ mod tests {
         route_pty_input(&registry, None, b"\x1b[<64;1;1M");
 
         assert!(registry.inputs.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn handle_control_returns_err_when_registry_health_fails() {
+        let registry: Arc<dyn DaemonRegistry> = Arc::new(UnhealthyRegistry);
+        let (outbound_tx, mut outbound_rx) = mpsc::channel(1);
+        let data_generation = Arc::new(AtomicU64::new(0));
+        let mut attached = None;
+
+        handle_control(
+            42,
+            Control::ListProjects,
+            &registry,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("health failure should be encoded as a worker reply");
+
+        let frame = outbound_rx.recv().await.expect("worker reply");
+        assert_eq!(frame.ty, crate::frame::TY_WORKER_REPLY);
+        let envelope: WorkerReplyEnvelope =
+            serde_json::from_slice(&frame.payload).expect("decode worker reply");
+        assert_eq!(envelope.request_id, 42);
+        match envelope.reply {
+            WorkerReply::Err { message, kind } => {
+                assert_eq!(message, "registry unavailable");
+                assert!(matches!(kind, ErrKind::Internal));
+            }
+            other => panic!("expected WorkerReply::Err, got {other:?}"),
+        }
     }
 
     #[test]

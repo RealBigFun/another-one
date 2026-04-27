@@ -12,7 +12,7 @@
 //! codegen ignores it; the FRB-exposed surface is in
 //! `api/pair.rs`, which calls these accessors internally.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Adapter the host binary implements over its
 /// `daemon_sandbox::EndpointHandle`. All methods are called from FRB
@@ -52,18 +52,35 @@ pub trait LocalPairInfo: Send + Sync + 'static {
     fn relay_urls(&self) -> Vec<String>;
 }
 
-static LOCAL_PAIR_INFO: OnceLock<Arc<dyn LocalPairInfo>> = OnceLock::new();
+static LOCAL_PAIR_INFO: OnceLock<Mutex<Option<Arc<dyn LocalPairInfo>>>> = OnceLock::new();
+
+fn slot() -> &'static Mutex<Option<Arc<dyn LocalPairInfo>>> {
+    LOCAL_PAIR_INFO.get_or_init(|| Mutex::new(None))
+}
 
 /// Register the embedded daemon's pairing source so subsequent
 /// [`crate::api::pair::pairing_info`] calls can find it.
 ///
-/// Call exactly once at host-binary startup, immediately after the
-/// `EndpointHandle` is available. `OnceLock` semantics: a second
-/// call is silently dropped and the first registration sticks.
+/// Called when the embedded daemon endpoint is available. Replaces
+/// any prior handle so hot restart / explicit shutdown can install a
+/// fresh endpoint without leaving stale pairing material behind.
 pub fn set_local_pair_info(handle: Arc<dyn LocalPairInfo>) {
-    let _ = LOCAL_PAIR_INFO.set(handle);
+    let mut guard = slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(handle);
 }
 
-pub(crate) fn local_pair_info() -> Option<&'static Arc<dyn LocalPairInfo>> {
-    LOCAL_PAIR_INFO.get()
+pub fn clear_local_pair_info() {
+    let mut guard = slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = None;
+}
+
+pub(crate) fn local_pair_info() -> Option<Arc<dyn LocalPairInfo>> {
+    slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }

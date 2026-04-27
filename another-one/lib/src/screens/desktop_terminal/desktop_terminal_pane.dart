@@ -25,10 +25,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../../connection.dart';
+import '../../rust/api/iroh_client.dart';
 import '../../state/local_connection_provider.dart';
 import '../../state/tab_selection_provider.dart';
 import '../../tokens.dart';
 import '../../transport.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/terminal_view_alacritty.dart';
 
 /// Desktop defaults to the alacritty-backed engine on macOS/Linux.
@@ -63,6 +65,27 @@ class DesktopTerminalPane extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final transport = ref.watch(localConnectionProvider);
+    final projects = ref.watch(desktopProjectsProvider).valueOrNull ?? const [];
+    final activeTab = _findSelectedTab(projects, selection);
+    if (activeTab?.restoreStatus == TerminalRestoreStatus.failed) {
+      return _LaunchFailurePane(
+        tab: activeTab!,
+        onRetry: () async {
+          try {
+            await transport.launchTab(
+              sectionId: selection.sectionId,
+              tabId: selection.tabId,
+            );
+            await Future<void>.delayed(const Duration(milliseconds: 250));
+            await transport.listProjects();
+          } catch (e) {
+            if (context.mounted) {
+              showAppToast(context, message: 'Could not retry launch: $e');
+            }
+          }
+        },
+      );
+    }
     if (_useAlacrittyEngine) {
       return TerminalViewAlacritty(
         key: ValueKey('alacritty::${selection.sectionId}::${selection.tabId}'),
@@ -76,6 +99,21 @@ class DesktopTerminalPane extends ConsumerWidget {
       transport: transport,
       selection: selection,
     );
+  }
+
+  static TabSummary? _findSelectedTab(
+    List<ProjectSummary> projects,
+    TabSelection selection,
+  ) {
+    for (final project in projects) {
+      for (final task in project.tasks) {
+        if (task.sectionId != selection.sectionId) continue;
+        for (final tab in task.tabs) {
+          if (tab.id == selection.tabId) return tab;
+        }
+      }
+    }
+    return null;
   }
 }
 
@@ -240,6 +278,7 @@ class _AttachedTerminalState extends State<_AttachedTerminal> {
     _spinnerTimeout = Timer(const Duration(milliseconds: 1500), () {
       if (!mounted || !_awaitingFirstByte) return;
       setState(() => _awaitingFirstByte = false);
+      unawaited(widget.transport.listProjects().catchError((_) {}));
     });
   }
 
@@ -332,6 +371,89 @@ class _ErrorBanner extends StatelessWidget {
         style: const TextStyle(
           fontSize: AppTokens.fontBody,
           color: AppTokens.errorText,
+        ),
+      ),
+    );
+  }
+}
+
+class _LaunchFailurePane extends StatelessWidget {
+  const _LaunchFailurePane({required this.tab, required this.onRetry});
+
+  final TabSummary tab;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final message =
+        tab.failureMessage ?? tab.failureDetails ?? 'Terminal failed to launch';
+    final details = tab.failureDetails;
+    return Container(
+      color: AppTokens.terminalBg,
+      padding: const EdgeInsets.all(AppTokens.space6),
+      alignment: Alignment.topLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppTokens.errorBg.withValues(alpha: 0.34),
+            border: Border.all(color: AppTokens.errorMuted),
+            borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(AppTokens.space5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      size: 18,
+                      color: AppTokens.errorText,
+                    ),
+                    SizedBox(width: AppTokens.space2),
+                    Text(
+                      'Terminal launch failed',
+                      style: TextStyle(
+                        color: AppTokens.errorText,
+                        fontSize: AppTokens.fontHeadingSm,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppTokens.space3),
+                SelectableText(
+                  message,
+                  style: const TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontSize: AppTokens.fontBody,
+                    fontFamily: AppTokens.fontFamilyMono,
+                  ),
+                ),
+                if (details != null && details != message) ...[
+                  const SizedBox(height: AppTokens.space3),
+                  SelectableText(
+                    details,
+                    style: const TextStyle(
+                      color: AppTokens.textSecondary,
+                      fontSize: AppTokens.fontSmall,
+                      fontFamily: AppTokens.fontFamilyMono,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: AppTokens.space4),
+                OutlinedButton.icon(
+                  onPressed: () => unawaited(onRetry()),
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Retry launch'),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

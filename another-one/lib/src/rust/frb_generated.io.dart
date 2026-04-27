@@ -445,6 +445,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TaskSummary dco_decode_task_summary(dynamic raw);
 
   @protected
+  TerminalRestoreStatus dco_decode_terminal_restore_status(dynamic raw);
+
+  @protected
   ToolbarActionOutcomeDto dco_decode_toolbar_action_outcome_dto(dynamic raw);
 
   @protected
@@ -994,6 +997,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TaskSummary sse_decode_task_summary(SseDeserializer deserializer);
+
+  @protected
+  TerminalRestoreStatus sse_decode_terminal_restore_status(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ToolbarActionOutcomeDto sse_decode_toolbar_action_outcome_dto(
@@ -1670,6 +1678,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_task_summary(TaskSummary self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_terminal_restore_status(
+    TerminalRestoreStatus self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_toolbar_action_outcome_dto(

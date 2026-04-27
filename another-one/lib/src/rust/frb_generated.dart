@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 416376882;
+  int get rustContentHash => -642917640;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -408,12 +408,32 @@ abstract class RustLibApi extends BaseApi {
     required List<int> bytes,
   });
 
+  Future<void> crateApiIrohClientIrohSessionSetAgentEnabled({
+    required IrohSession that,
+    required BigInt requestId,
+    required String agentId,
+    required bool enabled,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionSetAgentLaunchArgs({
+    required IrohSession that,
+    required BigInt requestId,
+    required String agentId,
+    required List<String> args,
+  });
+
   Future<void> crateApiIrohClientIrohSessionSetBranchSetting({
     required IrohSession that,
     required BigInt requestId,
     required String projectId,
     required String field,
     String? branchName,
+  });
+
+  Future<void> crateApiIrohClientIrohSessionSetDefaultAgent({
+    required IrohSession that,
+    required BigInt requestId,
+    required String agentId,
   });
 
   Future<void> crateApiIrohClientIrohSessionSetGitCommitScript({
@@ -588,6 +608,11 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiPairRegenerateLocalPairing();
 
   Future<void> crateApiIrohClientSetDataDir({required String path});
+
+  Future<void> crateApiEmbeddedDaemonShutdownEmbeddedDaemon();
+
+  Future<TerminalRestoreStatus>
+  crateApiIrohClientTerminalRestoreStatusDefault();
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_IrohSession;
@@ -2784,6 +2809,90 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiIrohClientIrohSessionSetAgentEnabled({
+    required IrohSession that,
+    required BigInt requestId,
+    required String agentId,
+    required bool enabled,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(agentId, serializer);
+          sse_encode_bool(enabled, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 53,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionSetAgentEnabledConstMeta,
+        argValues: [that, requestId, agentId, enabled],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionSetAgentEnabledConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_set_agent_enabled",
+        argNames: ["that", "requestId", "agentId", "enabled"],
+      );
+
+  @override
+  Future<void> crateApiIrohClientIrohSessionSetAgentLaunchArgs({
+    required IrohSession that,
+    required BigInt requestId,
+    required String agentId,
+    required List<String> args,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(agentId, serializer);
+          sse_encode_list_String(args, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 54,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionSetAgentLaunchArgsConstMeta,
+        argValues: [that, requestId, agentId, args],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionSetAgentLaunchArgsConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_set_agent_launch_args",
+        argNames: ["that", "requestId", "agentId", "args"],
+      );
+
+  @override
   Future<void> crateApiIrohClientIrohSessionSetBranchSetting({
     required IrohSession that,
     required BigInt requestId,
@@ -2806,7 +2915,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 53,
+            funcId: 55,
             port: port_,
           );
         },
@@ -2828,6 +2937,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiIrohClientIrohSessionSetDefaultAgent({
+    required IrohSession that,
+    required BigInt requestId,
+    required String agentId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIrohSession(
+            that,
+            serializer,
+          );
+          sse_encode_u_64(requestId, serializer);
+          sse_encode_String(agentId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 56,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiIrohClientIrohSessionSetDefaultAgentConstMeta,
+        argValues: [that, requestId, agentId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientIrohSessionSetDefaultAgentConstMeta =>
+      const TaskConstMeta(
+        debugName: "IrohSession_set_default_agent",
+        argNames: ["that", "requestId", "agentId"],
+      );
+
+  @override
   Future<void> crateApiIrohClientIrohSessionSetGitCommitScript({
     required IrohSession that,
     required BigInt requestId,
@@ -2846,7 +2995,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 54,
+            funcId: 57,
             port: port_,
           );
         },
@@ -2886,7 +3035,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 55,
+            funcId: 58,
             port: port_,
           );
         },
@@ -2928,7 +3077,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 56,
+            funcId: 59,
             port: port_,
           );
         },
@@ -2971,7 +3120,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 57,
+            funcId: 60,
             port: port_,
           );
         },
@@ -3013,7 +3162,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 58,
+            funcId: 61,
             port: port_,
           );
         },
@@ -3053,7 +3202,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 59,
+            funcId: 62,
             port: port_,
           );
         },
@@ -3093,7 +3242,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 60,
+            funcId: 63,
             port: port_,
           );
         },
@@ -3137,7 +3286,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 61,
+            funcId: 64,
             port: port_,
           );
         },
@@ -3187,7 +3336,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 62,
+            funcId: 65,
             port: port_,
           );
         },
@@ -3244,7 +3393,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 63,
+              funcId: 66,
               port: port_,
             );
           },
@@ -3286,7 +3435,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 64,
+              funcId: 67,
               port: port_,
             );
           },
@@ -3330,7 +3479,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 65,
+            funcId: 68,
             port: port_,
           );
         },
@@ -3372,7 +3521,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 66,
+            funcId: 69,
             port: port_,
           );
         },
@@ -3414,7 +3563,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 67,
+            funcId: 70,
             port: port_,
           );
         },
@@ -3458,7 +3607,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 68,
+            funcId: 71,
             port: port_,
           );
         },
@@ -3491,7 +3640,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 69,
+            funcId: 72,
             port: port_,
           );
         },
@@ -3521,7 +3670,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 70,
+            funcId: 73,
             port: port_,
           );
         },
@@ -3553,7 +3702,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 71,
+            funcId: 74,
             port: port_,
           );
         },
@@ -3590,7 +3739,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 72,
+            funcId: 75,
             port: port_,
           );
         },
@@ -3629,7 +3778,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 73,
+            funcId: 76,
             port: port_,
           );
         },
@@ -3668,7 +3817,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 74,
+            funcId: 77,
             port: port_,
           );
         },
@@ -3703,7 +3852,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 75,
+            funcId: 78,
             port: port_,
           );
         },
@@ -3742,7 +3891,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 76,
+            funcId: 79,
             port: port_,
           );
         },
@@ -3779,7 +3928,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 77,
+            funcId: 80,
             port: port_,
           );
         },
@@ -3809,7 +3958,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 78,
+            funcId: 81,
             port: port_,
           );
         },
@@ -3845,7 +3994,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 79,
+            funcId: 82,
             port: port_,
           );
         },
@@ -3876,7 +4025,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 80,
+            funcId: 83,
             port: port_,
           );
         },
@@ -3903,7 +4052,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 81,
+            funcId: 84,
             port: port_,
           );
         },
@@ -3930,7 +4079,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 82,
+            funcId: 85,
             port: port_,
           );
         },
@@ -3957,7 +4106,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 83,
+            funcId: 86,
             port: port_,
           );
         },
@@ -3985,7 +4134,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 84,
+            funcId: 87,
             port: port_,
           );
         },
@@ -4016,7 +4165,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 85,
+            funcId: 88,
             port: port_,
           );
         },
@@ -4044,7 +4193,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 86,
+            funcId: 89,
             port: port_,
           );
         },
@@ -4061,6 +4210,64 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiIrohClientSetDataDirConstMeta =>
       const TaskConstMeta(debugName: "set_data_dir", argNames: ["path"]);
+
+  @override
+  Future<void> crateApiEmbeddedDaemonShutdownEmbeddedDaemon() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 90,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEmbeddedDaemonShutdownEmbeddedDaemonConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEmbeddedDaemonShutdownEmbeddedDaemonConstMeta =>
+      const TaskConstMeta(debugName: "shutdown_embedded_daemon", argNames: []);
+
+  @override
+  Future<TerminalRestoreStatus>
+  crateApiIrohClientTerminalRestoreStatusDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 91,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_terminal_restore_status,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIrohClientTerminalRestoreStatusDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIrohClientTerminalRestoreStatusDefaultConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_restore_status_default",
+        argNames: [],
+      );
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_IrohSession => wire
@@ -5200,8 +5407,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TabSummary dco_decode_tab_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return TabSummary(
       id: dco_decode_String(arr[0]),
       title: dco_decode_String(arr[1]),
@@ -5209,6 +5416,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       running: dco_decode_bool(arr[3]),
       pinned: dco_decode_bool(arr[4]),
       fixedTitle: dco_decode_opt_String(arr[5]),
+      restoreStatus: dco_decode_terminal_restore_status(arr[6]),
+      failureMessage: dco_decode_opt_String(arr[7]),
+      failureDetails: dco_decode_opt_String(arr[8]),
     );
   }
 
@@ -5231,6 +5441,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       linesRemoved: dco_decode_i_32(arr[9]),
       targetProjectId: dco_decode_String(arr[10]),
     );
+  }
+
+  @protected
+  TerminalRestoreStatus dco_decode_terminal_restore_status(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TerminalRestoreStatus.values[raw as int];
   }
 
   @protected
@@ -5459,58 +5675,66 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           view: dco_decode_box_autoadd_agent_settings_view(raw[1]),
         );
       case 41:
+        return WorkerReply_SetAgentEnabledAck(changed: dco_decode_bool(raw[1]));
+      case 42:
+        return WorkerReply_SetDefaultAgentAck(changed: dco_decode_bool(raw[1]));
+      case 43:
+        return WorkerReply_SetAgentLaunchArgsAck(
+          changed: dco_decode_bool(raw[1]),
+        );
+      case 44:
         return WorkerReply_OpenInSettingsAck(
           view: dco_decode_box_autoadd_open_in_settings_view(raw[1]),
         );
-      case 42:
+      case 45:
         return WorkerReply_SetOpenInAppEnabledAck();
-      case 43:
+      case 46:
         return WorkerReply_OpenProjectInAppAck();
-      case 44:
+      case 47:
         return WorkerReply_RunProjectActionAck(
           tabId: dco_decode_String(raw[1]),
         );
-      case 45:
+      case 48:
         return WorkerReply_SaveProjectActionAck();
-      case 46:
+      case 49:
         return WorkerReply_DeleteProjectActionAck(
           deleted: dco_decode_bool(raw[1]),
         );
-      case 47:
+      case 50:
         return WorkerReply_GitActionScriptsAck(
           view: dco_decode_box_autoadd_git_action_scripts_view(raw[1]),
         );
-      case 48:
+      case 51:
         return WorkerReply_SetGitCommitScriptAck(
           changed: dco_decode_bool(raw[1]),
         );
-      case 49:
+      case 52:
         return WorkerReply_ResetGitCommitScriptAck(
           changed: dco_decode_bool(raw[1]),
         );
-      case 50:
+      case 53:
         return WorkerReply_SetGitPrScriptAck(changed: dco_decode_bool(raw[1]));
-      case 51:
+      case 54:
         return WorkerReply_ResetGitPrScriptAck(
           changed: dco_decode_bool(raw[1]),
         );
-      case 52:
+      case 55:
         return WorkerReply_ShortcutSettingsAck(
           view: dco_decode_box_autoadd_shortcut_settings_view(raw[1]),
         );
-      case 53:
+      case 56:
         return WorkerReply_SetShortcutBindingAck();
-      case 54:
+      case 57:
         return WorkerReply_ResetShortcutBindingAck();
-      case 55:
+      case 58:
         return WorkerReply_McpSettingsAck(
           view: dco_decode_box_autoadd_mcp_settings_view(raw[1]),
         );
-      case 56:
+      case 59:
         return WorkerReply_McpAddFromCatalogAck();
-      case 57:
+      case 60:
         return WorkerReply_McpToggleAck();
-      case 58:
+      case 61:
         return WorkerReply_McpRemoveAck();
       default:
         throw Exception("unreachable");
@@ -7033,6 +7257,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_running = sse_decode_bool(deserializer);
     var var_pinned = sse_decode_bool(deserializer);
     var var_fixedTitle = sse_decode_opt_String(deserializer);
+    var var_restoreStatus = sse_decode_terminal_restore_status(deserializer);
+    var var_failureMessage = sse_decode_opt_String(deserializer);
+    var var_failureDetails = sse_decode_opt_String(deserializer);
     return TabSummary(
       id: var_id,
       title: var_title,
@@ -7040,6 +7267,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       running: var_running,
       pinned: var_pinned,
       fixedTitle: var_fixedTitle,
+      restoreStatus: var_restoreStatus,
+      failureMessage: var_failureMessage,
+      failureDetails: var_failureDetails,
     );
   }
 
@@ -7070,6 +7300,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       linesRemoved: var_linesRemoved,
       targetProjectId: var_targetProjectId,
     );
+  }
+
+  @protected
+  TerminalRestoreStatus sse_decode_terminal_restore_status(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TerminalRestoreStatus.values[inner];
   }
 
   @protected
@@ -7297,56 +7536,65 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_view = sse_decode_box_autoadd_agent_settings_view(deserializer);
         return WorkerReply_AgentSettingsAck(view: var_view);
       case 41:
+        var var_changed = sse_decode_bool(deserializer);
+        return WorkerReply_SetAgentEnabledAck(changed: var_changed);
+      case 42:
+        var var_changed = sse_decode_bool(deserializer);
+        return WorkerReply_SetDefaultAgentAck(changed: var_changed);
+      case 43:
+        var var_changed = sse_decode_bool(deserializer);
+        return WorkerReply_SetAgentLaunchArgsAck(changed: var_changed);
+      case 44:
         var var_view = sse_decode_box_autoadd_open_in_settings_view(
           deserializer,
         );
         return WorkerReply_OpenInSettingsAck(view: var_view);
-      case 42:
+      case 45:
         return WorkerReply_SetOpenInAppEnabledAck();
-      case 43:
+      case 46:
         return WorkerReply_OpenProjectInAppAck();
-      case 44:
+      case 47:
         var var_tabId = sse_decode_String(deserializer);
         return WorkerReply_RunProjectActionAck(tabId: var_tabId);
-      case 45:
+      case 48:
         return WorkerReply_SaveProjectActionAck();
-      case 46:
+      case 49:
         var var_deleted = sse_decode_bool(deserializer);
         return WorkerReply_DeleteProjectActionAck(deleted: var_deleted);
-      case 47:
+      case 50:
         var var_view = sse_decode_box_autoadd_git_action_scripts_view(
           deserializer,
         );
         return WorkerReply_GitActionScriptsAck(view: var_view);
-      case 48:
-        var var_changed = sse_decode_bool(deserializer);
-        return WorkerReply_SetGitCommitScriptAck(changed: var_changed);
-      case 49:
-        var var_changed = sse_decode_bool(deserializer);
-        return WorkerReply_ResetGitCommitScriptAck(changed: var_changed);
-      case 50:
-        var var_changed = sse_decode_bool(deserializer);
-        return WorkerReply_SetGitPrScriptAck(changed: var_changed);
       case 51:
         var var_changed = sse_decode_bool(deserializer);
-        return WorkerReply_ResetGitPrScriptAck(changed: var_changed);
+        return WorkerReply_SetGitCommitScriptAck(changed: var_changed);
       case 52:
+        var var_changed = sse_decode_bool(deserializer);
+        return WorkerReply_ResetGitCommitScriptAck(changed: var_changed);
+      case 53:
+        var var_changed = sse_decode_bool(deserializer);
+        return WorkerReply_SetGitPrScriptAck(changed: var_changed);
+      case 54:
+        var var_changed = sse_decode_bool(deserializer);
+        return WorkerReply_ResetGitPrScriptAck(changed: var_changed);
+      case 55:
         var var_view = sse_decode_box_autoadd_shortcut_settings_view(
           deserializer,
         );
         return WorkerReply_ShortcutSettingsAck(view: var_view);
-      case 53:
+      case 56:
         return WorkerReply_SetShortcutBindingAck();
-      case 54:
+      case 57:
         return WorkerReply_ResetShortcutBindingAck();
-      case 55:
+      case 58:
         var var_view = sse_decode_box_autoadd_mcp_settings_view(deserializer);
         return WorkerReply_McpSettingsAck(view: var_view);
-      case 56:
+      case 59:
         return WorkerReply_McpAddFromCatalogAck();
-      case 57:
+      case 60:
         return WorkerReply_McpToggleAck();
-      case 58:
+      case 61:
         return WorkerReply_McpRemoveAck();
       default:
         throw UnimplementedError('');
@@ -8685,6 +8933,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.running, serializer);
     sse_encode_bool(self.pinned, serializer);
     sse_encode_opt_String(self.fixedTitle, serializer);
+    sse_encode_terminal_restore_status(self.restoreStatus, serializer);
+    sse_encode_opt_String(self.failureMessage, serializer);
+    sse_encode_opt_String(self.failureDetails, serializer);
   }
 
   @protected
@@ -8701,6 +8952,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.linesAdded, serializer);
     sse_encode_i_32(self.linesRemoved, serializer);
     sse_encode_String(self.targetProjectId, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_restore_status(
+    TerminalRestoreStatus self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -8903,52 +9163,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case WorkerReply_AgentSettingsAck(view: final view):
         sse_encode_i_32(40, serializer);
         sse_encode_box_autoadd_agent_settings_view(view, serializer);
-      case WorkerReply_OpenInSettingsAck(view: final view):
+      case WorkerReply_SetAgentEnabledAck(changed: final changed):
         sse_encode_i_32(41, serializer);
+        sse_encode_bool(changed, serializer);
+      case WorkerReply_SetDefaultAgentAck(changed: final changed):
+        sse_encode_i_32(42, serializer);
+        sse_encode_bool(changed, serializer);
+      case WorkerReply_SetAgentLaunchArgsAck(changed: final changed):
+        sse_encode_i_32(43, serializer);
+        sse_encode_bool(changed, serializer);
+      case WorkerReply_OpenInSettingsAck(view: final view):
+        sse_encode_i_32(44, serializer);
         sse_encode_box_autoadd_open_in_settings_view(view, serializer);
       case WorkerReply_SetOpenInAppEnabledAck():
-        sse_encode_i_32(42, serializer);
+        sse_encode_i_32(45, serializer);
       case WorkerReply_OpenProjectInAppAck():
-        sse_encode_i_32(43, serializer);
+        sse_encode_i_32(46, serializer);
       case WorkerReply_RunProjectActionAck(tabId: final tabId):
-        sse_encode_i_32(44, serializer);
+        sse_encode_i_32(47, serializer);
         sse_encode_String(tabId, serializer);
       case WorkerReply_SaveProjectActionAck():
-        sse_encode_i_32(45, serializer);
+        sse_encode_i_32(48, serializer);
       case WorkerReply_DeleteProjectActionAck(deleted: final deleted):
-        sse_encode_i_32(46, serializer);
+        sse_encode_i_32(49, serializer);
         sse_encode_bool(deleted, serializer);
       case WorkerReply_GitActionScriptsAck(view: final view):
-        sse_encode_i_32(47, serializer);
+        sse_encode_i_32(50, serializer);
         sse_encode_box_autoadd_git_action_scripts_view(view, serializer);
       case WorkerReply_SetGitCommitScriptAck(changed: final changed):
-        sse_encode_i_32(48, serializer);
-        sse_encode_bool(changed, serializer);
-      case WorkerReply_ResetGitCommitScriptAck(changed: final changed):
-        sse_encode_i_32(49, serializer);
-        sse_encode_bool(changed, serializer);
-      case WorkerReply_SetGitPrScriptAck(changed: final changed):
-        sse_encode_i_32(50, serializer);
-        sse_encode_bool(changed, serializer);
-      case WorkerReply_ResetGitPrScriptAck(changed: final changed):
         sse_encode_i_32(51, serializer);
         sse_encode_bool(changed, serializer);
-      case WorkerReply_ShortcutSettingsAck(view: final view):
+      case WorkerReply_ResetGitCommitScriptAck(changed: final changed):
         sse_encode_i_32(52, serializer);
+        sse_encode_bool(changed, serializer);
+      case WorkerReply_SetGitPrScriptAck(changed: final changed):
+        sse_encode_i_32(53, serializer);
+        sse_encode_bool(changed, serializer);
+      case WorkerReply_ResetGitPrScriptAck(changed: final changed):
+        sse_encode_i_32(54, serializer);
+        sse_encode_bool(changed, serializer);
+      case WorkerReply_ShortcutSettingsAck(view: final view):
+        sse_encode_i_32(55, serializer);
         sse_encode_box_autoadd_shortcut_settings_view(view, serializer);
       case WorkerReply_SetShortcutBindingAck():
-        sse_encode_i_32(53, serializer);
+        sse_encode_i_32(56, serializer);
       case WorkerReply_ResetShortcutBindingAck():
-        sse_encode_i_32(54, serializer);
+        sse_encode_i_32(57, serializer);
       case WorkerReply_McpSettingsAck(view: final view):
-        sse_encode_i_32(55, serializer);
+        sse_encode_i_32(58, serializer);
         sse_encode_box_autoadd_mcp_settings_view(view, serializer);
       case WorkerReply_McpAddFromCatalogAck():
-        sse_encode_i_32(56, serializer);
+        sse_encode_i_32(59, serializer);
       case WorkerReply_McpToggleAck():
-        sse_encode_i_32(57, serializer);
+        sse_encode_i_32(60, serializer);
       case WorkerReply_McpRemoveAck():
-        sse_encode_i_32(58, serializer);
+        sse_encode_i_32(61, serializer);
     }
   }
 
@@ -9555,6 +9824,30 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
   Future<void> send({required List<int> bytes}) => RustLib.instance.api
       .crateApiIrohClientIrohSessionSend(that: this, bytes: bytes);
 
+  /// Issue [`Control::SetAgentEnabled`] under `request_id`.
+  Future<void> setAgentEnabled({
+    required BigInt requestId,
+    required String agentId,
+    required bool enabled,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionSetAgentEnabled(
+    that: this,
+    requestId: requestId,
+    agentId: agentId,
+    enabled: enabled,
+  );
+
+  /// Issue [`Control::SetAgentLaunchArgs`] under `request_id`.
+  Future<void> setAgentLaunchArgs({
+    required BigInt requestId,
+    required String agentId,
+    required List<String> args,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionSetAgentLaunchArgs(
+    that: this,
+    requestId: requestId,
+    agentId: agentId,
+    args: args,
+  );
+
   /// Issue [`Control::SetBranchSetting`] for `project_id`. `field`
   /// is one of `"default-branch"` / `"default-target-branch"`;
   /// `branch_name == None` clears the override.
@@ -9569,6 +9862,16 @@ class IrohSessionImpl extends RustOpaque implements IrohSession {
     projectId: projectId,
     field: field,
     branchName: branchName,
+  );
+
+  /// Issue [`Control::SetDefaultAgent`] under `request_id`.
+  Future<void> setDefaultAgent({
+    required BigInt requestId,
+    required String agentId,
+  }) => RustLib.instance.api.crateApiIrohClientIrohSessionSetDefaultAgent(
+    that: this,
+    requestId: requestId,
+    agentId: agentId,
   );
 
   /// Send `Control::SetGitCommitScript`.

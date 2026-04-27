@@ -16,25 +16,33 @@
 //!      `LocalSession` + the pair-mobile FRB API can read from
 //!      it.
 //!
-//! Registry registration is still one-time, but boot coordination is
-//! handled separately so concurrent `boot_embedded_daemon` calls
-//! collapse into one in-flight attempt and a failed startup can be
-//! retried later.
+//! Host ownership is explicit: concurrent `boot_embedded_daemon`
+//! calls collapse into one in-flight attempt, failed startup reopens
+//! the boot slot, and shutdown drops the endpoint plus local
+//! registry/pairing handoffs so a later boot can install fresh state.
 //!
-//! MCP transport is not started here — the GPUI desktop owns that
-//! today. Phase 6 of the migration will move MCP wiring into core
-//! and fold it back in.
+//! The local MCP transport is also started from this runtime on
+//! macOS/Linux. It binds the daemon-owned Unix socket used by the
+//! `another-one-mcp-shim` stdio bridge and dispatches against the
+//! same shared registry state as the iroh endpoint.
 
 use std::collections::HashSet;
 use std::io::Write;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::path::PathBuf;
+use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use tokio::sync::broadcast;
 
 use another_one_core::agents::{AgentProviderKind, TerminalLaunchConfig};
 use another_one_core::daemon_embed::{
     daemon_paths, key_from_wire, RegistryState, TabLaunchRequest,
+};
+use another_one_core::mcp::orchestrator::{
+    McpOrchestrator, ProjectInfo, RunCommandRequest, RunCommandResponse, SpawnTaskRequest,
+    SpawnTaskResponse, SpawnTerminalRequest, SpawnTerminalResponse, TabInfo, TaskInfo, TaskStatus,
+    TerminalSnapshot, RUN_COMMAND_TIMEOUT_CEILING_MS,
 };
 use another_one_core::open_in::OpenInAppKind;
 use another_one_core::platform::{CurrentPlatform, HeadlessPlatform};
@@ -61,26 +69,23 @@ use daemon_sandbox::frame::{
 use daemon_sandbox::registry::{RegistryFuture, TabAttachment};
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
-use crate::local_pair::{set_local_pair_info, LocalPairInfo};
-use crate::local_registry::set_local_registry;
+use crate::local_pair::{clear_local_pair_info, set_local_pair_info, LocalPairInfo};
+use crate::local_registry::{clear_local_registry, set_local_registry};
 
-/// One-time process-wide registry state for the embedded daemon.
-///
-/// Startup retries must keep reusing this state because
-/// [`crate::local_registry`] and the PTY drain are both registered
-/// once per process.
-static REGISTRY_STATE: OnceLock<Arc<Mutex<RegistryState>>> = OnceLock::new();
-
-/// Tracks the embedded daemon's boot phase so concurrent callers
-/// share one in-flight startup and a failed startup reopens the boot
-/// slot for the next call.
-static BOOT_COORDINATOR: OnceLock<Mutex<BootCoordinator>> = OnceLock::new();
+/// Process-local owner for the embedded daemon. The FRB API remains
+/// process-global, but the daemon resources themselves live in this
+/// replaceable host state rather than one-shot handoff cells.
+static HOST: OnceLock<Mutex<EmbeddedDaemonHost>> = OnceLock::new();
 
 /// Providers whose most recent MCP sync failed. Mirrors GPUI's
 /// `mcp_last_sync_errors` column-level state so the Flutter settings
 /// page can tint the affected provider chips red after a partial
 /// `sync_all` failure.
 static MCP_LAST_SYNC_ERRORS: OnceLock<Mutex<HashSet<AgentProviderKind>>> = OnceLock::new();
+
+const MCP_TAB_REF_SEPARATOR: &str = "::tab::";
+const RUN_COMMAND_DEFAULT_TIMEOUT_MS: u64 = 30_000;
+const RUN_COMMAND_IDLE_MS: u64 = 750;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BootPhase {
@@ -92,12 +97,14 @@ enum BootPhase {
 #[derive(Debug)]
 struct BootCoordinator {
     phase: BootPhase,
+    last_error: Option<String>,
 }
 
 impl Default for BootCoordinator {
     fn default() -> Self {
         Self {
             phase: BootPhase::Idle,
+            last_error: None,
         }
     }
 }
@@ -107,6 +114,7 @@ impl BootCoordinator {
         match self.phase {
             BootPhase::Idle => {
                 self.phase = BootPhase::Booting;
+                self.last_error = None;
                 true
             }
             BootPhase::Booting | BootPhase::Booted => false,
@@ -115,10 +123,16 @@ impl BootCoordinator {
 
     fn mark_booted(&mut self) {
         self.phase = BootPhase::Booted;
+        self.last_error = None;
     }
 
-    fn mark_failed(&mut self) {
+    fn mark_failed(&mut self, message: impl Into<String>) {
         self.phase = BootPhase::Idle;
+        self.last_error = Some(message.into());
+    }
+
+    fn last_error(&self) -> Option<String> {
+        self.last_error.clone()
     }
 
     #[cfg(test)]
@@ -128,45 +142,94 @@ impl BootCoordinator {
 }
 
 struct BootAttemptGuard {
-    booted: bool,
+    finished: bool,
 }
 
 impl BootAttemptGuard {
     fn new() -> Self {
-        Self { booted: false }
+        Self { finished: false }
     }
 
     fn mark_booted(&mut self) {
         with_boot_coordinator(|coordinator| coordinator.mark_booted());
-        self.booted = true;
+        self.finished = true;
+    }
+
+    fn mark_failed(&mut self, message: impl Into<String>) {
+        with_boot_coordinator(|coordinator| coordinator.mark_failed(message));
+        self.finished = true;
     }
 }
 
 impl Drop for BootAttemptGuard {
     fn drop(&mut self) {
-        if !self.booted {
-            with_boot_coordinator(|coordinator| coordinator.mark_failed());
+        if !self.finished {
+            with_boot_coordinator(|coordinator| {
+                coordinator.mark_failed("embedded daemon boot attempt ended before endpoint bind")
+            });
         }
     }
 }
 
-fn with_boot_coordinator<R>(f: impl FnOnce(&mut BootCoordinator) -> R) -> R {
-    let coordinator = BOOT_COORDINATOR.get_or_init(|| Mutex::new(BootCoordinator::default()));
-    let mut guard = coordinator
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+#[derive(Default)]
+struct EmbeddedDaemonHost {
+    coordinator: BootCoordinator,
+    registry_state: Option<Arc<Mutex<RegistryState>>>,
+    shutdown_tx: Option<mpsc::Sender<()>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+fn with_host<R>(f: impl FnOnce(&mut EmbeddedDaemonHost) -> R) -> R {
+    let host = HOST.get_or_init(|| Mutex::new(EmbeddedDaemonHost::default()));
+    let mut guard = host.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     f(&mut guard)
 }
 
+fn with_boot_coordinator<R>(f: impl FnOnce(&mut BootCoordinator) -> R) -> R {
+    with_host(|host| f(&mut host.coordinator))
+}
+
 fn embedded_registry_state() -> Arc<Mutex<RegistryState>> {
-    REGISTRY_STATE
-        .get_or_init(|| {
-            let registry_state = Arc::new(Mutex::new(RegistryState::new(ProjectStore::load())));
-            set_local_registry(registry_state.clone());
-            crate::pty_drain::spawn_drain(registry_state.clone());
-            registry_state
-        })
-        .clone()
+    with_host(|host| {
+        host.registry_state
+            .get_or_insert_with(|| {
+                let registry_state = Arc::new(Mutex::new(RegistryState::new(ProjectStore::load())));
+                set_local_registry(registry_state.clone());
+                crate::pty_drain::spawn_drain(registry_state.clone());
+                registry_state
+            })
+            .clone()
+    })
+}
+
+pub(crate) fn boot_error() -> Option<String> {
+    with_boot_coordinator(|coordinator| coordinator.last_error())
+}
+
+pub(crate) fn shutdown() {
+    let (shutdown_tx, thread) = with_host(|host| {
+        host.coordinator = BootCoordinator::default();
+        host.registry_state.take();
+        (host.shutdown_tx.take(), host.thread.take())
+    });
+    if let Some(tx) = shutdown_tx {
+        let _ = tx.send(());
+    }
+    if let Some(thread) = thread {
+        if thread.thread().id() != thread::current().id() {
+            let _ = thread.join();
+        }
+    }
+    clear_local_pair_info();
+    clear_local_registry();
+}
+
+/// Factory for the local MCP listener once `another-one-6gc.23.3`
+/// moves listener startup into the embedded daemon boot path.
+#[allow(dead_code)]
+pub(crate) fn embedded_mcp_orchestrator() -> Arc<dyn McpOrchestrator> {
+    let state = embedded_registry_state();
+    Arc::new(BridgeMcpOrchestrator::new(Arc::downgrade(&state)))
 }
 
 fn with_mcp_last_sync_errors<R>(f: impl FnOnce(&mut HashSet<AgentProviderKind>) -> R) -> R {
@@ -228,18 +291,25 @@ pub(crate) fn boot() -> Result<(), String> {
         return Ok(());
     }
 
-    thread::Builder::new()
+    let (shutdown_tx, shutdown_rx) = mpsc::channel();
+    let thread = thread::Builder::new()
         .name("another-one-embedded-daemon".into())
-        .spawn(move || run(registry_state))
+        .spawn(move || run(registry_state, shutdown_rx))
         .map_err(|e| {
-            with_boot_coordinator(|coordinator| coordinator.mark_failed());
-            format!("spawn embedded daemon thread: {e}")
+            let message = format!("spawn embedded daemon thread: {e}");
+            with_boot_coordinator(|coordinator| coordinator.mark_failed(message.clone()));
+            message
         })?;
+
+    with_host(|host| {
+        host.shutdown_tx = Some(shutdown_tx);
+        host.thread = Some(thread);
+    });
 
     Ok(())
 }
 
-fn run(registry_state: Arc<Mutex<RegistryState>>) {
+fn run(registry_state: Arc<Mutex<RegistryState>>, shutdown_rx: mpsc::Receiver<()>) {
     let mut boot_attempt = BootAttemptGuard::new();
     // Mirrors `desktop::daemon_host::run`. Four workers: a single
     // stuck PTY write under `block_in_place` shouldn't be able to
@@ -252,7 +322,9 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
     {
         Ok(rt) => rt,
         Err(e) => {
-            tracing::error!("build embedded daemon runtime: {e:#}");
+            let message = format!("build embedded daemon runtime: {e:#}");
+            tracing::error!("{message}");
+            boot_attempt.mark_failed(message);
             return;
         }
     };
@@ -261,10 +333,28 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
     drop(registry_state);
     let registry: Arc<dyn DaemonRegistry> = Arc::new(BridgeDaemonRegistry::new(weak));
 
+    let mcp_listener = runtime.block_on(async {
+        daemon_sandbox::transport_mcp::spawn(
+            daemon_sandbox::transport_mcp::default_socket_path(),
+            embedded_mcp_orchestrator(),
+        )
+    });
+    let _mcp_listener = match mcp_listener {
+        Ok(listener) => Some(listener),
+        Err(e) => {
+            let message = format!("embedded daemon MCP listener failed to start: {e:#}");
+            tracing::error!("{message}");
+            boot_attempt.mark_failed(message);
+            return;
+        }
+    };
+
     let paths = match daemon_paths() {
         Ok(p) => p,
         Err(e) => {
-            tracing::error!("resolve daemon paths: {e:#}");
+            let message = format!("resolve daemon paths: {e:#}");
+            tracing::error!("{message}");
+            boot_attempt.mark_failed(message);
             return;
         }
     };
@@ -284,11 +374,13 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
         Ok(sk) => {
             let device_node_id = sk.public().to_string();
             if let Err(e) = daemon_sandbox::persist_pairing(&device_node_id, &paths.paired_peers) {
-                tracing::warn!(
-                    "loopback self-trust: persist_pairing failed (device_node_id={}): {:#}",
-                    device_node_id,
-                    e,
+                let message = format!(
+                    "loopback self-trust: persist_pairing failed \
+                     (device_node_id={device_node_id}): {e:#}"
                 );
+                tracing::error!("{message}");
+                boot_attempt.mark_failed(message);
+                return;
             } else {
                 tracing::info!(
                     "loopback self-trust: pre-allowlisted device NodeId {} in paired_peers",
@@ -297,10 +389,10 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
             }
         }
         Err(e) => {
-            tracing::warn!(
-                "loopback self-trust: skipping — could not load device secret key: {:#}",
-                e,
-            );
+            let message = format!("loopback self-trust: could not load device secret key: {e:#}");
+            tracing::error!("{message}");
+            boot_attempt.mark_failed(message);
+            return;
         }
     }
 
@@ -310,19 +402,18 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
 
     match endpoint_result {
         Ok(handle) => {
+            let handle = Arc::new(handle);
             let adapter: Arc<dyn LocalPairInfo> =
-                Arc::new(EndpointHandlePairAdapter::new(Arc::new(handle)));
+                Arc::new(EndpointHandlePairAdapter::new(handle.clone()));
             set_local_pair_info(adapter);
             boot_attempt.mark_booted();
-            // Park forever — the handle stays in `set_local_pair_info`'s
-            // `OnceLock` for the rest of the process. Dropping the
-            // runtime would tear down the endpoint.
-            loop {
-                thread::park();
-            }
+            let _ = shutdown_rx.recv();
+            drop(handle);
         }
         Err(e) => {
-            tracing::error!("embedded daemon boot failed: {e:#}");
+            let message = format!("embedded daemon boot failed: {e:#}");
+            tracing::error!("{message}");
+            boot_attempt.mark_failed(message);
         }
     }
 }
@@ -330,8 +421,8 @@ fn run(registry_state: Arc<Mutex<RegistryState>>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        close_tab_in_section, launch_config_for_add_agent, toggle_tab_pinned_in_section,
-        BootCoordinator, BootPhase,
+        close_tab_in_section, launch_config_for_add_agent, shutdown, toggle_tab_pinned_in_section,
+        with_boot_coordinator, BootCoordinator, BootPhase,
     };
     use another_one_core::agents::TerminalRestoreStatus;
     use another_one_core::project_store::{PersistedSectionState, PersistedTerminalTab};
@@ -345,6 +436,8 @@ mod tests {
             provider: None,
             launch_config: None,
             restore_status: TerminalRestoreStatus::NotStarted,
+            failure_message: None,
+            failure_details: None,
         }
     }
 
@@ -362,10 +455,27 @@ mod tests {
         let mut coordinator = BootCoordinator::default();
 
         assert!(coordinator.try_start());
-        coordinator.mark_failed();
+        coordinator.mark_failed("bind failed");
 
         assert_eq!(coordinator.phase(), BootPhase::Idle);
+        assert_eq!(coordinator.last_error().as_deref(), Some("bind failed"));
         assert!(coordinator.try_start());
+        assert_eq!(coordinator.last_error(), None);
+    }
+
+    #[test]
+    fn shutdown_should_reset_global_host_state() {
+        with_boot_coordinator(|coordinator| {
+            assert!(coordinator.try_start());
+            coordinator.mark_booted();
+        });
+
+        shutdown();
+
+        assert_eq!(
+            with_boot_coordinator(|coordinator| coordinator.phase()),
+            BootPhase::Idle
+        );
     }
 
     #[test]
@@ -523,14 +633,606 @@ impl BridgeDaemonRegistry {
         Self { inner }
     }
 
+    fn lock_state(&self) -> Result<Arc<Mutex<RegistryState>>, String> {
+        let arc = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| "embedded daemon registry state has been dropped".to_string())?;
+        {
+            let _guard = arc
+                .lock()
+                .map_err(|_| "embedded daemon registry mutex is poisoned".to_string())?;
+        }
+        Ok(arc)
+    }
+
     fn with_state<R>(&self, f: impl FnOnce(&mut RegistryState) -> R) -> Option<R> {
         let arc = self.inner.upgrade()?;
         let mut guard = arc.lock().ok()?;
         Some(f(&mut guard))
     }
+
+    fn mark_writer_failed(
+        &self,
+        key: &TerminalRuntimeKey,
+        message: &'static str,
+        err: anyhow::Error,
+    ) {
+        let details = format!("{err:#}");
+        tracing::warn!(
+            section_id = %key.section_id.store_key(),
+            tab_id = %key.tab_id,
+            message = message,
+            details = details.as_str(),
+            "terminal writer failed"
+        );
+        self.with_state(|state| state.fail_tab_io(key, message, details));
+    }
+}
+
+struct BridgeMcpOrchestrator {
+    inner: Weak<Mutex<RegistryState>>,
+}
+
+impl BridgeMcpOrchestrator {
+    fn new(inner: Weak<Mutex<RegistryState>>) -> Self {
+        Self { inner }
+    }
+
+    fn with_state<R>(&self, f: impl FnOnce(&mut RegistryState) -> R) -> anyhow::Result<R> {
+        let arc = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("mcp orchestrator: registry state dropped"))?;
+        let mut guard = arc
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mcp orchestrator: registry mutex poisoned"))?;
+        Ok(f(&mut guard))
+    }
+
+    fn with_state_opt<R>(&self, f: impl FnOnce(&mut RegistryState) -> R) -> Option<R> {
+        let arc = self.inner.upgrade()?;
+        let mut guard = arc.lock().ok()?;
+        Some(f(&mut guard))
+    }
+
+    fn mark_writer_failed(
+        &self,
+        key: &TerminalRuntimeKey,
+        message: &'static str,
+        err: &anyhow::Error,
+    ) {
+        let details = format!("{err:#}");
+        tracing::warn!(
+            section_id = %key.section_id.store_key(),
+            tab_id = %key.tab_id,
+            message = message,
+            details = details.as_str(),
+            "terminal writer failed"
+        );
+        let _ = self.with_state(|state| state.fail_tab_io(key, message, details));
+    }
+}
+
+impl McpOrchestrator for BridgeMcpOrchestrator {
+    fn list_projects(&self) -> Vec<ProjectInfo> {
+        self.with_state_opt(|state| {
+            state
+                .project_store
+                .projects
+                .iter()
+                .map(|project| ProjectInfo {
+                    id: project.id.clone(),
+                    path: project.path.display().to_string(),
+                    label: project.name.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    fn list_tasks(&self) -> Vec<TaskInfo> {
+        self.with_state_opt(|state| {
+            state
+                .project_store
+                .tasks
+                .values()
+                .flatten()
+                .map(|task| TaskInfo {
+                    project_id: task.root_project_id.clone(),
+                    task_id: task.id.clone(),
+                    branch: (task.kind != another_one_core::project_store::TaskKind::Direct)
+                        .then(|| task.branch_name.clone()),
+                    worktree_path: task
+                        .worktree_project_id
+                        .as_deref()
+                        .and_then(|project_id| state.project_store.project(project_id))
+                        .map(|project| project.path.display().to_string()),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    fn list_tabs(&self, task_id: &str) -> Vec<TabInfo> {
+        self.with_state_opt(|state| {
+            let Some(task) = state.project_store.task(task_id) else {
+                return Vec::new();
+            };
+            let Some(section) = state.project_store.terminal_sections.get(&task.section_id) else {
+                return Vec::new();
+            };
+            section
+                .tabs
+                .iter()
+                .map(|tab| TabInfo {
+                    tab_id: mcp_tab_ref(&task.section_id, &tab.id),
+                    provider: tab.provider.map(provider_id_str).map(str::to_string),
+                    title: tab.title.clone(),
+                    session_ref: tab
+                        .launch_config
+                        .as_ref()
+                        .and_then(|config| config.session.as_ref())
+                        .map(|session| session.id.clone()),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    fn get_task_status(&self, task_id: &str) -> Option<TaskStatus> {
+        self.with_state_opt(|state| {
+            let task = state.project_store.task(task_id)?;
+            let section = state
+                .project_store
+                .terminal_sections
+                .get(&task.section_id)?;
+            if section.tabs.is_empty() {
+                return Some(TaskStatus::NoTabs);
+            }
+
+            let working = section.tabs.iter().any(|tab| {
+                let Some(key) = key_from_wire(&task.section_id, &tab.id) else {
+                    return false;
+                };
+                state.writers.contains_key(&key)
+                    || state.broadcasts.contains_key(&key)
+                    || state.in_flight_launches.contains(&key)
+                    || state
+                        .pending_tab_launches
+                        .iter()
+                        .any(|request| request.key == key)
+                    || state.pending_post_launch_input.contains_key(&key)
+            });
+
+            Some(if working {
+                TaskStatus::Working
+            } else {
+                TaskStatus::Idle
+            })
+        })
+        .flatten()
+    }
+
+    fn read_terminal_output(&self, tab_id: &str, tail: usize) -> Option<TerminalSnapshot> {
+        self.with_state_opt(|state| {
+            let tab = resolve_mcp_tab_ref(state, tab_id)?;
+            let (bytes, truncated_head) = state
+                .terminal_replay
+                .get(&tab.key)
+                .map(|replay| replay.tail_bytes(tail))
+                .unwrap_or((Vec::new(), false));
+            Some(TerminalSnapshot {
+                bytes,
+                truncated_head,
+            })
+        })
+        .flatten()
+    }
+
+    fn spawn_task(&self, req: SpawnTaskRequest) -> anyhow::Result<SpawnTaskResponse> {
+        let provider = parse_provider_id(&req.harness)
+            .ok_or_else(|| anyhow::anyhow!("spawn_task: unknown harness `{}`", req.harness))?;
+        let launch_config = TerminalLaunchConfig::for_provider(provider);
+        let initial_input = req.initial_prompt.as_deref().map(terminal_input_line);
+
+        match req.branch {
+            Some(branch) => self.spawn_worktree_task(
+                req.project_id,
+                branch,
+                req.title,
+                launch_config,
+                initial_input,
+            ),
+            None => self.spawn_direct_task(req.project_id, req.title, launch_config, initial_input),
+        }
+    }
+
+    fn spawn_terminal(&self, req: SpawnTerminalRequest) -> anyhow::Result<SpawnTerminalResponse> {
+        match (req.project_id, req.task_id) {
+            (Some(project_id), None) => {
+                let inserted = self.with_state(|state| {
+                    let project = state.project_store.project(&project_id).cloned();
+                    let Some(project) = project else {
+                        return Err(anyhow::anyhow!(
+                            "spawn_terminal: unknown project_id `{project_id}`"
+                        ));
+                    };
+                    let root_project_id = state
+                        .project_store
+                        .root_project_id_for_project(&project.id)
+                        .unwrap_or_else(|| project.id.clone());
+                    let branch_name =
+                        another_one_core::project_store::current_branch(&project.path)
+                            .or_else(|| state.project_store.current_branch_name(&project.id))
+                            .unwrap_or_else(|| "main".to_string());
+                    let cwd = req
+                        .cwd
+                        .as_deref()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| project.path.clone());
+                    Ok(insert_task_with_initial_tab_details(
+                        state,
+                        root_project_id,
+                        project.id.clone(),
+                        another_one_core::project_store::TaskKind::Direct,
+                        "Terminal".to_string(),
+                        branch_name,
+                        None,
+                        cwd,
+                        TerminalLaunchConfig::default(),
+                    ))
+                })??;
+                Ok(SpawnTerminalResponse {
+                    tab_id: mcp_tab_ref(&inserted.section_key, &inserted.tab_id),
+                })
+            }
+            (None, Some(task_id)) => {
+                let tab_ref = self.with_state(|state| {
+                    let task = state.project_store.task(&task_id).cloned().ok_or_else(|| {
+                        anyhow::anyhow!("spawn_terminal: unknown task_id `{task_id}`")
+                    })?;
+                    let section_id =
+                        SectionId::from_store_key(&task.section_id).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "spawn_terminal: malformed section id `{}`",
+                                task.section_id
+                            )
+                        })?;
+                    let mut section = state
+                        .project_store
+                        .terminal_sections
+                        .get(&task.section_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "spawn_terminal: missing terminal section `{}`",
+                                task.section_id
+                            )
+                        })?;
+                    if let Some(cwd) = req.cwd.as_deref() {
+                        section.cwd = Some(PathBuf::from(cwd));
+                    }
+                    let (tab_id, tab) = build_terminal_tab(TerminalLaunchConfig::default(), None);
+                    append_tab_to_section(&mut section, tab);
+                    state
+                        .project_store
+                        .set_section_state(task.section_id.clone(), section);
+                    state.pending_tab_launches.push(TabLaunchRequest {
+                        key: TerminalRuntimeKey {
+                            section_id,
+                            tab_id: tab_id.clone(),
+                        },
+                    });
+                    Ok::<_, anyhow::Error>(mcp_tab_ref(&task.section_id, &tab_id))
+                })??;
+                Ok(SpawnTerminalResponse { tab_id: tab_ref })
+            }
+            (None, None) => anyhow::bail!("spawn_terminal requires project_id or task_id"),
+            (Some(_), Some(_)) => anyhow::bail!("spawn_terminal accepts project_id XOR task_id"),
+        }
+    }
+
+    fn send_input(&self, tab_id: &str, bytes: &[u8]) -> anyhow::Result<()> {
+        let (key, writer) = self.with_state(|state| {
+            let tab = resolve_mcp_tab_ref(state, tab_id)
+                .ok_or_else(|| anyhow::anyhow!("send_input: unknown tab_id `{tab_id}`"))?;
+            let writer = state
+                .writers
+                .get(&tab.key)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("send_input: tab `{tab_id}` has no live PTY"))?;
+            Ok::<_, anyhow::Error>((tab.key, writer))
+        })??;
+        if let Err(err) = write_tab_bytes(writer, bytes) {
+            self.mark_writer_failed(&key, "Terminal input failed", &err);
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    fn run_command(&self, req: RunCommandRequest) -> anyhow::Result<RunCommandResponse> {
+        if req.command.trim().is_empty() {
+            anyhow::bail!("run_command: command must not be blank");
+        }
+        let target =
+            self.resolve_run_command_target(req.tab_id.as_deref(), req.task_id.as_deref())?;
+        let start_sequence = self.with_state(|state| {
+            state
+                .terminal_replay
+                .get(&target.key)
+                .and_then(|replay| replay.latest_sequence())
+        })?;
+        let writer = self.with_state(|state| {
+            state
+                .writers
+                .get(&target.key)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("run_command: tab has no live PTY"))
+        })??;
+        if let Err(err) = write_tab_bytes(writer, &terminal_input_line(&req.command)) {
+            self.mark_writer_failed(&target.key, "Terminal command input failed", &err);
+            return Err(err);
+        }
+
+        let timeout_ms = req
+            .timeout_ms
+            .unwrap_or(RUN_COMMAND_DEFAULT_TIMEOUT_MS)
+            .min(RUN_COMMAND_TIMEOUT_CEILING_MS);
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        let idle = Duration::from_millis(RUN_COMMAND_IDLE_MS);
+        let mut last_seen = start_sequence;
+        let mut last_activity = Instant::now();
+        let mut output = Vec::new();
+
+        loop {
+            let chunks = self.with_state(|state| {
+                state
+                    .terminal_replay
+                    .get(&target.key)
+                    .map(|replay| (replay.replay_after(last_seen), replay.latest_sequence()))
+                    .unwrap_or_default()
+            })?;
+
+            if !chunks.0.is_empty() {
+                last_seen = chunks.1;
+                last_activity = Instant::now();
+                for chunk in chunks.0 {
+                    output.extend(chunk);
+                }
+            }
+
+            let now = Instant::now();
+            if now.duration_since(last_activity) >= idle {
+                return Ok(RunCommandResponse {
+                    output,
+                    timed_out: false,
+                });
+            }
+            if now >= deadline {
+                return Ok(RunCommandResponse {
+                    output,
+                    timed_out: true,
+                });
+            }
+
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn close_tab(&self, tab_id: &str) -> anyhow::Result<()> {
+        self.with_state(|state| {
+            let tab = resolve_mcp_tab_ref(state, tab_id)
+                .ok_or_else(|| anyhow::anyhow!("close_tab: unknown tab_id `{tab_id}`"))?;
+            let mut section = state
+                .project_store
+                .terminal_sections
+                .get(&tab.section_key)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("close_tab: missing terminal section `{}`", tab.section_key)
+                })?;
+            close_tab_in_section(&mut section, &tab.key.tab_id)
+                .ok_or_else(|| anyhow::anyhow!("close_tab: unknown tab_id `{tab_id}`"))?;
+            state
+                .project_store
+                .set_section_state(tab.section_key, section);
+            state.pending_tab_terminations.push(tab.key);
+            Ok(())
+        })?
+    }
+}
+
+impl BridgeMcpOrchestrator {
+    fn spawn_direct_task(
+        &self,
+        project_id: String,
+        title: Option<String>,
+        launch_config: TerminalLaunchConfig,
+        initial_input: Option<Vec<u8>>,
+    ) -> anyhow::Result<SpawnTaskResponse> {
+        let inserted = self.with_state(|state| {
+            let root_project_id = state
+                .project_store
+                .root_project_id_for_project(&project_id)
+                .ok_or_else(|| anyhow::anyhow!("spawn_task: unknown project_id `{project_id}`"))?;
+            let project = state
+                .project_store
+                .project(&root_project_id)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("spawn_task: unknown root project `{root_project_id}`")
+                })?;
+            let branch_name = another_one_core::project_store::current_branch(&project.path)
+                .or_else(|| state.project_store.current_branch_name(&project.id))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "spawn_task: could not determine current branch for `{}`",
+                        project.name
+                    )
+                })?;
+            let task_name = task_title_or_default(title.as_deref(), &branch_name);
+            let inserted = insert_task_with_initial_tab_details(
+                state,
+                root_project_id.clone(),
+                project.id.clone(),
+                another_one_core::project_store::TaskKind::Direct,
+                task_name,
+                branch_name,
+                None,
+                project.path.clone(),
+                launch_config,
+            );
+            queue_initial_tab_input(state, &inserted, initial_input);
+            Ok::<_, anyhow::Error>(inserted)
+        })??;
+
+        Ok(SpawnTaskResponse {
+            project_id: inserted.root_project_id,
+            task_id: inserted.task_id,
+            worktree_path: None,
+            tab_id: mcp_tab_ref(&inserted.section_key, &inserted.tab_id),
+        })
+    }
+
+    fn spawn_worktree_task(
+        &self,
+        project_id: String,
+        branch: String,
+        title: Option<String>,
+        launch_config: TerminalLaunchConfig,
+        initial_input: Option<Vec<u8>>,
+    ) -> anyhow::Result<SpawnTaskResponse> {
+        let branch = branch.trim().to_string();
+        if branch.is_empty() {
+            anyhow::bail!("spawn_task: branch must not be blank for worktree tasks");
+        }
+
+        let (root_project_id, project_path, project_name, source_branch) =
+            self.with_state(|state| {
+                let root_project_id = state
+                    .project_store
+                    .root_project_id_for_project(&project_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("spawn_task: unknown project_id `{project_id}`")
+                    })?;
+                let project = state
+                    .project_store
+                    .project(&root_project_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("spawn_task: unknown root project `{root_project_id}`")
+                    })?;
+                let source_branch = another_one_core::project_store::current_branch(&project.path)
+                    .or_else(|| state.project_store.current_branch_name(&project.id))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "spawn_task: could not determine source branch for `{}`",
+                            project.name
+                        )
+                    })?;
+                Ok::<_, anyhow::Error>((
+                    root_project_id,
+                    project.path.clone(),
+                    project.name.clone(),
+                    source_branch,
+                ))
+            })??;
+
+        let task_name = task_title_or_default(title.as_deref(), &branch);
+        let mut rx = another_one_core::project_service::spawn_task_creation(
+            root_project_id.clone(),
+            project_path,
+            project_name,
+            task_name,
+            branch.clone(),
+            another_one_core::project_store::TaskWorktreeBranchMode::NewBranchFrom {
+                source_branch,
+            },
+            launch_config,
+        );
+        let reply = wait_for_task_creation(&mut rx, "spawn_task")?;
+        let success = reply
+            .result
+            .map_err(|failure| anyhow::anyhow!("spawn_task: {}", failure.message))?;
+
+        let (inserted, worktree_path) = self.with_state(|state| {
+            let inserted_worktree = state
+                .project_store
+                .insert_prepared_project(success.project.clone());
+            let worktree_project_id = if inserted_worktree {
+                success.project.project.id.clone()
+            } else {
+                state
+                    .project_store
+                    .projects
+                    .iter()
+                    .find(|project| project.path == success.project.project.path)
+                    .map(|project| project.id.clone())
+                    .unwrap_or_else(|| success.project.project.id.clone())
+            };
+            let inserted = insert_task_with_initial_tab_details(
+                state,
+                root_project_id.clone(),
+                worktree_project_id.clone(),
+                another_one_core::project_store::TaskKind::Worktree,
+                success.task_name,
+                success.branch_name,
+                Some(worktree_project_id),
+                success.project.project.path.clone(),
+                success.launch_config,
+            );
+            queue_initial_tab_input(state, &inserted, initial_input);
+            Ok::<_, anyhow::Error>((inserted, success.project.project.path))
+        })??;
+
+        Ok(SpawnTaskResponse {
+            project_id: inserted.root_project_id,
+            task_id: inserted.task_id,
+            worktree_path: Some(worktree_path.display().to_string()),
+            tab_id: mcp_tab_ref(&inserted.section_key, &inserted.tab_id),
+        })
+    }
+
+    fn resolve_run_command_target(
+        &self,
+        tab_id: Option<&str>,
+        task_id: Option<&str>,
+    ) -> anyhow::Result<McpResolvedTab> {
+        match (tab_id, task_id) {
+            (Some(tab_id), None) => self
+                .with_state(|state| resolve_mcp_tab_ref(state, tab_id))?
+                .ok_or_else(|| anyhow::anyhow!("run_command: unknown tab_id `{tab_id}`")),
+            (None, Some(task_id)) => self
+                .with_state(|state| {
+                    let task = state.project_store.task(task_id)?;
+                    let section = state
+                        .project_store
+                        .terminal_sections
+                        .get(&task.section_id)?;
+                    let tab_id = if section.active_tab_id.is_empty() {
+                        section.tabs.first()?.id.as_str()
+                    } else {
+                        section.active_tab_id.as_str()
+                    };
+                    let key = key_from_wire(&task.section_id, tab_id)?;
+                    Some(McpResolvedTab {
+                        section_key: task.section_id.clone(),
+                        key,
+                    })
+                })?
+                .ok_or_else(|| anyhow::anyhow!("run_command: unknown task_id `{task_id}`")),
+            (None, None) => anyhow::bail!("run_command requires tab_id or task_id"),
+            (Some(_), Some(_)) => anyhow::bail!("run_command accepts tab_id XOR task_id"),
+        }
+    }
 }
 
 impl DaemonRegistry for BridgeDaemonRegistry {
+    fn health(&self) -> Result<(), String> {
+        self.lock_state().map(|_| ())
+    }
+
     fn list_projects(&self) -> Vec<ProjectSummary> {
         // Project flattening mirrors `LocalSession::list_projects`'s
         // `flatten_project_store`. Worktree-kind projects collapse
@@ -599,14 +1301,10 @@ impl DaemonRegistry for BridgeDaemonRegistry {
             .with_state(|state| state.writers.get(&key).cloned())
             .flatten();
         let Some(writer) = writer else { return };
-        tokio::task::block_in_place(|| {
-            let mut guard = match writer.lock() {
-                Ok(g) => g,
-                Err(p) => p.into_inner(),
-            };
-            let _ = guard.write_all(bytes);
-            let _ = guard.flush();
-        });
+        let result = tokio::task::block_in_place(|| write_tab_bytes(writer, bytes));
+        if let Err(err) = result {
+            self.mark_writer_failed(&key, "Terminal input failed", err);
+        }
     }
 
     fn tab_resize(&self, viewer_id: &str, section_id: &str, tab_id: &str, cols: u16, rows: u16) {
@@ -1963,6 +2661,24 @@ impl DaemonRegistry for BridgeDaemonRegistry {
         })
     }
 
+    fn set_agent_enabled(&self, agent_id: &str, enabled: bool) -> Result<bool, String> {
+        ensure_known_agent_id(agent_id)?;
+        self.with_state(|state| state.project_store.set_agent_enabled(agent_id, enabled))
+            .ok_or_else(|| "set_agent_enabled: registry state dropped".to_string())
+    }
+
+    fn set_default_agent(&self, agent_id: &str) -> Result<bool, String> {
+        ensure_known_agent_id(agent_id)?;
+        self.with_state(|state| state.project_store.set_default_agent(agent_id))
+            .ok_or_else(|| "set_default_agent: registry state dropped".to_string())
+    }
+
+    fn set_agent_launch_args(&self, agent_id: &str, args: Vec<String>) -> Result<bool, String> {
+        ensure_known_agent_id(agent_id)?;
+        self.with_state(|state| state.project_store.set_agent_launch_args(agent_id, args))
+            .ok_or_else(|| "set_agent_launch_args: registry state dropped".to_string())
+    }
+
     fn read_open_in_settings(&self) -> Option<OpenInSettingsViewWire> {
         let available = available_open_in_apps();
         self.with_state(|state| OpenInSettingsViewWire {
@@ -2332,6 +3048,120 @@ impl BridgeDaemonRegistry {
     }
 }
 
+#[derive(Clone, Debug)]
+struct InsertedTask {
+    root_project_id: String,
+    task_id: String,
+    section_key: String,
+    tab_id: String,
+}
+
+impl InsertedTask {
+    fn runtime_key(&self) -> Option<TerminalRuntimeKey> {
+        key_from_wire(&self.section_key, &self.tab_id)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct McpResolvedTab {
+    section_key: String,
+    key: TerminalRuntimeKey,
+}
+
+fn mcp_tab_ref(section_key: &str, tab_id: &str) -> String {
+    format!("{section_key}{MCP_TAB_REF_SEPARATOR}{tab_id}")
+}
+
+fn resolve_mcp_tab_ref(state: &RegistryState, tab_ref: &str) -> Option<McpResolvedTab> {
+    if let Some((section_key, tab_id)) = tab_ref.split_once(MCP_TAB_REF_SEPARATOR) {
+        return resolve_mcp_tab_ref_parts(state, section_key, tab_id);
+    }
+
+    let mut matches = state
+        .project_store
+        .terminal_sections
+        .iter()
+        .filter(|(_, section)| section.tabs.iter().any(|tab| tab.id == tab_ref))
+        .filter_map(|(section_key, _)| resolve_mcp_tab_ref_parts(state, section_key, tab_ref))
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
+fn resolve_mcp_tab_ref_parts(
+    state: &RegistryState,
+    section_key: &str,
+    tab_id: &str,
+) -> Option<McpResolvedTab> {
+    let section = state.project_store.terminal_sections.get(section_key)?;
+    if !section.tabs.iter().any(|tab| tab.id == tab_id) {
+        return None;
+    }
+    Some(McpResolvedTab {
+        section_key: section_key.to_string(),
+        key: key_from_wire(section_key, tab_id)?,
+    })
+}
+
+fn queue_initial_tab_input(
+    state: &mut RegistryState,
+    inserted: &InsertedTask,
+    input: Option<Vec<u8>>,
+) {
+    let Some(input) = input else {
+        return;
+    };
+    let Some(key) = inserted.runtime_key() else {
+        return;
+    };
+    state.pending_post_launch_input.insert(key, input);
+}
+
+fn terminal_input_line(input: &str) -> Vec<u8> {
+    let mut bytes = input.as_bytes().to_vec();
+    if !bytes.ends_with(b"\n") {
+        bytes.push(b'\n');
+    }
+    bytes
+}
+
+fn task_title_or_default(title: Option<&str>, fallback: &str) -> String {
+    let title = title.map(str::trim).filter(|title| !title.is_empty());
+    title.unwrap_or(fallback).to_string()
+}
+
+fn write_tab_bytes(writer: Arc<Mutex<Box<dyn Write + Send>>>, bytes: &[u8]) -> anyhow::Result<()> {
+    let mut guard = writer
+        .lock()
+        .map_err(|_| anyhow::anyhow!("terminal writer mutex poisoned"))?;
+    guard.write_all(bytes)?;
+    guard.flush()?;
+    Ok(())
+}
+
+fn wait_for_task_creation(
+    rx: &mut broadcast::Receiver<another_one_core::project_service::TaskCreationReply>,
+    context: &str,
+) -> anyhow::Result<another_one_core::project_service::TaskCreationReply> {
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        match rx.try_recv() {
+            Ok(reply) => return Ok(reply),
+            Err(TryRecvError::Empty) => {
+                if Instant::now() >= deadline {
+                    anyhow::bail!("{context}: task creation worker timed out");
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(TryRecvError::Lagged(_)) => continue,
+            Err(TryRecvError::Closed) => {
+                anyhow::bail!("{context}: task creation worker dropped")
+            }
+        }
+    }
+}
+
 fn insert_task_with_initial_tab(
     state: &mut RegistryState,
     root_project_id: String,
@@ -2343,6 +3173,31 @@ fn insert_task_with_initial_tab(
     project_path: std::path::PathBuf,
     launch_config: TerminalLaunchConfig,
 ) -> String {
+    insert_task_with_initial_tab_details(
+        state,
+        root_project_id,
+        target_project_id,
+        kind,
+        task_name,
+        branch_name,
+        worktree_project_id,
+        project_path,
+        launch_config,
+    )
+    .section_key
+}
+
+fn insert_task_with_initial_tab_details(
+    state: &mut RegistryState,
+    root_project_id: String,
+    target_project_id: String,
+    kind: another_one_core::project_store::TaskKind,
+    task_name: String,
+    branch_name: String,
+    worktree_project_id: Option<String>,
+    project_path: std::path::PathBuf,
+    launch_config: TerminalLaunchConfig,
+) -> InsertedTask {
     let task_id = uuid::Uuid::new_v4().to_string();
     let section = SectionId::for_task(&target_project_id, &branch_name, &task_id);
     let section_key = section.store_key();
@@ -2350,10 +3205,10 @@ fn insert_task_with_initial_tab(
     state
         .project_store
         .insert_task(another_one_core::project_store::Task {
-            id: task_id,
+            id: task_id.clone(),
             name: task_name,
             kind,
-            root_project_id,
+            root_project_id: root_project_id.clone(),
             target_project_id,
             branch_name,
             section_id: section_key.clone(),
@@ -2373,6 +3228,8 @@ fn insert_task_with_initial_tab(
         provider: launch_config.provider,
         launch_config: Some(launch_config),
         restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
+        failure_message: None,
+        failure_details: None,
     };
     state.project_store.set_section_state(
         section_key.clone(),
@@ -2386,11 +3243,16 @@ fn insert_task_with_initial_tab(
     state.pending_tab_launches.push(TabLaunchRequest {
         key: TerminalRuntimeKey {
             section_id: section,
-            tab_id: initial_tab_id,
+            tab_id: initial_tab_id.clone(),
         },
     });
 
-    section_key
+    InsertedTask {
+        root_project_id,
+        task_id,
+        section_key,
+        tab_id: initial_tab_id,
+    }
 }
 fn launch_config_for_add_agent(agent_id: &str) -> Result<TerminalLaunchConfig, String> {
     let trimmed_agent_id = agent_id.trim();
@@ -2416,6 +3278,8 @@ fn build_terminal_tab(
         provider: launch_config.provider,
         launch_config: Some(launch_config),
         restore_status: another_one_core::agents::TerminalRestoreStatus::Launching,
+        failure_message: None,
+        failure_details: None,
     };
     (tab_id, tab)
 }
@@ -2482,6 +3346,17 @@ fn selected_agent_launch_config(agent_ids: &[String]) -> TerminalLaunchConfig {
         .cloned()
         .collect::<std::collections::HashSet<_>>();
     another_one_core::agents::terminal_launch_config_for_selected_agents(&selected)
+}
+
+fn ensure_known_agent_id(agent_id: &str) -> Result<(), String> {
+    if another_one_core::agents::AGENTS
+        .iter()
+        .any(|agent| agent.id == agent_id)
+    {
+        Ok(())
+    } else {
+        Err(format!("unknown agent_id `{agent_id}`"))
+    }
 }
 
 fn parse_open_in_app_id(app_id: &str) -> Option<OpenInAppKind> {
@@ -2930,6 +3805,9 @@ fn task_to_summary(
                 running,
                 pinned: tab.pinned,
                 fixed_title: tab.fixed_title,
+                restore_status: tab.restore_status,
+                failure_message: tab.failure_message,
+                failure_details: tab.failure_details,
             }
         })
         .collect();

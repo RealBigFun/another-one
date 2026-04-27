@@ -232,6 +232,7 @@ class _TaskRowBodyState extends ConsumerState<_TaskRowBody> {
                   title: '',
                   running: false,
                   pinned: false,
+                  restoreStatus: TerminalRestoreStatus.notStarted,
                 ),
         ).fixedTitle ?? task.name;
     final subtitle = _buildSubtitle(task);

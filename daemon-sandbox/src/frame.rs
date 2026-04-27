@@ -16,6 +16,7 @@
 //! Used by both the server ([`super::transport_iroh`]) and the client
 //! smoke test (`bin/iroh-client.rs`). See [[docs/architecture/transport-abstraction]].
 
+use another_one_core::agents::TerminalRestoreStatus;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
@@ -200,6 +201,15 @@ pub enum Control {
     /// launch-args list. Drives the Settings → Agents page. Reply:
     /// [`WorkerReply::AgentSettingsAck`].
     ReadAgentSettings,
+    /// Toggle one agent's enabled flag in the daemon host config.
+    /// Reply: [`WorkerReply::SetAgentEnabledAck`].
+    SetAgentEnabled { agent_id: String, enabled: bool },
+    /// Mark an enabled agent as the daemon host's default. Reply:
+    /// [`WorkerReply::SetDefaultAgentAck`].
+    SetDefaultAgent { agent_id: String },
+    /// Replace one agent's launch-args list. Empty `args` clears
+    /// the override. Reply: [`WorkerReply::SetAgentLaunchArgsAck`].
+    SetAgentLaunchArgs { agent_id: String, args: Vec<String> },
     /// Snapshot of every detected Open-In app on the daemon host plus
     /// its enabled flag. Drives Settings → Open In. Reply:
     /// [`WorkerReply::OpenInSettingsAck`].
@@ -715,6 +725,12 @@ pub enum WorkerReply {
     /// order) regardless of enabled state, so the Settings →
     /// Agents page can render rows for every agent at once.
     AgentSettingsAck { view: AgentSettingsViewWire },
+    /// Reply to [`Control::SetAgentEnabled`].
+    SetAgentEnabledAck { changed: bool },
+    /// Reply to [`Control::SetDefaultAgent`].
+    SetDefaultAgentAck { changed: bool },
+    /// Reply to [`Control::SetAgentLaunchArgs`].
+    SetAgentLaunchArgsAck { changed: bool },
     /// Reply to [`Control::ReadOpenInSettings`].
     OpenInSettingsAck { view: OpenInSettingsViewWire },
     /// Reply to [`Control::SetOpenInAppEnabled`].
@@ -1213,6 +1229,18 @@ pub struct TabSummary {
     /// the auto-generated title field above (which tends to be the
     /// agent provider's default label).
     pub fixed_title: Option<String>,
+    /// Persisted launch/restore state for this tab. `Failed` means
+    /// the daemon could not spawn the PTY and the failure fields
+    /// should be shown instead of silently attaching to nothing.
+    #[serde(default)]
+    pub restore_status: TerminalRestoreStatus,
+    /// Short user-facing launch failure summary.
+    #[serde(default)]
+    pub failure_message: Option<String>,
+    /// Longer diagnostic details from the PTY launcher, when
+    /// available.
+    #[serde(default)]
+    pub failure_details: Option<String>,
 }
 
 /// Mirror of `core::project_store::ProjectKind`. Wire-serialised as

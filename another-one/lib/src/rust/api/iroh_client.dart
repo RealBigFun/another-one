@@ -11,7 +11,7 @@ part 'iroh_client.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `data_dir_slot`, `hex_decode_32`, `hex_encode_32`, `iroh_connect_inner`, `load_or_create_device_secret_key`, `load_or_create_secret_key_at`, `read_frame`, `send_control`, `send_frame`, `setup_tracing`, `tokio_rt`, `write_frame`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ControlEnvelope`, `Control`, `PendingTable`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 /// Record the application data directory Dart has chosen for us.
@@ -383,6 +383,20 @@ abstract class IrohSession implements RustOpaqueInterface {
   /// Send raw bytes to the daemon (will be written into the PTY's stdin).
   Future<void> send({required List<int> bytes});
 
+  /// Issue [`Control::SetAgentEnabled`] under `request_id`.
+  Future<void> setAgentEnabled({
+    required BigInt requestId,
+    required String agentId,
+    required bool enabled,
+  });
+
+  /// Issue [`Control::SetAgentLaunchArgs`] under `request_id`.
+  Future<void> setAgentLaunchArgs({
+    required BigInt requestId,
+    required String agentId,
+    required List<String> args,
+  });
+
   /// Issue [`Control::SetBranchSetting`] for `project_id`. `field`
   /// is one of `"default-branch"` / `"default-target-branch"`;
   /// `branch_name == None` clears the override.
@@ -391,6 +405,12 @@ abstract class IrohSession implements RustOpaqueInterface {
     required String projectId,
     required String field,
     String? branchName,
+  });
+
+  /// Issue [`Control::SetDefaultAgent`] under `request_id`.
+  Future<void> setDefaultAgent({
+    required BigInt requestId,
+    required String agentId,
   });
 
   /// Send `Control::SetGitCommitScript`.
@@ -598,6 +618,12 @@ class TabSummary {
   /// render this instead of [`TabSummary::title`].
   final String? fixedTitle;
 
+  /// Persisted launch/restore state. `Failed` means callers should
+  /// surface the failure fields instead of retrying attach loops.
+  final TerminalRestoreStatus restoreStatus;
+  final String? failureMessage;
+  final String? failureDetails;
+
   const TabSummary({
     required this.id,
     required this.title,
@@ -605,6 +631,9 @@ class TabSummary {
     required this.running,
     required this.pinned,
     this.fixedTitle,
+    required this.restoreStatus,
+    this.failureMessage,
+    this.failureDetails,
   });
 
   @override
@@ -614,7 +643,10 @@ class TabSummary {
       provider.hashCode ^
       running.hashCode ^
       pinned.hashCode ^
-      fixedTitle.hashCode;
+      fixedTitle.hashCode ^
+      restoreStatus.hashCode ^
+      failureMessage.hashCode ^
+      failureDetails.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -626,7 +658,10 @@ class TabSummary {
           provider == other.provider &&
           running == other.running &&
           pinned == other.pinned &&
-          fixedTitle == other.fixedTitle;
+          fixedTitle == other.fixedTitle &&
+          restoreStatus == other.restoreStatus &&
+          failureMessage == other.failureMessage &&
+          failureDetails == other.failureDetails;
 }
 
 /// Mirror of `daemon-sandbox/src/frame.rs::TaskSummary`. Carries the
@@ -712,6 +747,18 @@ class TaskSummary {
           linesAdded == other.linesAdded &&
           linesRemoved == other.linesRemoved &&
           targetProjectId == other.targetProjectId;
+}
+
+/// Mirror of `core::agents::TerminalRestoreStatus`. Wire form is
+/// kebab-case so it matches persisted tab JSON and daemon frames.
+enum TerminalRestoreStatus {
+  notStarted,
+  launching,
+  ready,
+  failed;
+
+  static Future<TerminalRestoreStatus> default_() =>
+      RustLib.instance.api.crateApiIrohClientTerminalRestoreStatusDefault();
 }
 
 @freezed
@@ -978,6 +1025,18 @@ sealed class WorkerReply with _$WorkerReply {
   const factory WorkerReply.agentSettingsAck({
     required AgentSettingsView view,
   }) = WorkerReply_AgentSettingsAck;
+
+  /// Reply to [`Control::SetAgentEnabled`].
+  const factory WorkerReply.setAgentEnabledAck({required bool changed}) =
+      WorkerReply_SetAgentEnabledAck;
+
+  /// Reply to [`Control::SetDefaultAgent`].
+  const factory WorkerReply.setDefaultAgentAck({required bool changed}) =
+      WorkerReply_SetDefaultAgentAck;
+
+  /// Reply to [`Control::SetAgentLaunchArgs`].
+  const factory WorkerReply.setAgentLaunchArgsAck({required bool changed}) =
+      WorkerReply_SetAgentLaunchArgsAck;
 
   /// Reply to [`Control::ReadOpenInSettings`]. Reuses
   /// `local_session::OpenInSettingsView` directly.

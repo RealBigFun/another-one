@@ -23,6 +23,13 @@ pub fn boot_embedded_daemon() -> Result<(), String> {
     embedded_daemon::boot()
 }
 
+/// Shut down the embedded daemon endpoint and clear the local
+/// registry/pairing handoffs. Idempotent; primarily used by hot
+/// restart and tests.
+pub fn shutdown_embedded_daemon() {
+    embedded_daemon::shutdown();
+}
+
 /// Hex-encoded `EndpointId` + direct socket addresses + relay URLs
 /// of the running embedded daemon. Drives the desktop's loopback
 /// bootstrap: the UI's `DaemonConnection` is an `IrohTransport`
@@ -55,10 +62,9 @@ pub fn loopback_session_addr() -> Option<LoopbackSessionAddr> {
 /// Errors:
 ///   * `boot_embedded_daemon` was never called (daemon thread isn't
 ///     running) — returns the timeout error after the deadline.
-///   * The daemon thread is running but its endpoint bind failed —
-///     same observable: timeout. The bind error is logged; surfacing
-///     it across this FFI would couple the bridge to the
-///     `daemon-sandbox` error type.
+///   * The daemon thread failed before binding its endpoint — returns
+///     the recorded startup error immediately instead of collapsing
+///     it into a generic timeout.
 pub async fn await_loopback_session_addr(timeout_ms: u32) -> Result<LoopbackSessionAddr, String> {
     use std::time::Duration;
     use std::time::Instant;
@@ -68,12 +74,14 @@ pub async fn await_loopback_session_addr(timeout_ms: u32) -> Result<LoopbackSess
         if let Some(addr) = loopback_session_addr() {
             return Ok(addr);
         }
+        if let Some(error) = embedded_daemon::boot_error() {
+            return Err(format!("embedded daemon boot failed: {error}"));
+        }
         if Instant::now() >= deadline {
             return Err(format!(
                 "embedded daemon did not bind within {timeout_ms} ms — \
-                 boot_embedded_daemon may not have been called or the iroh \
-                 endpoint bind failed (check tracing logs for `embedded \
-                 daemon boot failed`)"
+                 boot_embedded_daemon may not have been called or the daemon \
+                 thread may not have reached its endpoint bind"
             ));
         }
         tokio::time::sleep(Duration::from_millis(50)).await;

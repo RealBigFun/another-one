@@ -422,6 +422,10 @@ pub struct PersistedTerminalTab {
     pub launch_config: Option<TerminalLaunchConfig>,
     #[serde(default)]
     pub restore_status: TerminalRestoreStatus,
+    #[serde(default)]
+    pub failure_message: Option<String>,
+    #[serde(default)]
+    pub failure_details: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1816,6 +1820,35 @@ impl ProjectStore {
         }
         config.session = Some(session);
         tab.launch_config = Some(config);
+        self.save();
+    }
+
+    pub fn set_tab_restore_status(
+        &mut self,
+        section_key: &str,
+        tab_id: &str,
+        status: TerminalRestoreStatus,
+        failure_message: Option<String>,
+        failure_details: Option<String>,
+    ) {
+        let section = match self.terminal_sections.get_mut(section_key) {
+            Some(s) => s,
+            None => return,
+        };
+        let tab = match section.tabs.iter_mut().find(|t| t.id == tab_id) {
+            Some(t) => t,
+            None => return,
+        };
+        if tab.restore_status == status
+            && tab.failure_message == failure_message
+            && tab.failure_details == failure_details
+        {
+            return;
+        }
+        tab.restore_status = status;
+        tab.failure_message = failure_message;
+        tab.failure_details = failure_details;
+        self.rebuild_runtime_views();
         self.save();
     }
 }
@@ -3476,6 +3509,8 @@ mod tests {
             provider: None,
             launch_config: None,
             restore_status: Default::default(),
+            failure_message: None,
+            failure_details: None,
         };
 
         let json = serde_json::to_string(&tab).expect("serialize persisted tab");
@@ -3495,6 +3530,8 @@ mod tests {
             provider: None,
             launch_config: None,
             restore_status: Default::default(),
+            failure_message: None,
+            failure_details: None,
         };
 
         let json = serde_json::to_string(&tab).expect("serialize persisted tab");
@@ -3513,6 +3550,8 @@ mod tests {
 
         assert!(!restored.pinned);
         assert_eq!(restored.fixed_title, None);
+        assert_eq!(restored.failure_message, None);
+        assert_eq!(restored.failure_details, None);
     }
 
     fn sample_project_store(root_project: Project) -> super::ProjectStore {
@@ -4100,6 +4139,8 @@ mod tests {
                                 provider: None,
                                 launch_config: Some(TerminalLaunchConfig::default()),
                                 restore_status: TerminalRestoreStatus::NotStarted,
+                                failure_message: None,
+                                failure_details: None,
                             },
                             PersistedTerminalTab {
                                 id: "1".to_string(),
@@ -4119,6 +4160,8 @@ mod tests {
                                     )),
                                 ),
                                 restore_status: TerminalRestoreStatus::Ready,
+                                failure_message: None,
+                                failure_details: None,
                             },
                         ],
                         active_tab_id: "1".to_string(),
@@ -4151,6 +4194,8 @@ mod tests {
                                     })),
                             ),
                             restore_status: TerminalRestoreStatus::Launching,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
@@ -4178,6 +4223,8 @@ mod tests {
                                 provider: None,
                                 launch_config: Some(TerminalLaunchConfig::default()),
                                 restore_status: TerminalRestoreStatus::NotStarted,
+                                failure_message: None,
+                                failure_details: None,
                             },
                             PersistedTerminalTab {
                                 id: "1".to_string(),
@@ -4197,6 +4244,8 @@ mod tests {
                                     )),
                                 ),
                                 restore_status: TerminalRestoreStatus::Ready,
+                                failure_message: None,
+                                failure_details: None,
                             },
                         ],
                     },
@@ -4221,6 +4270,8 @@ mod tests {
                                     })),
                             ),
                             restore_status: TerminalRestoreStatus::Launching,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                 ),
@@ -4427,6 +4478,8 @@ mod tests {
                             provider: None,
                             launch_config: Some(TerminalLaunchConfig::default()),
                             restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
@@ -4454,6 +4507,8 @@ mod tests {
                                 AgentProviderKind::ClaudeCode,
                             )),
                             restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
@@ -4481,6 +4536,8 @@ mod tests {
                             provider: None,
                             launch_config: Some(TerminalLaunchConfig::default()),
                             restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                 ),
@@ -4500,6 +4557,8 @@ mod tests {
                                 AgentProviderKind::ClaudeCode,
                             )),
                             restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                 ),

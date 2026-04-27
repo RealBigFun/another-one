@@ -16,26 +16,37 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use another_one_core::daemon_embed::RegistryState;
 
-static LOCAL_REGISTRY: OnceLock<Arc<Mutex<RegistryState>>> = OnceLock::new();
+static LOCAL_REGISTRY: OnceLock<Mutex<Option<Arc<Mutex<RegistryState>>>>> = OnceLock::new();
+
+fn slot() -> &'static Mutex<Option<Arc<Mutex<RegistryState>>>> {
+    LOCAL_REGISTRY.get_or_init(|| Mutex::new(None))
+}
 
 /// Register the in-process daemon's `RegistryState` so subsequent
 /// [`crate::api::local_session::local_connect`] calls can find it.
 ///
-/// Call exactly once at host-binary startup, before any Dart
-/// `local_connect()` reaches Rust. `OnceLock` semantics: a second
-/// call is silently dropped and the first registration sticks.
-/// Re-registering doesn't currently make sense because the daemon
-/// thread keeps a strong reference to the state it was constructed
-/// with — replacing the global wouldn't actually swap what the
-/// daemon sees.
+/// Called when the embedded daemon host creates its registry. This
+/// replaces any previous handle so explicit shutdown/hot restart can
+/// drop stale state before installing a fresh daemon registry.
 pub fn set_local_registry(registry: Arc<Mutex<RegistryState>>) {
-    let _ = LOCAL_REGISTRY.set(registry);
+    let mut guard = slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(registry);
 }
 
-/// Borrow the registered registry, if any. Returns `None` until
-/// [`set_local_registry`] has been called — which `LocalSession`
-/// methods like `list_projects` treat as "no projects yet"
-/// rather than an error.
-pub(crate) fn local_registry() -> Option<&'static Arc<Mutex<RegistryState>>> {
-    LOCAL_REGISTRY.get()
+pub fn clear_local_registry() {
+    let mut guard = slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = None;
+}
+
+/// Clone the registered registry, if any. Returns `None` until
+/// [`set_local_registry`] has been called.
+pub(crate) fn local_registry() -> Option<Arc<Mutex<RegistryState>>> {
+    slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }

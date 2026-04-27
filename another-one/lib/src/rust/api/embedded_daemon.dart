@@ -13,6 +13,12 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 Future<void> bootEmbeddedDaemon() =>
     RustLib.instance.api.crateApiEmbeddedDaemonBootEmbeddedDaemon();
 
+/// Shut down the embedded daemon endpoint and clear the local
+/// registry/pairing handoffs. Idempotent; primarily used by hot
+/// restart and tests.
+Future<void> shutdownEmbeddedDaemon() =>
+    RustLib.instance.api.crateApiEmbeddedDaemonShutdownEmbeddedDaemon();
+
 /// Snapshot of the embedded daemon's iroh address. Returns `None`
 /// until [`boot_embedded_daemon`] has finished binding the endpoint
 /// (typically a few hundred milliseconds after `boot`).
@@ -28,10 +34,9 @@ Future<LoopbackSessionAddr?> loopbackSessionAddr() =>
 /// Errors:
 ///   * `boot_embedded_daemon` was never called (daemon thread isn't
 ///     running) — returns the timeout error after the deadline.
-///   * The daemon thread is running but its endpoint bind failed —
-///     same observable: timeout. The bind error is logged; surfacing
-///     it across this FFI would couple the bridge to the
-///     `daemon-sandbox` error type.
+///   * The daemon thread failed before binding its endpoint — returns
+///     the recorded startup error immediately instead of collapsing
+///     it into a generic timeout.
 Future<LoopbackSessionAddr> awaitLoopbackSessionAddr({
   required int timeoutMs,
 }) => RustLib.instance.api.crateApiEmbeddedDaemonAwaitLoopbackSessionAddr(

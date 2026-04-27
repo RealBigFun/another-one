@@ -99,7 +99,11 @@ class _TaskPageState extends State<TaskPage> {
     _onStatus(widget.transport.currentStatus);
     _armSpinnerTimeout();
     _armIgnoreWindow();
-    unawaited(_openTab(_activeTabId));
+    if (_activeTab?.restoreStatus == TerminalRestoreStatus.failed) {
+      _clearSpinner();
+    } else {
+      unawaited(_openTab(_activeTabId));
+    }
   }
 
   /// (Re)subscribe the PTY-bytes listener. Pulled into a helper so
@@ -194,6 +198,10 @@ class _TaskPageState extends State<TaskPage> {
   /// desktop window for the first few hundred ms on every mobile
   /// open.
   Future<void> _openTab(String tabId) async {
+    if (_tabById(tabId)?.restoreStatus == TerminalRestoreStatus.failed) {
+      _clearSpinner();
+      return;
+    }
     _gotFirstByte = false;
     unawaited(
       widget.transport.launchTab(
@@ -263,8 +271,14 @@ class _TaskPageState extends State<TaskPage> {
       _instanceKey++;
       _terminal = Terminal(maxLines: 10000);
       _wireTerminal();
-      _awaitingFirstByte = true;
+      _awaitingFirstByte = tab.restoreStatus != TerminalRestoreStatus.failed;
     });
+
+    if (tab.restoreStatus == TerminalRestoreStatus.failed) {
+      _attachRetry?.cancel();
+      _attachRetry = null;
+      return;
+    }
 
     _armBytesListener();
     _armSpinnerTimeout();
@@ -288,6 +302,7 @@ class _TaskPageState extends State<TaskPage> {
 
   @override
   Widget build(BuildContext context) {
+    final activeTab = _activeTab;
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -342,33 +357,35 @@ class _TaskPageState extends State<TaskPage> {
             Expanded(
               child: Container(
                 color: AppTokens.terminalBg,
-                child: Stack(
-                  children: [
-                    GestureDetector(
-                      onTap: _terminalFocus.requestFocus,
-                      child: TerminalView(
-                        _terminal,
-                        key: ValueKey(_instanceKey),
-                        controller: _terminalController,
-                        focusNode: _terminalFocus,
-                        autofocus: true,
-                        backgroundOpacity: 1.0,
-                        padding: const EdgeInsets.all(AppTokens.space2),
-                        // Recommended by xterm.dart for mobile: many soft
-                        // keyboards report backspace as a text-diff rather
-                        // than a hardware key event. Without this, tapping
-                        // delete on an empty-looking prompt sends nothing.
-                        deleteDetection: true,
-                        textStyle: const TerminalStyle(
-                          fontFamily: AppTokens.fontFamilyMono,
-                          fontSize: AppTokens.fontBody,
-                        ),
+                child: activeTab?.restoreStatus == TerminalRestoreStatus.failed
+                    ? _LaunchFailurePanel(tab: activeTab!)
+                    : Stack(
+                        children: [
+                          GestureDetector(
+                            onTap: _terminalFocus.requestFocus,
+                            child: TerminalView(
+                              _terminal,
+                              key: ValueKey(_instanceKey),
+                              controller: _terminalController,
+                              focusNode: _terminalFocus,
+                              autofocus: true,
+                              backgroundOpacity: 1.0,
+                              padding: const EdgeInsets.all(AppTokens.space2),
+                              // Recommended by xterm.dart for mobile: many soft
+                              // keyboards report backspace as a text-diff rather
+                              // than a hardware key event. Without this, tapping
+                              // delete on an empty-looking prompt sends nothing.
+                              deleteDetection: true,
+                              textStyle: const TerminalStyle(
+                                fontFamily: AppTokens.fontFamilyMono,
+                                fontSize: AppTokens.fontBody,
+                              ),
+                            ),
+                          ),
+                          if (_awaitingFirstByte)
+                            const Positioned.fill(child: _TabLoadingOverlay()),
+                        ],
                       ),
-                    ),
-                    if (_awaitingFirstByte)
-                      const Positioned.fill(child: _TabLoadingOverlay()),
-                  ],
-                ),
               ),
             ),
             _ChordBar(
@@ -378,6 +395,61 @@ class _TaskPageState extends State<TaskPage> {
               },
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  TabSummary? get _activeTab => _tabById(_activeTabId);
+
+  TabSummary? _tabById(String tabId) {
+    for (final tab in widget.task.tabs) {
+      if (tab.id == tabId) return tab;
+    }
+    return null;
+  }
+}
+
+class _LaunchFailurePanel extends StatelessWidget {
+  const _LaunchFailurePanel({required this.tab});
+
+  final TabSummary tab;
+
+  @override
+  Widget build(BuildContext context) {
+    final message =
+        tab.failureMessage ?? tab.failureDetails ?? 'Terminal failed to launch';
+    return Padding(
+      padding: const EdgeInsets.all(AppTokens.space5),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppTokens.errorBg.withValues(alpha: 0.34),
+          border: Border.all(color: AppTokens.errorMuted),
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(AppTokens.space4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.error_outline,
+                size: AppTokens.iconSizeDefault,
+                color: AppTokens.errorText,
+              ),
+              const SizedBox(width: AppTokens.space3),
+              Expanded(
+                child: SelectableText(
+                  message,
+                  style: const TextStyle(
+                    color: AppTokens.errorText,
+                    fontSize: AppTokens.fontSmall,
+                    fontFamily: AppTokens.fontFamilyMono,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -443,8 +515,13 @@ class _TabChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final failed = tab.restoreStatus == TerminalRestoreStatus.failed;
     final bg = active ? AppTokens.terminalBg : AppTokens.cardBg;
-    final textColor = active ? AppTokens.textPrimary : AppTokens.textMuted;
+    final textColor = failed
+        ? AppTokens.errorText
+        : active
+        ? AppTokens.textPrimary
+        : AppTokens.textMuted;
 
     // Prefer the user-set `fixed_title` (mirrors desktop: `fixed_title`
     // on `PersistedTerminalTab` overrides the agent-provided label).
@@ -465,7 +542,11 @@ class _TabChip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              tab.running ? Icons.terminal : Icons.check_circle_outline,
+              failed
+                  ? Icons.error_outline
+                  : tab.running
+                  ? Icons.terminal
+                  : Icons.check_circle_outline,
               size: AppTokens.iconSizeSm,
               color: textColor,
             ),

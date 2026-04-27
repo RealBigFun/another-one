@@ -482,6 +482,50 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     );
   }
 
+  @override
+  Future<bool> setAgentEnabled({
+    required String agentId,
+    required bool enabled,
+  }) async {
+    return _callWireAck<bool, WorkerReply_SetAgentEnabledAck>(
+      verb: 'setAgentEnabled',
+      send: (requestId) => _session!.setAgentEnabled(
+        requestId: BigInt.from(requestId),
+        agentId: agentId,
+        enabled: enabled,
+      ),
+      mapAck: (ack) => ack.changed,
+    );
+  }
+
+  @override
+  Future<bool> setDefaultAgent(String agentId) async {
+    return _callWireAck<bool, WorkerReply_SetDefaultAgentAck>(
+      verb: 'setDefaultAgent',
+      send: (requestId) => _session!.setDefaultAgent(
+        requestId: BigInt.from(requestId),
+        agentId: agentId,
+      ),
+      mapAck: (ack) => ack.changed,
+    );
+  }
+
+  @override
+  Future<bool> setAgentLaunchArgs({
+    required String agentId,
+    required List<String> args,
+  }) async {
+    return _callWireAck<bool, WorkerReply_SetAgentLaunchArgsAck>(
+      verb: 'setAgentLaunchArgs',
+      send: (requestId) => _session!.setAgentLaunchArgs(
+        requestId: BigInt.from(requestId),
+        agentId: agentId,
+        args: args,
+      ),
+      mapAck: (ack) => ack.changed,
+    );
+  }
+
   /// Settings → Open In snapshot from the daemon host.
   @override
   Future<ls.OpenInSettingsView> readOpenInSettings() async {

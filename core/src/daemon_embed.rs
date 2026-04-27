@@ -47,6 +47,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
 
+use crate::agents::TerminalRestoreStatus;
 use crate::process::TrackedProcess;
 use crate::project_store::ProjectStore;
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot};
@@ -177,6 +178,48 @@ impl RegistryState {
         self.resource_sampler.sample(app_pid, &tracked)
     }
 
+    /// Mark a live tab unusable after a write-side PTY failure. This
+    /// clears daemon-visible runtime state immediately and queues a
+    /// termination so the PTY drain drops its `PreparedTerminalRuntime`
+    /// handle on the next tick.
+    pub fn fail_tab_io(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        message: impl Into<String>,
+        details: impl Into<String>,
+    ) {
+        self.broadcasts.remove(key);
+        self.terminal_replay.remove(key);
+        self.writers.remove(key);
+        self.in_flight_launches.remove(key);
+        self.pending_tab_launches
+            .retain(|request| request.key != *key);
+        self.pending_resizes.retain(|request| request.key != *key);
+        self.pending_post_launch_input.remove(key);
+        self.tracked_processes.remove(key);
+        self.active_viewers.remove(key);
+        self.effective_sizes.remove(key);
+        self.viewer_output_cursors
+            .retain(|(_, cursor_key), _| cursor_key != key);
+        self.viewer_focus
+            .retain(|_, focused_key| focused_key != key);
+        if !self
+            .pending_tab_terminations
+            .iter()
+            .any(|queued| queued == key)
+        {
+            self.pending_tab_terminations.push(key.clone());
+        }
+        let section_key = key.section_id.store_key();
+        self.project_store.set_tab_restore_status(
+            &section_key,
+            &key.tab_id,
+            TerminalRestoreStatus::Failed,
+            Some(message.into()),
+            Some(details.into()),
+        );
+    }
+
     /// Recompute the min-across-viewers size for `key` and, if it
     /// changed since the last effective size, enqueue a resize for
     /// the UI render tick to apply. Returns the effective size so
@@ -242,6 +285,37 @@ impl TerminalReplayBuffer {
             })
             .map(|chunk| chunk.bytes.clone())
             .collect()
+    }
+
+    pub fn tail_bytes(&self, tail: usize) -> (Vec<u8>, bool) {
+        let tail = tail.min(TERMINAL_REPLAY_MAX_BYTES);
+        if tail == 0 {
+            return (Vec::new(), self.bytes > 0);
+        }
+
+        let mut remaining = tail;
+        let mut chunks = Vec::new();
+        for chunk in self.chunks.iter().rev() {
+            if remaining == 0 {
+                break;
+            }
+            let bytes = if chunk.bytes.len() <= remaining {
+                chunk.bytes.clone()
+            } else {
+                chunk.bytes[chunk.bytes.len() - remaining..].to_vec()
+            };
+            remaining = remaining.saturating_sub(bytes.len());
+            chunks.push(bytes);
+        }
+        chunks.reverse();
+
+        let len = chunks.iter().map(Vec::len).sum();
+        let mut bytes = Vec::with_capacity(len);
+        for chunk in chunks {
+            bytes.extend(chunk);
+        }
+        let truncated_head = self.bytes > bytes.len();
+        (bytes, truncated_head)
     }
 
     pub fn latest_sequence(&self) -> Option<u64> {
@@ -360,5 +434,17 @@ mod tests {
 
         assert_eq!(replay.replay_after(None).len(), TERMINAL_REPLAY_MAX_CHUNKS);
         assert_eq!(replay.replay_after(None).first().cloned(), Some(vec![1]));
+    }
+
+    #[test]
+    fn terminal_replay_tail_bytes_reports_truncation() {
+        let mut replay = TerminalReplayBuffer::default();
+        replay.push(b"hello ".to_vec());
+        replay.push(b"world".to_vec());
+
+        let (bytes, truncated) = replay.tail_bytes(5);
+
+        assert_eq!(bytes, b"world");
+        assert!(truncated);
     }
 }

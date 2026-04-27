@@ -228,12 +228,76 @@ class _TabState extends ConsumerState<_Tab> {
     final displayTitle = widget.indexLabel != null
         ? '$title ${widget.indexLabel}'
         : title;
+    final failed = tab.restoreStatus == TerminalRestoreStatus.failed;
+    final failureText =
+        tab.failureMessage ?? tab.failureDetails ?? 'Terminal failed to launch';
     final bg = widget.active
         ? _tabBgActive
         : (_hover ? _tabHover : _tabBgInactive);
-    final textColor = widget.active
+    final textColor = failed
+        ? AppTokens.errorText
+        : widget.active
         ? AppTokens.textPrimary
         : const Color(0x8CFFFFFF);
+    final tabContent = Container(
+      height: AppTokens.tabStripHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      color: bg,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (tab.pinned) ...[
+            AppIcon('pin-off', size: 12, color: textColor),
+            const SizedBox(width: 6),
+          ],
+          if (failed)
+            Icon(Icons.error_outline, size: 14, color: textColor)
+          else
+            AgentProviderIcon(
+              provider: tab.provider,
+              size: 14,
+              color: textColor,
+            ),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 220),
+            child: Text(
+              displayTitle,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: textColor),
+            ),
+          ),
+          const SizedBox(width: 8),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hoverClose = true),
+            onExit: (_) => setState(() => _hoverClose = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => unawaited(_close()),
+              child: Container(
+                width: 18,
+                height: 18,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _hoverClose
+                      ? AppTokens.overlayHoverStrong
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: AppIcon(
+                  'close',
+                  size: 11,
+                  color: _hoverClose
+                      ? const Color(0xCCFFFFFF)
+                      : const Color(0x73FFFFFF),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
@@ -243,62 +307,9 @@ class _TabState extends ConsumerState<_Tab> {
         onTap: () => unawaited(_activate()),
         onSecondaryTapDown: (details) =>
             _showContextMenu(details.globalPosition),
-        child: Container(
-          height: AppTokens.tabStripHeight,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          color: bg,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (tab.pinned) ...[
-                AppIcon('pin-off', size: 12, color: textColor),
-                const SizedBox(width: 6),
-              ],
-              AgentProviderIcon(
-                provider: tab.provider,
-                size: 14,
-                color: textColor,
-              ),
-              const SizedBox(width: 6),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 220),
-                child: Text(
-                  displayTitle,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: textColor),
-                ),
-              ),
-              const SizedBox(width: 8),
-              MouseRegion(
-                cursor: SystemMouseCursors.click,
-                onEnter: (_) => setState(() => _hoverClose = true),
-                onExit: (_) => setState(() => _hoverClose = false),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => unawaited(_close()),
-                  child: Container(
-                    width: 18,
-                    height: 18,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: _hoverClose
-                          ? AppTokens.overlayHoverStrong
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: AppIcon(
-                      'close',
-                      size: 11,
-                      color: _hoverClose
-                          ? const Color(0xCCFFFFFF)
-                          : const Color(0x73FFFFFF),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        child: failed
+            ? Tooltip(message: failureText, child: tabContent)
+            : tabContent,
       ),
     );
   }

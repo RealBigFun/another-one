@@ -175,6 +175,14 @@ impl Drop for EndpointHandle {
 /// - `.8` — settings (`read_git_action_scripts`, `set_shortcut_binding`,
 ///   `read_mcp_settings`).
 pub trait DaemonRegistry: Send + Sync + 'static {
+    /// Return an error when the backing registry is unavailable. The
+    /// transport checks this before dispatching control requests so
+    /// an unhealthy embedder is reported as `WorkerReply::Err`
+    /// instead of each verb degrading into empty/default responses.
+    fn health(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Snapshot of projects + tasks + tabs as of now. The daemon
     /// calls this on every `Control::ListProjects`, so cheap.
     fn list_projects(&self) -> Vec<ProjectSummary>;
@@ -734,6 +742,22 @@ pub trait DaemonRegistry: Send + Sync + 'static {
             agents: Vec::new(),
             default_agent_id: None,
         }
+    }
+
+    /// Toggle one agent's enabled flag in the daemon host config.
+    fn set_agent_enabled(&self, _agent_id: &str, _enabled: bool) -> Result<bool, String> {
+        Err("unsupported on this daemon".to_string())
+    }
+
+    /// Mark an enabled agent as the daemon host's default.
+    fn set_default_agent(&self, _agent_id: &str) -> Result<bool, String> {
+        Err("unsupported on this daemon".to_string())
+    }
+
+    /// Replace one agent's launch-args list. Empty args clear the
+    /// override.
+    fn set_agent_launch_args(&self, _agent_id: &str, _args: Vec<String>) -> Result<bool, String> {
+        Err("unsupported on this daemon".to_string())
     }
 
     /// Snapshot of the Settings → Open In page on the daemon host.

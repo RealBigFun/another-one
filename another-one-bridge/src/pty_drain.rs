@@ -30,8 +30,9 @@
 //!
 //! What this drain DOESN'T do (vs GPUI's tick): no VT-parsing,
 //! no snapshot rebuilds, no toast surfacing. Flutter's
-//! `xterm.dart` consumes the raw byte stream directly, and
-//! launch-failure surfacing is the next iteration's work.
+//! `xterm.dart` consumes the raw byte stream directly; launch
+//! failures are persisted on the tab and rendered from the project
+//! summary state.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -41,7 +42,7 @@ use std::thread;
 use std::time::Duration;
 
 use another_one_core::agents::{
-    agent_id_for_provider, AgentProviderKind, TerminalLaunchConfig, AGENTS,
+    agent_id_for_provider, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, AGENTS,
 };
 use another_one_core::daemon_embed::{
     RegistryState, TabLaunchRequest, TabResizeRequest, TerminalReplayBuffer,
@@ -51,6 +52,9 @@ use another_one_core::terminal_launch::{spawn_terminal_launch, TerminalLaunchRep
 use another_one_core::terminal_types::{
     PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey,
 };
+
+const DESKTOP_BASELINE_COLS: u16 = 100;
+const DESKTOP_BASELINE_ROWS: u16 = 30;
 
 /// Per-key local state pinning the PTY alive. Holding the full
 /// [`PreparedTerminalRuntime`] (minus the writer + broadcast,
@@ -135,9 +139,15 @@ fn run(weak: Weak<Mutex<RegistryState>>) {
                             .set_tab_session(&section_key, &key.tab_id, session);
                     }
                 }
-                Ok(TerminalLaunchReply::Exited { key, .. })
-                | Ok(TerminalLaunchReply::Failed { key, .. }) => {
+                Ok(TerminalLaunchReply::Exited { key, .. }) => {
                     handle_terminated(&registry, &mut live, &key);
+                }
+                Ok(TerminalLaunchReply::Failed {
+                    key,
+                    message,
+                    details,
+                }) => {
+                    handle_failed_launch(&registry, &mut live, &key, message, details);
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return,
@@ -201,6 +211,14 @@ fn spawn_one(
     };
     let launch_size = launch_size_for_effective_size(state.effective_sizes.get(&req.key).copied());
     state.in_flight_launches.insert(req.key.clone());
+    let section_key = req.key.section_id.store_key();
+    state.project_store.set_tab_restore_status(
+        &section_key,
+        &req.key.tab_id,
+        TerminalRestoreStatus::Launching,
+        None,
+        None,
+    );
     drop(state);
     spawn_terminal_launch(
         tx,
@@ -213,7 +231,7 @@ fn spawn_one(
 }
 
 fn launch_size_for_effective_size(effective_size: Option<(u16, u16)>) -> TerminalGridSize {
-    let (cols, rows) = effective_size.unwrap_or((80, 24));
+    let (cols, rows) = effective_size.unwrap_or((DESKTOP_BASELINE_COLS, DESKTOP_BASELINE_ROWS));
     TerminalGridSize {
         cols: cols.max(1),
         rows: rows.max(1),
@@ -396,6 +414,14 @@ fn handle_launched(
         clear_viewer_output_cursors(&mut state, &key);
         state.writers.insert(key.clone(), writer_arc.clone());
         state.in_flight_launches.remove(&key);
+        let section_key = key.section_id.store_key();
+        state.project_store.set_tab_restore_status(
+            &section_key,
+            &key.tab_id,
+            TerminalRestoreStatus::Ready,
+            None,
+            None,
+        );
         if let Some(pid) = process_id {
             let tracked = build_tracked_process(&state, &key, &launch_config, pid);
             state.tracked_processes.insert(key.clone(), tracked);
@@ -409,9 +435,23 @@ fn handle_launched(
         apply_resize_request(live, &request);
     }
     if let Some(bytes) = pending_input {
-        if let Ok(mut writer) = writer_arc.lock() {
-            let _ = writer.write_all(&bytes);
-            let _ = writer.flush();
+        let result = writer_arc
+            .lock()
+            .map_err(|_| "terminal writer mutex poisoned".to_string())
+            .and_then(|mut writer| {
+                writer
+                    .write_all(&bytes)
+                    .and_then(|_| writer.flush())
+                    .map_err(|e| e.to_string())
+            });
+        if let Err(details) = result {
+            handle_writer_failed(
+                registry,
+                live,
+                &key,
+                "Terminal input failed during post-launch replay".to_string(),
+                details,
+            );
         }
     }
 }
@@ -523,6 +563,57 @@ fn handle_terminated(
         .retain(|_, focused_key| focused_key != key);
 }
 
+fn handle_failed_launch(
+    registry: &Arc<Mutex<RegistryState>>,
+    live: &mut HashMap<TerminalRuntimeKey, LiveTab>,
+    key: &TerminalRuntimeKey,
+    message: String,
+    details: String,
+) {
+    let section_key = key.section_id.store_key();
+    tracing::warn!(
+        section_id = %section_key,
+        tab_id = %key.tab_id,
+        message = message.as_str(),
+        details = details.as_str(),
+        "terminal launch failed"
+    );
+    handle_terminated(registry, live, key);
+    let mut state = match registry.lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    state.project_store.set_tab_restore_status(
+        &section_key,
+        &key.tab_id,
+        TerminalRestoreStatus::Failed,
+        Some(message),
+        Some(details),
+    );
+}
+
+fn handle_writer_failed(
+    registry: &Arc<Mutex<RegistryState>>,
+    live: &mut HashMap<TerminalRuntimeKey, LiveTab>,
+    key: &TerminalRuntimeKey,
+    message: String,
+    details: String,
+) {
+    tracing::warn!(
+        section_id = %key.section_id.store_key(),
+        tab_id = %key.tab_id,
+        message = message.as_str(),
+        details = details.as_str(),
+        "terminal writer failed"
+    );
+    live.remove(key);
+    let mut state = match registry.lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    state.fail_tab_io(key, message, details);
+}
+
 fn clear_viewer_output_cursors(state: &mut RegistryState, key: &TerminalRuntimeKey) {
     state
         .viewer_output_cursors
@@ -533,7 +624,7 @@ fn clear_viewer_output_cursors(state: &mut RegistryState, key: &TerminalRuntimeK
 mod tests {
     use super::{
         apply_resize_request_to_size, effective_resize_request, launch_size_for_effective_size,
-        resize_request_for_effective_size,
+        resize_request_for_effective_size, DESKTOP_BASELINE_COLS, DESKTOP_BASELINE_ROWS,
     };
     use another_one_core::daemon_embed::TabResizeRequest;
     use another_one_core::section::SectionId;
@@ -678,12 +769,12 @@ mod tests {
     }
 
     #[test]
-    fn launch_size_for_effective_size_defaults_to_legacy_size() {
+    fn launch_size_for_effective_size_defaults_to_desktop_baseline_size() {
         assert_eq!(
             launch_size_for_effective_size(None),
             TerminalGridSize {
-                cols: 80,
-                rows: 24,
+                cols: DESKTOP_BASELINE_COLS,
+                rows: DESKTOP_BASELINE_ROWS,
                 pixel_width: 0,
                 pixel_height: 0,
             }
