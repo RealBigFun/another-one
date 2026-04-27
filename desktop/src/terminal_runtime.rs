@@ -287,7 +287,7 @@ impl LiveTerminalRuntime {
     }
 
     /// Clone the shared writer handle. The embedded daemon's
-    /// `TerminalRegistry` clones this on tab launch so incoming mobile
+    /// `DaemonRegistry` clones this on tab launch so incoming mobile
     /// keystrokes can feed into the same `Arc<Mutex<…>>` the desktop
     /// writes to. See `daemon_host::DesktopTerminalRegistry::tab_input`.
     pub fn writer_handle(&self) -> Arc<Mutex<Box<dyn Write + Send>>> {

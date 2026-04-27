@@ -12,7 +12,7 @@
 //!   tasks can query it without cx access; the GPUI side mutates the
 //!   same mutex on every `TerminalLaunchReply::Launched` /
 //!   `…::Terminated` / tab-close.
-//! * [`DesktopTerminalRegistry`] — the `daemon_sandbox::TerminalRegistry`
+//! * [`DesktopTerminalRegistry`] — the `daemon_sandbox::DaemonRegistry`
 //!   impl handed to `run_endpoint`. Holds a `Weak` back to
 //!   `RegistryState` so dropping the app still lets the daemon task
 //!   unwind cleanly.
@@ -31,7 +31,7 @@ use std::thread;
 use tokio::sync::broadcast;
 
 use daemon_sandbox::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
-use daemon_sandbox::{EndpointHandle, TerminalRegistry};
+use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
 use another_one_core::agents::AgentProviderKind;
 use another_one_core::project_store::{ProjectKind as CoreProjectKind, ProjectStore};
@@ -163,7 +163,7 @@ pub(crate) struct TabResizeRequest {
     pub rows: u16,
 }
 
-/// `TerminalRegistry` implementation that projects `AnotherOneApp`
+/// `DaemonRegistry` implementation that projects `AnotherOneApp`
 /// state onto the wire. Holds a `Weak` so a late-arriving daemon
 /// callback after app shutdown drops out cleanly instead of keeping
 /// the app alive.
@@ -183,7 +183,12 @@ impl DesktopTerminalRegistry {
     }
 }
 
-impl TerminalRegistry for DesktopTerminalRegistry {
+impl DaemonRegistry for DesktopTerminalRegistry {
+    fn health(&self) -> Result<(), String> {
+        self.with_state(|_| ())
+            .ok_or_else(|| "desktop registry state is unavailable".to_string())
+    }
+
     fn list_projects(&self) -> Vec<ProjectSummary> {
         self.with_state(|state| project_summaries(state))
             .unwrap_or_default()
@@ -379,42 +384,7 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
-                .map(|task| {
-                    let section_key = task.section_id.clone();
-                    let parsed_section = SectionId::from_store_key(&section_key);
-                    let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
-                    let tabs = task
-                        .tabs
-                        .into_iter()
-                        .map(|tab| {
-                            let running = parsed_section
-                                .as_ref()
-                                .map(|section| TerminalRuntimeKey {
-                                    section_id: section.clone(),
-                                    tab_id: tab.id.clone(),
-                                })
-                                .map(|key| state.broadcasts.contains_key(&key))
-                                .unwrap_or(false);
-                            TabSummary {
-                                id: tab.id,
-                                title: tab.title,
-                                provider: tab.provider.map(map_agent_provider),
-                                running,
-                                pinned: tab.pinned,
-                                fixed_title: tab.fixed_title,
-                            }
-                        })
-                        .collect();
-                    TaskSummary {
-                        id: task.id,
-                        name: task.name,
-                        section_id: section_key,
-                        branch_name: task.branch_name,
-                        active_tab_id: task.active_tab_id,
-                        tabs,
-                        pinned: task_pinned,
-                    }
-                })
+                .map(|task| task_to_summary(state, task))
                 .collect();
             ProjectSummary {
                 id: project.id.clone(),
@@ -426,6 +396,62 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
             }
         })
         .collect()
+}
+
+fn task_to_summary(
+    state: &RegistryState,
+    task: another_one_core::project_store::Task,
+) -> TaskSummary {
+    let store = &state.project_store;
+    let section_key = task.section_id.clone();
+    let parsed_section = SectionId::from_store_key(&section_key);
+    let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
+    let tabs = task
+        .tabs
+        .into_iter()
+        .map(|tab| {
+            let running = parsed_section
+                .as_ref()
+                .map(|section| TerminalRuntimeKey {
+                    section_id: section.clone(),
+                    tab_id: tab.id.clone(),
+                })
+                .map(|key| state.broadcasts.contains_key(&key))
+                .unwrap_or(false);
+            TabSummary {
+                id: tab.id,
+                title: tab.title,
+                provider: tab.provider.map(map_agent_provider),
+                running,
+                pinned: tab.pinned,
+                fixed_title: tab.fixed_title,
+                restore_status: tab.restore_status,
+                failure_message: tab.failure_message,
+                failure_details: tab.failure_details,
+            }
+        })
+        .collect();
+    let branch_view = store.branch_view(&task.target_project_id, &task.branch_name);
+    let last_commit_relative = branch_view
+        .as_ref()
+        .map(|branch| branch.last_commit_relative.clone())
+        .unwrap_or_default();
+    let (lines_added, lines_removed) = branch_view
+        .map(|branch| (branch.lines_added, branch.lines_removed))
+        .unwrap_or((0, 0));
+    TaskSummary {
+        id: task.id,
+        name: task.name,
+        section_id: section_key,
+        branch_name: task.branch_name,
+        active_tab_id: task.active_tab_id,
+        tabs,
+        pinned: task_pinned,
+        last_commit_relative,
+        lines_added,
+        lines_removed,
+        target_project_id: task.target_project_id,
+    }
 }
 
 fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {
@@ -496,7 +522,7 @@ fn run(
 
     let weak = Arc::downgrade(&registry_state);
     drop(registry_state); // drop the strong ref we took for spawn; the app still holds one.
-    let registry: Arc<dyn TerminalRegistry> = Arc::new(DesktopTerminalRegistry::new(weak.clone()));
+    let registry: Arc<dyn DaemonRegistry> = Arc::new(DesktopTerminalRegistry::new(weak.clone()));
     let mcp_orchestrator = crate::mcp_orchestrator::arc(weak);
 
     let paths = match daemon_paths() {

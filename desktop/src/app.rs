@@ -372,6 +372,8 @@ impl TerminalTab {
             provider: self.launch_config.provider,
             launch_config: Some(self.launch_config.clone()),
             restore_status: self.restore_status,
+            failure_message: None,
+            failure_details: None,
         }
     }
 
@@ -9454,6 +9456,8 @@ mod tests {
             provider: None,
             launch_config: Some(TerminalLaunchConfig::default()),
             restore_status: TerminalRestoreStatus::NotStarted,
+            failure_message: None,
+            failure_details: None,
         }
     }
 
@@ -9466,6 +9470,8 @@ mod tests {
             provider: Some(provider),
             launch_config: Some(TerminalLaunchConfig::for_provider(provider)),
             restore_status: TerminalRestoreStatus::NotStarted,
+            failure_message: None,
+            failure_details: None,
         }
     }
 
@@ -9647,6 +9653,8 @@ mod tests {
                             AgentProviderKind::Codex,
                         )),
                         restore_status: TerminalRestoreStatus::NotStarted,
+                        failure_message: None,
+                        failure_details: None,
                     },
                 ],
             },
@@ -9766,6 +9774,8 @@ mod tests {
                         provider: None,
                         launch_config: Some(TerminalLaunchConfig::default()),
                         restore_status: TerminalRestoreStatus::NotStarted,
+                        failure_message: None,
+                        failure_details: None,
                     },
                     PersistedTerminalTab {
                         id: "c".to_string(),
@@ -9775,6 +9785,8 @@ mod tests {
                         provider: None,
                         launch_config: Some(TerminalLaunchConfig::default()),
                         restore_status: TerminalRestoreStatus::NotStarted,
+                        failure_message: None,
+                        failure_details: None,
                     },
                 ],
             },
@@ -9811,6 +9823,8 @@ mod tests {
                         provider: None,
                         launch_config: Some(TerminalLaunchConfig::default()),
                         restore_status: TerminalRestoreStatus::NotStarted,
+                        failure_message: None,
+                        failure_details: None,
                     },
                     PersistedTerminalTab {
                         id: "active".to_string(),
@@ -9820,6 +9834,8 @@ mod tests {
                         provider: None,
                         launch_config: Some(TerminalLaunchConfig::default()),
                         restore_status: TerminalRestoreStatus::NotStarted,
+                        failure_message: None,
+                        failure_details: None,
                     },
                     PersistedTerminalTab {
                         id: "plain".to_string(),
@@ -9829,6 +9845,8 @@ mod tests {
                         provider: None,
                         launch_config: Some(TerminalLaunchConfig::default()),
                         restore_status: TerminalRestoreStatus::NotStarted,
+                        failure_message: None,
+                        failure_details: None,
                     },
                 ],
             },
@@ -9864,6 +9882,8 @@ mod tests {
                     provider: Some(AgentProviderKind::Pi),
                     launch_config: Some(TerminalLaunchConfig::for_provider(AgentProviderKind::Pi)),
                     restore_status: TerminalRestoreStatus::NotStarted,
+                    failure_message: None,
+                    failure_details: None,
                 }],
             },
             None,
@@ -10014,7 +10034,7 @@ mod tests {
         ]);
         let section_states = HashMap::from([
             (
-                SectionId::for_task("root-a", "feature/a1", "task-a1"),
+                SectionId::for_task("root-a", "main", "task-a1"),
                 SectionState::from_persisted(
                     PersistedSectionState {
                         active_tab_id: "a1-tab-1".to_string(),
@@ -10031,6 +10051,8 @@ mod tests {
                                     AgentProviderKind::Codex,
                                 )),
                                 restore_status: TerminalRestoreStatus::NotStarted,
+                                failure_message: None,
+                                failure_details: None,
                             },
                             PersistedTerminalTab {
                                 id: "a1-tab-2".to_string(),
@@ -10042,6 +10064,8 @@ mod tests {
                                     AgentProviderKind::ClaudeCode,
                                 )),
                                 restore_status: TerminalRestoreStatus::NotStarted,
+                                failure_message: None,
+                                failure_details: None,
                             },
                         ],
                     },
@@ -10065,6 +10089,8 @@ mod tests {
                                 AgentProviderKind::Pi,
                             )),
                             restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                     None,
@@ -10085,6 +10111,8 @@ mod tests {
                             provider: None,
                             launch_config: Some(TerminalLaunchConfig::default()),
                             restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                     None,
@@ -10167,6 +10195,8 @@ mod tests {
                                     AgentProviderKind::Codex,
                                 )),
                                 restore_status: TerminalRestoreStatus::NotStarted,
+                                failure_message: None,
+                                failure_details: None,
                             },
                             PersistedTerminalTab {
                                 id: "a1-tab-2".to_string(),
@@ -10178,6 +10208,8 @@ mod tests {
                                     AgentProviderKind::ClaudeCode,
                                 )),
                                 restore_status: TerminalRestoreStatus::NotStarted,
+                                failure_message: None,
+                                failure_details: None,
                             },
                         ],
                     },
@@ -10201,6 +10233,8 @@ mod tests {
                                 AgentProviderKind::Pi,
                             )),
                             restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                     None,
@@ -10284,6 +10318,8 @@ mod tests {
                                 AgentProviderKind::Codex,
                             )),
                             restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                     None,
@@ -10306,6 +10342,8 @@ mod tests {
                                 AgentProviderKind::Pi,
                             )),
                             restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
                         }],
                     },
                     None,
@@ -10821,6 +10859,8 @@ mod tests {
                         AgentProviderKind::ClaudeCode,
                     )),
                     restore_status: TerminalRestoreStatus::NotStarted,
+                    failure_message: None,
+                    failure_details: None,
                 }],
             },
             None,
@@ -10859,6 +10899,8 @@ mod tests {
                             AgentProviderKind::Codex,
                         )),
                         restore_status: TerminalRestoreStatus::Launching,
+                        failure_message: None,
+                        failure_details: None,
                     }],
                 },
                 None,
