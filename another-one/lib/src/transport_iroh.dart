@@ -285,37 +285,30 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   Future<ls.PullRequestStatusDto?> findPullRequestStatus(
     String projectId,
   ) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.findPullRequestStatus(
+    return _callStateAck<
+      ls.PullRequestStatusDto?,
+      WorkerReply_PullRequestStatusAck
+    >(
+      verb: 'findPullRequestStatus',
+      send: (requestId) => _session!.findPullRequestStatus(
         requestId: BigInt.from(requestId),
         projectId: projectId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_PullRequestStatusAck(:final status) => status,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'unexpected WorkerReply for findPullRequestStatus: $reply',
       ),
-    };
+      mapAck: (ack) => ack.status,
+    );
   }
 
   /// CI checks attached to `projectId`'s current PR.
   @override
   Future<List<ls.CheckDto>?> readPullRequestChecks(String projectId) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.readPullRequestChecks(
+    return _callStateAck<List<ls.CheckDto>?, WorkerReply_PullRequestChecksAck>(
+      verb: 'readPullRequestChecks',
+      send: (requestId) => _session!.readPullRequestChecks(
         requestId: BigInt.from(requestId),
         projectId: projectId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_PullRequestChecksAck(:final checks) => checks,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'unexpected WorkerReply for readPullRequestChecks: $reply',
       ),
-    };
+      mapAck: (ack) => ack.checks,
+    );
   }
 
   /// Open pull requests for `projectId` filtered by `filterIndex`.
@@ -325,21 +318,19 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required int filterIndex,
     required String query,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.findProjectPullRequests(
+    return _callStateAck<
+      List<ls.ProjectPagePullRequestDto>?,
+      WorkerReply_ProjectPullRequestsAck
+    >(
+      verb: 'findProjectPullRequests',
+      send: (requestId) => _session!.findProjectPullRequests(
         requestId: BigInt.from(requestId),
         projectId: projectId,
         filterIndex: filterIndex,
         query: query,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_ProjectPullRequestsAck(:final prs) => prs,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'unexpected WorkerReply for findProjectPullRequests: $reply',
       ),
-    };
+      mapAck: (ack) => ack.prs,
+    );
   }
 
   // ── Custom actions + Open In + agents read verbs (`another-one-ojm.7`) ───
@@ -347,47 +338,39 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// Snapshot the host's "Open In" config.
   @override
   Future<ls.OpenInState> openInState() async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.openInState(requestId: BigInt.from(requestId));
-    });
-    return switch (reply) {
-      WorkerReply_OpenInStateAck(:final state) => state,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError('unexpected WorkerReply for openInState: $reply'),
-    };
+    return _callStateAck<ls.OpenInState, WorkerReply_OpenInStateAck>(
+      verb: 'openInState',
+      send: (requestId) =>
+          _session!.openInState(requestId: BigInt.from(requestId)),
+      mapAck: (ack) => ack.state,
+    );
   }
 
   /// Project + global custom actions for `projectId`.
   @override
   Future<List<ls.ProjectActionDto>> listProjectActions(String projectId) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.listProjectActions(
+    return _callStateAck<
+      List<ls.ProjectActionDto>,
+      WorkerReply_ProjectActionsAck
+    >(
+      verb: 'listProjectActions',
+      send: (requestId) => _session!.listProjectActions(
         requestId: BigInt.from(requestId),
         projectId: projectId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_ProjectActionsAck(:final actions) => actions,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'unexpected WorkerReply for listProjectActions: $reply',
       ),
-    };
+      mapAck: (ack) => ack.actions,
+    );
   }
 
   /// Snapshot of agents the user has enabled on this host.
   @override
   Future<ls.EnabledAgentsView> readEnabledAgents() async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.readEnabledAgents(requestId: BigInt.from(requestId));
-    });
-    return switch (reply) {
-      WorkerReply_EnabledAgentsAck(:final view) => view,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'unexpected WorkerReply for readEnabledAgents: $reply',
-      ),
-    };
+    return _callStateAck<ls.EnabledAgentsView, WorkerReply_EnabledAgentsAck>(
+      verb: 'readEnabledAgents',
+      send: (requestId) =>
+          _session!.readEnabledAgents(requestId: BigInt.from(requestId)),
+      mapAck: (ack) => ack.view,
+    );
   }
 
   /// Submit the new-task modal over the shared iroh wire.
@@ -400,8 +383,9 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required bool branchModeExisting,
     required bool worktreeMode,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.submitNewTask(
+    return _callWireAck<String, WorkerReply_SubmitNewTaskAck>(
+      verb: 'submitNewTask',
+      send: (requestId) => _session!.submitNewTask(
         requestId: BigInt.from(requestId),
         projectId: projectId,
         taskName: taskName,
@@ -409,16 +393,9 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
         agentIds: agentIds,
         branchModeExisting: branchModeExisting,
         worktreeMode: worktreeMode,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_SubmitNewTaskAck(:final sectionId) => sectionId,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
       ),
-      _ => throw StateError('unexpected WorkerReply for submitNewTask: $reply'),
-    };
+      mapAck: (ack) => ack.sectionId,
+    );
   }
 
   @override
@@ -426,23 +403,15 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String agentId,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.addAgentToSection(
+    return _callWireAck<String, WorkerReply_AddAgentToSectionAck>(
+      verb: 'addAgentToSection',
+      send: (requestId) => _session!.addAgentToSection(
         requestId: BigInt.from(requestId),
         sectionId: sectionId,
         agentId: agentId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_AddAgentToSectionAck(:final tabId) => tabId,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
       ),
-      _ => throw StateError(
-        'unexpected WorkerReply for addAgentToSection: $reply',
-      ),
-    };
+      mapAck: (ack) => ack.tabId,
+    );
   }
 
   @override
@@ -450,23 +419,14 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String tabId,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.activateSectionTab(
+    return _callWireVoid<WorkerReply_ActivateSectionTabAck>(
+      verb: 'activateSectionTab',
+      send: (requestId) => _session!.activateSectionTab(
         requestId: BigInt.from(requestId),
         sectionId: sectionId,
         tabId: tabId,
-      );
-    });
-    switch (reply) {
-      case WorkerReply_ActivateSectionTabAck():
-        return;
-      case WorkerReply_Err(:final message, :final kind):
-        throw IrohWireException(message: message, kind: kind);
-      default:
-        throw StateError(
-          'unexpected WorkerReply for activateSectionTab: $reply',
-        );
-    }
+      ),
+    );
   }
 
   @override
@@ -474,23 +434,15 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String tabId,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.closeSectionTab(
+    return _callWireAck<String, WorkerReply_CloseSectionTabAck>(
+      verb: 'closeSectionTab',
+      send: (requestId) => _session!.closeSectionTab(
         requestId: BigInt.from(requestId),
         sectionId: sectionId,
         tabId: tabId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_CloseSectionTabAck(:final activeTabId) => activeTabId,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
       ),
-      _ => throw StateError(
-        'unexpected WorkerReply for closeSectionTab: $reply',
-      ),
-    };
+      mapAck: (ack) => ack.activeTabId,
+    );
   }
 
   @override
@@ -498,56 +450,37 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String tabId,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.toggleSectionTabPinned(
+    return _callWireAck<bool, WorkerReply_ToggleSectionTabPinnedAck>(
+      verb: 'toggleSectionTabPinned',
+      send: (requestId) => _session!.toggleSectionTabPinned(
         requestId: BigInt.from(requestId),
         sectionId: sectionId,
         tabId: tabId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_ToggleSectionTabPinnedAck(:final pinned) => pinned,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
       ),
-      _ => throw StateError(
-        'unexpected WorkerReply for toggleSectionTabPinned: $reply',
-      ),
-    };
+      mapAck: (ack) => ack.pinned,
+    );
   }
 
   /// Full agent registry — drives the Settings → Agents page.
   @override
   Future<ls.AgentSettingsView> readAgentSettings() async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.readAgentSettings(requestId: BigInt.from(requestId));
-    });
-    return switch (reply) {
-      WorkerReply_AgentSettingsAck(:final view) => view,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'unexpected WorkerReply for readAgentSettings: $reply',
-      ),
-    };
+    return _callStateAck<ls.AgentSettingsView, WorkerReply_AgentSettingsAck>(
+      verb: 'readAgentSettings',
+      send: (requestId) =>
+          _session!.readAgentSettings(requestId: BigInt.from(requestId)),
+      mapAck: (ack) => ack.view,
+    );
   }
 
   /// Settings → Open In snapshot from the daemon host.
   @override
   Future<ls.OpenInSettingsView> readOpenInSettings() async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.readOpenInSettings(requestId: BigInt.from(requestId));
-    });
-    return switch (reply) {
-      WorkerReply_OpenInSettingsAck(:final view) => view,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'unexpected WorkerReply for readOpenInSettings: $reply',
-      ),
-    };
+    return _callWireAck<ls.OpenInSettingsView, WorkerReply_OpenInSettingsAck>(
+      verb: 'readOpenInSettings',
+      send: (requestId) =>
+          _session!.readOpenInSettings(requestId: BigInt.from(requestId)),
+      mapAck: (ack) => ack.view,
+    );
   }
 
   /// Toggle one daemon-host Open-In app.
@@ -556,23 +489,14 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String appId,
     required bool enabled,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.setOpenInAppEnabled(
+    return _callWireVoid<WorkerReply_SetOpenInAppEnabledAck>(
+      verb: 'setOpenInAppEnabled',
+      send: (requestId) => _session!.setOpenInAppEnabled(
         requestId: BigInt.from(requestId),
         appId: appId,
         enabled: enabled,
-      );
-    });
-    switch (reply) {
-      case WorkerReply_SetOpenInAppEnabledAck():
-        return;
-      case WorkerReply_Err(:final message, :final kind):
-        throw IrohWireException(message: message, kind: kind);
-      default:
-        throw StateError(
-          'unexpected WorkerReply for setOpenInAppEnabled: $reply',
-        );
-    }
+      ),
+    );
   }
 
   /// Launch `projectId` in `appId` on the daemon host.
@@ -581,21 +505,14 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String appId,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.openProjectInApp(
+    return _callWireVoid<WorkerReply_OpenProjectInAppAck>(
+      verb: 'openProjectInApp',
+      send: (requestId) => _session!.openProjectInApp(
         requestId: BigInt.from(requestId),
         projectId: projectId,
         appId: appId,
-      );
-    });
-    switch (reply) {
-      case WorkerReply_OpenProjectInAppAck():
-        return;
-      case WorkerReply_Err(:final message, :final kind):
-        throw IrohWireException(message: message, kind: kind);
-      default:
-        throw StateError('unexpected WorkerReply for openProjectInApp: $reply');
-    }
+      ),
+    );
   }
 
   /// Run one custom action inside `sectionId`'s task.
@@ -605,21 +522,16 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String sectionId,
     required String actionId,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.runProjectAction(
+    return _callStateAck<String, WorkerReply_RunProjectActionAck>(
+      verb: 'runProjectAction',
+      send: (requestId) => _session!.runProjectAction(
         requestId: BigInt.from(requestId),
         projectId: projectId,
         sectionId: sectionId,
         actionId: actionId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_RunProjectActionAck(:final tabId) => tabId,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'unexpected WorkerReply for runProjectAction: $reply',
       ),
-    };
+      mapAck: (ack) => ack.tabId,
+    );
   }
 
   @override
@@ -628,24 +540,15 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required ls.ProjectActionDto action,
     required bool saveGlobalCopy,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.saveProjectAction(
+    return _callWireVoid<WorkerReply_SaveProjectActionAck>(
+      verb: 'saveProjectAction',
+      send: (requestId) => _session!.saveProjectAction(
         requestId: BigInt.from(requestId),
         projectId: projectId,
         action: action,
         saveGlobalCopy: saveGlobalCopy,
-      );
-    });
-    switch (reply) {
-      case WorkerReply_SaveProjectActionAck():
-        return;
-      case WorkerReply_Err(:final message, :final kind):
-        throw IrohWireException(message: message, kind: kind);
-      default:
-        throw StateError(
-          'unexpected WorkerReply for saveProjectAction: $reply',
-        );
-    }
+      ),
+    );
   }
 
   @override
@@ -653,23 +556,15 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String actionId,
   }) async {
-    final reply = await _sendControlAndAwait((requestId) async {
-      await _session!.deleteProjectAction(
+    return _callWireAck<bool, WorkerReply_DeleteProjectActionAck>(
+      verb: 'deleteProjectAction',
+      send: (requestId) => _session!.deleteProjectAction(
         requestId: BigInt.from(requestId),
         projectId: projectId,
         actionId: actionId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_DeleteProjectActionAck(:final deleted) => deleted,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
       ),
-      _ => throw StateError(
-        'unexpected WorkerReply for deleteProjectAction: $reply',
-      ),
-    };
+      mapAck: (ack) => ack.deleted,
+    );
   }
 
   @override
@@ -788,6 +683,62 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     return completer.future;
   }
 
+  Future<R> _callAck<R, A extends WorkerReply>({
+    required String verb,
+    required Future<void> Function(int requestId) send,
+    required R Function(A ack) mapAck,
+    required R Function(WorkerReply_Err err) onErr,
+  }) async {
+    final reply = await _sendControlAndAwait(send);
+    if (reply is A) {
+      return mapAck(reply);
+    }
+    if (reply is WorkerReply_Err) {
+      return onErr(reply);
+    }
+    _unexpectedReply(verb, reply);
+  }
+
+  Future<R> _callStateAck<R, A extends WorkerReply>({
+    required String verb,
+    required Future<void> Function(int requestId) send,
+    required R Function(A ack) mapAck,
+  }) {
+    return _callAck<R, A>(
+      verb: verb,
+      send: send,
+      mapAck: mapAck,
+      onErr: _throwStateErr,
+    );
+  }
+
+  Future<R> _callWireAck<R, A extends WorkerReply>({
+    required String verb,
+    required Future<void> Function(int requestId) send,
+    required R Function(A ack) mapAck,
+  }) {
+    return _callAck<R, A>(
+      verb: verb,
+      send: send,
+      mapAck: mapAck,
+      onErr: _throwForErr,
+    );
+  }
+
+  Future<void> _callStateVoid<A extends WorkerReply>({
+    required String verb,
+    required Future<void> Function(int requestId) send,
+  }) {
+    return _callStateAck<void, A>(verb: verb, send: send, mapAck: (_) {});
+  }
+
+  Future<void> _callWireVoid<A extends WorkerReply>({
+    required String verb,
+    required Future<void> Function(int requestId) send,
+  }) {
+    return _callWireAck<void, A>(verb: verb, send: send, mapAck: (_) {});
+  }
+
   // ── Project mutation (another-one-ojm.2) ────────────────────────
 
   /// Add an on-disk project at `path`. Routes through
@@ -800,41 +751,31 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   /// other `Err` throws a `StateError` for the UI toast.
   @override
   Future<bool> addProject(String path) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.addProject(requestId: BigInt.from(id), path: path),
+    return _callAck<bool, WorkerReply_ProjectAdded>(
+      verb: 'addProject',
+      send: (id) =>
+          _session!.addProject(requestId: BigInt.from(id), path: path),
+      mapAck: (_) => true,
+      onErr: (err) =>
+          err.message.contains('project at this path already exists')
+          ? false
+          : throw StateError('addProject failed: ${err.message}'),
     );
-    return switch (reply) {
-      WorkerReply_ProjectAdded() => true,
-      WorkerReply_Err(:final message) =>
-        message.contains('project at this path already exists')
-            ? false
-            : throw StateError('addProject failed: $message'),
-      _ => throw StateError(
-        'addProject: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   /// Remove a project from the daemon's store by id. Idempotent —
   /// unknown ids reply with `ProjectRemoved`, no error.
   @override
   Future<void> removeProject(String projectId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.removeProject(
+    return _callAck<void, WorkerReply_ProjectRemoved>(
+      verb: 'removeProject',
+      send: (id) => _session!.removeProject(
         requestId: BigInt.from(id),
         projectId: projectId,
       ),
+      mapAck: (_) {},
+      onErr: (err) => throw StateError('removeProject failed: ${err.message}'),
     );
-    switch (reply) {
-      case WorkerReply_ProjectRemoved():
-        return;
-      case WorkerReply_Err(:final message):
-        throw StateError('removeProject failed: $message');
-      default:
-        throw StateError(
-          'removeProject: unexpected daemon reply ${reply.runtimeType}',
-        );
-    }
   }
 
   // ── Task mutation (another-one-ojm.3) ───────────────────────────
@@ -851,92 +792,80 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String sourceBranch,
     AgentProvider? agentProvider,
   }) async {
-    final reply = await _sendControlAndAwait((id) async {
-      final session = _session;
-      if (session == null) {
-        throw StateError('IrohTransport not connected');
-      }
-      await session.createWorktreeTask(
-        requestId: BigInt.from(id),
-        projectId: projectId,
-        taskName: taskName,
-        sourceBranch: sourceBranch,
-        agentProvider: agentProvider,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_TaskCreated(:final task) => task.sectionId,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'createWorktreeTask: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
+    return _callStateAck<String, WorkerReply_TaskCreated>(
+      verb: 'createWorktreeTask',
+      send: (id) async {
+        final session = _session;
+        if (session == null) {
+          throw StateError('IrohTransport not connected');
+        }
+        await session.createWorktreeTask(
+          requestId: BigInt.from(id),
+          projectId: projectId,
+          taskName: taskName,
+          sourceBranch: sourceBranch,
+          agentProvider: agentProvider,
+        );
+      },
+      mapAck: (ack) => ack.task.sectionId,
+    );
   }
 
   @override
   Future<bool> renameTask(String taskId, String newName) async {
-    final reply = await _sendControlAndAwait((id) async {
-      final session = _session;
-      if (session == null) {
-        throw StateError('IrohTransport not connected');
-      }
-      await session.renameTask(
-        requestId: BigInt.from(id),
-        taskId: taskId,
-        newName: newName,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_TaskRenamed(:final changed) => changed,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'renameTask: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
+    return _callStateAck<bool, WorkerReply_TaskRenamed>(
+      verb: 'renameTask',
+      send: (id) async {
+        final session = _session;
+        if (session == null) {
+          throw StateError('IrohTransport not connected');
+        }
+        await session.renameTask(
+          requestId: BigInt.from(id),
+          taskId: taskId,
+          newName: newName,
+        );
+      },
+      mapAck: (ack) => ack.changed,
+    );
   }
 
   @override
   Future<bool> setTaskPinned(String taskId, bool pinned) async {
-    final reply = await _sendControlAndAwait((id) async {
-      final session = _session;
-      if (session == null) {
-        throw StateError('IrohTransport not connected');
-      }
-      await session.setTaskPinned(
-        requestId: BigInt.from(id),
-        taskId: taskId,
-        pinned: pinned,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_TaskPinned(:final changed) => changed,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'setTaskPinned: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
+    return _callStateAck<bool, WorkerReply_TaskPinned>(
+      verb: 'setTaskPinned',
+      send: (id) async {
+        final session = _session;
+        if (session == null) {
+          throw StateError('IrohTransport not connected');
+        }
+        await session.setTaskPinned(
+          requestId: BigInt.from(id),
+          taskId: taskId,
+          pinned: pinned,
+        );
+      },
+      mapAck: (ack) => ack.changed,
+    );
   }
 
   @override
   Future<bool> removeTask(String projectId, String taskId) async {
-    final reply = await _sendControlAndAwait((id) async {
-      final session = _session;
-      if (session == null) {
-        throw StateError('IrohTransport not connected');
-      }
-      await session.removeTask(
-        requestId: BigInt.from(id),
-        projectId: projectId,
-        taskId: taskId,
-      );
-    });
-    return switch (reply) {
-      WorkerReply_TaskRemoved(:final removed) => removed,
-      WorkerReply_Err(:final message) => throw StateError(message),
-      _ => throw StateError(
-        'removeTask: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
+    return _callStateAck<bool, WorkerReply_TaskRemoved>(
+      verb: 'removeTask',
+      send: (id) async {
+        final session = _session;
+        if (session == null) {
+          throw StateError('IrohTransport not connected');
+        }
+        await session.removeTask(
+          requestId: BigInt.from(id),
+          projectId: projectId,
+          taskId: taskId,
+        );
+      },
+      mapAck: (ack) => ack.removed,
+    );
   }
 
   // ── Git state read verbs (`another-one-ojm.4`) ─────────────────
@@ -951,141 +880,84 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<String> slugifyBranchName(String name) async {
-    final reply = await _sendControlAndAwait(
-      (id) =>
+    return _callWireAck<String, WorkerReply_SlugifyBranchNameAck>(
+      verb: 'slugifyBranchName',
+      send: (id) =>
           _session!.slugifyBranchName(requestId: BigInt.from(id), name: name),
+      mapAck: (ack) => ack.slug,
     );
-    return switch (reply) {
-      WorkerReply_SlugifyBranchNameAck(:final slug) => slug,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'slugifyBranchName: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
   Future<List<String>> readProjectBranches(String projectId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readProjectBranches(
+    return _callWireAck<List<String>, WorkerReply_ProjectBranchesAck>(
+      verb: 'readProjectBranches',
+      send: (id) => _session!.readProjectBranches(
         requestId: BigInt.from(id),
         projectId: projectId,
       ),
+      mapAck: (ack) => ack.branches,
     );
-    return switch (reply) {
-      WorkerReply_ProjectBranchesAck(:final branches) => branches,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'readProjectBranches: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
   Future<String?> primaryBranchForProject(String projectId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.primaryBranchForProject(
+    return _callWireAck<String?, WorkerReply_PrimaryBranchAck>(
+      verb: 'primaryBranchForProject',
+      send: (id) => _session!.primaryBranchForProject(
         requestId: BigInt.from(id),
         projectId: projectId,
       ),
+      mapAck: (ack) => ack.branch,
     );
-    return switch (reply) {
-      WorkerReply_PrimaryBranchAck(:final branch) => branch,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'primaryBranchForProject: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
   Future<String?> repoDefaultCommitAction(String projectId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.repoDefaultCommitAction(
+    return _callWireAck<String?, WorkerReply_RepoDefaultCommitActionAck>(
+      verb: 'repoDefaultCommitAction',
+      send: (id) => _session!.repoDefaultCommitAction(
         requestId: BigInt.from(id),
         projectId: projectId,
       ),
+      mapAck: (ack) => ack.action,
     );
-    return switch (reply) {
-      WorkerReply_RepoDefaultCommitActionAck(:final action) => action,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'repoDefaultCommitAction: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
   Future<ls.ActiveGitStateDto?> readActiveGitState(String projectId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readActiveGitState(
+    return _callWireAck<ls.ActiveGitStateDto?, WorkerReply_ActiveGitStateAck>(
+      verb: 'readActiveGitState',
+      send: (id) => _session!.readActiveGitState(
         requestId: BigInt.from(id),
         projectId: projectId,
       ),
+      mapAck: (ack) => ack.state,
     );
-    return switch (reply) {
-      WorkerReply_ActiveGitStateAck(:final state) => state,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'readActiveGitState: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
   Future<List<ls.ChangedFileDto>?> readChangedFiles(String projectId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readChangedFiles(
+    return _callWireAck<List<ls.ChangedFileDto>?, WorkerReply_ChangedFilesAck>(
+      verb: 'readChangedFiles',
+      send: (id) => _session!.readChangedFiles(
         requestId: BigInt.from(id),
         projectId: projectId,
       ),
+      mapAck: (ack) => ack.files?.cast<ls.ChangedFileDto>(),
     );
-    return switch (reply) {
-      WorkerReply_ChangedFilesAck(:final files) =>
-        files?.cast<ls.ChangedFileDto>(),
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'readChangedFiles: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
   Future<String?> readProjectGithubUrl(String projectId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readProjectGithubUrl(
+    return _callWireAck<String?, WorkerReply_ProjectGithubUrlAck>(
+      verb: 'readProjectGithubUrl',
+      send: (id) => _session!.readProjectGithubUrl(
         requestId: BigInt.from(id),
         projectId: projectId,
       ),
+      mapAck: (ack) => ack.url,
     );
-    return switch (reply) {
-      WorkerReply_ProjectGithubUrlAck(:final url) => url,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'readProjectGithubUrl: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
@@ -1093,23 +965,15 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required int limit,
   }) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readRecentCommits(
+    return _callWireAck<ls.RecentCommitsView?, WorkerReply_RecentCommitsAck>(
+      verb: 'readRecentCommits',
+      send: (id) => _session!.readRecentCommits(
         requestId: BigInt.from(id),
         projectId: projectId,
         limit: limit,
       ),
+      mapAck: (ack) => ack.view,
     );
-    return switch (reply) {
-      WorkerReply_RecentCommitsAck(:final view) => view,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'readRecentCommits: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
@@ -1117,24 +981,18 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String commitId,
   }) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readCommitFileChanges(
+    return _callWireAck<
+      List<ls.BranchCompareFileDto>?,
+      WorkerReply_CommitFileChangesAck
+    >(
+      verb: 'readCommitFileChanges',
+      send: (id) => _session!.readCommitFileChanges(
         requestId: BigInt.from(id),
         projectId: projectId,
         commitId: commitId,
       ),
+      mapAck: (ack) => ack.files?.cast<ls.BranchCompareFileDto>(),
     );
-    return switch (reply) {
-      WorkerReply_CommitFileChangesAck(:final files) =>
-        files?.cast<ls.BranchCompareFileDto>(),
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'readCommitFileChanges: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
@@ -1142,45 +1000,32 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String targetBranch,
   }) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readBranchCompareState(
+    return _callWireAck<ls.BranchCompareView?, WorkerReply_BranchCompareAck>(
+      verb: 'readBranchCompareState',
+      send: (id) => _session!.readBranchCompareState(
         requestId: BigInt.from(id),
         projectId: projectId,
         targetBranch: targetBranch,
       ),
+      mapAck: (ack) => ack.view,
     );
-    return switch (reply) {
-      WorkerReply_BranchCompareAck(:final view) => view,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'readBranchCompareState: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
   Future<ls.ResolvedProjectBranchSettingsDto?> readBranchSettings(
     String projectId,
   ) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readBranchSettings(
+    return _callWireAck<
+      ls.ResolvedProjectBranchSettingsDto?,
+      WorkerReply_BranchSettingsAck
+    >(
+      verb: 'readBranchSettings',
+      send: (id) => _session!.readBranchSettings(
         requestId: BigInt.from(id),
         projectId: projectId,
       ),
+      mapAck: (ack) => ack.settings,
     );
-    return switch (reply) {
-      WorkerReply_BranchSettingsAck(:final settings) => settings,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'readBranchSettings: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   @override
@@ -1189,24 +1034,16 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String field,
     String? branchName,
   }) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.setBranchSetting(
+    return _callWireAck<bool, WorkerReply_SetBranchSettingAck>(
+      verb: 'setBranchSetting',
+      send: (id) => _session!.setBranchSetting(
         requestId: BigInt.from(id),
         projectId: projectId,
         field: field,
         branchName: branchName,
       ),
+      mapAck: (ack) => ack.changed,
     );
-    return switch (reply) {
-      WorkerReply_SetBranchSettingAck(:final changed) => changed,
-      WorkerReply_Err(:final message, :final kind) => throw IrohWireException(
-        message: message,
-        kind: kind,
-      ),
-      _ => throw StateError(
-        'setBranchSetting: unexpected daemon reply ${reply.runtimeType}',
-      ),
-    };
   }
 
   // ── Git mutation verbs (`another-one-ojm.5`) ───────────────────
@@ -1216,6 +1053,10 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
   // `WorkerReply::*Ack`. On `WorkerReply::Err`, throws
   // [IrohWireException] so callers can `try/catch` and route to a
   // toast.
+
+  Never _throwStateErr(WorkerReply_Err err) {
+    throw StateError(err.message);
+  }
 
   /// Map a `WorkerReply.err` payload to a thrown exception.
   Never _throwForErr(WorkerReply_Err err) {
@@ -1369,27 +1210,22 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String projectId,
     required String actionId,
   }) async {
-    final reply = await _sendControlAndAwait((id) async {
-      await _session!.runToolbarGitAction(
+    return _callWireAck<
+      ls.ToolbarActionOutcomeDto,
+      WorkerReply_ToolbarActionOutcomeAck
+    >(
+      verb: 'runToolbarGitAction',
+      send: (id) => _session!.runToolbarGitAction(
         requestId: BigInt.from(id),
         projectId: projectId,
         actionId: actionId,
-      );
-    });
-    switch (reply) {
-      case WorkerReply_ToolbarActionOutcomeAck(:final outcome):
-        return ls.ToolbarActionOutcomeDto(
-          toastMessage: outcome.toastMessage,
-          warning: outcome.warning,
-          refreshGitState: outcome.refreshGitState,
-        );
-      case WorkerReply_Err(:final message, :final kind):
-        _throwForErr(WorkerReply_Err(message: message, kind: kind));
-      default:
-        throw StateError(
-          'runToolbarGitAction: unexpected reply variant $reply',
-        );
-    }
+      ),
+      mapAck: (ack) => ls.ToolbarActionOutcomeDto(
+        toastMessage: ack.outcome.toastMessage,
+        warning: ack.outcome.warning,
+        refreshGitState: ack.outcome.refreshGitState,
+      ),
+    );
   }
 
   /// `another-one-ojm.5` — create a branch from HEAD over the iroh
@@ -1405,31 +1241,27 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required bool useCurrentTask,
     required bool migrateChanges,
   }) async {
-    final reply = await _sendControlAndAwait((id) async {
-      await _session!.createBranch(
+    return _callWireAck<String, WorkerReply_CreateBranchAck>(
+      verb: 'createBranch',
+      send: (id) => _session!.createBranch(
         requestId: BigInt.from(id),
         projectId: projectId,
         branchName: branchName,
         useCurrentTask: useCurrentTask,
         migrateChanges: migrateChanges,
-      );
-    });
-    switch (reply) {
-      case WorkerReply_CreateBranchAck(:final sectionId, :final projects):
+      ),
+      mapAck: (ack) {
         // Re-broadcast the post-mutation project snapshot so any
         // listener on `workerReplies` (the projects drawer's
         // FRB-side consumer) repaints in the same round-trip the
         // ack carried. Mirrors LocalSession::create_branch which
         // calls `self.list_projects()` after the mutation.
         if (!_workerReplies.isClosed) {
-          _workerReplies.add(WorkerReply.projectList(projects: projects));
+          _workerReplies.add(WorkerReply.projectList(projects: ack.projects));
         }
-        return sectionId;
-      case WorkerReply_Err(:final message, :final kind):
-        _throwForErr(WorkerReply_Err(message: message, kind: kind));
-      default:
-        throw StateError('createBranch: unexpected reply variant $reply');
-    }
+        return ack.sectionId;
+      },
+    );
   }
 
   /// `another-one-ojm.5` — spawn a review task for a PR over the iroh
@@ -1443,26 +1275,22 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String headBranch,
     AgentProvider? agentProvider,
   }) async {
-    final reply = await _sendControlAndAwait((id) async {
-      await _session!.createReviewTask(
+    return _callWireAck<String, WorkerReply_CreateReviewTaskAck>(
+      verb: 'createReviewTask',
+      send: (id) => _session!.createReviewTask(
         requestId: BigInt.from(id),
         projectId: projectId,
         pullRequestNumber: BigInt.from(pullRequestNumber),
         headBranch: headBranch,
         agentProvider: agentProvider,
-      );
-    });
-    switch (reply) {
-      case WorkerReply_CreateReviewTaskAck(:final sectionId, :final projects):
+      ),
+      mapAck: (ack) {
         if (!_workerReplies.isClosed) {
-          _workerReplies.add(WorkerReply.projectList(projects: projects));
+          _workerReplies.add(WorkerReply.projectList(projects: ack.projects));
         }
-        return sectionId;
-      case WorkerReply_Err(:final message, :final kind):
-        _throwForErr(WorkerReply_Err(message: message, kind: kind));
-      default:
-        throw StateError('createReviewTask: unexpected reply variant $reply');
-    }
+        return ack.sectionId;
+      },
+    );
   }
 
   /// Throw a developer-friendly error for a settings reply that
@@ -1484,62 +1312,68 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
 
   @override
   Future<ls.GitActionScriptsView> readGitActionScripts() async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readGitActionScripts(requestId: BigInt.from(id)),
+    return _callStateAck<
+      ls.GitActionScriptsView,
+      WorkerReply_GitActionScriptsAck
+    >(
+      verb: 'readGitActionScripts',
+      send: (id) => _session!.readGitActionScripts(requestId: BigInt.from(id)),
+      mapAck: (ack) => ack.view,
     );
-    if (reply is WorkerReply_GitActionScriptsAck) return reply.view;
-    _unexpectedReply('readGitActionScripts', reply);
   }
 
   @override
   Future<bool> setGitCommitScript(String script) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.setGitCommitScript(
+    return _callStateAck<bool, WorkerReply_SetGitCommitScriptAck>(
+      verb: 'setGitCommitScript',
+      send: (id) => _session!.setGitCommitScript(
         requestId: BigInt.from(id),
         script: script,
       ),
+      mapAck: (ack) => ack.changed,
     );
-    if (reply is WorkerReply_SetGitCommitScriptAck) return reply.changed;
-    _unexpectedReply('setGitCommitScript', reply);
   }
 
   @override
   Future<bool> resetGitCommitScript() async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.resetGitCommitScript(requestId: BigInt.from(id)),
+    return _callStateAck<bool, WorkerReply_ResetGitCommitScriptAck>(
+      verb: 'resetGitCommitScript',
+      send: (id) => _session!.resetGitCommitScript(requestId: BigInt.from(id)),
+      mapAck: (ack) => ack.changed,
     );
-    if (reply is WorkerReply_ResetGitCommitScriptAck) return reply.changed;
-    _unexpectedReply('resetGitCommitScript', reply);
   }
 
   @override
   Future<bool> setGitPrScript(String script) async {
-    final reply = await _sendControlAndAwait(
-      (id) =>
+    return _callStateAck<bool, WorkerReply_SetGitPrScriptAck>(
+      verb: 'setGitPrScript',
+      send: (id) =>
           _session!.setGitPrScript(requestId: BigInt.from(id), script: script),
+      mapAck: (ack) => ack.changed,
     );
-    if (reply is WorkerReply_SetGitPrScriptAck) return reply.changed;
-    _unexpectedReply('setGitPrScript', reply);
   }
 
   @override
   Future<bool> resetGitPrScript() async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.resetGitPrScript(requestId: BigInt.from(id)),
+    return _callStateAck<bool, WorkerReply_ResetGitPrScriptAck>(
+      verb: 'resetGitPrScript',
+      send: (id) => _session!.resetGitPrScript(requestId: BigInt.from(id)),
+      mapAck: (ack) => ack.changed,
     );
-    if (reply is WorkerReply_ResetGitPrScriptAck) return reply.changed;
-    _unexpectedReply('resetGitPrScript', reply);
   }
 
   // ── Settings → Keybindings (`another-one-ojm.8`) ────────────────
 
   @override
   Future<ls.ShortcutSettingsView> readShortcutSettings() async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readShortcutSettings(requestId: BigInt.from(id)),
+    return _callStateAck<
+      ls.ShortcutSettingsView,
+      WorkerReply_ShortcutSettingsAck
+    >(
+      verb: 'readShortcutSettings',
+      send: (id) => _session!.readShortcutSettings(requestId: BigInt.from(id)),
+      mapAck: (ack) => ack.view,
     );
-    if (reply is WorkerReply_ShortcutSettingsAck) return reply.view;
-    _unexpectedReply('readShortcutSettings', reply);
   }
 
   @override
@@ -1547,50 +1381,47 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String actionId,
     required String binding,
   }) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.setShortcutBinding(
+    return _callStateVoid<WorkerReply_SetShortcutBindingAck>(
+      verb: 'setShortcutBinding',
+      send: (id) => _session!.setShortcutBinding(
         requestId: BigInt.from(id),
         actionId: actionId,
         binding: binding,
       ),
     );
-    if (reply is WorkerReply_SetShortcutBindingAck) return;
-    _unexpectedReply('setShortcutBinding', reply);
   }
 
   @override
   Future<void> resetShortcutBinding(String actionId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.resetShortcutBinding(
+    return _callStateVoid<WorkerReply_ResetShortcutBindingAck>(
+      verb: 'resetShortcutBinding',
+      send: (id) => _session!.resetShortcutBinding(
         requestId: BigInt.from(id),
         actionId: actionId,
       ),
     );
-    if (reply is WorkerReply_ResetShortcutBindingAck) return;
-    _unexpectedReply('resetShortcutBinding', reply);
   }
 
   // ── Settings → MCP (`another-one-ojm.8`) ────────────────────────
 
   @override
   Future<ls.McpSettingsView> readMcpSettings() async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.readMcpSettings(requestId: BigInt.from(id)),
+    return _callStateAck<ls.McpSettingsView, WorkerReply_McpSettingsAck>(
+      verb: 'readMcpSettings',
+      send: (id) => _session!.readMcpSettings(requestId: BigInt.from(id)),
+      mapAck: (ack) => ack.view,
     );
-    if (reply is WorkerReply_McpSettingsAck) return reply.view;
-    _unexpectedReply('readMcpSettings', reply);
   }
 
   @override
   Future<void> mcpAddFromCatalog(String catalogId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.mcpAddFromCatalog(
+    return _callStateVoid<WorkerReply_McpAddFromCatalogAck>(
+      verb: 'mcpAddFromCatalog',
+      send: (id) => _session!.mcpAddFromCatalog(
         requestId: BigInt.from(id),
         catalogId: catalogId,
       ),
     );
-    if (reply is WorkerReply_McpAddFromCatalogAck) return;
-    _unexpectedReply('mcpAddFromCatalog', reply);
   }
 
   @override
@@ -1599,24 +1430,23 @@ class IrohTransport extends DaemonConnection implements TerminalTransport {
     required String providerId,
     required bool enabled,
   }) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.mcpToggle(
+    return _callStateVoid<WorkerReply_McpToggleAck>(
+      verb: 'mcpToggle',
+      send: (id) => _session!.mcpToggle(
         requestId: BigInt.from(id),
         entryId: entryId,
         providerId: providerId,
         enabled: enabled,
       ),
     );
-    if (reply is WorkerReply_McpToggleAck) return;
-    _unexpectedReply('mcpToggle', reply);
   }
 
   @override
   Future<void> mcpRemove(String entryId) async {
-    final reply = await _sendControlAndAwait(
-      (id) => _session!.mcpRemove(requestId: BigInt.from(id), entryId: entryId),
+    return _callStateVoid<WorkerReply_McpRemoveAck>(
+      verb: 'mcpRemove',
+      send: (id) =>
+          _session!.mcpRemove(requestId: BigInt.from(id), entryId: entryId),
     );
-    if (reply is WorkerReply_McpRemoveAck) return;
-    _unexpectedReply('mcpRemove', reply);
   }
 }
