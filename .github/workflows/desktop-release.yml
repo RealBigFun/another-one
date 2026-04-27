@@ -1,6 +1,6 @@
 name: Desktop release
 
-# Every push to `main` produces a public release in the
+# Each pushed tag (e.g. `v1.2.3`) produces a public release in the
 # `another-one-releases` repo: a DMG and updater payload for macOS
 # (per arch), an AppImage for Linux x86_64, a SHA256SUMS file, a
 # signed `latest.json` manifest, and the matching `latest.json.sig`.
@@ -9,8 +9,8 @@ name: Desktop release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
   workflow_dispatch: {}
 
 permissions:
