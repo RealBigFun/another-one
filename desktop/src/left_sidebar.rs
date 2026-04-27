@@ -53,6 +53,7 @@ struct ProjectRowState {
     active: bool,
     has_children: bool,
     expanded: bool,
+    menu_open: bool,
 }
 
 struct SidebarTaskMenuItemStyle {
@@ -1101,6 +1102,7 @@ impl AnotherOneApp {
         let github_url_for_icon = state.github_url.clone();
         let github_url_for_click = state.github_url.clone();
         let row_group = SharedString::from(format!("project-row-{}", pid));
+        let project_menu_open = state.menu_open;
 
         let row = div()
             .id(SharedString::from(format!("project-{}", &pid)))
@@ -1228,6 +1230,12 @@ impl AnotherOneApp {
                         .w(px(24.))
                         .h(px(24.))
                         .rounded_md()
+                        .when(project_menu_open, |button| button.visible())
+                        .when(!project_menu_open, |button| {
+                            button
+                                .invisible()
+                                .group_hover(row_group.clone(), |button| button.visible())
+                        })
                         .cursor_pointer()
                         .hover(move |s| s.bg(gpui::white().opacity(0.08)))
                         .tooltip(move |_window, cx| {
@@ -1374,9 +1382,10 @@ impl AnotherOneApp {
             .map(|project| project.id)
             .unwrap_or_else(|| project_id.clone());
         let meta_indent = 20.;
+        let show_git_metadata = self.project_store.ui.show_sidebar_git_metadata;
         let meta = [
             (entry.task_name != entry.branch.name).then(|| entry.branch.name.clone()),
-            (!entry.branch.last_commit_relative.is_empty())
+            (show_git_metadata && !entry.branch.last_commit_relative.is_empty())
                 .then(|| entry.branch.last_commit_relative.clone()),
         ]
         .into_iter()
@@ -1471,7 +1480,8 @@ impl AnotherOneApp {
 
         let row_group = SharedString::from(format!("task-row-{project_id}-{row_id}"));
         let mut right_controls = div().flex().flex_row().items_center().gap(px(6.));
-        let has_diff = entry.branch.lines_added > 0 || entry.branch.lines_removed > 0;
+        let has_diff =
+            show_git_metadata && (entry.branch.lines_added > 0 || entry.branch.lines_removed > 0);
 
         let delete_project_id = project_id.clone();
         let delete_task_id = task_id.clone();
@@ -1613,6 +1623,7 @@ impl AnotherOneApp {
             .group(row_group.clone())
             .flex()
             .flex_col()
+            .min_h(px(BRANCH_ROW_H))
             .pl(px(18.))
             .pr(px(10.))
             .py(px(4.))
@@ -2495,6 +2506,7 @@ impl AnotherOneApp {
                         active,
                         has_children: !group.child_entries.is_empty(),
                         expanded,
+                        menu_open: self.project_menu_project.as_deref() == Some(root_id),
                     },
                     window,
                     cx,

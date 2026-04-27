@@ -1027,8 +1027,98 @@ impl AnotherOneApp {
         let check_disabled =
             self.updater_state.is_checking() || self.updater_state.is_downloading();
         let install_enabled = matches!(self.updater_state, UpdateState::ReadyToInstall { .. });
+        let show_sidebar_git_metadata = self.project_store.ui.show_sidebar_git_metadata;
 
         let copy_full_sha = full_sha.to_string();
+
+        let sidebar_metadata_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(20.))
+            .px(px(18.))
+            .py(px(14.))
+            .bg(row_bg)
+            .cursor_pointer()
+            .hover(move |style| style.bg(gpui::white().opacity(0.06)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    this.set_sidebar_git_metadata_visible(!show_sidebar_git_metadata, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .min_w(px(0.))
+                    .child(
+                        div()
+                            .text_size(rems(13. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(TEXT_PRIMARY())
+                            .child("Sidebar git metadata"),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(11. / 16.))
+                            .text_color(TEXT_SECONDARY())
+                            .child("Show relative commit time and +/- line counts in task rows."),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .text_size(rems(11. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(if show_sidebar_git_metadata {
+                                gpui::white()
+                            } else {
+                                TEXT_SECONDARY()
+                            })
+                            .child(if show_sidebar_git_metadata {
+                                "Enabled"
+                            } else {
+                                "Disabled"
+                            }),
+                    )
+                    .child(
+                        div()
+                            .w(px(18.))
+                            .h(px(18.))
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(if show_sidebar_git_metadata {
+                                active_button_bg.opacity(0.85)
+                            } else {
+                                BORDER_SUBTLE()
+                            })
+                            .bg(if show_sidebar_git_metadata {
+                                active_button_bg
+                            } else {
+                                button_bg
+                            })
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(show_sidebar_git_metadata, |container| {
+                                container.child(
+                                    svg()
+                                        .path("assets/icons/icons__check.svg")
+                                        .size(px(11.))
+                                        .text_color(gpui::white()),
+                                )
+                            }),
+                    ),
+            );
 
         let build_row = div()
             .flex()
@@ -1039,6 +1129,8 @@ impl AnotherOneApp {
             .px(px(18.))
             .py(px(14.))
             .bg(row_bg)
+            .border_t_1()
+            .border_color(BORDER_SUBTLE())
             .child(
                 div()
                     .flex()
@@ -1195,6 +1287,7 @@ impl AnotherOneApp {
                     .border_color(BORDER_SUBTLE())
                     .bg(panel_bg)
                     .overflow_hidden()
+                    .child(sidebar_metadata_row)
                     .child(build_row)
                     .child(updates_row),
             )

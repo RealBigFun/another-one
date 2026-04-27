@@ -3378,6 +3378,15 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    pub(crate) fn set_sidebar_git_metadata_visible(
+        &mut self,
+        visible: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.project_store.set_sidebar_git_metadata_visible(visible);
+        cx.notify();
+    }
+
     pub(crate) fn set_agent_enabled(
         &mut self,
         agent_id: &str,

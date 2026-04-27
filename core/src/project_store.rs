@@ -464,6 +464,8 @@ pub struct UiState {
     pub shortcuts: ShortcutSettings,
     #[serde(default)]
     pub global_actions: Vec<ProjectAction>,
+    #[serde(default)]
+    pub show_sidebar_git_metadata: bool,
 }
 
 impl Default for UiState {
@@ -483,6 +485,7 @@ impl Default for UiState {
             git_pr_generation_script: None,
             shortcuts: ShortcutSettings::default(),
             global_actions: Vec::new(),
+            show_sidebar_git_metadata: false,
         }
     }
 }
@@ -1278,6 +1281,14 @@ impl ProjectStore {
             return;
         }
         self.ui.left_sidebar_open = is_open;
+        self.save();
+    }
+
+    pub fn set_sidebar_git_metadata_visible(&mut self, visible: bool) {
+        if self.ui.show_sidebar_git_metadata == visible {
+            return;
+        }
+        self.ui.show_sidebar_git_metadata = visible;
         self.save();
     }
 
@@ -4185,6 +4196,7 @@ mod tests {
                 git_pr_generation_script: None,
                 shortcuts: ShortcutSettings::default(),
                 global_actions: Vec::new(),
+                show_sidebar_git_metadata: false,
             },
         };
 
