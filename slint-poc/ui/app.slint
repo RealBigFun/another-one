@@ -80,6 +80,9 @@ export component AppWindow inherits Window {
     in property <[TerminalLinkSpan]> terminal_link_spans;
 
     callback close_requested();
+    callback project_selected(string);
+    callback task_selected(string);
+    callback tab_selected(string);
     callback terminal_key(string, bool, bool, bool);
 
     title: "AnotherOne";
@@ -234,6 +237,9 @@ export component AppWindow inherits Window {
                 text-primary: root.text_primary;
                 text-secondary: root.text_secondary;
                 text-muted: root.text_muted;
+                clicked(project-id) => {
+                    root.project_selected(project-id);
+                }
             }
 
             Rectangle {
@@ -278,6 +284,9 @@ export component AppWindow inherits Window {
                 text-muted: root.text_muted;
                 success-color: root.success_color;
                 row-border-color: root.border_color;
+                clicked(task-id) => {
+                    root.task_selected(task-id);
+                }
             }
         }
 
@@ -319,6 +328,9 @@ export component AppWindow inherits Window {
                     text-primary: root.text_primary;
                     text-muted: root.text_muted;
                     success-color: root.success_color;
+                    clicked(tab-id) => {
+                        root.tab_selected(tab-id);
+                    }
                 }
 
                 AoButton {

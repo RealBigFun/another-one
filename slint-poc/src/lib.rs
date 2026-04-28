@@ -43,16 +43,28 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     apply_tokens(&app);
     seed_shell_model(&app);
 
-    let (input_tx, input_rx) = mpsc::unbounded_channel::<SlintKeyEvent>();
+    let (client_event_tx, client_event_rx) = mpsc::unbounded_channel::<SlintClientEvent>();
+    let terminal_event_tx = client_event_tx.clone();
     app.on_terminal_key(move |text, control, alt, _shift| {
-        let _ = input_tx.send(SlintKeyEvent {
+        let _ = terminal_event_tx.send(SlintClientEvent::TerminalKey(SlintKeyEvent {
             text: text.to_string(),
             control,
             alt,
-        });
+        }));
+    });
+    let project_event_tx = client_event_tx.clone();
+    app.on_project_selected(move |project_id| {
+        let _ = project_event_tx.send(SlintClientEvent::SelectProject(project_id.to_string()));
+    });
+    let task_event_tx = client_event_tx.clone();
+    app.on_task_selected(move |task_id| {
+        let _ = task_event_tx.send(SlintClientEvent::SelectTask(task_id.to_string()));
+    });
+    app.on_tab_selected(move |tab_id| {
+        let _ = client_event_tx.send(SlintClientEvent::SelectTab(tab_id.to_string()));
     });
 
-    spawn_terminal_worker(app.as_weak(), input_rx);
+    spawn_terminal_worker(app.as_weak(), client_event_rx);
     app.on_close_requested(|| std::process::exit(0));
     app.run()
 }
@@ -193,6 +205,12 @@ struct WorkspaceShellModel {
     project_summary: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TerminalTarget {
+    section_id: String,
+    tab_id: String,
+}
+
 fn set_workspace_tree(
     app_weak: &slint::Weak<AppWindow>,
     projects: &[frame::ProjectSummary],
@@ -206,12 +224,8 @@ fn set_workspace_tree(
             app.set_project_rows(slint::ModelRc::new(slint::VecModel::from(
                 model.project_rows,
             )));
-            app.set_task_rows(slint::ModelRc::new(slint::VecModel::from(
-                model.task_rows,
-            )));
-            app.set_tab_chips(slint::ModelRc::new(slint::VecModel::from(
-                model.tab_chips,
-            )));
+            app.set_task_rows(slint::ModelRc::new(slint::VecModel::from(model.task_rows)));
+            app.set_tab_chips(slint::ModelRc::new(slint::VecModel::from(model.tab_chips)));
             app.set_active_project_name(model.active_project_name.into());
             app.set_active_task_name(model.active_task_name.into());
             app.set_active_branch_name(model.active_branch_name.into());
@@ -343,6 +357,74 @@ fn workspace_shell_model(
     }
 }
 
+fn first_attachable_target(projects: &[frame::ProjectSummary]) -> Option<TerminalTarget> {
+    projects
+        .iter()
+        .find_map(|project| project.tasks.iter().find_map(target_for_task))
+}
+
+fn target_for_project_id(
+    projects: &[frame::ProjectSummary],
+    project_id: &str,
+) -> Option<TerminalTarget> {
+    projects
+        .iter()
+        .find(|project| project.id == project_id)
+        .and_then(|project| project.tasks.iter().find_map(target_for_task))
+}
+
+fn target_for_task_id(projects: &[frame::ProjectSummary], task_id: &str) -> Option<TerminalTarget> {
+    projects
+        .iter()
+        .flat_map(|project| &project.tasks)
+        .find(|task| task.id == task_id)
+        .and_then(target_for_task)
+}
+
+fn target_for_tab_id(
+    projects: &[frame::ProjectSummary],
+    active_section_id: &str,
+    tab_id: &str,
+) -> Option<TerminalTarget> {
+    projects
+        .iter()
+        .flat_map(|project| &project.tasks)
+        .find(|task| {
+            task.section_id == active_section_id && task.tabs.iter().any(|tab| tab.id == tab_id)
+        })
+        .or_else(|| {
+            projects
+                .iter()
+                .flat_map(|project| &project.tasks)
+                .find(|task| task.tabs.iter().any(|tab| tab.id == tab_id))
+        })
+        .map(|task| TerminalTarget {
+            section_id: task.section_id.clone(),
+            tab_id: tab_id.to_string(),
+        })
+}
+
+fn target_still_exists(projects: &[frame::ProjectSummary], target: &TerminalTarget) -> bool {
+    projects.iter().any(|project| {
+        project.tasks.iter().any(|task| {
+            task.section_id == target.section_id
+                && task.tabs.iter().any(|tab| tab.id == target.tab_id)
+        })
+    })
+}
+
+fn target_for_task(task: &frame::TaskSummary) -> Option<TerminalTarget> {
+    let tab = task
+        .tabs
+        .iter()
+        .find(|tab| tab.id == task.active_tab_id)
+        .or_else(|| task.tabs.first())?;
+    Some(TerminalTarget {
+        section_id: task.section_id.clone(),
+        tab_id: tab.id.clone(),
+    })
+}
+
 fn project_kind_label(kind: frame::ProjectKind) -> &'static str {
     match kind {
         frame::ProjectKind::Root => "root",
@@ -408,16 +490,16 @@ fn initials(label: &str) -> String {
 }
 
 fn project_accent_color(id: &str) -> slint::Color {
-    let hash = id
-        .bytes()
-        .fold(0_u32, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as u32));
+    let hash = id.bytes().fold(0_u32, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(byte as u32)
+    });
     let color = PROJECT_ACCENTS[(hash as usize) % PROJECT_ACCENTS.len()];
     slint::Color::from_argb_encoded(0xff000000 | color)
 }
 
 fn spawn_terminal_worker(
     app_weak: slint::Weak<AppWindow>,
-    mut input_rx: mpsc::UnboundedReceiver<SlintKeyEvent>,
+    mut client_event_rx: mpsc::UnboundedReceiver<SlintClientEvent>,
 ) {
     std::thread::spawn(move || {
         let runtime = match tokio::runtime::Runtime::new() {
@@ -433,11 +515,11 @@ fn spawn_terminal_worker(
 
         runtime.block_on(async move {
             loop {
-                if input_rx.is_closed() {
+                if client_event_rx.is_closed() {
                     break;
                 }
 
-                if let Err(error) = run_terminal_session(&app_weak, &mut input_rx).await {
+                if let Err(error) = run_terminal_session(&app_weak, &mut client_event_rx).await {
                     set_terminal_status(&app_weak, format!("terminal: {error:#}; retrying"));
                     tokio::time::sleep(RETRY_DELAY).await;
                 }
@@ -448,7 +530,7 @@ fn spawn_terminal_worker(
 
 async fn run_terminal_session(
     app_weak: &slint::Weak<AppWindow>,
-    input_rx: &mut mpsc::UnboundedReceiver<SlintKeyEvent>,
+    client_event_rx: &mut mpsc::UnboundedReceiver<SlintClientEvent>,
 ) -> anyhow::Result<()> {
     set_terminal_status(app_weak, "terminal: loading /tmp/daemon-sandbox.ticket");
     let (endpoint_id, direct_addrs) = wait_for_ticket(app_weak).await?;
@@ -475,7 +557,7 @@ async fn run_terminal_session(
     let mut next_request_id = 1_u64;
     send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
     set_terminal_status(app_weak, "terminal: requesting sandbox project tree");
-    let (section_id, tab_id) = loop {
+    let (mut projects, mut attached_target) = loop {
         let Some((ty, payload)) = tokio::time::timeout(FRAME_TIMEOUT, frame::read_frame(&mut recv))
             .await
             .context("timed out waiting for project list")??
@@ -491,49 +573,18 @@ async fn run_terminal_session(
             serde_json::from_slice(&payload).context("decode worker reply")?;
         match envelope.reply {
             WorkerReply::ProjectList { projects } => {
-                let Some((task, tab)) = projects.iter().find_map(|project| {
-                    project
-                        .tasks
-                        .first()
-                        .and_then(|task| task.tabs.first().map(|tab| (task, tab)))
-                }) else {
+                let Some(target) = first_attachable_target(&projects) else {
                     anyhow::bail!("daemon-sandbox returned no attachable task tabs");
                 };
-                set_workspace_tree(app_weak, &projects, &task.section_id, &tab.id);
-                break (task.section_id.clone(), tab.id.clone());
+                set_workspace_tree(app_weak, &projects, &target.section_id, &target.tab_id);
+                break (projects, target);
             }
             WorkerReply::Err { message, .. } => anyhow::bail!("list_projects failed: {message}"),
             _ => {}
         }
     };
 
-    send_control(
-        &mut send,
-        &mut next_request_id,
-        Control::LaunchTab {
-            section_id: section_id.clone(),
-            tab_id: tab_id.clone(),
-        },
-    )
-    .await?;
-    send_control(
-        &mut send,
-        &mut next_request_id,
-        Control::AttachTab {
-            section_id: section_id.clone(),
-            tab_id: tab_id.clone(),
-        },
-    )
-    .await?;
-    send_control(
-        &mut send,
-        &mut next_request_id,
-        Control::TabResize {
-            cols: TERMINAL_COLS,
-            rows: TERMINAL_ROWS,
-        },
-    )
-    .await?;
+    attach_terminal_target(&mut send, &mut next_request_id, &attached_target, true).await?;
     if let Some(probe) = startup_probe() {
         send_terminal_input(
             &mut send,
@@ -548,7 +599,10 @@ async fn run_terminal_session(
 
     set_terminal_status(
         app_weak,
-        format!("terminal: attached {section_id}/{tab_id} at {TERMINAL_COLS}x{TERMINAL_ROWS}"),
+        format!(
+            "terminal: attached {}/{} at {TERMINAL_COLS}x{TERMINAL_ROWS}",
+            attached_target.section_id, attached_target.tab_id
+        ),
     );
 
     let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
@@ -560,14 +614,72 @@ async fn run_terminal_session(
 
     loop {
         tokio::select! {
-            maybe_input = input_rx.recv() => {
-                let Some(input) = maybe_input else {
-                    anyhow::bail!("input channel closed");
+            maybe_event = client_event_rx.recv() => {
+                let Some(event) = maybe_event else {
+                    anyhow::bail!("client event channel closed");
                 };
-                if let Some(event) = encode_terminal_key(&input, terminal.input_modes()) {
-                    send_terminal_input(&mut send, &mut next_request_id, event)
-                        .await
-                        .context("send terminal input")?;
+                match event {
+                    SlintClientEvent::TerminalKey(input) => {
+                        if let Some(event) = encode_terminal_key(&input, terminal.input_modes()) {
+                            send_terminal_input(&mut send, &mut next_request_id, event)
+                                .await
+                                .context("send terminal input")?;
+                        }
+                    }
+                    SlintClientEvent::SelectProject(project_id) => {
+                        if let Some(target) = target_for_project_id(&projects, &project_id) {
+                            switch_terminal_target(
+                                app_weak,
+                                &mut send,
+                                &mut next_request_id,
+                                &projects,
+                                &mut attached_target,
+                                target,
+                                &mut terminal,
+                                &mut dirty,
+                                &mut pending_flush_at,
+                            )
+                            .await?;
+                        } else {
+                            set_terminal_status(app_weak, format!("terminal: project has no attachable tab: {project_id}"));
+                        }
+                    }
+                    SlintClientEvent::SelectTask(task_id) => {
+                        if let Some(target) = target_for_task_id(&projects, &task_id) {
+                            switch_terminal_target(
+                                app_weak,
+                                &mut send,
+                                &mut next_request_id,
+                                &projects,
+                                &mut attached_target,
+                                target,
+                                &mut terminal,
+                                &mut dirty,
+                                &mut pending_flush_at,
+                            )
+                            .await?;
+                        } else {
+                            set_terminal_status(app_weak, format!("terminal: task has no attachable tab: {task_id}"));
+                        }
+                    }
+                    SlintClientEvent::SelectTab(tab_id) => {
+                        if let Some(target) = target_for_tab_id(&projects, &attached_target.section_id, &tab_id) {
+                            switch_terminal_target(
+                                app_weak,
+                                &mut send,
+                                &mut next_request_id,
+                                &projects,
+                                &mut attached_target,
+                                target,
+                                &mut terminal,
+                                &mut dirty,
+                                &mut pending_flush_at,
+                            )
+                            .await?;
+                        } else {
+                            set_terminal_status(app_weak, format!("terminal: unknown tab: {tab_id}"));
+                        }
+                    }
                 }
             }
             frame = frame::read_frame(&mut recv) => {
@@ -593,8 +705,37 @@ async fn run_terminal_session(
                     }
                     frame::TY_WORKER_REPLY => {
                         if let Ok(envelope) = serde_json::from_slice::<WorkerReplyEnvelope>(&payload) {
-                            if let WorkerReply::Err { message, .. } = envelope.reply {
-                                set_terminal_status(app_weak, format!("terminal worker error: {message}"));
+                            match envelope.reply {
+                                WorkerReply::ProjectList { projects: latest_projects } => {
+                                    projects = latest_projects;
+                                    if target_still_exists(&projects, &attached_target) {
+                                        set_workspace_tree(
+                                            app_weak,
+                                            &projects,
+                                            &attached_target.section_id,
+                                            &attached_target.tab_id,
+                                        );
+                                    } else if let Some(target) = first_attachable_target(&projects) {
+                                        switch_terminal_target(
+                                            app_weak,
+                                            &mut send,
+                                            &mut next_request_id,
+                                            &projects,
+                                            &mut attached_target,
+                                            target,
+                                            &mut terminal,
+                                            &mut dirty,
+                                            &mut pending_flush_at,
+                                        )
+                                        .await?;
+                                    } else {
+                                        set_terminal_status(app_weak, "terminal: project tree has no attachable tabs");
+                                    }
+                                }
+                                WorkerReply::Err { message, .. } => {
+                                    set_terminal_status(app_weak, format!("terminal worker error: {message}"));
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -620,6 +761,14 @@ struct SlintKeyEvent {
     alt: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SlintClientEvent {
+    TerminalKey(SlintKeyEvent),
+    SelectProject(String),
+    SelectTask(String),
+    SelectTab(String),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct TerminalInputModeState {
     app_cursor: bool,
@@ -637,7 +786,102 @@ async fn wait_for_terminal_flush(deadline: Option<Instant>) {
 
 fn next_terminal_flush_deadline(now: Instant, last_flush: Instant) -> Instant {
     let earliest = last_flush + TERMINAL_FRAME_INTERVAL;
-    if earliest > now { earliest } else { now }
+    if earliest > now {
+        earliest
+    } else {
+        now
+    }
+}
+
+async fn switch_terminal_target<W>(
+    app_weak: &slint::Weak<AppWindow>,
+    send: &mut W,
+    next_request_id: &mut u64,
+    projects: &[frame::ProjectSummary],
+    current_target: &mut TerminalTarget,
+    next_target: TerminalTarget,
+    terminal: &mut AlacrittySnapshot,
+    dirty: &mut bool,
+    pending_flush_at: &mut Option<Instant>,
+) -> anyhow::Result<()>
+where
+    W: frame::WriteAllAsync + Unpin,
+{
+    set_workspace_tree(
+        app_weak,
+        projects,
+        &next_target.section_id,
+        &next_target.tab_id,
+    );
+
+    if *current_target == next_target {
+        return Ok(());
+    }
+
+    attach_terminal_target(send, next_request_id, &next_target, true).await?;
+    *current_target = next_target;
+    *terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
+    set_terminal_surface(app_weak, terminal.snapshot_surface());
+    *dirty = false;
+    *pending_flush_at = None;
+    set_terminal_status(
+        app_weak,
+        format!(
+            "terminal: attached {}/{} at {TERMINAL_COLS}x{TERMINAL_ROWS}",
+            current_target.section_id, current_target.tab_id
+        ),
+    );
+
+    Ok(())
+}
+
+async fn attach_terminal_target<W>(
+    send: &mut W,
+    next_request_id: &mut u64,
+    target: &TerminalTarget,
+    persist_active: bool,
+) -> anyhow::Result<()>
+where
+    W: frame::WriteAllAsync + Unpin,
+{
+    if persist_active {
+        send_control(
+            send,
+            next_request_id,
+            Control::ActivateSectionTab {
+                section_id: target.section_id.clone(),
+                tab_id: target.tab_id.clone(),
+            },
+        )
+        .await?;
+    }
+    send_control(
+        send,
+        next_request_id,
+        Control::LaunchTab {
+            section_id: target.section_id.clone(),
+            tab_id: target.tab_id.clone(),
+        },
+    )
+    .await?;
+    send_control(
+        send,
+        next_request_id,
+        Control::AttachTab {
+            section_id: target.section_id.clone(),
+            tab_id: target.tab_id.clone(),
+        },
+    )
+    .await?;
+    send_control(
+        send,
+        next_request_id,
+        Control::TabResize {
+            cols: TERMINAL_COLS,
+            rows: TERMINAL_ROWS,
+        },
+    )
+    .await
 }
 
 async fn send_terminal_input<W>(
@@ -1055,10 +1299,7 @@ fn joins_previous_terminal_grapheme(
         return false;
     };
 
-    run.line == line
-        && run.style == *style
-        && !text.is_empty()
-        && run.text.ends_with('\u{200d}')
+    run.line == line && run.style == *style && !text.is_empty() && run.text.ends_with('\u{200d}')
 }
 
 fn append_terminal_run(
@@ -1176,9 +1417,7 @@ fn maybe_push_link_span(
     let column = to_i32(column);
     let cell_count = to_i32(cell_count);
     if let Some(last) = spans.last_mut() {
-        if last.line == line
-            && last.column + last.cell_count == column
-            && last.uri.as_str() == uri
+        if last.line == line && last.column + last.cell_count == column && last.uri.as_str() == uri
         {
             last.cell_count += cell_count;
             return;
@@ -1520,8 +1759,7 @@ mod tests {
     #[test]
     fn snapshot_surface_preserves_osc8_hyperlink_spans() {
         let mut terminal = AlacrittySnapshot::new(40, 4);
-        let _ = terminal
-            .apply_output(b"\x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\ tail");
+        let _ = terminal.apply_output(b"\x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\ tail");
 
         let surface = terminal.snapshot_surface();
 
@@ -1534,7 +1772,10 @@ mod tests {
 
     #[test]
     fn cursor_shape_name_maps_hollow_block() {
-        assert_eq!(cursor_shape_name(CursorShape::HollowBlock), Some("hollow-block"));
+        assert_eq!(
+            cursor_shape_name(CursorShape::HollowBlock),
+            Some("hollow-block")
+        );
     }
 
     #[test]
