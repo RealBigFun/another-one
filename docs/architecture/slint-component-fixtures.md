@@ -6,14 +6,15 @@ Component fixtures are the review surface for base components before full views 
 
 | Fixture | Required states | GPUI reference source | Slint target |
 | --- | --- | --- | --- |
-| `button-row` | normal, hover, active, focus, disabled, destructive | `desktop/src/titlebar.rs`, `desktop/src/settings_page.rs` | `AoButton`, future `AoIconButton`, future `AoSplitButton` |
+| `button-row` | normal, hover, active, focus, disabled, loading, destructive | `desktop/src/titlebar.rs`, `desktop/src/settings_page.rs` | `AoButton`, `AoIconButton`, `AoSplitButton` |
 | `sidebar-project-row` | normal, hover, active, menu-hover, add-hover, GitHub-hover | `desktop/src/left_sidebar.rs` | `AoProjectRow` |
 | `sidebar-task-row` | normal, hover, active, pinned, running, rename, delete-confirm | `desktop/src/left_sidebar.rs` | `AoTaskRow` |
 | `terminal-tabs` | active, inactive, pinned, running, failed restore, launching | `desktop/src/app.rs`, `desktop/src/titlebar.rs` | `AoTabChip` |
 | `modal-new-task` | empty, focused field, validation error, create disabled/enabled | new-task modal paths in `desktop/src/app.rs` | `AoModalCard`, `AoTextInput`, `AoButton` |
-| `right-sidebar-cards` | empty, loading, changed files, commits, checks failure | `desktop/src/right_sidebar.rs` | `AoCard`, future `AoStateCard` |
-| `toast-stack` | success, warning, error with copy, info, drag offset | `desktop/src/app.rs` | future `AoToast` |
-| `settings-inputs` | agent args, script editor, keybinding row, focus ring | `desktop/src/settings_page.rs` | `AoTextInput`, future menu/shortcut components |
+| `right-sidebar-cards` | empty, loading, changed files, commits, checks failure | `desktop/src/right_sidebar.rs` | `AoCard`, `AoStateCard` |
+| `toast-stack` | success, warning, error with copy, info, drag offset | `desktop/src/app.rs` | `AoToast` |
+| `menu-popover` | normal, hover, selected, disabled, destructive, shortcut | `desktop/src/titlebar.rs`, `desktop/src/left_sidebar.rs` | `AoMenu`, `AoMenuItem` |
+| `settings-inputs` | agent args, script editor, keybinding row, focus ring | `desktop/src/settings_page.rs` | `AoTextInput`, future shortcut component |
 
 ## Capture Requirements
 

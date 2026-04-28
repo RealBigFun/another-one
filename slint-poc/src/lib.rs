@@ -65,8 +65,29 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     app.on_task_selected(move |task_id| {
         let _ = task_event_tx.send(SlintClientEvent::SelectTask(task_id.to_string()));
     });
+    let tab_event_tx = client_event_tx.clone();
     app.on_tab_selected(move |tab_id| {
-        let _ = client_event_tx.send(SlintClientEvent::SelectTab(tab_id.to_string()));
+        let _ = tab_event_tx.send(SlintClientEvent::SelectTab(tab_id.to_string()));
+    });
+    let submit_event_tx = client_event_tx.clone();
+    app.on_submit_new_task(move |task_name, source_branch| {
+        let _ = submit_event_tx.send(SlintClientEvent::SubmitNewTask {
+            task_name: task_name.to_string(),
+            source_branch: source_branch.to_string(),
+        });
+    });
+    let dismiss_toast_app = app.as_weak();
+    app.on_toast_dismissed(move || {
+        clear_toast(&dismiss_toast_app);
+    });
+    let copy_toast_app = app.as_weak();
+    app.on_toast_copy_requested(move || {
+        set_toast(
+            &copy_toast_app,
+            "info",
+            "Notification copy is not wired yet",
+            "Toast details remain visible for manual copy.",
+        );
     });
 
     spawn_terminal_worker(app.as_weak(), client_event_rx);
@@ -215,6 +236,36 @@ fn set_workspace_tree(
             app.set_active_worktree_name(model.active_worktree_name.into());
             app.set_active_project_path(model.active_project_path.into());
             app.set_project_summary(model.project_summary.into());
+        }
+    });
+}
+
+fn set_toast(
+    app_weak: &slint::Weak<AppWindow>,
+    kind: impl Into<String>,
+    message: impl Into<String>,
+    detail: impl Into<String>,
+) {
+    let app_weak = app_weak.clone();
+    let kind = kind.into();
+    let message = message.into();
+    let detail = detail.into();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_toast_kind(kind.into());
+            app.set_toast_message(message.into());
+            app.set_toast_detail(detail.into());
+        }
+    });
+}
+
+fn clear_toast(app_weak: &slint::Weak<AppWindow>) {
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_toast_kind("info".into());
+            app.set_toast_message("".into());
+            app.set_toast_detail("".into());
         }
     });
 }
@@ -393,6 +444,51 @@ fn target_still_exists(projects: &[frame::ProjectSummary], target: &TerminalTarg
             task.section_id == target.section_id
                 && task.tabs.iter().any(|tab| tab.id == target.tab_id)
         })
+    })
+}
+
+fn project_id_for_target(
+    projects: &[frame::ProjectSummary],
+    target: &TerminalTarget,
+) -> Option<String> {
+    task_project_for_target(projects, target).map(|(project, task)| {
+        if task.target_project_id.is_empty() {
+            project.id.clone()
+        } else {
+            task.target_project_id.clone()
+        }
+    })
+}
+
+fn normalized_source_branch(
+    projects: &[frame::ProjectSummary],
+    target: &TerminalTarget,
+    requested_branch: &str,
+) -> Option<String> {
+    let requested_branch = requested_branch.trim();
+    if !requested_branch.is_empty() {
+        return Some(requested_branch.to_string());
+    }
+
+    task_project_for_target(projects, target).and_then(|(project, task)| {
+        if !task.branch_name.is_empty() {
+            Some(task.branch_name.clone())
+        } else {
+            project.current_branch.clone()
+        }
+    })
+}
+
+fn task_project_for_target<'a>(
+    projects: &'a [frame::ProjectSummary],
+    target: &TerminalTarget,
+) -> Option<(&'a frame::ProjectSummary, &'a frame::TaskSummary)> {
+    projects.iter().find_map(|project| {
+        project
+            .tasks
+            .iter()
+            .find(|task| task.section_id == target.section_id)
+            .map(|task| (project, task))
     })
 }
 
@@ -663,6 +759,41 @@ async fn run_terminal_session(
                             set_terminal_status(app_weak, format!("terminal: unknown tab: {tab_id}"));
                         }
                     }
+                    SlintClientEvent::SubmitNewTask { task_name, source_branch } => {
+                        let task_name = task_name.trim().to_string();
+                        if task_name.is_empty() {
+                            set_toast(app_weak, "error", "Task name is required", "Enter a task name before creating a task.");
+                            continue;
+                        }
+                        let Some(project_id) = project_id_for_target(&projects, &attached_target) else {
+                            set_toast(app_weak, "error", "No active project", "Select a daemon-backed project before creating a task.");
+                            continue;
+                        };
+                        let Some(source_branch) = normalized_source_branch(&projects, &attached_target, &source_branch) else {
+                            set_toast(app_weak, "error", "No source branch", "Enter a source branch before creating a worktree task.");
+                            continue;
+                        };
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::SubmitNewTask {
+                                project_id,
+                                task_name: task_name.clone(),
+                                source_branch: source_branch.clone(),
+                                agent_ids: Vec::new(),
+                                branch_mode_existing: false,
+                                worktree_mode: true,
+                            },
+                        )
+                        .await
+                        .context("submit new task")?;
+                        set_toast(
+                            app_weak,
+                            "info",
+                            format!("Creating task {task_name}"),
+                            format!("Source branch: {source_branch}"),
+                        );
+                    }
                 }
             }
             frame = frame::read_frame(&mut recv) => {
@@ -717,6 +848,21 @@ async fn run_terminal_session(
                                 }
                                 WorkerReply::Err { message, .. } => {
                                     set_terminal_status(app_weak, format!("terminal worker error: {message}"));
+                                    set_toast(app_weak, "error", "Daemon request failed", message);
+                                }
+                                WorkerReply::SubmitNewTaskAck { section_id } => {
+                                    let target = TerminalTarget {
+                                        section_id,
+                                        tab_id: "0".to_string(),
+                                    };
+                                    attach_terminal_target(&mut send, &mut next_request_id, &target, true).await?;
+                                    attached_target = target;
+                                    terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
+                                    set_terminal_surface(app_weak, terminal.snapshot_surface());
+                                    dirty = false;
+                                    pending_flush_at = None;
+                                    send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
+                                    set_toast(app_weak, "success", "Task created", "Attached to the new task terminal.");
                                 }
                                 _ => {}
                             }
@@ -750,6 +896,10 @@ enum SlintClientEvent {
     SelectProject(String),
     SelectTask(String),
     SelectTab(String),
+    SubmitNewTask {
+        task_name: String,
+        source_branch: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1849,6 +1999,58 @@ mod tests {
         assert_eq!(bytes, b"\x1bx");
     }
 
+    #[test]
+    fn project_id_for_target_prefers_task_target_project_id() {
+        let projects = project_tree_for_submit_tests("worktree-project", "feature/a");
+        let target = TerminalTarget {
+            section_id: "section-1".to_string(),
+            tab_id: "0".to_string(),
+        };
+
+        let project_id = project_id_for_target(&projects, &target);
+
+        assert_eq!(project_id.as_deref(), Some("worktree-project"));
+    }
+
+    #[test]
+    fn project_id_for_target_falls_back_to_root_project_id() {
+        let projects = project_tree_for_submit_tests("", "feature/a");
+        let target = TerminalTarget {
+            section_id: "section-1".to_string(),
+            tab_id: "0".to_string(),
+        };
+
+        let project_id = project_id_for_target(&projects, &target);
+
+        assert_eq!(project_id.as_deref(), Some("root-project"));
+    }
+
+    #[test]
+    fn normalized_source_branch_uses_requested_branch_first() {
+        let projects = project_tree_for_submit_tests("worktree-project", "feature/a");
+        let target = TerminalTarget {
+            section_id: "section-1".to_string(),
+            tab_id: "0".to_string(),
+        };
+
+        let source_branch = normalized_source_branch(&projects, &target, "  release/b  ");
+
+        assert_eq!(source_branch.as_deref(), Some("release/b"));
+    }
+
+    #[test]
+    fn normalized_source_branch_falls_back_to_task_branch() {
+        let projects = project_tree_for_submit_tests("worktree-project", "feature/a");
+        let target = TerminalTarget {
+            section_id: "section-1".to_string(),
+            tab_id: "0".to_string(),
+        };
+
+        let source_branch = normalized_source_branch(&projects, &target, "");
+
+        assert_eq!(source_branch.as_deref(), Some("feature/a"));
+    }
+
     fn assert_run_color(surface: &TerminalSurface, text: &str, expected: u32) {
         let run = find_run_containing(surface, text);
         assert_eq!(run.color.as_argb_encoded(), expected);
@@ -1882,5 +2084,31 @@ mod tests {
         encode_terminal_key(&event, modes)
             .expect("key should encode")
             .pty_bytes()
+    }
+
+    fn project_tree_for_submit_tests(
+        task_target_project_id: &str,
+        task_branch_name: &str,
+    ) -> Vec<frame::ProjectSummary> {
+        vec![frame::ProjectSummary {
+            id: "root-project".to_string(),
+            name: "Root".to_string(),
+            path: "/repo/root".to_string(),
+            kind: frame::ProjectKind::Root,
+            current_branch: Some("main".to_string()),
+            tasks: vec![frame::TaskSummary {
+                id: "task-1".to_string(),
+                name: "Task".to_string(),
+                section_id: "section-1".to_string(),
+                branch_name: task_branch_name.to_string(),
+                active_tab_id: "0".to_string(),
+                tabs: Vec::new(),
+                pinned: false,
+                last_commit_relative: String::new(),
+                lines_added: 0,
+                lines_removed: 0,
+                target_project_id: task_target_project_id.to_string(),
+            }],
+        }]
     }
 }

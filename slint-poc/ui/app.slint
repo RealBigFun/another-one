@@ -1,13 +1,17 @@
 import {
     AoButton,
-    AoCard,
+    AoIconButton,
     AoModalCard,
     AoProjectRow,
+    AoResourceIndicator,
     AoSectionLabel,
+    AoSplitButton,
+    AoStateCard,
     AoStatusPill,
     AoTabChip,
     AoTaskRow,
     AoTextInput,
+    AoToast,
     ProjectSidebarEntry,
     TaskSidebarEntry,
     TerminalTabChip,
@@ -72,6 +76,11 @@ export component AppWindow inherits Window {
     in-out property <string> resource_summary: "app 1.0% / 175 MB";
     in-out property <string> appearance_label: "dark";
     in-out property <string> platform_label: "linux / keyboard";
+    in-out property <string> new_task_name: "";
+    in-out property <string> new_task_branch: "";
+    in-out property <string> toast_kind: "info";
+    in-out property <string> toast_message: "";
+    in-out property <string> toast_detail: "";
 
     in property <[ProjectSidebarEntry]> project_rows;
     in property <[TaskSidebarEntry]> task_rows;
@@ -86,6 +95,9 @@ export component AppWindow inherits Window {
     callback task_selected(string);
     callback tab_selected(string);
     callback terminal_key(string, bool, bool, bool);
+    callback submit_new_task(string, string);
+    callback toast_dismissed();
+    callback toast_copy_requested();
 
     title: "AnotherOne";
     preferred-width: 1380px;
@@ -115,16 +127,17 @@ export component AppWindow inherits Window {
             height: root.titlebar-height;
             background: chrome_bg;
 
-            AoButton {
+            AoIconButton {
                 x: 10px;
                 y: 6px;
                 width: 30px;
-                label: "|";
+                icon: "|";
+                control-label: "Toggle project drawer";
                 active: false;
                 bg: overlay_active;
                 hover-bg: overlay_hover;
                 border: border_color;
-                text-color: text_secondary;
+                icon-color: text_secondary;
             }
 
             Text {
@@ -156,11 +169,13 @@ export component AppWindow inherits Window {
                 text-color: text_primary;
             }
 
-            if !root.mobile-layout: AoButton {
+            if !root.mobile-layout: AoSplitButton {
                 x: parent.width - 520px;
                 y: 6px;
                 width: 138px;
                 label: "Actions";
+                control-label: "Run task action";
+                menu-control-label: "Open task action menu";
                 active: true;
                 bg: overlay_active;
                 hover-bg: overlay_hover;
@@ -180,7 +195,7 @@ export component AppWindow inherits Window {
                 text-color: text_secondary;
             }
 
-            if !root.mobile-layout: AoStatusPill {
+            if !root.mobile-layout: AoResourceIndicator {
                 x: parent.width - 244px;
                 y: 7px;
                 width: 184px;
@@ -188,18 +203,21 @@ export component AppWindow inherits Window {
                 bg: sunken_bg;
                 border: border_color;
                 text-color: text_secondary;
+                warning-color: warning_color;
+                danger-color: danger_color;
             }
 
-            AoButton {
+            AoIconButton {
                 x: parent.width - 50px;
                 y: 6px;
                 width: 32px;
-                label: "x";
+                icon: "x";
+                control-label: "Close window";
                 active: false;
                 bg: overlay_active;
                 hover-bg: overlay_hover;
                 border: border_color;
-                text-color: text_secondary;
+                icon-color: text_secondary;
                 clicked => {
                     root.close_requested();
                 }
@@ -338,16 +356,17 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                AoButton {
+                AoIconButton {
                     x: parent.width - 42px;
                     y: 6px;
                     width: 30px;
-                    label: "+";
+                    icon: "+";
+                    control-label: "Open new terminal tab";
                     active: false;
                     bg: overlay_active;
                     hover-bg: overlay_hover;
                     border: border_color;
-                    text-color: text_secondary;
+                    icon-color: text_secondary;
                 }
             }
 
@@ -512,40 +531,52 @@ export component AppWindow inherits Window {
                 text-color: text_secondary;
             }
 
-            AoCard {
+            AoStateCard {
                 x: 16px;
                 y: 86px;
                 width: parent.width - 32px;
                 title: "Working Tree";
                 body: "Changed files and git actions will render here from daemon ProjectList and git metadata frames.";
+                state: "empty";
                 card-bg: card_bg;
                 card-border-color: border_color;
                 text-primary: text_primary;
                 text-muted: text_muted;
+                success-color: success_color;
+                warning-color: warning_color;
+                danger-color: danger_color;
             }
 
-            AoCard {
+            AoStateCard {
                 x: 16px;
-                y: 186px;
+                y: 202px;
                 width: parent.width - 32px;
                 title: "Checks";
                 body: "CI status, branch comparison, and PR state mirror the GPUI right sidebar contracts.";
+                state: "loading";
                 card-bg: card_bg;
                 card-border-color: border_color;
                 text-primary: text_primary;
                 text-muted: text_muted;
+                success-color: success_color;
+                warning-color: warning_color;
+                danger-color: danger_color;
             }
 
-            AoCard {
+            AoStateCard {
                 x: 16px;
-                y: 286px;
+                y: 318px;
                 width: parent.width - 32px;
                 title: "Project Path";
                 body: active_project_path;
+                state: active_project_path == "" ? "empty" : "populated";
                 card-bg: card_bg;
                 card-border-color: border_color;
                 text-primary: text_primary;
                 text-muted: text_muted;
+                success-color: success_color;
+                warning-color: warning_color;
+                danger-color: danger_color;
             }
         }
 
@@ -556,28 +587,33 @@ export component AppWindow inherits Window {
             height: footer-height;
             background: chrome_bg;
 
-            AoButton {
+            AoIconButton {
                 x: 10px;
                 y: 6px;
                 width: 32px;
-                label: "S";
+                icon: "S";
+                control-label: "Open settings";
                 active: false;
                 bg: overlay_active;
                 hover-bg: overlay_hover;
                 border: border_color;
-                text-color: text_secondary;
+                icon-color: text_secondary;
             }
 
-            AoButton {
+            AoIconButton {
                 x: 50px;
                 y: 6px;
                 width: 32px;
-                label: "+";
+                icon: "+";
+                control-label: "Create task";
                 active: false;
                 bg: overlay_active;
                 hover-bg: overlay_hover;
                 border: border_color;
-                text-color: text_secondary;
+                icon-color: text_secondary;
+                clicked => {
+                    root.modal_open = true;
+                }
             }
 
             AoStatusPill {
@@ -652,6 +688,21 @@ export component AppWindow inherits Window {
                     font-weight: 900;
                 }
 
+                AoIconButton {
+                    x: parent.width - 50px;
+                    y: 20px;
+                    width: 30px;
+                    icon: "x";
+                    control-label: "Close new task modal";
+                    bg: root.overlay_active;
+                    hover-bg: root.overlay_hover;
+                    border: root.border_color;
+                    icon-color: root.text_secondary;
+                    clicked => {
+                        root.modal_open = false;
+                    }
+                }
+
                 Text {
                     x: 24px;
                     y: 56px;
@@ -666,8 +717,12 @@ export component AppWindow inherits Window {
                     y: 92px;
                     width: 392px;
                     placeholder-text: "Task name";
+                    text <=> root.new_task_name;
                     field-bg: terminal_bg;
                     field-border: border_color;
+                    focus-border: focus_ring;
+                    error-color: danger_color;
+                    error: root.new_task_name == "";
                 }
 
                 AoTextInput {
@@ -675,8 +730,26 @@ export component AppWindow inherits Window {
                     y: 142px;
                     width: 392px;
                     placeholder-text: "Branch name";
+                    text <=> root.new_task_branch;
                     field-bg: terminal_bg;
                     field-border: border_color;
+                    focus-border: focus_ring;
+                    error-color: danger_color;
+                }
+
+                AoButton {
+                    x: 202px;
+                    y: 198px;
+                    width: 102px;
+                    label: "Cancel";
+                    active: false;
+                    bg: overlay_active;
+                    hover-bg: overlay_hover;
+                    border: border_color;
+                    text-color: text_secondary;
+                    clicked => {
+                        root.modal_open = false;
+                    }
                 }
 
                 AoButton {
@@ -685,14 +758,40 @@ export component AppWindow inherits Window {
                     width: 102px;
                     label: "Create";
                     active: true;
+                    disabled: root.new_task_name == "";
                     bg: overlay_active;
                     hover-bg: overlay_hover;
                     border: border_color;
                     text-color: text_primary;
                     clicked => {
+                        root.submit_new_task(root.new_task_name, root.new_task_branch);
                         root.modal_open = false;
+                        root.new_task_name = "";
+                        root.new_task_branch = "";
                     }
                 }
+            }
+        }
+
+        if toast_message != "": AoToast {
+            x: parent.width - 402px;
+            y: parent.height - footer-height - self.height - 16px;
+            width: 386px;
+            kind: root.toast_kind;
+            message: root.toast_message;
+            detail: root.toast_detail;
+            card-bg: root.card_bg;
+            toast-border-color: root.border_color;
+            text-primary: root.text_primary;
+            text-muted: root.text_muted;
+            success-color: root.success_color;
+            warning-color: root.warning_color;
+            danger-color: root.danger_color;
+            dismissed => {
+                root.toast_dismissed();
+            }
+            copy-requested => {
+                root.toast_copy_requested();
             }
         }
     }
