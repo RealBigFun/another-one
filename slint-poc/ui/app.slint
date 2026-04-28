@@ -1,0 +1,253 @@
+import { Button, LineEdit } from "std-widgets.slint";
+
+component SidebarRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> active;
+    in property <color> overlay_hover;
+    in property <color> overlay_active;
+    in property <color> text_primary;
+    in property <color> text_muted;
+
+    height: 58px;
+    border-radius: 10px;
+    background: active ? overlay_active : row_touch.has-hover ? overlay_hover : transparent;
+
+    row_touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+    }
+
+    Rectangle {
+        x: 12px;
+        y: 16px;
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        background: active ? #5d7ad5 : #4d7f58;
+
+        Text {
+            x: 0px;
+            y: 6px;
+            width: parent.width;
+            horizontal-alignment: center;
+            text: "A";
+            color: text_primary;
+            font-size: 12px;
+            font-weight: 700;
+        }
+    }
+
+    Text {
+        x: 52px;
+        y: 11px;
+        text: title;
+        color: text_primary;
+        font-size: 15px;
+        font-weight: 700;
+    }
+
+    Text {
+        x: 52px;
+        y: 33px;
+        text: subtitle;
+        color: text_muted;
+        font-size: 12px;
+    }
+}
+
+export component AppWindow inherits Window {
+    in property <color> chrome_bg;
+    in property <color> card_bg;
+    in property <color> terminal_bg;
+    in property <color> overlay_hover;
+    in property <color> overlay_active;
+    in property <color> focus_ring;
+    in property <color> text_primary;
+    in property <color> text_secondary;
+    in property <color> text_muted;
+    in-out property <bool> modal_open: true;
+    callback close_requested();
+
+    title: "AnotherOne Slint POC";
+    width: 1180px;
+    height: 760px;
+    background: terminal_bg;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: terminal_bg;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 44px;
+            background: chrome_bg;
+
+            Text {
+                x: 18px;
+                y: 13px;
+                text: "AnotherOne / Slint POC";
+                color: text_primary;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            Button {
+                x: parent.width - 52px;
+                y: 8px;
+                width: 32px;
+                height: 28px;
+                text: "x";
+                clicked => {
+                    root.close_requested();
+                }
+            }
+        }
+
+        Rectangle {
+            x: 0px;
+            y: 44px;
+            width: 296px;
+            height: parent.height - 44px;
+            background: chrome_bg;
+
+            Text {
+                x: 18px;
+                y: 18px;
+                text: "PROJECTS";
+                color: text_muted;
+                font-size: 12px;
+                font-weight: 700;
+            }
+
+            SidebarRow {
+                x: 12px;
+                y: 48px;
+                width: 272px;
+                active: true;
+                title: "appimage-daemon";
+                subtitle: "daemon-transport-foundation";
+                overlay_hover: root.overlay_hover;
+                overlay_active: root.overlay_active;
+                text_primary: root.text_primary;
+                text_muted: root.text_muted;
+            }
+
+            SidebarRow {
+                x: 12px;
+                y: 112px;
+                width: 272px;
+                active: false;
+                title: "another-one";
+                subtitle: "poc/slint-makepad-ui-eval";
+                overlay_hover: root.overlay_hover;
+                overlay_active: root.overlay_active;
+                text_primary: root.text_primary;
+                text_muted: root.text_muted;
+            }
+
+            SidebarRow {
+                x: 12px;
+                y: 176px;
+                width: 272px;
+                active: false;
+                title: "mobile-eval";
+                subtitle: "iroh-only terminal baseline";
+                overlay_hover: root.overlay_hover;
+                overlay_active: root.overlay_active;
+                text_primary: root.text_primary;
+                text_muted: root.text_muted;
+            }
+        }
+
+        Rectangle {
+            x: 296px;
+            y: 44px;
+            width: parent.width - 296px;
+            height: parent.height - 44px;
+            background: terminal_bg;
+
+            Text {
+                x: 28px;
+                y: 28px;
+                text: "$ cargo run -p slint-poc";
+                color: text_secondary;
+                font-family: "monospace";
+                font-size: 14px;
+            }
+
+            Text {
+                x: 28px;
+                y: 58px;
+                text: "fixture grid: iroh + alacritty_terminal wiring lands after chrome parity";
+                color: text_muted;
+                font-family: "monospace";
+                font-size: 13px;
+            }
+        }
+
+        if modal_open: Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: #00000080;
+
+            Rectangle {
+                x: (parent.width - 430px) / 2;
+                y: (parent.height - 250px) / 2;
+                width: 430px;
+                height: 250px;
+                border-radius: 18px;
+                background: card_bg;
+                border-width: 1px;
+                border-color: focus_ring;
+
+                Text {
+                    x: 24px;
+                    y: 22px;
+                    text: "New task";
+                    color: text_primary;
+                    font-size: 19px;
+                    font-weight: 800;
+                }
+
+                Text {
+                    x: 24px;
+                    y: 56px;
+                    text: "Fixture modal used to compare form ergonomics.";
+                    color: text_muted;
+                    font-size: 12px;
+                }
+
+                LineEdit {
+                    x: 24px;
+                    y: 92px;
+                    width: 382px;
+                    height: 36px;
+                    placeholder-text: "Task name";
+                }
+
+                LineEdit {
+                    x: 24px;
+                    y: 142px;
+                    width: 382px;
+                    height: 36px;
+                    placeholder-text: "Branch name";
+                }
+
+                Button {
+                    x: 304px;
+                    y: 196px;
+                    width: 102px;
+                    height: 34px;
+                    text: "Create";
+                    clicked => {
+                        root.modal_open = false;
+                    }
+                }
+            }
+        }
+    }
+}

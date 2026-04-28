@@ -1,0 +1,8 @@
+[package]
+name = "makepad-poc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+makepad-widgets = "1.0.0"

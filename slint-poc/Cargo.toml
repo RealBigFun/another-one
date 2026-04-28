@@ -1,0 +1,17 @@
+[package]
+name = "slint-poc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+
+[dependencies]
+slint = "1.15"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# GPUI enables yeslogic-fontconfig-sys/dlopen in the workspace. Mirror that
+# through fontique so Slint's normal dependency graph uses the dlopen path too.
+fontique = { version = "0.8.0", default-features = false, features = ["fontconfig-dlopen"] }
+
+[build-dependencies]
+slint-build = "1.15"
