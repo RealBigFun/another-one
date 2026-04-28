@@ -16,6 +16,14 @@ export struct TerminalBackgroundSpan {
     color: color,
 }
 
+export struct TerminalCursorSpan {
+    line: int,
+    column: int,
+    cell-count: int,
+    shape: string,
+    color: color,
+}
+
 component SidebarRow inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
@@ -86,6 +94,7 @@ export component AppWindow inherits Window {
     in-out property <string> terminal_status: "terminal: waiting for daemon-sandbox ticket";
     in property <[TerminalTextRun]> terminal_runs;
     in property <[TerminalBackgroundSpan]> terminal_background_spans;
+    in property <[TerminalCursorSpan]> terminal_cursor_spans;
     callback close_requested();
     callback terminal_key(string, bool, bool, bool);
 
@@ -173,7 +182,7 @@ export component AppWindow inherits Window {
                 width: 272px;
                 active: false;
                 title: "another-one";
-                subtitle: "poc/slint-makepad-ui-eval";
+                subtitle: "poc/slint-daemon-ui";
                 overlay_hover: root.overlay_hover;
                 overlay_active: root.overlay_active;
                 text_primary: root.text_primary;
@@ -185,7 +194,7 @@ export component AppWindow inherits Window {
                 y: 176px;
                 width: 272px;
                 active: false;
-                title: "mobile-eval";
+                title: "slint-eval";
                 subtitle: "iroh-only terminal baseline";
                 overlay_hover: root.overlay_hover;
                 overlay_active: root.overlay_active;
@@ -253,6 +262,17 @@ export component AppWindow inherits Window {
                 font-family: "monospace";
                 font-size: 13px;
                 font-weight: run.bold ? 700 : 400;
+            }
+
+            for cursor in root.terminal_cursor_spans: Rectangle {
+                x: terminal_surface.terminal-left + cursor.column * terminal_surface.terminal-cell-width;
+                y: terminal_surface.terminal-top + cursor.line * terminal_surface.terminal-cell-height
+                    + (cursor.shape == "underline" ? terminal_surface.terminal-cell-height - 2px : 0px);
+                width: cursor.shape == "beam" ? 2px : cursor.cell-count * terminal_surface.terminal-cell-width;
+                height: cursor.shape == "underline" ? 2px : terminal_surface.terminal-cell-height;
+                border-width: cursor.shape == "hollow-block" ? 1px : 0px;
+                border-color: cursor.color;
+                background: cursor.shape == "hollow-block" ? transparent : cursor.color;
             }
         }
 

@@ -360,6 +360,9 @@ fn set_terminal_surface(app_weak: &slint::Weak<AppWindow>, surface: TerminalSurf
             app.set_terminal_background_spans(slint::ModelRc::new(slint::VecModel::from(
                 surface.background_spans,
             )));
+            app.set_terminal_cursor_spans(slint::ModelRc::new(slint::VecModel::from(
+                surface.cursor_spans,
+            )));
             app.set_terminal_runs(slint::ModelRc::new(slint::VecModel::from(
                 surface.text_runs,
             )));
@@ -464,6 +467,7 @@ struct AlacrittySnapshot {
 struct TerminalSurface {
     text_runs: Vec<TerminalTextRun>,
     background_spans: Vec<TerminalBackgroundSpan>,
+    cursor_spans: Vec<TerminalCursorSpan>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -580,6 +584,17 @@ impl AlacrittySnapshot {
                         cell_count,
                         style.background,
                         false,
+                    );
+                }
+
+                if is_cursor {
+                    maybe_push_cursor_span(
+                        &mut surface.cursor_spans,
+                        viewport_line,
+                        visual_column,
+                        cell_count,
+                        renderable.cursor.shape,
+                        style.foreground,
                     );
                 }
 
@@ -700,6 +715,36 @@ fn maybe_push_background_span(
         cell_count,
         color: slint::Color::from_argb_encoded(color),
     });
+}
+
+fn maybe_push_cursor_span(
+    spans: &mut Vec<TerminalCursorSpan>,
+    line: usize,
+    column: usize,
+    cell_count: usize,
+    shape: CursorShape,
+    color: u32,
+) {
+    let Some(shape) = cursor_shape_name(shape) else {
+        return;
+    };
+
+    spans.push(TerminalCursorSpan {
+        line: to_i32(line),
+        column: to_i32(column),
+        cell_count: to_i32(cell_count),
+        shape: shape.into(),
+        color: slint::Color::from_argb_encoded(color),
+    });
+}
+
+fn cursor_shape_name(shape: CursorShape) -> Option<&'static str> {
+    match shape {
+        CursorShape::Block | CursorShape::Hidden => None,
+        CursorShape::Underline => Some("underline"),
+        CursorShape::Beam => Some("beam"),
+        CursorShape::HollowBlock => Some("hollow-block"),
+    }
 }
 
 fn visible_cell_text(cell: &alacritty_terminal::term::cell::Cell) -> Option<String> {
@@ -988,6 +1033,49 @@ mod tests {
         assert_eq!(narrow.color.as_argb_encoded(), 0xff98c379);
     }
 
+    #[test]
+    fn snapshot_surface_emits_beam_cursor_span() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output(b"\x1b[6 q");
+
+        let surface = terminal.snapshot_surface();
+
+        let cursor = single_cursor_span(&surface);
+        assert_eq!(cursor.shape.as_str(), "beam");
+        assert_eq!(cursor.line, 0);
+        assert_eq!(cursor.column, 0);
+        assert_eq!(cursor.cell_count, 1);
+    }
+
+    #[test]
+    fn snapshot_surface_emits_underline_cursor_span() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output(b"\x1b[4 q");
+
+        let surface = terminal.snapshot_surface();
+
+        let cursor = single_cursor_span(&surface);
+        assert_eq!(cursor.shape.as_str(), "underline");
+        assert_eq!(cursor.line, 0);
+        assert_eq!(cursor.column, 0);
+        assert_eq!(cursor.cell_count, 1);
+    }
+
+    #[test]
+    fn snapshot_surface_hides_hidden_cursor() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output(b"\x1b[?25l");
+
+        let surface = terminal.snapshot_surface();
+
+        assert!(surface.cursor_spans.is_empty());
+    }
+
+    #[test]
+    fn cursor_shape_name_maps_hollow_block() {
+        assert_eq!(cursor_shape_name(CursorShape::HollowBlock), Some("hollow-block"));
+    }
+
     fn assert_run_color(surface: &TerminalSurface, text: &str, expected: u32) {
         let run = find_run_containing(surface, text);
         assert_eq!(run.color.as_argb_encoded(), expected);
@@ -999,5 +1087,10 @@ mod tests {
             .iter()
             .find(|run| run.text.as_str().contains(text))
             .unwrap_or_else(|| panic!("missing terminal run containing {text:?}"))
+    }
+
+    fn single_cursor_span(surface: &TerminalSurface) -> &TerminalCursorSpan {
+        assert_eq!(surface.cursor_spans.len(), 1);
+        &surface.cursor_spans[0]
     }
 }
