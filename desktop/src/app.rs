@@ -3900,9 +3900,7 @@ impl AnotherOneApp {
             resource_usage: ResourceUsageSnapshot::default(),
             resource_usage_sampler: ResourceUsageSampler::default(),
             last_resource_usage_refresh: Instant::now() - RESOURCE_REFRESH_INTERVAL_CLOSED,
-            updater: crate::updater::UpdaterHandle::spawn(
-                crate::updater::BuildIdentity::current(),
-            ),
+            updater: crate::updater::UpdaterHandle::spawn(crate::updater::BuildIdentity::current()),
             updater_state: crate::updater::UpdateState::Idle,
         };
 
