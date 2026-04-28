@@ -168,9 +168,7 @@ pub enum UpdateComparison {
     /// Manifest published but no asset matches the current
     /// OS/arch. Shown as an informational state — never an error
     /// loop.
-    UnsupportedPlatform {
-        manifest: UpdateManifest,
-    },
+    UnsupportedPlatform { manifest: UpdateManifest },
 }
 
 /// User-visible state machine. The settings UI renders this
@@ -252,10 +250,7 @@ pub enum UpdaterEvent {
     /// Toast-worthy notice (download finished, install failed,
     /// etc.). The desktop app routes these through the existing
     /// toast helpers.
-    Notice {
-        kind: NoticeKind,
-        message: String,
-    },
+    Notice { kind: NoticeKind, message: String },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -404,7 +399,12 @@ fn run_worker(
                         // app to download silently and only the
                         // install step to be user initiated.
                         if matches!(state, UpdateState::UpdateAvailable { .. }) {
-                            run_download(&identity, &event_tx, &mut state, &mut last_available);
+                            run_download(
+                                &identity,
+                                &event_tx,
+                                &mut state,
+                                &mut last_available,
+                            );
                         }
                     }
                     Err(err) => {
@@ -619,8 +619,8 @@ fn perform_check(identity: &BuildIdentity) -> Result<UpdateComparison, String> {
         .map_err(|err| format!("fetch signature: {err}"))?;
     verify_manifest_signature(&manifest_bytes, &signature_bytes)?;
 
-    let manifest: UpdateManifest =
-        serde_json::from_slice(&manifest_bytes).map_err(|err| format!("parse manifest: {err}"))?;
+    let manifest: UpdateManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|err| format!("parse manifest: {err}"))?;
     if manifest.schema_version != SUPPORTED_SCHEMA_VERSION {
         return Err(format!(
             "unsupported manifest schema version {}",
@@ -687,7 +687,8 @@ fn trust_pubkey() -> Result<&'static VerifyingKey, String> {
         }
         let mut key_bytes = [0u8; 32];
         key_bytes.copy_from_slice(&bytes);
-        VerifyingKey::from_bytes(&key_bytes).map_err(|err| format!("invalid Ed25519 pubkey: {err}"))
+        VerifyingKey::from_bytes(&key_bytes)
+            .map_err(|err| format!("invalid Ed25519 pubkey: {err}"))
     });
     cached.as_ref().map_err(|err| err.clone())
 }
@@ -788,7 +789,8 @@ fn perform_download(
         }
     }
 
-    file.flush().map_err(|err| format!("flush part: {err}"))?;
+    file.flush()
+        .map_err(|err| format!("flush part: {err}"))?;
     file.sync_all()
         .map_err(|err| format!("fsync part: {err}"))?;
     drop(file);
@@ -848,7 +850,8 @@ fn asset_filename(manifest: &UpdateManifest, asset: &UpdateAsset) -> String {
 }
 
 pub fn updates_cache_dir() -> Result<PathBuf, String> {
-    let base = dirs::cache_dir().ok_or_else(|| "could not resolve user cache dir".to_string())?;
+    let base = dirs::cache_dir()
+        .ok_or_else(|| "could not resolve user cache dir".to_string())?;
     Ok(base.join("another-one").join("updates"))
 }
 
@@ -894,8 +897,9 @@ mod tests {
                     arch: "aarch64".into(),
                     kind: "app-tar-gz".into(),
                     url: "https://example.com/macos.app.tar.gz".into(),
-                    sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-                        .into(),
+                    sha256:
+                        "0000000000000000000000000000000000000000000000000000000000000000"
+                            .into(),
                     size_bytes: Some(123),
                 },
                 UpdateAsset {
@@ -903,8 +907,9 @@ mod tests {
                     arch: "x86_64".into(),
                     kind: "appimage".into(),
                     url: "https://example.com/linux.AppImage".into(),
-                    sha256: "1111111111111111111111111111111111111111111111111111111111111111"
-                        .into(),
+                    sha256:
+                        "1111111111111111111111111111111111111111111111111111111111111111"
+                            .into(),
                     size_bytes: Some(456),
                 },
             ],
