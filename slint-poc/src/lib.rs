@@ -9,7 +9,7 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
-use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
+use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
 use anyhow::Context;
 use daemon_sandbox::frame::{
@@ -39,11 +39,13 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     slint::set_xdg_app_id("com.anotherone.SlintPoc")?;
     apply_tokens(&app);
 
-    let (input_tx, input_rx) = mpsc::unbounded_channel::<TerminalInputEvent>();
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<SlintKeyEvent>();
     app.on_terminal_key(move |text, control, alt, _shift| {
-        if let Some(bytes) = encode_terminal_key(text.as_str(), control, alt) {
-            let _ = input_tx.send(TerminalInputEvent::Key { bytes });
-        }
+        let _ = input_tx.send(SlintKeyEvent {
+            text: text.to_string(),
+            control,
+            alt,
+        });
     });
 
     spawn_terminal_worker(app.as_weak(), input_rx);
@@ -82,7 +84,7 @@ fn argb(a: u8, r: u8, g: u8, b: u8) -> slint::Color {
 
 fn spawn_terminal_worker(
     app_weak: slint::Weak<AppWindow>,
-    mut input_rx: mpsc::UnboundedReceiver<TerminalInputEvent>,
+    mut input_rx: mpsc::UnboundedReceiver<SlintKeyEvent>,
 ) {
     std::thread::spawn(move || {
         let runtime = match tokio::runtime::Runtime::new() {
@@ -113,7 +115,7 @@ fn spawn_terminal_worker(
 
 async fn run_terminal_session(
     app_weak: &slint::Weak<AppWindow>,
-    input_rx: &mut mpsc::UnboundedReceiver<TerminalInputEvent>,
+    input_rx: &mut mpsc::UnboundedReceiver<SlintKeyEvent>,
 ) -> anyhow::Result<()> {
     set_terminal_status(app_weak, "terminal: loading /tmp/daemon-sandbox.ticket");
     let (endpoint_id, direct_addrs) = wait_for_ticket(app_weak).await?;
@@ -229,9 +231,11 @@ async fn run_terminal_session(
                 let Some(input) = maybe_input else {
                     anyhow::bail!("input channel closed");
                 };
-                send_terminal_input(&mut send, &mut next_request_id, input)
-                    .await
-                    .context("send terminal input")?;
+                if let Some(event) = encode_terminal_key(&input, terminal.input_modes()) {
+                    send_terminal_input(&mut send, &mut next_request_id, event)
+                        .await
+                        .context("send terminal input")?;
+                }
             }
             frame = frame::read_frame(&mut recv) => {
                 let Some((ty, payload)) = frame.context("read daemon frame")? else {
@@ -274,6 +278,19 @@ async fn run_terminal_session(
             }
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SlintKeyEvent {
+    text: String,
+    control: bool,
+    alt: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TerminalInputModeState {
+    app_cursor: bool,
+    bracketed_paste: bool,
 }
 
 async fn wait_for_terminal_flush(deadline: Option<Instant>) {
@@ -394,38 +411,60 @@ fn set_terminal_surface(app_weak: &slint::Weak<AppWindow>, surface: TerminalSurf
     });
 }
 
-fn encode_terminal_key(text: &str, control: bool, alt: bool) -> Option<Vec<u8>> {
+fn encode_terminal_key(
+    input: &SlintKeyEvent,
+    modes: TerminalInputModeState,
+) -> Option<TerminalInputEvent> {
+    let text = input.text.as_str();
     let mut bytes = match text {
         "\u{0008}" => vec![0x7f],
         "\u{0009}" => b"\t".to_vec(),
         "\u{000a}" => b"\r".to_vec(),
         "\u{001b}" => b"\x1b".to_vec(),
         "\u{007f}" => b"\x1b[3~".to_vec(),
-        "\u{f700}" => b"\x1b[A".to_vec(),
-        "\u{f701}" => b"\x1b[B".to_vec(),
-        "\u{f702}" => b"\x1b[D".to_vec(),
-        "\u{f703}" => b"\x1b[C".to_vec(),
-        "\u{f729}" => b"\x1b[H".to_vec(),
-        "\u{f72b}" => b"\x1b[F".to_vec(),
+        "\u{f700}" => cursor_key_sequence(b'A', modes.app_cursor),
+        "\u{f701}" => cursor_key_sequence(b'B', modes.app_cursor),
+        "\u{f702}" => cursor_key_sequence(b'D', modes.app_cursor),
+        "\u{f703}" => cursor_key_sequence(b'C', modes.app_cursor),
+        "\u{f729}" => cursor_key_sequence(b'H', modes.app_cursor),
+        "\u{f72b}" => cursor_key_sequence(b'F', modes.app_cursor),
         "\u{f72c}" => b"\x1b[5~".to_vec(),
         "\u{f72d}" => b"\x1b[6~".to_vec(),
         value if value.chars().count() == 1 => {
             let ch = value.chars().next()?;
-            if control {
+            if input.control {
                 control_key_byte(ch)?
-            } else {
+            } else if input.alt {
                 value.as_bytes().to_vec()
+            } else {
+                return Some(TerminalInputEvent::Text {
+                    text: value.to_string(),
+                });
             }
         }
-        value if !control => value.as_bytes().to_vec(),
+        value if !input.control && input.alt => value.as_bytes().to_vec(),
+        value if !input.control => {
+            return Some(TerminalInputEvent::Paste {
+                text: value.to_string(),
+                bracketed: modes.bracketed_paste,
+            });
+        }
         _ => return None,
     };
 
-    if alt {
+    if input.alt {
         bytes.insert(0, 0x1b);
     }
 
-    Some(bytes)
+    Some(TerminalInputEvent::Key { bytes })
+}
+
+fn cursor_key_sequence(final_byte: u8, app_cursor: bool) -> Vec<u8> {
+    if app_cursor {
+        vec![0x1b, b'O', final_byte]
+    } else {
+        vec![0x1b, b'[', final_byte]
+    }
 }
 
 fn control_key_byte(ch: char) -> Option<Vec<u8>> {
@@ -527,6 +566,14 @@ impl AlacrittySnapshot {
     fn apply_output(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
         self.parser.advance(&mut self.term, bytes);
         self.pending_pty_writes()
+    }
+
+    fn input_modes(&self) -> TerminalInputModeState {
+        let mode = self.term.mode();
+        TerminalInputModeState {
+            app_cursor: mode.contains(TermMode::APP_CURSOR),
+            bracketed_paste: mode.contains(TermMode::BRACKETED_PASTE),
+        }
     }
 
     fn pending_pty_writes(&self) -> Vec<Vec<u8>> {
@@ -1120,6 +1167,74 @@ mod tests {
         assert_eq!(deadline, now);
     }
 
+    #[test]
+    fn input_modes_track_application_cursor_mode() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        assert!(!terminal.input_modes().app_cursor);
+
+        let _ = terminal.apply_output(b"\x1b[?1h");
+
+        assert!(terminal.input_modes().app_cursor);
+    }
+
+    #[test]
+    fn input_modes_track_bracketed_paste_mode() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        assert!(!terminal.input_modes().bracketed_paste);
+
+        let _ = terminal.apply_output(b"\x1b[?2004h");
+
+        assert!(terminal.input_modes().bracketed_paste);
+    }
+
+    #[test]
+    fn encode_terminal_key_uses_normal_cursor_sequences() {
+        let bytes = encode_key_bytes("\u{f700}", TerminalInputModeState::default());
+
+        assert_eq!(bytes, b"\x1b[A");
+    }
+
+    #[test]
+    fn encode_terminal_key_uses_application_cursor_sequences() {
+        let bytes = encode_key_bytes(
+            "\u{f700}",
+            TerminalInputModeState {
+                app_cursor: true,
+                bracketed_paste: false,
+            },
+        );
+
+        assert_eq!(bytes, b"\x1bOA");
+    }
+
+    #[test]
+    fn encode_terminal_key_brackets_multi_character_paste_when_enabled() {
+        let bytes = encode_key_bytes(
+            "alpha\nbeta",
+            TerminalInputModeState {
+                app_cursor: false,
+                bracketed_paste: true,
+            },
+        );
+
+        assert_eq!(bytes, b"\x1b[200~alpha\nbeta\x1b[201~");
+    }
+
+    #[test]
+    fn encode_terminal_key_preserves_alt_prefix_for_text() {
+        let event = SlintKeyEvent {
+            text: "x".to_string(),
+            control: false,
+            alt: true,
+        };
+
+        let bytes = encode_terminal_key(&event, TerminalInputModeState::default())
+            .expect("alt key should encode")
+            .pty_bytes();
+
+        assert_eq!(bytes, b"\x1bx");
+    }
+
     fn assert_run_color(surface: &TerminalSurface, text: &str, expected: u32) {
         let run = find_run_containing(surface, text);
         assert_eq!(run.color.as_argb_encoded(), expected);
@@ -1136,5 +1251,17 @@ mod tests {
     fn single_cursor_span(surface: &TerminalSurface) -> &TerminalCursorSpan {
         assert_eq!(surface.cursor_spans.len(), 1);
         &surface.cursor_spans[0]
+    }
+
+    fn encode_key_bytes(text: &str, modes: TerminalInputModeState) -> Vec<u8> {
+        let event = SlintKeyEvent {
+            text: text.to_string(),
+            control: false,
+            alt: false,
+        };
+
+        encode_terminal_key(&event, modes)
+            .expect("key should encode")
+            .pty_bytes()
     }
 }
