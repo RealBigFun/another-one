@@ -533,7 +533,7 @@ impl AlacrittySnapshot {
             let point = viewport_to_point(display_offset, Point::new(viewport_line, Column(0)));
             let grid_line = &self.term.grid()[point.line];
             let mut pending_run = None;
-            let mut previous_cell_had_zero_width = false;
+            let mut visual_column = 0;
 
             for column in 0..self.size.cols as usize {
                 let cell = &grid_line[Column(column)];
@@ -544,24 +544,29 @@ impl AlacrittySnapshot {
                     continue;
                 }
 
-                if cell.c == ' ' && previous_cell_had_zero_width {
-                    previous_cell_had_zero_width = false;
-                    continue;
-                }
-                previous_cell_had_zero_width =
-                    matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
-
                 let is_cursor = cursor.is_some_and(|cursor| {
                     cursor.line == viewport_line && cursor.column.0 == column
                 });
                 let mut style = resolve_cell_style(cell, renderable.colors);
                 let cell_count = terminal_cell_width(cell);
+                let text = visible_cell_text(cell);
+
+                if text.as_deref().is_some_and(|text| {
+                    joins_previous_terminal_grapheme(&pending_run, viewport_line, text, &style)
+                }) {
+                    if let Some(run) = pending_run.as_mut() {
+                        if let Some(text) = text {
+                            run.text.push_str(&text);
+                        }
+                    }
+                    continue;
+                }
 
                 if is_cursor && renderable.cursor.shape == CursorShape::Block {
                     maybe_push_background_span(
                         &mut surface.background_spans,
                         viewport_line,
-                        column,
+                        visual_column,
                         cell_count,
                         style.foreground,
                         true,
@@ -571,17 +576,18 @@ impl AlacrittySnapshot {
                     maybe_push_background_span(
                         &mut surface.background_spans,
                         viewport_line,
-                        column,
+                        visual_column,
                         cell_count,
                         style.background,
                         false,
                     );
                 }
 
-                let Some(text) = visible_cell_text(cell) else {
+                let Some(text) = text else {
                     if let Some(run) = pending_run.take() {
                         push_terminal_run(&mut surface.text_runs, run);
                     }
+                    visual_column += cell_count;
                     continue;
                 };
 
@@ -589,11 +595,12 @@ impl AlacrittySnapshot {
                     &mut pending_run,
                     &mut surface.text_runs,
                     viewport_line,
-                    column,
+                    visual_column,
                     cell_count,
                     text,
                     style,
                 );
+                visual_column += cell_count;
             }
 
             if let Some(run) = pending_run.take() {
@@ -603,6 +610,22 @@ impl AlacrittySnapshot {
 
         surface
     }
+}
+
+fn joins_previous_terminal_grapheme(
+    pending_run: &Option<PendingTerminalRun>,
+    line: usize,
+    text: &str,
+    style: &ResolvedCellStyle,
+) -> bool {
+    let Some(run) = pending_run else {
+        return false;
+    };
+
+    run.line == line
+        && run.style == *style
+        && !text.is_empty()
+        && run.text.ends_with('\u{200d}')
 }
 
 fn append_terminal_run(
@@ -895,12 +918,86 @@ mod tests {
         assert_run_color(&surface, "BLUE", 0xff61afef);
     }
 
+    #[test]
+    fn snapshot_surface_preserves_combining_marks_in_text_runs() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output("e\u{0301}clair".as_bytes());
+
+        let surface = terminal.snapshot_surface();
+
+        let run = find_run_containing(&surface, "e\u{0301}clair");
+        assert_eq!(run.line, 0);
+        assert_eq!(run.column, 0);
+        assert_eq!(run.cell_count, 6);
+    }
+
+    #[test]
+    fn snapshot_surface_preserves_wide_cjk_cell_occupancy() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output("界X".as_bytes());
+
+        let surface = terminal.snapshot_surface();
+
+        let run = find_run_containing(&surface, "界X");
+        assert_eq!(run.line, 0);
+        assert_eq!(run.column, 0);
+        assert_eq!(run.cell_count, 3);
+    }
+
+    #[test]
+    fn snapshot_surface_preserves_wide_emoji_cell_occupancy() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output("🙂Z".as_bytes());
+
+        let surface = terminal.snapshot_surface();
+
+        let run = find_run_containing(&surface, "🙂Z");
+        assert_eq!(run.line, 0);
+        assert_eq!(run.column, 0);
+        assert_eq!(run.cell_count, 3);
+    }
+
+    #[test]
+    fn snapshot_surface_preserves_emoji_zwj_graphemes() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output("👩\u{200d}💻Z".as_bytes());
+
+        let surface = terminal.snapshot_surface();
+
+        let run = find_run_containing(&surface, "👩\u{200d}💻Z");
+        assert_eq!(run.line, 0);
+        assert_eq!(run.column, 0);
+        assert_eq!(run.cell_count, 3);
+    }
+
+    #[test]
+    fn snapshot_surface_splits_styled_runs_after_wide_cells() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output("\x1b[31m界\x1b[32mX".as_bytes());
+
+        let surface = terminal.snapshot_surface();
+
+        let wide = find_run_containing(&surface, "界");
+        assert_eq!(wide.column, 0);
+        assert_eq!(wide.cell_count, 2);
+        assert_eq!(wide.color.as_argb_encoded(), 0xffe06c75);
+
+        let narrow = find_run_containing(&surface, "X");
+        assert_eq!(narrow.column, 2);
+        assert_eq!(narrow.cell_count, 1);
+        assert_eq!(narrow.color.as_argb_encoded(), 0xff98c379);
+    }
+
     fn assert_run_color(surface: &TerminalSurface, text: &str, expected: u32) {
-        let run = surface
+        let run = find_run_containing(surface, text);
+        assert_eq!(run.color.as_argb_encoded(), expected);
+    }
+
+    fn find_run_containing<'a>(surface: &'a TerminalSurface, text: &str) -> &'a TerminalTextRun {
+        surface
             .text_runs
             .iter()
             .find(|run| run.text.as_str().contains(text))
-            .unwrap_or_else(|| panic!("missing terminal run containing {text:?}"));
-        assert_eq!(run.color.as_argb_encoded(), expected);
+            .unwrap_or_else(|| panic!("missing terminal run containing {text:?}"))
     }
 }
