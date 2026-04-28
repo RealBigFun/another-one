@@ -5,20 +5,20 @@ Captured on 2026-04-28 while building the Slint visual corpus.
 ## Current Coverage
 
 - Full desktop shell, titlebar, project/task sidebar, terminal text pane, and right-sidebar changes mode are captured from the live GPUI window.
+- New Task modal, Add Action modal, settings General/Agents sections, resource monitor popover, and an error toast are captured from interactive GPUI controls.
 - These captures are sufficient for first-pass geometry, typography, color, and section-placement comparison against the current Slint shell.
 
 ## Not Captured Yet
 
-- `modal/new-task.png`
-- `toast/error.png`
-- `settings/agents.png`
 - `terminal/color-smoke.png`
 - `terminal/selection-cursor-links.png`
 - GPUI menu/popover hover states
 
 ## Capture Blocker
 
-The current automation session can launch and capture the GPUI window, but reliable GPUI control activation was not achieved. The existing root `ydotoold` socket is not accessible to this user, and a user-scoped `ydotoold` socket can emit pointer events but did not activate the GPUI footer/settings/project controls in this session.
+The current automation session can launch and capture the GPUI window. Root-backed `ydotool` plus `hyprctl dispatch movecursor` can activate some GPUI controls and produced the modal/settings/resource/toast corpus listed above.
+
+The remaining missing captures require terminal/content state setup rather than simple shell control activation. They need either a deterministic GPUI terminal fixture or manual terminal setup for color, selection, cursor, and OSC8/link states.
 
 ## Manual Reproduction
 
