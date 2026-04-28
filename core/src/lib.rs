@@ -15,6 +15,8 @@
 //! Phase 1 plan in `docs/`. This is PR 1 — the two smallest,
 //! zero-intra-crate-dep files.
 
+mod command_env;
+
 pub mod agents;
 pub mod git_actions;
 pub mod git_service;

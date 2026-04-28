@@ -266,9 +266,8 @@ fn run_simple_git_command(
         ));
     };
 
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args(command.args)
-        .current_dir(repo_path)
         .output()
         .map_err(|err| {
             ToolbarActionError::from_message(format!("{}: {err}", command.failure_prefix))
@@ -293,11 +292,7 @@ fn undo_last_commit(repo_path: &Path) -> Result<ToolbarActionOutcome, ToolbarAct
 }
 
 fn git_stdout(repo_path: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo_path)
-        .output()
-        .ok()?;
+    let output = git_command(repo_path).args(args).output().ok()?;
 
     if !output.status.success() {
         return None;
@@ -320,10 +315,10 @@ pub fn find_latest_pull_request_status(
         return None;
     }
 
-    let gh = find_gh_cli()?;
-    let output = Command::new(gh)
+    let gh = find_gh_cli(repo_path)?;
+    let mut command = external_command(gh, repo_path);
+    let output = command
         .args(find_latest_pull_request_args(head_branch))
-        .current_dir(repo_path)
         .output()
         .ok()?;
 
@@ -355,11 +350,11 @@ pub fn find_pull_request_checks(
     repo_path: &Path,
     pull_request_number: Option<u64>,
 ) -> Result<Option<Vec<PullRequestCheck>>, String> {
-    let gh = find_gh_cli().ok_or_else(|| {
+    let gh = find_gh_cli(repo_path).ok_or_else(|| {
         "Could not load PR checks. GitHub CLI (`gh`) is not installed or not on the app PATH."
             .to_string()
     })?;
-    let mut command = Command::new(gh);
+    let mut command = external_command(gh, repo_path);
     command.args(["pr", "checks"]);
     if let Some(pull_request_number) = pull_request_number {
         command.arg(pull_request_number.to_string());
@@ -642,7 +637,7 @@ fn git_push_output(
     remote_name: Option<&str>,
     branch_name: Option<&str>,
 ) -> std::io::Result<Output> {
-    let mut command = Command::new("git");
+    let mut command = git_command(repo_path);
     command.arg("push");
     if force {
         command.arg("--force-with-lease");
@@ -653,7 +648,7 @@ fn git_push_output(
             .arg(remote_name)
             .arg(branch_name);
     }
-    command.current_dir(repo_path).output()
+    command.output()
 }
 
 fn is_missing_upstream_push_error(output: &Output) -> bool {
@@ -701,7 +696,7 @@ fn create_pull_request(
     settings: &GitActionSettings,
     _on_progress: &mut dyn FnMut(String),
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
-    let gh = find_gh_cli().ok_or_else(|| {
+    let gh = find_gh_cli(repo_path).ok_or_else(|| {
         ToolbarActionError::from_message(
             "Create PR failed. GitHub CLI (`gh`) is not installed or not on the app PATH.",
         )
@@ -716,15 +711,14 @@ fn create_pull_request(
             ToolbarActionError::from_message(format!("Create PR failed. {message}"))
         })?;
 
-    let mut cmd = Command::new(gh);
+    let mut cmd = external_command(gh, repo_path);
     cmd.args(create_pull_request_args(
         &head_branch,
         draft,
         base_branch,
         &generated.title,
         &generated.body,
-    ))
-    .current_dir(repo_path);
+    ));
 
     let output = cmd
         .output()
@@ -805,9 +799,8 @@ impl ToolbarActionError {
 }
 
 fn has_staged_changes(repo_path: &Path) -> Result<bool, String> {
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args(["diff", "--cached", "--quiet"])
-        .current_dir(repo_path)
         .output()
         .map_err(|err| format!("Could not inspect staged changes: {err}"))?;
 
@@ -819,9 +812,8 @@ fn has_staged_changes(repo_path: &Path) -> Result<bool, String> {
 }
 
 fn has_worktree_changes(repo_path: &Path) -> Result<bool, String> {
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args(["status", "--porcelain"])
-        .current_dir(repo_path)
         .output()
         .map_err(|err| format!("Could not inspect local changes: {err}"))?;
 
@@ -833,9 +825,8 @@ fn has_worktree_changes(repo_path: &Path) -> Result<bool, String> {
 }
 
 fn stage_all_changes(repo_path: &Path) -> Result<(), ToolbarActionError> {
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args(["add", "-A"])
-        .current_dir(repo_path)
         .output()
         .map_err(|err| {
             ToolbarActionError::from_message(format!("Could not stage changes: {err}"))
@@ -852,9 +843,8 @@ fn stage_all_changes(repo_path: &Path) -> Result<(), ToolbarActionError> {
 }
 
 fn staged_diff_patch(repo_path: &Path) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args(["diff", "--cached", "--no-ext-diff", "--no-color"])
-        .current_dir(repo_path)
         .output()
         .map_err(|err| format!("Could not read the staged diff: {err}"))?;
 
@@ -1006,14 +996,13 @@ fn resolve_pull_request_base_branch(
 }
 
 fn branch_commit_list(repo_path: &Path, base_branch: &str) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args([
             "log",
             "--no-decorate",
             "--pretty=format:%h %s",
             &format!("{base_branch}..HEAD"),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|err| format!("Could not read branch commits for PR generation: {err}"))?;
 
@@ -1033,14 +1022,13 @@ fn branch_commit_list(repo_path: &Path, base_branch: &str) -> Result<String, Str
 }
 
 fn branch_diff_patch(repo_path: &Path, base_branch: &str) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = git_command(repo_path)
         .args([
             "diff",
             "--no-ext-diff",
             "--no-color",
             &format!("{base_branch}...HEAD"),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|err| format!("Could not read the branch diff for PR generation: {err}"))?;
 
@@ -1067,9 +1055,9 @@ fn run_codex(
     output_prefix: &str,
     empty_output_label: &str,
 ) -> Result<String, String> {
-    let codex = find_codex_cli().ok_or_else(|| "Codex CLI was not found.".to_string())?;
+    let codex = find_codex_cli(repo_path).ok_or_else(|| "Codex CLI was not found.".to_string())?;
     let output_path = temp_output_path(output_prefix);
-    let mut cmd = Command::new(codex);
+    let mut cmd = external_command(codex, repo_path);
     cmd.args([
         "exec",
         "--model",
@@ -1080,7 +1068,6 @@ fn run_codex(
     ])
     .arg(&output_path)
     .arg("-")
-    .current_dir(repo_path)
     .stdin(Stdio::piped())
     .stdout(Stdio::null())
     .stderr(Stdio::piped());
@@ -1113,8 +1100,10 @@ fn run_codex(
 }
 
 fn run_claude(prompt: &str, repo_path: &Path, empty_output_label: &str) -> Result<String, String> {
-    let claude = find_claude_cli().ok_or_else(|| "Claude CLI was not found.".to_string())?;
-    let output = Command::new(claude)
+    let claude =
+        find_claude_cli(repo_path).ok_or_else(|| "Claude CLI was not found.".to_string())?;
+    let mut command = external_command(claude, repo_path);
+    let output = command
         .args([
             "-p",
             "--model",
@@ -1125,7 +1114,6 @@ fn run_claude(prompt: &str, repo_path: &Path, empty_output_label: &str) -> Resul
             "",
         ])
         .arg(prompt)
-        .current_dir(repo_path)
         .output()
         .map_err(|err| format!("Could not start Claude CLI: {err}"))?;
 
@@ -1258,14 +1246,13 @@ fn normalize_generated_output(raw: &str) -> &str {
 }
 
 fn git_commit(repo_path: &Path, message: &GeneratedCommitMessage) -> Result<(), String> {
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command(repo_path);
     cmd.arg("commit").arg("-m").arg(&message.subject);
     if let Some(body) = message.body.as_ref() {
         cmd.arg("-m").arg(body);
     }
 
     let mut child = cmd
-        .current_dir(repo_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1347,44 +1334,44 @@ fn temp_output_path(prefix: &str) -> PathBuf {
     env::temp_dir().join(format!("{prefix}-{}.txt", uuid::Uuid::new_v4()))
 }
 
-fn find_codex_cli() -> Option<PathBuf> {
-    find_executable(
+fn git_command(repo_path: &Path) -> Command {
+    external_command("git", repo_path)
+}
+
+fn external_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command {
+    let mut command = Command::new(program);
+    command.current_dir(cwd);
+    crate::command_env::apply_command_path(&mut command, cwd);
+    command
+}
+
+fn find_codex_cli(repo_path: &Path) -> Option<PathBuf> {
+    crate::command_env::find_executable(
         "codex",
+        repo_path,
         &[PathBuf::from(
             "/Applications/Codex.app/Contents/Resources/codex",
         )],
     )
 }
 
-fn find_claude_cli() -> Option<PathBuf> {
+fn find_claude_cli(repo_path: &Path) -> Option<PathBuf> {
     let mut fallbacks = Vec::new();
     if let Some(home) = dirs::home_dir() {
         fallbacks.push(home.join(".local/bin/claude"));
     }
-    find_executable("claude", &fallbacks)
+    crate::command_env::find_executable("claude", repo_path, &fallbacks)
 }
 
-fn find_gh_cli() -> Option<PathBuf> {
-    find_executable(
+fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
+    crate::command_env::find_executable(
         "gh",
+        repo_path,
         &[
             PathBuf::from("/opt/homebrew/bin/gh"),
             PathBuf::from("/usr/local/bin/gh"),
         ],
     )
-}
-
-fn find_executable(command: &str, fallbacks: &[PathBuf]) -> Option<PathBuf> {
-    if let Some(paths) = env::var_os("PATH") {
-        for dir in env::split_paths(&paths) {
-            let candidate = dir.join(command);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    fallbacks.iter().find(|path| path.is_file()).cloned()
 }
 
 #[cfg(test)]
@@ -1783,7 +1770,7 @@ pub fn find_project_pull_requests(
     filter_index: usize,
     query: Option<&str>,
 ) -> Result<Vec<ProjectPagePullRequest>, String> {
-    let gh = find_gh_cli().ok_or_else(|| {
+    let gh = find_gh_cli(repo_path).ok_or_else(|| {
         "Could not load pull requests. GitHub CLI (`gh`) is not installed or not on the app PATH."
             .to_string()
     })?;
@@ -1799,7 +1786,7 @@ pub fn find_project_pull_requests(
         search_terms.push(query.to_string());
     }
 
-    let mut command = Command::new(gh);
+    let mut command = external_command(gh, repo_path);
     command.args([
         "pr",
         "list",
