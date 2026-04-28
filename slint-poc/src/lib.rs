@@ -22,6 +22,8 @@ use tokio::time::Instant;
 
 slint::include_modules!();
 
+mod style;
+
 const TERMINAL_COLS: u16 = 100;
 const TERMINAL_ROWS: u16 = 34;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -40,7 +42,7 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
     #[cfg(not(target_os = "android"))]
     slint::set_xdg_app_id("com.anotherone.Slint")?;
-    apply_tokens(&app);
+    style::apply_theme(&app);
     seed_shell_model(&app);
 
     let (client_event_tx, client_event_rx) = mpsc::unbounded_channel::<SlintClientEvent>();
@@ -80,28 +82,6 @@ pub fn android_main(app: slint::android::AndroidApp) {
     if let Err(error) = run_app() {
         eprintln!("AnotherOne Slint android startup failed: {error}");
     }
-}
-
-fn apply_tokens(app: &AppWindow) {
-    app.set_chrome_bg(argb(0xff, 0x27, 0x29, 0x2e));
-    app.set_card_bg(argb(0xff, 0x2b, 0x2d, 0x31));
-    app.set_sunken_bg(argb(0xff, 0x20, 0x23, 0x29));
-    app.set_terminal_bg(argb(0xff, 0x17, 0x19, 0x1d));
-    app.set_overlay_hover(argb(0x0f, 0xff, 0xff, 0xff));
-    app.set_overlay_active(argb(0x1a, 0xff, 0xff, 0xff));
-    app.set_border_color(argb(0x16, 0xff, 0xff, 0xff));
-    app.set_divider_color(argb(0x10, 0xff, 0xff, 0xff));
-    app.set_focus_ring(argb(0xff, 0x5d, 0x7a, 0xd5));
-    app.set_text_primary(argb(0xff, 0xeb, 0xeb, 0xeb));
-    app.set_text_secondary(argb(0xff, 0xc7, 0xc7, 0xc7));
-    app.set_text_muted(argb(0xff, 0x94, 0x94, 0x94));
-    app.set_success_color(argb(0xff, 0x7a, 0xd5, 0x91));
-    app.set_warning_color(argb(0xff, 0xe5, 0xc0, 0x7b));
-    app.set_danger_color(argb(0xff, 0xe0, 0x6c, 0x75));
-}
-
-fn argb(a: u8, r: u8, g: u8, b: u8) -> slint::Color {
-    slint::Color::from_argb_u8(a, r, g, b)
 }
 
 fn seed_shell_model(app: &AppWindow) {
