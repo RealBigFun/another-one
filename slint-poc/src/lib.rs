@@ -38,6 +38,13 @@ const PROJECT_ACCENTS: [u32; 8] = [
 const SHELL_COLOR_SMOKE_PROBE: &[u8] =
     b"printf '\\033[31mRED \\033[32mGREEN \\033[34mBLUE\\033[0m DEFAULT\\n'\nprintf 'ANOTHERONE_SLINT_READY\\n'\r";
 const SHELL_READINESS_PROBE: &[u8] = b"printf 'ANOTHERONE_SLINT_READY\\n'\r";
+const TERMINAL_FIDELITY_FIXTURE: &[u8] = concat!(
+    "\x1b[31mRED \x1b[32mGREEN \x1b[34mBLUE\x1b[0m DEFAULT\r\n",
+    "Combining: e\u{301} CJK: \u{754c} Emoji: \u{1f469}\u{200d}\u{1f4bb}\r\n",
+    "\x1b]8;;https://example.test\x1b\\OSC8_LINK\x1b]8;;\x1b\\ plain text\r\n",
+    "\x1b[4 qUnderline cursor fixture"
+)
+.as_bytes();
 const TERMINAL_RENDER_PROBE_CHUNK_SIZE: usize = 8192;
 const TERMINAL_RENDER_PROBE_LINE: &[u8] =
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/ terminal flood line\n";
@@ -174,6 +181,11 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     style::apply_theme(&app);
     app.set_platform_label(platform_profile.label().into());
     seed_shell_model(&app);
+    if std::env::var("ANOTHERONE_SLINT_FIXTURE").as_deref() == Ok("terminal-fidelity") {
+        seed_terminal_fidelity_fixture(&app);
+        app.on_close_requested(|| std::process::exit(0));
+        return app.run();
+    }
 
     let (client_event_tx, client_event_rx) = mpsc::unbounded_channel::<SlintClientEvent>();
     let terminal_event_tx = client_event_tx.clone();
@@ -341,6 +353,45 @@ fn seed_shell_model(app: &AppWindow) {
             pinned: false,
         },
     ])));
+}
+
+fn seed_terminal_fidelity_fixture(app: &AppWindow) {
+    let mut terminal = AlacrittySnapshot::new(100, 34);
+    let _ = terminal.apply_output(TERMINAL_FIDELITY_FIXTURE);
+    apply_terminal_surface(app, terminal.snapshot_surface());
+    app.set_terminal_selection_spans(slint::ModelRc::new(slint::VecModel::from(
+        selection_spans_for_points(
+            TerminalCellPoint {
+                line: 1,
+                column: 11,
+            },
+            TerminalCellPoint {
+                line: 1,
+                column: 24,
+            },
+            100,
+            34,
+        ),
+    )));
+    app.set_terminal_status(
+        "terminal fixture: ANSI colors, combining marks, wide cells, OSC8 link, selection, cursor"
+            .into(),
+    );
+}
+
+fn apply_terminal_surface(app: &AppWindow, surface: TerminalSurface) {
+    app.set_terminal_background_spans(slint::ModelRc::new(slint::VecModel::from(
+        surface.background_spans,
+    )));
+    app.set_terminal_cursor_spans(slint::ModelRc::new(slint::VecModel::from(
+        surface.cursor_spans,
+    )));
+    app.set_terminal_link_spans(slint::ModelRc::new(slint::VecModel::from(
+        surface.link_spans,
+    )));
+    app.set_terminal_runs(slint::ModelRc::new(slint::VecModel::from(
+        surface.text_runs,
+    )));
 }
 
 #[derive(Default)]

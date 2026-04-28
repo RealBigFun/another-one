@@ -143,6 +143,11 @@ Evidence:
   and `terminal-resize-after.png` capture the live Slint terminal before and
   after compositor-driven resizing; the app stayed mapped and responsive while
   Rust handled the corresponding terminal dimension update path.
+- Deterministic terminal fixture mode:
+  `ANOTHERONE_SLINT_FIXTURE=terminal-fidelity target/debug/slint-poc` seeds the
+  Slint terminal renderer without dialing the daemon, using ANSI color,
+  combining-mark, wide-cell, emoji, OSC8 link, selection, and cursor fixture
+  data. This is the capture path for matched terminal visual evidence.
 
 ## Remaining Gates
 
