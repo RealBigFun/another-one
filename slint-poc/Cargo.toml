@@ -23,9 +23,9 @@ tokio = { version = "1", features = ["io-util", "rt-multi-thread", "sync", "time
 fontique = { version = "0.8.0", default-features = false, features = ["fontconfig-dlopen"] }
 
 [package.metadata.android]
-package = "com.anotherone.slintpoc"
+package = "com.anotherone.slint"
 build_targets = ["aarch64-linux-android"]
-apk_name = "anotherone-slint-poc"
+apk_name = "anotherone-slint"
 strip = "strip"
 
 [package.metadata.android.sdk]
@@ -36,11 +36,11 @@ target_sdk_version = 35
 name = "android.permission.INTERNET"
 
 [package.metadata.android.application]
-label = "AnotherOne Slint POC"
+label = "AnotherOne"
 theme = "@android:style/Theme.DeviceDefault.NoActionBar"
 
 [package.metadata.android.application.activity]
-label = "AnotherOne Slint POC"
+label = "AnotherOne"
 exported = true
 orientation = "landscape"
 

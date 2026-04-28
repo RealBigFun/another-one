@@ -33,13 +33,13 @@ const PROJECT_ACCENTS: [u32; 8] = [
     0x5b4a9e, 0x2e7d6f, 0xb85c38, 0x3a6ea5, 0x8b5e3c, 0x7b2d5f, 0x4a7c4b, 0x9c5151,
 ];
 const SHELL_COLOR_SMOKE_PROBE: &[u8] =
-    b"printf '\\033[31mRED \\033[32mGREEN \\033[34mBLUE\\033[0m DEFAULT\\n'\nprintf 'SLINT_POC_IROH_ALACRITTY_READY\\n'\r";
-const SHELL_READINESS_PROBE: &[u8] = b"printf 'SLINT_POC_IROH_ALACRITTY_READY\\n'\r";
+    b"printf '\\033[31mRED \\033[32mGREEN \\033[34mBLUE\\033[0m DEFAULT\\n'\nprintf 'ANOTHERONE_SLINT_READY\\n'\r";
+const SHELL_READINESS_PROBE: &[u8] = b"printf 'ANOTHERONE_SLINT_READY\\n'\r";
 
 pub fn run_app() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
     #[cfg(not(target_os = "android"))]
-    slint::set_xdg_app_id("com.anotherone.SlintPoc")?;
+    slint::set_xdg_app_id("com.anotherone.Slint")?;
     apply_tokens(&app);
     seed_shell_model(&app);
 
@@ -73,12 +73,12 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
 #[no_mangle]
 pub fn android_main(app: slint::android::AndroidApp) {
     if let Err(error) = slint::android::init(app) {
-        eprintln!("slint-poc android backend init failed: {error}");
+        eprintln!("AnotherOne Slint android backend init failed: {error}");
         return;
     }
 
     if let Err(error) = run_app() {
-        eprintln!("slint-poc android startup failed: {error}");
+        eprintln!("AnotherOne Slint android startup failed: {error}");
     }
 }
 
@@ -1059,7 +1059,7 @@ fn control_key_byte(ch: char) -> Option<Vec<u8>> {
 }
 
 fn startup_probe() -> Option<&'static [u8]> {
-    match std::env::var("SLINT_POC_STARTUP_PROBE").as_deref() {
+    match std::env::var("ANOTHERONE_SLINT_STARTUP_PROBE").as_deref() {
         Ok("shell-color") => Some(SHELL_COLOR_SMOKE_PROBE),
         Ok("shell-ready") => Some(SHELL_READINESS_PROBE),
         _ => None,

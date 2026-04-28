@@ -81,7 +81,7 @@ Covered cases:
 
 ## Slint Renderer Evidence
 
-The Slint POC renderer now consumes Alacritty cells into batched text,
+The Slint renderer now consumes Alacritty cells into batched text,
 background, and cursor spans.
 
 Implemented coverage:
@@ -103,8 +103,8 @@ Evidence:
 
 - `cargo test -p slint-poc`
 - `cargo check -p slint-poc`
-- Live debug hot-reload window: `AnotherOne Slint POC` /
-  `com.anotherone.SlintPoc` on Hyprland workspace 1.
+- Live debug hot-reload window: `AnotherOne` /
+  `com.anotherone.Slint` on Hyprland workspace 1.
 - Provisional idle debug sample after dirty-only scheduling:
   `top -b -n 3 -d 1 -p 3015109` reported `0.0%`, `0.0%`, then `1.0%` CPU with
   approximately `175480 KiB` RSS. This is a debug/hot-reload sample, not the

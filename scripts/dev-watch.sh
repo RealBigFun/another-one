@@ -13,8 +13,8 @@ case "$APP_TARGET" in
     PACKAGE_NAME="slint-poc"
     WATCH_PATHS="$ROOT_DIR/slint-poc/src $ROOT_DIR/slint-poc/ui $ROOT_DIR/slint-poc/build.rs"
     BINARY_PATH="$ROOT_DIR/target/debug/slint-poc"
-    HYPR_TITLE_REGEX="AnotherOne Slint POC"
-    HYPR_CLASS_REGEX="com[.]anotherone[.]SlintPoc"
+    HYPR_TITLE_REGEX="AnotherOne"
+    HYPR_CLASS_REGEX="com[.]anotherone[.]Slint"
     ;;
   desktop | gpui)
     PACKAGE_NAME=$(
@@ -83,11 +83,11 @@ setup_hyprland_rule() {
 hyprland_client_visible() {
   clients=$(hyprctl clients -j 2>/dev/null || true)
 
-  if [ -n "$HYPR_TITLE_REGEX" ] && printf '%s' "$clients" | grep -F 'AnotherOne Slint POC' >/dev/null 2>&1; then
+  if [ -n "$HYPR_TITLE_REGEX" ] && printf '%s' "$clients" | grep -F 'AnotherOne' >/dev/null 2>&1; then
     return 0
   fi
 
-  if [ -n "$HYPR_CLASS_REGEX" ] && printf '%s' "$clients" | grep -F 'com.anotherone.SlintPoc' >/dev/null 2>&1; then
+  if [ -n "$HYPR_CLASS_REGEX" ] && printf '%s' "$clients" | grep -F 'com.anotherone.Slint' >/dev/null 2>&1; then
     return 0
   fi
 
