@@ -1,4 +1,17 @@
-import { Button, LineEdit } from "std-widgets.slint";
+import {
+    AoButton,
+    AoCard,
+    AoModalCard,
+    AoProjectRow,
+    AoSectionLabel,
+    AoStatusPill,
+    AoTabChip,
+    AoTaskRow,
+    AoTextInput,
+    ProjectSidebarEntry,
+    TaskSidebarEntry,
+    TerminalTabChip,
+} from "components.slint";
 
 export struct TerminalTextRun {
     line: int,
@@ -31,85 +44,56 @@ export struct TerminalLinkSpan {
     uri: string,
 }
 
-component SidebarRow inherits Rectangle {
-    in property <string> title;
-    in property <string> subtitle;
-    in property <bool> active;
-    in property <color> overlay_hover;
-    in property <color> overlay_active;
-    in property <color> text_primary;
-    in property <color> text_muted;
-
-    height: 58px;
-    border-radius: 10px;
-    background: active ? overlay_active : row_touch.has-hover ? overlay_hover : transparent;
-
-    row_touch := TouchArea {
-        width: parent.width;
-        height: parent.height;
-    }
-
-    Rectangle {
-        x: 12px;
-        y: 16px;
-        width: 28px;
-        height: 28px;
-        border-radius: 8px;
-        background: active ? #5d7ad5 : #4d7f58;
-
-        Text {
-            x: 0px;
-            y: 6px;
-            width: parent.width;
-            horizontal-alignment: center;
-            text: "A";
-            color: text_primary;
-            font-size: 12px;
-            font-weight: 700;
-        }
-    }
-
-    Text {
-        x: 52px;
-        y: 11px;
-        text: title;
-        color: text_primary;
-        font-size: 15px;
-        font-weight: 700;
-    }
-
-    Text {
-        x: 52px;
-        y: 33px;
-        text: subtitle;
-        color: text_muted;
-        font-size: 12px;
-    }
-}
-
 export component AppWindow inherits Window {
     in property <color> chrome_bg;
     in property <color> card_bg;
+    in property <color> sunken_bg;
     in property <color> terminal_bg;
     in property <color> overlay_hover;
     in property <color> overlay_active;
+    in property <color> border_color;
+    in property <color> divider_color;
     in property <color> focus_ring;
     in property <color> text_primary;
     in property <color> text_secondary;
     in property <color> text_muted;
+    in property <color> success_color;
+    in property <color> warning_color;
+    in property <color> danger_color;
+
     in-out property <bool> modal_open: false;
     in-out property <string> terminal_status: "terminal: waiting for daemon-sandbox ticket";
+    in-out property <string> active_project_name: "another-one";
+    in-out property <string> active_task_name: "Slint migration";
+    in-out property <string> active_branch_name: "slint-daemon-poc-clean";
+    in-out property <string> active_worktree_name: "mellow-river-guides-wt";
+    in-out property <string> active_project_path: "~/.another-one/worktrees/another-one/mellow-river-guides-wt";
+    in-out property <string> project_summary: "loading projects from daemon";
+    in-out property <string> resource_summary: "app 1.0% / 175 MB";
+
+    in property <[ProjectSidebarEntry]> project_rows;
+    in property <[TaskSidebarEntry]> task_rows;
+    in property <[TerminalTabChip]> tab_chips;
     in property <[TerminalTextRun]> terminal_runs;
     in property <[TerminalBackgroundSpan]> terminal_background_spans;
     in property <[TerminalCursorSpan]> terminal_cursor_spans;
     in property <[TerminalLinkSpan]> terminal_link_spans;
+
     callback close_requested();
     callback terminal_key(string, bool, bool, bool);
 
-    title: "AnotherOne Slint POC";
-    preferred-width: 1180px;
-    preferred-height: 760px;
+    title: "AnotherOne";
+    preferred-width: 1380px;
+    preferred-height: 860px;
     background: terminal_bg;
+
+    property <length> titlebar-height: 38px;
+    property <length> footer-height: 38px;
+    property <length> gutter-width: 4px;
+    property <length> sidebar-width: root.width > 980px ? 318px : 252px;
+    property <length> right-width: root.width > 1180px ? 292px : 4px;
+    property <length> body-top: titlebar-height;
+    property <length> body-height: root.height - titlebar-height - footer-height;
 
     Rectangle {
         width: parent.width;
@@ -120,35 +104,94 @@ export component AppWindow inherits Window {
             x: 0px;
             y: 0px;
             width: parent.width;
-            height: 44px;
+            height: root.titlebar-height;
             background: chrome_bg;
 
+            AoButton {
+                x: 10px;
+                y: 6px;
+                width: 30px;
+                label: "|";
+                active: false;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_secondary;
+            }
+
             Text {
-                x: 18px;
-                y: 13px;
-                text: "AnotherOne / Slint POC";
+                x: 52px;
+                y: 10px;
+                text: active_project_name;
                 color: text_primary;
-                font-size: 14px;
-                font-weight: 700;
+                font-family: "monospace";
+                font-size: 13px;
+                font-weight: 900;
             }
 
-            Button {
-                x: parent.width - 160px;
-                y: 8px;
-                width: 96px;
-                height: 28px;
-                text: "New task";
-                clicked => {
-                    root.modal_open = true;
-                }
+            Text {
+                x: 52px;
+                y: 25px;
+                text: active_task_name;
+                color: text_muted;
+                font-family: "monospace";
+                font-size: 10px;
             }
 
-            Button {
-                x: parent.width - 52px;
-                y: 8px;
+            AoStatusPill {
+                x: parent.width - 720px;
+                y: 7px;
+                width: 190px;
+                label: active_branch_name;
+                bg: #7d333f;
+                border: #b95666;
+                text-color: text_primary;
+            }
+
+            AoButton {
+                x: parent.width - 520px;
+                y: 6px;
+                width: 138px;
+                label: "Actions";
+                active: true;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_primary;
+            }
+
+            AoButton {
+                x: parent.width - 374px;
+                y: 6px;
+                width: 120px;
+                label: "Open In";
+                active: false;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_secondary;
+            }
+
+            AoStatusPill {
+                x: parent.width - 244px;
+                y: 7px;
+                width: 184px;
+                label: resource_summary;
+                bg: sunken_bg;
+                border: border_color;
+                text-color: text_secondary;
+            }
+
+            AoButton {
+                x: parent.width - 50px;
+                y: 6px;
                 width: 32px;
-                height: 28px;
-                text: "x";
+                label: "x";
+                active: false;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_secondary;
                 clicked => {
                     root.close_requested();
                 }
@@ -157,71 +200,147 @@ export component AppWindow inherits Window {
 
         Rectangle {
             x: 0px;
-            y: 44px;
-            width: 296px;
-            height: parent.height - 44px;
+            y: body-top;
+            width: sidebar-width;
+            height: body-height;
             background: chrome_bg;
+            clip: true;
+
+            AoSectionLabel {
+                x: 16px;
+                y: 16px;
+                text: "PROJECTS";
+                label-color: text_muted;
+            }
 
             Text {
-                x: 18px;
-                y: 18px;
-                text: "PROJECTS";
+                x: parent.width - 114px;
+                y: 16px;
+                width: 94px;
+                horizontal-alignment: right;
+                text: project_summary;
                 color: text_muted;
-                font-size: 12px;
-                font-weight: 700;
+                font-family: "monospace";
+                font-size: 10px;
             }
 
-            SidebarRow {
+            for project[index] in root.project_rows: AoProjectRow {
+                x: 10px;
+                y: 40px + index * 72px;
+                width: parent.width - 20px;
+                entry: project;
+                overlay-hover: root.overlay_hover;
+                overlay-active: root.overlay_active;
+                text-primary: root.text_primary;
+                text-secondary: root.text_secondary;
+                text-muted: root.text_muted;
+            }
+
+            Rectangle {
                 x: 12px;
-                y: 48px;
-                width: 272px;
+                y: 258px;
+                width: parent.width - 24px;
+                height: 1px;
+                background: divider_color;
+            }
+
+            AoSectionLabel {
+                x: 16px;
+                y: 276px;
+                text: "TASKS";
+                label-color: text_muted;
+            }
+
+            AoButton {
+                clicked => {
+                    root.modal_open = true;
+                }
+                x: parent.width - 112px;
+                y: 269px;
+                width: 96px;
+                label: "New task";
                 active: true;
-                title: "appimage-daemon";
-                subtitle: "daemon-transport-foundation";
-                overlay_hover: root.overlay_hover;
-                overlay_active: root.overlay_active;
-                text_primary: root.text_primary;
-                text_muted: root.text_muted;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_primary;
             }
 
-            SidebarRow {
-                x: 12px;
-                y: 112px;
-                width: 272px;
-                active: false;
-                title: "another-one";
-                subtitle: "poc/slint-daemon-ui";
-                overlay_hover: root.overlay_hover;
-                overlay_active: root.overlay_active;
-                text_primary: root.text_primary;
-                text_muted: root.text_muted;
-            }
-
-            SidebarRow {
-                x: 12px;
-                y: 176px;
-                width: 272px;
-                active: false;
-                title: "slint-eval";
-                subtitle: "iroh-only terminal baseline";
-                overlay_hover: root.overlay_hover;
-                overlay_active: root.overlay_active;
-                text_primary: root.text_primary;
-                text_muted: root.text_muted;
+            for task[index] in root.task_rows: AoTaskRow {
+                x: 10px;
+                y: 304px + index * 64px;
+                width: parent.width - 20px;
+                entry: task;
+                overlay-hover: root.overlay_hover;
+                overlay-active: root.overlay_active;
+                text-primary: root.text_primary;
+                text-secondary: root.text_secondary;
+                text-muted: root.text_muted;
+                success-color: root.success_color;
+                row-border-color: root.border_color;
             }
         }
 
+        Rectangle {
+            x: sidebar-width;
+            y: body-top;
+            width: gutter-width;
+            height: body-height;
+            background: #0000001f;
+        }
+
         terminal_surface := Rectangle {
-            x: 296px;
-            y: 44px;
-            width: parent.width - 296px;
-            height: parent.height - 44px;
+            x: sidebar-width + gutter-width;
+            y: body-top;
+            width: parent.width - sidebar-width - right-width - gutter-width * 2;
+            height: body-height;
             background: terminal_bg;
             clip: true;
-            property <length> terminal-left: 28px;
-            property <length> terminal-top: 48px;
+            property <length> terminal-left: 24px;
+            property <length> terminal-top: 76px;
             property <length> terminal-cell-width: 8px;
             property <length> terminal-cell-height: 16px;
+
+            Rectangle {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: 38px;
+                background: card_bg;
+                border-width: 0px;
+
+                for tab[index] in root.tab_chips: AoTabChip {
+                    x: 12px + index * 154px;
+                    y: 4px;
+                    width: 146px;
+                    tab: tab;
+                    overlay-hover: root.overlay_hover;
+                    overlay-active: root.overlay_active;
+                    text-primary: root.text_primary;
+                    text-muted: root.text_muted;
+                    success-color: root.success_color;
+                }
+
+                AoButton {
+                    x: parent.width - 42px;
+                    y: 6px;
+                    width: 30px;
+                    label: "+";
+                    active: false;
+                    bg: overlay_active;
+                    hover-bg: overlay_hover;
+                    border: border_color;
+                    text-color: text_secondary;
+                }
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 38px;
+                width: parent.width;
+                height: 1px;
+                background: divider_color;
+            }
 
             terminal_touch := TouchArea {
                 width: parent.width;
@@ -246,12 +365,13 @@ export component AppWindow inherits Window {
             }
 
             Text {
-                x: 28px;
-                y: 20px;
+                x: terminal_surface.terminal-left;
+                y: 52px;
+                width: parent.width - 48px;
                 text: root.terminal_status;
                 color: text_secondary;
                 font-family: "monospace";
-                font-size: 13px;
+                font-size: 12px;
             }
 
             for span in root.terminal_background_spans: Rectangle {
@@ -284,60 +404,212 @@ export component AppWindow inherits Window {
             }
         }
 
+        Rectangle {
+            x: parent.width - right-width;
+            y: body-top;
+            width: right-width;
+            height: body-height;
+            background: chrome_bg;
+            clip: true;
+
+            Rectangle {
+                x: 0px;
+                y: 0px;
+                width: 4px;
+                height: parent.height;
+                background: #0000001f;
+            }
+
+            AoSectionLabel {
+                x: 18px;
+                y: 16px;
+                text: "INSPECTOR";
+                label-color: text_muted;
+            }
+
+            AoButton {
+                x: 18px;
+                y: 42px;
+                width: 76px;
+                label: "Files";
+                active: true;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_primary;
+            }
+
+            AoButton {
+                x: 102px;
+                y: 42px;
+                width: 92px;
+                label: "Commits";
+                active: false;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_secondary;
+            }
+
+            AoButton {
+                x: 202px;
+                y: 42px;
+                width: 74px;
+                label: "Checks";
+                active: false;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_secondary;
+            }
+
+            AoCard {
+                x: 16px;
+                y: 86px;
+                width: parent.width - 32px;
+                title: "Working Tree";
+                body: "Changed files and git actions will render here from daemon ProjectList and git metadata frames.";
+                card-bg: card_bg;
+                card-border-color: border_color;
+                text-primary: text_primary;
+                text-muted: text_muted;
+            }
+
+            AoCard {
+                x: 16px;
+                y: 186px;
+                width: parent.width - 32px;
+                title: "Checks";
+                body: "CI status, branch comparison, and PR state mirror the GPUI right sidebar contracts.";
+                card-bg: card_bg;
+                card-border-color: border_color;
+                text-primary: text_primary;
+                text-muted: text_muted;
+            }
+
+            AoCard {
+                x: 16px;
+                y: 286px;
+                width: parent.width - 32px;
+                title: "Project Path";
+                body: active_project_path;
+                card-bg: card_bg;
+                card-border-color: border_color;
+                text-primary: text_primary;
+                text-muted: text_muted;
+            }
+        }
+
+        Rectangle {
+            x: 0px;
+            y: parent.height - footer-height;
+            width: parent.width;
+            height: footer-height;
+            background: chrome_bg;
+
+            AoButton {
+                x: 10px;
+                y: 6px;
+                width: 32px;
+                label: "S";
+                active: false;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_secondary;
+            }
+
+            AoButton {
+                x: 50px;
+                y: 6px;
+                width: 32px;
+                label: "+";
+                active: false;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                text-color: text_secondary;
+            }
+
+            AoStatusPill {
+                x: sidebar-width + gutter-width + 12px;
+                y: 7px;
+                width: 240px;
+                label: active_branch_name;
+                bg: transparent;
+                border: transparent;
+                text-color: text_secondary;
+            }
+
+            AoStatusPill {
+                x: sidebar-width + gutter-width + 260px;
+                y: 7px;
+                width: 260px;
+                label: active_worktree_name;
+                bg: transparent;
+                border: transparent;
+                text-color: text_secondary;
+            }
+        }
+
         if modal_open: Rectangle {
             width: parent.width;
             height: parent.height;
             background: #00000080;
 
-            Rectangle {
-                x: (parent.width - 430px) / 2;
-                y: (parent.height - 250px) / 2;
-                width: 430px;
-                height: 250px;
-                border-radius: 18px;
-                background: card_bg;
-                border-width: 1px;
-                border-color: focus_ring;
+            AoModalCard {
+                x: (parent.width - 440px) / 2;
+                y: (parent.height - 260px) / 2;
+                card-bg: card_bg;
+                card-border-color: focus_ring;
 
                 Text {
                     x: 24px;
                     y: 22px;
                     text: "New task";
                     color: text_primary;
+                    font-family: "monospace";
                     font-size: 19px;
-                    font-weight: 800;
+                    font-weight: 900;
                 }
 
                 Text {
                     x: 24px;
                     y: 56px;
-                    text: "Fixture modal used to compare form ergonomics.";
+                    text: "Slint shell modal matching the GPUI task creation surface.";
                     color: text_muted;
+                    font-family: "monospace";
                     font-size: 12px;
                 }
 
-                LineEdit {
+                AoTextInput {
                     x: 24px;
                     y: 92px;
-                    width: 382px;
-                    height: 36px;
+                    width: 392px;
                     placeholder-text: "Task name";
+                    field-bg: terminal_bg;
+                    field-border: border_color;
                 }
 
-                LineEdit {
+                AoTextInput {
                     x: 24px;
                     y: 142px;
-                    width: 382px;
-                    height: 36px;
+                    width: 392px;
                     placeholder-text: "Branch name";
+                    field-bg: terminal_bg;
+                    field-border: border_color;
                 }
 
-                Button {
-                    x: 304px;
-                    y: 196px;
+                AoButton {
+                    x: 314px;
+                    y: 198px;
                     width: 102px;
-                    height: 34px;
-                    text: "Create";
+                    label: "Create";
+                    active: true;
+                    bg: overlay_active;
+                    hover-bg: overlay_hover;
+                    border: border_color;
+                    text-color: text_primary;
                     clicked => {
                         root.modal_open = false;
                     }

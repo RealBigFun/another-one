@@ -29,6 +29,9 @@ const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(33);
 const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x17191d;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
+const PROJECT_ACCENTS: [u32; 8] = [
+    0x5b4a9e, 0x2e7d6f, 0xb85c38, 0x3a6ea5, 0x8b5e3c, 0x7b2d5f, 0x4a7c4b, 0x9c5151,
+];
 const SHELL_COLOR_SMOKE_PROBE: &[u8] =
     b"printf '\\033[31mRED \\033[32mGREEN \\033[34mBLUE\\033[0m DEFAULT\\n'\nprintf 'SLINT_POC_IROH_ALACRITTY_READY\\n'\r";
 const SHELL_READINESS_PROBE: &[u8] = b"printf 'SLINT_POC_IROH_ALACRITTY_READY\\n'\r";
@@ -38,6 +41,7 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     #[cfg(not(target_os = "android"))]
     slint::set_xdg_app_id("com.anotherone.SlintPoc")?;
     apply_tokens(&app);
+    seed_shell_model(&app);
 
     let (input_tx, input_rx) = mpsc::unbounded_channel::<SlintKeyEvent>();
     app.on_terminal_key(move |text, control, alt, _shift| {
@@ -69,17 +73,346 @@ pub fn android_main(app: slint::android::AndroidApp) {
 fn apply_tokens(app: &AppWindow) {
     app.set_chrome_bg(argb(0xff, 0x27, 0x29, 0x2e));
     app.set_card_bg(argb(0xff, 0x2b, 0x2d, 0x31));
+    app.set_sunken_bg(argb(0xff, 0x20, 0x23, 0x29));
     app.set_terminal_bg(argb(0xff, 0x17, 0x19, 0x1d));
     app.set_overlay_hover(argb(0x0f, 0xff, 0xff, 0xff));
     app.set_overlay_active(argb(0x1a, 0xff, 0xff, 0xff));
+    app.set_border_color(argb(0x16, 0xff, 0xff, 0xff));
+    app.set_divider_color(argb(0x10, 0xff, 0xff, 0xff));
     app.set_focus_ring(argb(0xff, 0x5d, 0x7a, 0xd5));
     app.set_text_primary(argb(0xff, 0xeb, 0xeb, 0xeb));
     app.set_text_secondary(argb(0xff, 0xc7, 0xc7, 0xc7));
     app.set_text_muted(argb(0xff, 0x94, 0x94, 0x94));
+    app.set_success_color(argb(0xff, 0x7a, 0xd5, 0x91));
+    app.set_warning_color(argb(0xff, 0xe5, 0xc0, 0x7b));
+    app.set_danger_color(argb(0xff, 0xe0, 0x6c, 0x75));
 }
 
 fn argb(a: u8, r: u8, g: u8, b: u8) -> slint::Color {
     slint::Color::from_argb_u8(a, r, g, b)
+}
+
+fn seed_shell_model(app: &AppWindow) {
+    app.set_project_rows(slint::ModelRc::new(slint::VecModel::from(vec![
+        ProjectSidebarEntry {
+            id: "another-one".into(),
+            name: "another-one".into(),
+            path: "~/.another-one/worktrees/another-one".into(),
+            branch: "slint-daemon-poc-clean".into(),
+            initials: "A".into(),
+            accent: project_accent_color("another-one"),
+            active: true,
+            task_count_label: "3".into(),
+        },
+        ProjectSidebarEntry {
+            id: "daemon-sandbox".into(),
+            name: "daemon-sandbox".into(),
+            path: "daemon-sandbox".into(),
+            branch: "daemon transport".into(),
+            initials: "D".into(),
+            accent: project_accent_color("daemon-sandbox"),
+            active: false,
+            task_count_label: "1".into(),
+        },
+        ProjectSidebarEntry {
+            id: "slint-platform".into(),
+            name: "slint-platform".into(),
+            path: "slint-platform".into(),
+            branch: "platform traits".into(),
+            initials: "S".into(),
+            accent: project_accent_color("slint-platform"),
+            active: false,
+            task_count_label: "2".into(),
+        },
+    ])));
+    app.set_task_rows(slint::ModelRc::new(slint::VecModel::from(vec![
+        TaskSidebarEntry {
+            id: "slint-build".into(),
+            title: "Slint build".into(),
+            branch: "slint-daemon-poc-clean".into(),
+            metadata: "active | +0 -0".into(),
+            initials: "S".into(),
+            accent: project_accent_color("slint-build"),
+            active: true,
+            pinned: true,
+            running: true,
+        },
+        TaskSidebarEntry {
+            id: "terminal-ready".into(),
+            title: "Terminal readiness".into(),
+            branch: "terminal-production".into(),
+            metadata: "in progress | renderer".into(),
+            initials: "T".into(),
+            accent: project_accent_color("terminal-ready"),
+            active: false,
+            pinned: false,
+            running: false,
+        },
+        TaskSidebarEntry {
+            id: "style-system".into(),
+            title: "Style system".into(),
+            branch: "gpui baseline".into(),
+            metadata: "blocked | visual corpus".into(),
+            initials: "G".into(),
+            accent: project_accent_color("style-system"),
+            active: false,
+            pinned: false,
+            running: false,
+        },
+    ])));
+    app.set_tab_chips(slint::ModelRc::new(slint::VecModel::from(vec![
+        TerminalTabChip {
+            id: "main".into(),
+            title: "Codex".into(),
+            provider: "codex".into(),
+            active: true,
+            running: true,
+            pinned: false,
+        },
+        TerminalTabChip {
+            id: "shell".into(),
+            title: "Shell".into(),
+            provider: "shell".into(),
+            active: false,
+            running: false,
+            pinned: false,
+        },
+    ])));
+}
+
+#[derive(Default)]
+struct WorkspaceShellModel {
+    project_rows: Vec<ProjectSidebarEntry>,
+    task_rows: Vec<TaskSidebarEntry>,
+    tab_chips: Vec<TerminalTabChip>,
+    active_project_name: String,
+    active_task_name: String,
+    active_branch_name: String,
+    active_worktree_name: String,
+    active_project_path: String,
+    project_summary: String,
+}
+
+fn set_workspace_tree(
+    app_weak: &slint::Weak<AppWindow>,
+    projects: &[frame::ProjectSummary],
+    active_section_id: &str,
+    active_tab_id: &str,
+) {
+    let model = workspace_shell_model(projects, active_section_id, active_tab_id);
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_project_rows(slint::ModelRc::new(slint::VecModel::from(
+                model.project_rows,
+            )));
+            app.set_task_rows(slint::ModelRc::new(slint::VecModel::from(
+                model.task_rows,
+            )));
+            app.set_tab_chips(slint::ModelRc::new(slint::VecModel::from(
+                model.tab_chips,
+            )));
+            app.set_active_project_name(model.active_project_name.into());
+            app.set_active_task_name(model.active_task_name.into());
+            app.set_active_branch_name(model.active_branch_name.into());
+            app.set_active_worktree_name(model.active_worktree_name.into());
+            app.set_active_project_path(model.active_project_path.into());
+            app.set_project_summary(model.project_summary.into());
+        }
+    });
+}
+
+fn workspace_shell_model(
+    projects: &[frame::ProjectSummary],
+    active_section_id: &str,
+    active_tab_id: &str,
+) -> WorkspaceShellModel {
+    let active_project = projects
+        .iter()
+        .find(|project| {
+            project
+                .tasks
+                .iter()
+                .any(|task| task.section_id == active_section_id)
+        })
+        .or_else(|| projects.first());
+    let active_task = active_project.and_then(|project| {
+        project
+            .tasks
+            .iter()
+            .find(|task| task.section_id == active_section_id)
+            .or_else(|| project.tasks.first())
+    });
+
+    let project_rows = projects
+        .iter()
+        .take(3)
+        .map(|project| {
+            let active = project
+                .tasks
+                .iter()
+                .any(|task| task.section_id == active_section_id);
+            ProjectSidebarEntry {
+                id: project.id.clone().into(),
+                name: project.name.clone().into(),
+                path: compact_path(&project.path).into(),
+                branch: project
+                    .current_branch
+                    .as_deref()
+                    .unwrap_or_else(|| project_kind_label(project.kind))
+                    .into(),
+                initials: initials(&project.name).into(),
+                accent: project_accent_color(&project.id),
+                active,
+                task_count_label: project.tasks.len().to_string().into(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut task_entries = projects
+        .iter()
+        .flat_map(|project| {
+            project.tasks.iter().map(move |task| {
+                let running = task.tabs.iter().any(|tab| tab.running);
+                TaskSidebarEntry {
+                    id: task.id.clone().into(),
+                    title: task.name.clone().into(),
+                    branch: task.branch_name.clone().into(),
+                    metadata: task_metadata(task, running).into(),
+                    initials: initials(&task.name).into(),
+                    accent: project_accent_color(&project.id),
+                    active: task.section_id == active_section_id,
+                    pinned: task.pinned,
+                    running,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    task_entries.sort_by(|left, right| {
+        right
+            .active
+            .cmp(&left.active)
+            .then_with(|| right.pinned.cmp(&left.pinned))
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    task_entries.truncate(7);
+
+    let tab_chips = active_task
+        .map(|task| {
+            task.tabs
+                .iter()
+                .take(5)
+                .map(|tab| TerminalTabChip {
+                    id: tab.id.clone().into(),
+                    title: tab
+                        .fixed_title
+                        .as_deref()
+                        .unwrap_or(tab.title.as_str())
+                        .to_string()
+                        .into(),
+                    provider: tab.provider.map(provider_label).unwrap_or("shell").into(),
+                    active: tab.id == active_tab_id,
+                    running: tab.running,
+                    pinned: tab.pinned,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    WorkspaceShellModel {
+        project_rows,
+        task_rows: task_entries,
+        tab_chips,
+        active_project_name: active_project
+            .map(|project| project.name.clone())
+            .unwrap_or_else(|| "another-one".to_string()),
+        active_task_name: active_task
+            .map(|task| task.name.clone())
+            .unwrap_or_else(|| "No active task".to_string()),
+        active_branch_name: active_task
+            .map(|task| task.branch_name.clone())
+            .or_else(|| active_project.and_then(|project| project.current_branch.clone()))
+            .unwrap_or_else(|| "detached".to_string()),
+        active_worktree_name: active_project
+            .map(|project| worktree_name(&project.path))
+            .unwrap_or_else(|| "workspace".to_string()),
+        active_project_path: active_project
+            .map(|project| project.path.clone())
+            .unwrap_or_default(),
+        project_summary: format!("{} projects", projects.len()),
+    }
+}
+
+fn project_kind_label(kind: frame::ProjectKind) -> &'static str {
+    match kind {
+        frame::ProjectKind::Root => "root",
+        frame::ProjectKind::Worktree => "worktree",
+    }
+}
+
+fn task_metadata(task: &frame::TaskSummary, running: bool) -> String {
+    let mut parts = Vec::new();
+    if !task.last_commit_relative.is_empty() {
+        parts.push(task.last_commit_relative.clone());
+    }
+    if task.lines_added != 0 || task.lines_removed != 0 {
+        parts.push(format!("+{} -{}", task.lines_added, task.lines_removed));
+    }
+    parts.push(if running { "running" } else { "idle" }.to_string());
+    parts.join(" | ")
+}
+
+fn provider_label(provider: frame::AgentProvider) -> &'static str {
+    match provider {
+        frame::AgentProvider::ClaudeCode => "claude-code",
+        frame::AgentProvider::CursorAgent => "cursor-agent",
+        frame::AgentProvider::Codex => "codex",
+        frame::AgentProvider::Pi => "pi",
+        frame::AgentProvider::Gemini => "gemini",
+        frame::AgentProvider::OpenCode => "opencode",
+        frame::AgentProvider::Amp => "amp",
+        frame::AgentProvider::RovoDev => "rovo-dev",
+        frame::AgentProvider::Forge => "forge",
+        frame::AgentProvider::Shell => "shell",
+    }
+}
+
+fn compact_path(path: &str) -> String {
+    let mut parts = path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>();
+    parts.reverse();
+    if parts.is_empty() {
+        path.to_string()
+    } else {
+        format!(".../{}", parts.join("/"))
+    }
+}
+
+fn worktree_name(path: &str) -> String {
+    path.rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or("workspace")
+        .to_string()
+}
+
+fn initials(label: &str) -> String {
+    label
+        .chars()
+        .find(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_uppercase().to_string())
+        .unwrap_or_else(|| "A".to_string())
+}
+
+fn project_accent_color(id: &str) -> slint::Color {
+    let hash = id
+        .bytes()
+        .fold(0_u32, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as u32));
+    let color = PROJECT_ACCENTS[(hash as usize) % PROJECT_ACCENTS.len()];
+    slint::Color::from_argb_encoded(0xff000000 | color)
 }
 
 fn spawn_terminal_worker(
@@ -158,15 +491,15 @@ async fn run_terminal_session(
             serde_json::from_slice(&payload).context("decode worker reply")?;
         match envelope.reply {
             WorkerReply::ProjectList { projects } => {
-                let Some(project) = projects.first() else {
-                    anyhow::bail!("daemon-sandbox returned no projects");
+                let Some((task, tab)) = projects.iter().find_map(|project| {
+                    project
+                        .tasks
+                        .first()
+                        .and_then(|task| task.tabs.first().map(|tab| (task, tab)))
+                }) else {
+                    anyhow::bail!("daemon-sandbox returned no attachable task tabs");
                 };
-                let Some(task) = project.tasks.first() else {
-                    anyhow::bail!("daemon-sandbox project returned no tasks");
-                };
-                let Some(tab) = task.tabs.first() else {
-                    anyhow::bail!("daemon-sandbox task returned no tabs");
-                };
+                set_workspace_tree(app_weak, &projects, &task.section_id, &tab.id);
                 break (task.section_id.clone(), tab.id.clone());
             }
             WorkerReply::Err { message, .. } => anyhow::bail!("list_projects failed: {message}"),

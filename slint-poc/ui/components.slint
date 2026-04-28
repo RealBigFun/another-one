@@ -1,0 +1,397 @@
+import { LineEdit } from "std-widgets.slint";
+
+export struct ProjectSidebarEntry {
+    id: string,
+    name: string,
+    path: string,
+    branch: string,
+    initials: string,
+    accent: color,
+    active: bool,
+    task-count-label: string,
+}
+
+export struct TaskSidebarEntry {
+    id: string,
+    title: string,
+    branch: string,
+    metadata: string,
+    initials: string,
+    accent: color,
+    active: bool,
+    pinned: bool,
+    running: bool,
+}
+
+export struct TerminalTabChip {
+    id: string,
+    title: string,
+    provider: string,
+    active: bool,
+    running: bool,
+    pinned: bool,
+}
+
+export component AoButton inherits Rectangle {
+    in property <string> label;
+    in property <string> control-label: label;
+    in property <bool> active: false;
+    in property <color> bg;
+    in property <color> hover-bg;
+    in property <color> border;
+    in property <color> text-color;
+    callback clicked();
+
+    height: 26px;
+    accessible-role: button;
+    accessible-label: control-label;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: active ? border : transparent;
+    background: active ? bg : touch.has-hover ? hover-bg : transparent;
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    Text {
+        x: 10px;
+        y: 6px;
+        width: parent.width - 20px;
+        text: label;
+        color: text-color;
+        font-family: "monospace";
+        font-size: 12px;
+        font-weight: 700;
+    }
+}
+
+export component AoStatusPill inherits Rectangle {
+    in property <string> label;
+    in property <color> bg;
+    in property <color> border;
+    in property <color> text-color;
+
+    height: 24px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: border;
+    background: bg;
+
+    Text {
+        x: 12px;
+        y: 5px;
+        width: parent.width - 24px;
+        text: label;
+        color: text-color;
+        font-family: "monospace";
+        font-size: 12px;
+        font-weight: 700;
+    }
+}
+
+export component AoSectionLabel inherits Text {
+    in property <color> label-color;
+
+    color: label-color;
+    font-family: "monospace";
+    font-size: 11px;
+    font-weight: 800;
+}
+
+export component AoAvatar inherits Rectangle {
+    in property <string> label;
+    in property <color> accent;
+    in property <color> text-color;
+
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: accent;
+
+    Text {
+        x: 0px;
+        y: 6px;
+        width: parent.width;
+        horizontal-alignment: center;
+        text: label;
+        color: text-color;
+        font-family: "monospace";
+        font-size: 12px;
+        font-weight: 900;
+    }
+}
+
+export component AoProjectRow inherits Rectangle {
+    in property <ProjectSidebarEntry> entry;
+    in property <color> overlay-hover;
+    in property <color> overlay-active;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> text-secondary;
+    callback clicked(string);
+
+    height: 66px;
+    border-radius: 11px;
+    background: entry.active ? overlay-active : row-touch.has-hover ? overlay-hover : transparent;
+
+    row-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.clicked(root.entry.id);
+        }
+    }
+
+    AoAvatar {
+        x: 12px;
+        y: 11px;
+        label: entry.initials;
+        accent: entry.accent;
+        text-color: text-primary;
+    }
+
+    Text {
+        x: 52px;
+        y: 9px;
+        width: parent.width - 104px;
+        text: entry.name;
+        color: text-primary;
+        font-family: "monospace";
+        font-size: 14px;
+        font-weight: 800;
+    }
+
+    Text {
+        x: 52px;
+        y: 29px;
+        width: parent.width - 74px;
+        text: entry.branch;
+        color: text-muted;
+        font-family: "monospace";
+        font-size: 11px;
+    }
+
+    Text {
+        x: parent.width - 45px;
+        y: 13px;
+        width: 32px;
+        horizontal-alignment: right;
+        text: entry.task-count-label;
+        color: text-secondary;
+        font-family: "monospace";
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    Text {
+        x: 52px;
+        y: 46px;
+        width: parent.width - 66px;
+        text: entry.path;
+        color: text-muted;
+        font-family: "monospace";
+        font-size: 10px;
+    }
+}
+
+export component AoTaskRow inherits Rectangle {
+    in property <TaskSidebarEntry> entry;
+    in property <color> overlay-hover;
+    in property <color> overlay-active;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> text-secondary;
+    in property <color> success-color;
+    in property <color> row-border-color;
+    callback clicked(string);
+
+    height: 58px;
+    border-radius: 10px;
+    background: entry.active ? overlay-active : row-touch.has-hover ? overlay-hover : transparent;
+    border-width: entry.active ? 1px : 0px;
+    border-color: row-border-color;
+
+    row-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.clicked(root.entry.id);
+        }
+    }
+
+    AoAvatar {
+        x: 12px;
+        y: 15px;
+        label: entry.initials;
+        accent: entry.accent;
+        text-color: text-primary;
+    }
+
+    Text {
+        x: 52px;
+        y: 10px;
+        width: parent.width - 94px;
+        text: entry.title;
+        color: text-primary;
+        font-family: "monospace";
+        font-size: 13px;
+        font-weight: 800;
+    }
+
+    Text {
+        x: 52px;
+        y: 30px;
+        width: parent.width - 70px;
+        text: entry.metadata;
+        color: text-muted;
+        font-family: "monospace";
+        font-size: 11px;
+    }
+
+    if entry.pinned: Text {
+        x: parent.width - 64px;
+        y: 11px;
+        text: "pin";
+        color: text-secondary;
+        font-family: "monospace";
+        font-size: 10px;
+        font-weight: 800;
+    }
+
+    Rectangle {
+        x: parent.width - 22px;
+        y: 18px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: entry.running ? success-color : text-muted;
+        opacity: entry.running ? 1.0 : 0.36;
+    }
+}
+
+export component AoTabChip inherits Rectangle {
+    in property <TerminalTabChip> tab;
+    in property <color> overlay-hover;
+    in property <color> overlay-active;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> success-color;
+    callback clicked(string);
+
+    height: 30px;
+    border-radius: 9px;
+    background: tab.active ? overlay-active : chip-touch.has-hover ? overlay-hover : transparent;
+
+    chip-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.clicked(root.tab.id);
+        }
+    }
+
+    Rectangle {
+        x: 10px;
+        y: 11px;
+        width: 7px;
+        height: 7px;
+        border-radius: 4px;
+        background: tab.running ? success-color : text-muted;
+        opacity: tab.running ? 1.0 : 0.38;
+    }
+
+    Text {
+        x: 24px;
+        y: 7px;
+        width: parent.width - 46px;
+        text: tab.title;
+        color: tab.active ? text-primary : text-muted;
+        font-family: "monospace";
+        font-size: 12px;
+        font-weight: tab.active ? 800 : 600;
+    }
+
+    if tab.pinned: Text {
+        x: parent.width - 22px;
+        y: 8px;
+        text: "*";
+        color: text-primary;
+        font-family: "monospace";
+        font-size: 12px;
+        font-weight: 900;
+    }
+}
+
+export component AoCard inherits Rectangle {
+    in property <string> title;
+    in property <string> body;
+    in property <color> card-bg;
+    in property <color> card-border-color;
+    in property <color> text-primary;
+    in property <color> text-muted;
+
+    height: 88px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: card-border-color;
+    background: card-bg;
+
+    Text {
+        x: 14px;
+        y: 12px;
+        width: parent.width - 28px;
+        text: title;
+        color: text-primary;
+        font-family: "monospace";
+        font-size: 12px;
+        font-weight: 800;
+    }
+
+    Text {
+        x: 14px;
+        y: 36px;
+        width: parent.width - 28px;
+        text: body;
+        color: text-muted;
+        font-family: "monospace";
+        font-size: 11px;
+    }
+}
+
+export component AoTextInput inherits Rectangle {
+    in property <string> placeholder-text;
+    in-out property <string> text <=> input.text;
+    in property <color> field-bg;
+    in property <color> field-border;
+
+    height: 36px;
+    border-radius: 9px;
+    border-width: 1px;
+    border-color: field-border;
+    background: field-bg;
+
+    input := LineEdit {
+        x: 8px;
+        y: 3px;
+        width: parent.width - 16px;
+        height: parent.height - 6px;
+        placeholder-text: root.placeholder-text;
+    }
+}
+
+export component AoModalCard inherits Rectangle {
+    in property <color> card-bg;
+    in property <color> card-border-color;
+
+    width: 440px;
+    height: 260px;
+    border-radius: 18px;
+    background: card-bg;
+    border-width: 1px;
+    border-color: card-border-color;
+}
