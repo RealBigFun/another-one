@@ -18,6 +18,7 @@ use daemon_sandbox::frame::{
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, EndpointId};
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 slint::include_modules!();
 
@@ -25,6 +26,7 @@ const TERMINAL_COLS: u16 = 100;
 const TERMINAL_ROWS: u16 = 34;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
+const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(33);
 const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x17191d;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
 const SHELL_COLOR_SMOKE_PROBE: &[u8] =
@@ -215,8 +217,11 @@ async fn run_terminal_session(
     );
 
     let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
-    let mut frame_tick = tokio::time::interval(Duration::from_millis(33));
     let mut dirty = true;
+    let mut last_flush = Instant::now()
+        .checked_sub(TERMINAL_FRAME_INTERVAL)
+        .unwrap_or_else(Instant::now);
+    let mut pending_flush_at = Some(Instant::now());
 
     loop {
         tokio::select! {
@@ -245,6 +250,9 @@ async fn run_terminal_session(
                                 .context("send terminal protocol reply")?;
                         }
                         dirty = true;
+                        if pending_flush_at.is_none() {
+                            pending_flush_at = Some(next_terminal_flush_deadline(Instant::now(), last_flush));
+                        }
                     }
                     frame::TY_WORKER_REPLY => {
                         if let Ok(envelope) = serde_json::from_slice::<WorkerReplyEnvelope>(&payload) {
@@ -256,14 +264,30 @@ async fn run_terminal_session(
                     _ => {}
                 }
             }
-            _ = frame_tick.tick() => {
+            _ = wait_for_terminal_flush(pending_flush_at), if pending_flush_at.is_some() => {
                 if dirty {
                     set_terminal_surface(app_weak, terminal.snapshot_surface());
                     dirty = false;
                 }
+                last_flush = Instant::now();
+                pending_flush_at = None;
             }
         }
     }
+}
+
+async fn wait_for_terminal_flush(deadline: Option<Instant>) {
+    let Some(deadline) = deadline else {
+        std::future::pending::<()>().await;
+        return;
+    };
+
+    tokio::time::sleep_until(deadline).await;
+}
+
+fn next_terminal_flush_deadline(now: Instant, last_flush: Instant) -> Instant {
+    let earliest = last_flush + TERMINAL_FRAME_INTERVAL;
+    if earliest > now { earliest } else { now }
 }
 
 async fn send_terminal_input<W>(
@@ -1074,6 +1098,26 @@ mod tests {
     #[test]
     fn cursor_shape_name_maps_hollow_block() {
         assert_eq!(cursor_shape_name(CursorShape::HollowBlock), Some("hollow-block"));
+    }
+
+    #[test]
+    fn next_terminal_flush_deadline_keeps_frame_budget() {
+        let last_flush = Instant::now();
+        let now = last_flush + Duration::from_millis(10);
+
+        let deadline = next_terminal_flush_deadline(now, last_flush);
+
+        assert_eq!(deadline, last_flush + TERMINAL_FRAME_INTERVAL);
+    }
+
+    #[test]
+    fn next_terminal_flush_deadline_flushes_immediately_when_budget_elapsed() {
+        let last_flush = Instant::now();
+        let now = last_flush + TERMINAL_FRAME_INTERVAL + Duration::from_millis(1);
+
+        let deadline = next_terminal_flush_deadline(now, last_flush);
+
+        assert_eq!(deadline, now);
     }
 
     fn assert_run_color(surface: &TerminalSurface, text: &str, expected: u32) {
