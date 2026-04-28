@@ -38,6 +38,133 @@ const PROJECT_ACCENTS: [u32; 8] = [
 const SHELL_COLOR_SMOKE_PROBE: &[u8] =
     b"printf '\\033[31mRED \\033[32mGREEN \\033[34mBLUE\\033[0m DEFAULT\\n'\nprintf 'ANOTHERONE_SLINT_READY\\n'\r";
 const SHELL_READINESS_PROBE: &[u8] = b"printf 'ANOTHERONE_SLINT_READY\\n'\r";
+const TERMINAL_RENDER_PROBE_CHUNK_SIZE: usize = 8192;
+const TERMINAL_RENDER_PROBE_LINE: &[u8] =
+    b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/ terminal flood line\n";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalRenderProbeReport {
+    pub target_bytes: usize,
+    pub applied_bytes: usize,
+    pub data_frames: usize,
+    pub snapshots: usize,
+    pub elapsed_ms: u128,
+    pub throughput_mib_s: u64,
+    pub snapshot_p50_us: u128,
+    pub snapshot_p95_us: u128,
+    pub snapshot_p99_us: u128,
+    pub snapshot_max_us: u128,
+    pub max_text_runs: usize,
+    pub max_background_spans: usize,
+    pub max_cursor_spans: usize,
+    pub rss_kib: Option<u64>,
+}
+
+impl TerminalRenderProbeReport {
+    pub fn to_lines(&self) -> Vec<String> {
+        vec![
+            format!("target_bytes={}", self.target_bytes),
+            format!("applied_bytes={}", self.applied_bytes),
+            format!("data_frames={}", self.data_frames),
+            format!("snapshots={}", self.snapshots),
+            format!("elapsed_ms={}", self.elapsed_ms),
+            format!("throughput_mib_s={}", self.throughput_mib_s),
+            format!("snapshot_p50_us={}", self.snapshot_p50_us),
+            format!("snapshot_p95_us={}", self.snapshot_p95_us),
+            format!("snapshot_p99_us={}", self.snapshot_p99_us),
+            format!("snapshot_max_us={}", self.snapshot_max_us),
+            format!("max_text_runs={}", self.max_text_runs),
+            format!("max_background_spans={}", self.max_background_spans),
+            format!("max_cursor_spans={}", self.max_cursor_spans),
+            format!(
+                "rss_kib={}",
+                self.rss_kib
+                    .map(|rss| rss.to_string())
+                    .unwrap_or_else(|| "unavailable".to_string())
+            ),
+        ]
+    }
+}
+
+pub fn run_terminal_render_probe(target_bytes: usize) -> TerminalRenderProbeReport {
+    let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
+    let mut chunk = Vec::with_capacity(TERMINAL_RENDER_PROBE_CHUNK_SIZE);
+    let mut applied_bytes = 0;
+    let mut data_frames = 0;
+    let mut snapshot_durations = Vec::new();
+    let mut max_text_runs = 0;
+    let mut max_background_spans = 0;
+    let mut max_cursor_spans = 0;
+    let started = std::time::Instant::now();
+
+    while applied_bytes < target_bytes {
+        chunk.clear();
+        while chunk.len() < TERMINAL_RENDER_PROBE_CHUNK_SIZE
+            && applied_bytes + chunk.len() < target_bytes
+        {
+            let remaining = target_bytes - applied_bytes - chunk.len();
+            let take = remaining.min(TERMINAL_RENDER_PROBE_LINE.len());
+            chunk.extend_from_slice(&TERMINAL_RENDER_PROBE_LINE[..take]);
+        }
+
+        let _ = terminal.apply_output(&chunk);
+        applied_bytes += chunk.len();
+        data_frames += 1;
+
+        let snapshot_started = std::time::Instant::now();
+        let surface = terminal.snapshot_surface();
+        snapshot_durations.push(snapshot_started.elapsed().as_micros());
+        max_text_runs = max_text_runs.max(surface.text_runs.len());
+        max_background_spans = max_background_spans.max(surface.background_spans.len());
+        max_cursor_spans = max_cursor_spans.max(surface.cursor_spans.len());
+    }
+
+    snapshot_durations.sort_unstable();
+    let elapsed = started.elapsed();
+    TerminalRenderProbeReport {
+        target_bytes,
+        applied_bytes,
+        data_frames,
+        snapshots: snapshot_durations.len(),
+        elapsed_ms: elapsed.as_millis(),
+        throughput_mib_s: mib_per_second(applied_bytes, elapsed),
+        snapshot_p50_us: percentile(&snapshot_durations, 50),
+        snapshot_p95_us: percentile(&snapshot_durations, 95),
+        snapshot_p99_us: percentile(&snapshot_durations, 99),
+        snapshot_max_us: snapshot_durations.last().copied().unwrap_or_default(),
+        max_text_runs,
+        max_background_spans,
+        max_cursor_spans,
+        rss_kib: current_rss_kib(),
+    }
+}
+
+fn percentile(sorted_values: &[u128], percentile: usize) -> u128 {
+    if sorted_values.is_empty() {
+        return 0;
+    }
+
+    let index = ((sorted_values.len() - 1) * percentile) / 100;
+    sorted_values[index]
+}
+
+fn mib_per_second(bytes: usize, elapsed: Duration) -> u64 {
+    let nanos = elapsed.as_nanos();
+    if nanos == 0 {
+        return 0;
+    }
+
+    let bytes_per_second = (bytes as u128).saturating_mul(1_000_000_000) / nanos;
+    (bytes_per_second / (1024 * 1024)) as u64
+}
+
+fn current_rss_kib() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status.lines().find_map(|line| {
+        let rest = line.strip_prefix("VmRSS:")?;
+        rest.split_whitespace().next()?.parse().ok()
+    })
+}
 
 pub fn run_app() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
@@ -2303,6 +2430,15 @@ mod tests {
         let deadline = next_terminal_flush_deadline(now, last_flush);
 
         assert_eq!(deadline, now);
+    }
+
+    #[test]
+    fn terminal_render_probe_reaches_target_bytes() {
+        let report = run_terminal_render_probe(16 * 1024);
+
+        assert_eq!(report.applied_bytes, report.target_bytes);
+        assert!(report.snapshots > 0);
+        assert!(report.max_text_runs > 0);
     }
 
     #[test]

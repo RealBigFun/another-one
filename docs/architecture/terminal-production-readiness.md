@@ -123,10 +123,18 @@ Evidence:
   `top -b -n 3 -d 1 -p 3015109` reported `0.0%`, `0.0%`, then `1.0%` CPU with
   approximately `175480 KiB` RSS. This is a debug/hot-reload sample, not the
   final release performance gate.
+- Slint render throughput release probe:
+  `/usr/bin/time -v target/release/terminal_render_probe 50000000` drove
+  `50,000,000` PTY-like bytes through the Alacritty snapshot plus Slint span
+  batching path in `6,065` data frames and `6,065` snapshots. Wall time was
+  `1.16s`, throughput was `40 MiB/s`, snapshot latency was p50/p95/p99
+  `56/96/106 us`, max snapshot latency was `835 us`, max text/background/cursor
+  spans were `87/1/0`, process CPU was `99%` for the bounded probe, and max RSS
+  was `27,400 KiB`.
 
 ## Remaining Gates
 
 - Slint visual proof for grapheme/wide-cell rendering, ANSI/indexed/truecolor
   colors, cursor states, selection, and restored/failed tab states.
-- Slint renderer throughput proof under sustained PTY output.
-- Idle CPU and memory measurements for the Slint terminal pane.
+- Release-window idle CPU and memory measurements for the Slint terminal pane.
+- Manual resize responsiveness proof while collapsing/expanding drawers.
