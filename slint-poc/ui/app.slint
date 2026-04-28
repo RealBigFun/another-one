@@ -67,7 +67,10 @@ export component AppWindow inherits Window {
     in property <color> text_secondary;
     in property <color> text_muted;
     in-out property <bool> modal_open: false;
+    in-out property <string> terminal_status: "terminal: waiting for daemon-sandbox ticket";
+    in-out property <string> terminal_text: "Start daemon-sandbox, then click this pane and type.";
     callback close_requested();
+    callback terminal_key(string, bool, bool, bool);
 
     title: "AnotherOne Slint POC";
     preferred-width: 1180px;
@@ -181,20 +184,44 @@ export component AppWindow inherits Window {
             height: parent.height - 44px;
             background: terminal_bg;
 
-            Text {
-                x: 28px;
-                y: 28px;
-                text: "$ cargo run -p slint-poc";
-                color: text_secondary;
-                font-family: "monospace";
-                font-size: 14px;
+            terminal_touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => {
+                    terminal_focus.focus();
+                }
+            }
+
+            terminal_focus := FocusScope {
+                width: 0px;
+                height: 0px;
+                key-pressed(event) => {
+                    root.terminal_key(
+                        event.text,
+                        event.modifiers.control,
+                        event.modifiers.alt,
+                        event.modifiers.shift,
+                    );
+                    return accept;
+                }
             }
 
             Text {
                 x: 28px;
-                y: 58px;
-                text: "fixture grid: iroh + alacritty_terminal wiring lands after chrome parity";
-                color: text_muted;
+                y: 20px;
+                text: root.terminal_status;
+                color: text_secondary;
+                font-family: "monospace";
+                font-size: 13px;
+            }
+
+            Text {
+                x: 28px;
+                y: 48px;
+                width: parent.width - 56px;
+                height: parent.height - 76px;
+                text: root.terminal_text;
+                color: text_secondary;
                 font-family: "monospace";
                 font-size: 13px;
             }

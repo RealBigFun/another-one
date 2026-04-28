@@ -9234,9 +9234,15 @@ dependencies = [
 name = "slint-poc"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "daemon-sandbox",
  "fontique",
+ "iroh",
+ "serde_json",
  "slint",
  "slint-build",
+ "tokio",
 ]
 
 [[package]]

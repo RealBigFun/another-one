@@ -80,3 +80,11 @@ cargo makepad android --abi=arm64 run -p makepad-poc
 - Added a Linux-only `fontique/fontconfig-dlopen` feature shim in `slint-poc` because GPUI enables `yeslogic-fontconfig-sys/dlopen` in the shared workspace graph.
 - Flagged Makepad small-font quality as a potential hard fail; raised fixture typography above 12px and added a monospace terminal-text canary to separate bad placeholder styling from framework text quality.
 - User review found tuned Makepad text quality unacceptable. Makepad is DQ; no further Makepad implementation work planned.
+
+### Day 2
+
+- Continued Slint only after Makepad DQ.
+- Added the first Slint vertical terminal slice: reads `/tmp/daemon-sandbox.ticket`, dials daemon-sandbox over Iroh, pre-authorizes the local POC endpoint in the sandbox allowlist, lists the synthetic sandbox project, attaches the shell tab, forwards keyboard input as raw PTY bytes, feeds PTY output into `alacritty_terminal`, and displays a throttled text snapshot in the Slint terminal pane.
+- Rendering is still a text snapshot, not the final CPU-rasterized `Grid<Cell>` image path. It is enough to validate transport + parser integration before investing in rasterization.
+- Validation passed: `cargo check -p slint-poc`.
+- Runtime smoke passed: launched `daemon-sandbox`, launched `slint-poc`, and daemon logs showed the Slint client connected as a paired Iroh peer.
