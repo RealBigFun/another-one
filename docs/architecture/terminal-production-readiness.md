@@ -79,6 +79,37 @@ Covered cases:
 - typed input reaches the attached tab;
 - input without attachment is dropped.
 
+## Slint Renderer Evidence
+
+The Slint POC renderer now consumes Alacritty cells into batched text,
+background, and cursor spans.
+
+Implemented coverage:
+
+- ANSI foreground colors resolve into Slint text runs.
+- Combining marks stay attached to the leading text run.
+- CJK and emoji wide cells preserve terminal cell occupancy.
+- ZWJ emoji continuations compact into the leading wide cell so following text is
+  not shifted by the internal Alacritty continuation cells.
+- Styled run boundaries split correctly after wide cells.
+- Beam and underline cursors render as cursor spans; hidden cursors emit no
+  cursor span; hollow-block cursor mapping is represented for the Slint layer.
+- The Slint key path encodes cursor keys after reading active Alacritty modes,
+  so application-cursor mode switches arrow/home/end sequences from CSI to SS3.
+- The render loop no longer uses an always-on 33 ms ticker. PTY output schedules
+  a dirty-only coalesced flush; idle panes do not wake from a frame interval.
+
+Evidence:
+
+- `cargo test -p slint-poc`
+- `cargo check -p slint-poc`
+- Live debug hot-reload window: `AnotherOne Slint POC` /
+  `com.anotherone.SlintPoc` on Hyprland workspace 1.
+- Provisional idle debug sample after dirty-only scheduling:
+  `top -b -n 3 -d 1 -p 3015109` reported `0.0%`, `0.0%`, then `1.0%` CPU with
+  approximately `175480 KiB` RSS. This is a debug/hot-reload sample, not the
+  final release performance gate.
+
 ## Remaining Gates
 
 - Slint visual proof for grapheme/wide-cell rendering, ANSI/indexed/truecolor
