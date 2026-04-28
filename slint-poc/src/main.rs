@@ -8,8 +8,9 @@ use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::{viewport_to_point, Config, Term};
-use alacritty_terminal::vte::ansi;
+use alacritty_terminal::term::color::Colors;
+use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
+use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
 use anyhow::Context;
 use daemon_sandbox::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
 use iroh::endpoint::presets;
@@ -22,6 +23,8 @@ const TERMINAL_COLS: u16 = 100;
 const TERMINAL_ROWS: u16 = 34;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x17191d;
+const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
 
 fn main() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
@@ -228,7 +231,7 @@ async fn run_terminal_session(
             }
             _ = frame_tick.tick() => {
                 if dirty {
-                    set_terminal_text(app_weak, terminal.snapshot_text());
+                    set_terminal_surface(app_weak, terminal.snapshot_surface());
                     dirty = false;
                 }
             }
@@ -312,11 +315,16 @@ fn set_terminal_status(app_weak: &slint::Weak<AppWindow>, status: impl Into<Stri
     });
 }
 
-fn set_terminal_text(app_weak: &slint::Weak<AppWindow>, text: String) {
+fn set_terminal_surface(app_weak: &slint::Weak<AppWindow>, surface: TerminalSurface) {
     let app_weak = app_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(app) = app_weak.upgrade() {
-            app.set_terminal_text(text.into());
+            app.set_terminal_background_spans(slint::ModelRc::new(slint::VecModel::from(
+                surface.background_spans,
+            )));
+            app.set_terminal_runs(slint::ModelRc::new(slint::VecModel::from(
+                surface.text_runs,
+            )));
         }
     });
 }
@@ -406,6 +414,27 @@ struct AlacrittySnapshot {
     size: TerminalSize,
 }
 
+#[derive(Default)]
+struct TerminalSurface {
+    text_runs: Vec<TerminalTextRun>,
+    background_spans: Vec<TerminalBackgroundSpan>,
+}
+
+#[derive(Clone, PartialEq)]
+struct ResolvedCellStyle {
+    foreground: u32,
+    background: u32,
+    bold: bool,
+}
+
+struct PendingTerminalRun {
+    line: usize,
+    column: usize,
+    cell_count: usize,
+    text: String,
+    style: ResolvedCellStyle,
+}
+
 impl AlacrittySnapshot {
     fn new(cols: u16, rows: u16) -> Self {
         let size = TerminalSize { cols, rows };
@@ -446,14 +475,19 @@ impl AlacrittySnapshot {
         writes
     }
 
-    fn snapshot_text(&self) -> String {
-        let display_offset = self.term.renderable_content().display_offset;
-        let mut lines = Vec::with_capacity(self.size.rows as usize);
+    fn snapshot_surface(&self) -> TerminalSurface {
+        let renderable = self.term.renderable_content();
+        let display_offset = renderable.display_offset;
+        let cursor = (renderable.cursor.shape != CursorShape::Hidden)
+            .then(|| point_to_viewport(display_offset, renderable.cursor.point))
+            .flatten();
+        let mut surface = TerminalSurface::default();
 
         for viewport_line in 0..self.size.rows as usize {
             let point = viewport_to_point(display_offset, Point::new(viewport_line, Column(0)));
             let grid_line = &self.term.grid()[point.line];
-            let mut line = String::with_capacity(self.size.cols as usize);
+            let mut pending_run = None;
+            let mut previous_cell_had_zero_width = false;
 
             for column in 0..self.size.cols as usize {
                 let cell = &grid_line[Column(column)];
@@ -463,21 +497,331 @@ impl AlacrittySnapshot {
                 {
                     continue;
                 }
-                if cell.flags.contains(Flags::HIDDEN) {
-                    line.push(' ');
-                } else {
-                    line.push(cell.c);
-                    for zero_width in cell.zerowidth().into_iter().flatten() {
-                        line.push(*zero_width);
-                    }
+
+                if cell.c == ' ' && previous_cell_had_zero_width {
+                    previous_cell_had_zero_width = false;
+                    continue;
                 }
+                previous_cell_had_zero_width =
+                    matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
+
+                let is_cursor = cursor.is_some_and(|cursor| {
+                    cursor.line == viewport_line && cursor.column.0 == column
+                });
+                let mut style = resolve_cell_style(cell, renderable.colors);
+                let cell_count = terminal_cell_width(cell);
+
+                if is_cursor && renderable.cursor.shape == CursorShape::Block {
+                    maybe_push_background_span(
+                        &mut surface.background_spans,
+                        viewport_line,
+                        column,
+                        cell_count,
+                        style.foreground,
+                        true,
+                    );
+                    style.foreground = style.background;
+                } else {
+                    maybe_push_background_span(
+                        &mut surface.background_spans,
+                        viewport_line,
+                        column,
+                        cell_count,
+                        style.background,
+                        false,
+                    );
+                }
+
+                let Some(text) = visible_cell_text(cell) else {
+                    if let Some(run) = pending_run.take() {
+                        push_terminal_run(&mut surface.text_runs, run);
+                    }
+                    continue;
+                };
+
+                append_terminal_run(
+                    &mut pending_run,
+                    &mut surface.text_runs,
+                    viewport_line,
+                    column,
+                    cell_count,
+                    text,
+                    style,
+                );
             }
 
-            lines.push(line.trim_end().to_string());
+            if let Some(run) = pending_run.take() {
+                push_terminal_run(&mut surface.text_runs, run);
+            }
         }
 
-        lines.join("\n")
+        surface
     }
+}
+
+fn append_terminal_run(
+    pending_run: &mut Option<PendingTerminalRun>,
+    runs: &mut Vec<TerminalTextRun>,
+    line: usize,
+    column: usize,
+    cell_count: usize,
+    text: String,
+    style: ResolvedCellStyle,
+) {
+    if let Some(run) = pending_run {
+        if run.line == line && run.column + run.cell_count == column && run.style == style {
+            run.cell_count += cell_count;
+            run.text.push_str(&text);
+            return;
+        }
+
+        if let Some(finished) = pending_run.take() {
+            push_terminal_run(runs, finished);
+        }
+    }
+
+    *pending_run = Some(PendingTerminalRun {
+        line,
+        column,
+        cell_count,
+        text,
+        style,
+    });
+}
+
+fn push_terminal_run(runs: &mut Vec<TerminalTextRun>, run: PendingTerminalRun) {
+    runs.push(TerminalTextRun {
+        line: to_i32(run.line),
+        column: to_i32(run.column),
+        cell_count: to_i32(run.cell_count),
+        text: run.text.into(),
+        color: slint::Color::from_argb_encoded(run.style.foreground),
+        bold: run.style.bold,
+    });
+}
+
+fn maybe_push_background_span(
+    spans: &mut Vec<TerminalBackgroundSpan>,
+    line: usize,
+    column: usize,
+    cell_count: usize,
+    color: u32,
+    force: bool,
+) {
+    if !force && color == default_background_color() {
+        return;
+    }
+
+    let line = to_i32(line);
+    let column = to_i32(column);
+    let cell_count = to_i32(cell_count);
+    if let Some(last) = spans.last_mut() {
+        if last.line == line
+            && last.column + last.cell_count == column
+            && last.color.as_argb_encoded() == color
+        {
+            last.cell_count += cell_count;
+            return;
+        }
+    }
+
+    spans.push(TerminalBackgroundSpan {
+        line,
+        column,
+        cell_count,
+        color: slint::Color::from_argb_encoded(color),
+    });
+}
+
+fn visible_cell_text(cell: &alacritty_terminal::term::cell::Cell) -> Option<String> {
+    if cell.flags.contains(Flags::HIDDEN) || cell_is_render_blank(cell) {
+        return None;
+    }
+
+    let mut text = String::new();
+    text.push(if cell.c == ' ' { '\u{00a0}' } else { cell.c });
+    for zero_width in cell.zerowidth().into_iter().flatten() {
+        text.push(*zero_width);
+    }
+
+    Some(text)
+}
+
+fn cell_is_render_blank(cell: &alacritty_terminal::term::cell::Cell) -> bool {
+    if cell.c != ' ' {
+        return false;
+    }
+
+    if cell.bg != Color::Named(NamedColor::Background) {
+        return false;
+    }
+
+    !cell
+        .flags
+        .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
+}
+
+fn terminal_cell_width(cell: &alacritty_terminal::term::cell::Cell) -> usize {
+    if cell.flags.contains(Flags::WIDE_CHAR) {
+        2
+    } else {
+        1
+    }
+}
+
+fn resolve_cell_style(
+    cell: &alacritty_terminal::term::cell::Cell,
+    colors: &Colors,
+) -> ResolvedCellStyle {
+    let mut foreground = resolve_color(cell.fg, cell.flags, true, colors);
+    let mut background = resolve_color(cell.bg, cell.flags, false, colors);
+
+    if cell.flags.contains(Flags::INVERSE) {
+        std::mem::swap(&mut foreground, &mut background);
+    }
+
+    if cell.flags.contains(Flags::HIDDEN) {
+        foreground = background;
+    }
+
+    ResolvedCellStyle {
+        foreground,
+        background,
+        bold: cell.flags.contains(Flags::BOLD),
+    }
+}
+
+fn resolve_color(mut color: Color, flags: Flags, is_foreground: bool, colors: &Colors) -> u32 {
+    if is_foreground {
+        if flags.contains(Flags::DIM) {
+            if let Color::Named(named) = color {
+                color = Color::Named(named.to_dim());
+            }
+        } else if flags.contains(Flags::BOLD) {
+            if let Color::Named(named) = color {
+                color = Color::Named(named.to_bright());
+            }
+        }
+    }
+
+    let rgb = match color {
+        Color::Named(named) => resolve_named_color(named, colors),
+        Color::Spec(rgb) => rgb,
+        Color::Indexed(index) => resolve_indexed_color(index, colors),
+    };
+
+    rgb_to_argb(rgb)
+}
+
+fn resolve_named_color(named: NamedColor, colors: &Colors) -> Rgb {
+    colors[named].unwrap_or_else(|| default_named_color(named))
+}
+
+fn resolve_indexed_color(index: u8, colors: &Colors) -> Rgb {
+    colors[index as usize].unwrap_or_else(|| default_indexed_color(index))
+}
+
+fn default_named_color(named: NamedColor) -> Rgb {
+    match named {
+        NamedColor::Black => rgb_to_vte(0x1f242d),
+        NamedColor::Red => rgb_to_vte(0xe06c75),
+        NamedColor::Green => rgb_to_vte(0x98c379),
+        NamedColor::Yellow => rgb_to_vte(0xe5c07b),
+        NamedColor::Blue => rgb_to_vte(0x61afef),
+        NamedColor::Magenta => rgb_to_vte(0xc678dd),
+        NamedColor::Cyan => rgb_to_vte(0x56b6c2),
+        NamedColor::White => rgb_to_vte(0xd7dae0),
+        NamedColor::BrightBlack => rgb_to_vte(0x5c6370),
+        NamedColor::BrightRed => rgb_to_vte(0xf28b95),
+        NamedColor::BrightGreen => rgb_to_vte(0xb8db87),
+        NamedColor::BrightYellow => rgb_to_vte(0xf2d48f),
+        NamedColor::BrightBlue => rgb_to_vte(0x8fc7ff),
+        NamedColor::BrightMagenta => rgb_to_vte(0xd7a8ff),
+        NamedColor::BrightCyan => rgb_to_vte(0x7fd7e6),
+        NamedColor::BrightWhite => rgb_to_vte(0xffffff),
+        NamedColor::Foreground => rgb_to_vte(DEFAULT_TERMINAL_FOREGROUND_RGB),
+        NamedColor::Background => rgb_to_vte(DEFAULT_TERMINAL_BACKGROUND_RGB),
+        NamedColor::Cursor => rgb_to_vte(DEFAULT_TERMINAL_FOREGROUND_RGB),
+        NamedColor::DimBlack => scale_rgb(default_named_color(NamedColor::Black), 0.72),
+        NamedColor::DimRed => scale_rgb(default_named_color(NamedColor::Red), 0.72),
+        NamedColor::DimGreen => scale_rgb(default_named_color(NamedColor::Green), 0.72),
+        NamedColor::DimYellow => scale_rgb(default_named_color(NamedColor::Yellow), 0.72),
+        NamedColor::DimBlue => scale_rgb(default_named_color(NamedColor::Blue), 0.72),
+        NamedColor::DimMagenta => scale_rgb(default_named_color(NamedColor::Magenta), 0.72),
+        NamedColor::DimCyan => scale_rgb(default_named_color(NamedColor::Cyan), 0.72),
+        NamedColor::DimWhite => scale_rgb(default_named_color(NamedColor::White), 0.72),
+        NamedColor::BrightForeground => rgb_to_vte(0xffffff),
+        NamedColor::DimForeground => scale_rgb(rgb_to_vte(DEFAULT_TERMINAL_FOREGROUND_RGB), 0.72),
+    }
+}
+
+fn default_indexed_color(index: u8) -> Rgb {
+    match index {
+        0 => default_named_color(NamedColor::Black),
+        1 => default_named_color(NamedColor::Red),
+        2 => default_named_color(NamedColor::Green),
+        3 => default_named_color(NamedColor::Yellow),
+        4 => default_named_color(NamedColor::Blue),
+        5 => default_named_color(NamedColor::Magenta),
+        6 => default_named_color(NamedColor::Cyan),
+        7 => default_named_color(NamedColor::White),
+        8 => default_named_color(NamedColor::BrightBlack),
+        9 => default_named_color(NamedColor::BrightRed),
+        10 => default_named_color(NamedColor::BrightGreen),
+        11 => default_named_color(NamedColor::BrightYellow),
+        12 => default_named_color(NamedColor::BrightBlue),
+        13 => default_named_color(NamedColor::BrightMagenta),
+        14 => default_named_color(NamedColor::BrightCyan),
+        15 => default_named_color(NamedColor::BrightWhite),
+        16..=231 => {
+            let index = index - 16;
+            let red = index / 36;
+            let green = (index % 36) / 6;
+            let blue = index % 6;
+            let cube = [0, 95, 135, 175, 215, 255];
+            Rgb {
+                r: cube[red as usize],
+                g: cube[green as usize],
+                b: cube[blue as usize],
+            }
+        }
+        232..=255 => {
+            let value = 8 + (index - 232) * 10;
+            Rgb {
+                r: value,
+                g: value,
+                b: value,
+            }
+        }
+    }
+}
+
+fn default_background_color() -> u32 {
+    0xff000000 | DEFAULT_TERMINAL_BACKGROUND_RGB
+}
+
+fn scale_rgb(rgb: Rgb, factor: f32) -> Rgb {
+    Rgb {
+        r: (f32::from(rgb.r) * factor).round().clamp(0.0, 255.0) as u8,
+        g: (f32::from(rgb.g) * factor).round().clamp(0.0, 255.0) as u8,
+        b: (f32::from(rgb.b) * factor).round().clamp(0.0, 255.0) as u8,
+    }
+}
+
+fn rgb_to_argb(rgb: Rgb) -> u32 {
+    0xff000000 | ((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32
+}
+
+fn rgb_to_vte(color: u32) -> Rgb {
+    Rgb {
+        r: ((color >> 16) & 0xff) as u8,
+        g: ((color >> 8) & 0xff) as u8,
+        b: (color & 0xff) as u8,
+    }
+}
+
+fn to_i32(value: usize) -> i32 {
+    value.min(i32::MAX as usize) as i32
 }
 
 fn window_size_from_grid(size: TerminalSize) -> WindowSize {

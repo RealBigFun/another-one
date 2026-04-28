@@ -1,5 +1,21 @@
 import { Button, LineEdit } from "std-widgets.slint";
 
+export struct TerminalTextRun {
+    line: int,
+    column: int,
+    cell-count: int,
+    text: string,
+    color: color,
+    bold: bool,
+}
+
+export struct TerminalBackgroundSpan {
+    line: int,
+    column: int,
+    cell-count: int,
+    color: color,
+}
+
 component SidebarRow inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
@@ -68,7 +84,8 @@ export component AppWindow inherits Window {
     in property <color> text_muted;
     in-out property <bool> modal_open: false;
     in-out property <string> terminal_status: "terminal: waiting for daemon-sandbox ticket";
-    in-out property <string> terminal_text: "Start daemon-sandbox, then click this pane and type.";
+    in property <[TerminalTextRun]> terminal_runs;
+    in property <[TerminalBackgroundSpan]> terminal_background_spans;
     callback close_requested();
     callback terminal_key(string, bool, bool, bool);
 
@@ -177,12 +194,17 @@ export component AppWindow inherits Window {
             }
         }
 
-        Rectangle {
+        terminal_surface := Rectangle {
             x: 296px;
             y: 44px;
             width: parent.width - 296px;
             height: parent.height - 44px;
             background: terminal_bg;
+            clip: true;
+            property <length> terminal-left: 28px;
+            property <length> terminal-top: 48px;
+            property <length> terminal-cell-width: 8px;
+            property <length> terminal-cell-height: 16px;
 
             terminal_touch := TouchArea {
                 width: parent.width;
@@ -215,15 +237,22 @@ export component AppWindow inherits Window {
                 font-size: 13px;
             }
 
-            Text {
-                x: 28px;
-                y: 48px;
-                width: parent.width - 56px;
-                height: parent.height - 76px;
-                text: root.terminal_text;
-                color: text_secondary;
+            for span in root.terminal_background_spans: Rectangle {
+                x: terminal_surface.terminal-left + span.column * terminal_surface.terminal-cell-width;
+                y: terminal_surface.terminal-top + span.line * terminal_surface.terminal-cell-height;
+                width: span.cell-count * terminal_surface.terminal-cell-width;
+                height: terminal_surface.terminal-cell-height;
+                background: span.color;
+            }
+
+            for run in root.terminal_runs: Text {
+                x: terminal_surface.terminal-left + run.column * terminal_surface.terminal-cell-width;
+                y: terminal_surface.terminal-top + run.line * terminal_surface.terminal-cell-height;
+                text: run.text;
+                color: run.color;
                 font-family: "monospace";
                 font-size: 13px;
+                font-weight: run.bold ? 700 : 400;
             }
         }
 

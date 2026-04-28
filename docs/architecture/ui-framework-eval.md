@@ -85,6 +85,8 @@ cargo makepad android --abi=arm64 run -p makepad-poc
 
 - Continued Slint only after Makepad DQ.
 - Added the first Slint vertical terminal slice: reads `/tmp/daemon-sandbox.ticket`, dials daemon-sandbox over Iroh, pre-authorizes the local POC endpoint in the sandbox allowlist, lists the synthetic sandbox project, attaches the shell tab, forwards keyboard input as raw PTY bytes, feeds PTY output into `alacritty_terminal`, and displays a throttled text snapshot in the Slint terminal pane.
-- Rendering is still a text snapshot, not the final CPU-rasterized `Grid<Cell>` image path. It is enough to validate transport + parser integration before investing in rasterization.
+- Replaced the plaintext terminal snapshot with grouped Slint text/background models derived from `alacritty_terminal` cells. The slice resolves named, indexed, bright, dim, inverse, hidden, and truecolor foreground/background colors and renders a block cursor.
+- Rendering is still Slint `Text`/`Rectangle` repeaters, not the final CPU-rasterized `Grid<Cell>` image path. It is enough to validate transport, parser integration, and color fidelity before investing in rasterization.
 - Validation passed: `cargo check -p slint-poc`.
 - Runtime smoke passed: launched `daemon-sandbox`, launched `slint-poc`, and daemon logs showed the Slint client connected as a paired Iroh peer.
+- Android build/install is not proven yet. Rust Android targets are installed, but `cargo-apk`, Android SDK/NDK env, and `aarch64-linux-android-clang` are missing in this environment.
