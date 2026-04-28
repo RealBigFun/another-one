@@ -71,6 +71,7 @@ export component AppWindow inherits Window {
     in-out property <string> project_summary: "loading projects from daemon";
     in-out property <string> resource_summary: "app 1.0% / 175 MB";
     in-out property <string> appearance_label: "dark";
+    in-out property <string> platform_label: "linux / keyboard";
 
     in property <[ProjectSidebarEntry]> project_rows;
     in property <[TaskSidebarEntry]> task_rows;
@@ -600,6 +601,16 @@ export component AppWindow inherits Window {
             }
 
             AoStatusPill {
+                x: parent.width - 380px;
+                y: 7px;
+                width: 122px;
+                label: layout_label;
+                bg: transparent;
+                border: transparent;
+                text-color: text_muted;
+            }
+
+            AoStatusPill {
                 x: parent.width - 258px;
                 y: 7px;
                 width: 122px;
@@ -613,7 +624,7 @@ export component AppWindow inherits Window {
                 x: parent.width - 136px;
                 y: 7px;
                 width: 122px;
-                label: layout_label;
+                label: platform_label;
                 bg: transparent;
                 border: transparent;
                 text-color: text_muted;

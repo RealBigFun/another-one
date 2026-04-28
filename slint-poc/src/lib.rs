@@ -22,6 +22,7 @@ use tokio::time::Instant;
 
 slint::include_modules!();
 
+mod platform;
 mod style;
 
 const TERMINAL_COLS: u16 = 100;
@@ -40,9 +41,11 @@ const SHELL_READINESS_PROBE: &[u8] = b"printf 'ANOTHERONE_SLINT_READY\\n'\r";
 
 pub fn run_app() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
+    let platform_profile = platform::current_platform_profile();
     #[cfg(not(target_os = "android"))]
-    slint::set_xdg_app_id("com.anotherone.Slint")?;
+    slint::set_xdg_app_id(platform_profile.app_id)?;
     style::apply_theme(&app);
+    app.set_platform_label(platform_profile.label().into());
     seed_shell_model(&app);
 
     let (client_event_tx, client_event_rx) = mpsc::unbounded_channel::<SlintClientEvent>();
