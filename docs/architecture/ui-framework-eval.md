@@ -8,6 +8,13 @@ Baseline:
 - UI frameworks render `Grid<Cell>` snapshots and forward input/resize events.
 - Modern escape sequences and resize framing are handled below the UI layer.
 
+## Current Decision
+
+- Makepad is eliminated from the eval.
+- Reason: text rendering quality was unacceptable in the tuned 13px monospace canary, before any terminal-grid implementation work.
+- Impact: stop Makepad implementation work. Keep `makepad-poc` in the branch as evaluation evidence only.
+- Next focus: continue Slint unless it also trips a hard fail.
+
 ## POC Scope
 
 Both POCs must render the same fixture:
@@ -37,20 +44,29 @@ cargo makepad android --abi=arm64 run -p makepad-poc
 
 | Criterion | Weight | Slint | Makepad |
 | --- | --- | --- | --- |
-| Terminal rendering correctness (vim, htop, claude code) | High |  |  |
-| Terminal perf under flood (fps, dropped frames, CPU%) | High |  |  |
-| Design token fidelity | High |  |  |
-| Custom titlebar feasibility | Medium |  |  |
-| Mobile build stability (toolchain friction) | High |  |  |
-| Hot reload responsiveness | Medium |  |  |
-| POC LOC | Low |  |  |
-| Fluency: how the framework felt | Medium |  |  |
+| Terminal rendering correctness (vim, htop, claude code) | High |  | DQ: text quality unacceptable |
+| Terminal perf under flood (fps, dropped frames, CPU%) | High |  | Not evaluated after DQ |
+| Design token fidelity | High |  | Not evaluated after DQ |
+| Custom titlebar feasibility | Medium |  | Not evaluated after DQ |
+| Mobile build stability (toolchain friction) | High |  | Not evaluated after DQ |
+| Hot reload responsiveness | Medium |  | Not evaluated after DQ |
+| POC LOC | Low |  | Not evaluated after DQ |
+| Fluency: how the framework felt | Medium |  | DQ: unacceptable text for app baseline |
 
 ## Hard Fails
 
 - Terminal renders incorrectly under realistic loads.
 - Cannot build on iOS or Android in less than 1 hour of toolchain wrangling.
 - Sustained flood performance is below 30 fps.
+
+## Decisions
+
+### Makepad Text Quality
+
+- Status: eliminated.
+- Evidence: Makepad's public release notes call out poor small-font rendering, lack of font hinting, and SDF glyph rendering as an intentional speed/memory tradeoff that can hurt low-resolution quality. Local crate source confirms the primary app-level knobs are `DrawText.text_style`, `font_scale`, `temp_y_shift`, and `TextStyle` font family/size/line spacing.
+- POC response: avoided biased sub-12px fixture labels and added a 13px monospace terminal-text canary before investing deeper in transport wiring.
+- Decision: the tuned canary still looked unacceptable. Makepad fails the terminal-rendering criterion regardless of chrome/widget ergonomics.
 
 ## Running Log
 
@@ -62,3 +78,5 @@ cargo makepad android --abi=arm64 run -p makepad-poc
 - Validation passed: `cargo check -p slint-poc -p makepad-poc`.
 - Validation passed: `cargo check --workspace --all-targets`.
 - Added a Linux-only `fontique/fontconfig-dlopen` feature shim in `slint-poc` because GPUI enables `yeslogic-fontconfig-sys/dlopen` in the shared workspace graph.
+- Flagged Makepad small-font quality as a potential hard fail; raised fixture typography above 12px and added a monospace terminal-text canary to separate bad placeholder styling from framework text quality.
+- User review found tuned Makepad text quality unacceptable. Makepad is DQ; no further Makepad implementation work planned.

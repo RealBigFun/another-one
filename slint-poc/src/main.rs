@@ -2,6 +2,7 @@ slint::include_modules!();
 
 fn main() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
+    slint::set_xdg_app_id("com.anotherone.SlintPoc")?;
     apply_tokens(&app);
     app.on_close_requested(|| std::process::exit(0));
     app.run()

@@ -38,7 +38,12 @@ live_design! {
                             title = <Label> {
                                 width: Fill, height: Fit
                                 text: "AnotherOne / Makepad POC"
-                                draw_text: {color: (COLOR_TEXT), text_style: {font_size: 10.5}}
+                                draw_text: {color: (COLOR_TEXT), text_style: <THEME_FONT_REGULAR> {font_size: 12.5}}
+                            }
+
+                            new_task_button = <Button> {
+                                width: 92, height: 28
+                                text: "New task"
                             }
 
                             close_button = <Button> {
@@ -62,7 +67,7 @@ live_design! {
                                 sidebar_heading = <Label> {
                                     width: Fill, height: 24
                                     text: "PROJECTS"
-                                    draw_text: {color: (COLOR_TEXT_MUTED), text_style: {font_size: 9.0}}
+                                    draw_text: {color: (COLOR_TEXT_MUTED), text_style: <THEME_FONT_BOLD> {font_size: 11.0}}
                                 }
 
                                 row_active = <View> {
@@ -71,8 +76,8 @@ live_design! {
                                     flow: Down
                                     show_bg: true
                                     draw_bg: {color: (COLOR_ACTIVE)}
-                                    <Label> {text: "appimage-daemon", draw_text: {color: (COLOR_TEXT), text_style: {font_size: 11.0}}}
-                                    <Label> {text: "daemon-transport-foundation", draw_text: {color: (COLOR_TEXT_MUTED), text_style: {font_size: 9.0}}}
+                                    <Label> {text: "appimage-daemon", draw_text: {color: (COLOR_TEXT), text_style: <THEME_FONT_REGULAR> {font_size: 13.0}}}
+                                    <Label> {text: "daemon-transport-foundation", draw_text: {color: (COLOR_TEXT_MUTED), text_style: <THEME_FONT_REGULAR> {font_size: 11.5}}}
                                 }
 
                                 row_hover = <View> {
@@ -81,8 +86,8 @@ live_design! {
                                     flow: Down
                                     show_bg: true
                                     draw_bg: {color: (COLOR_HOVER)}
-                                    <Label> {text: "another-one", draw_text: {color: (COLOR_TEXT), text_style: {font_size: 11.0}}}
-                                    <Label> {text: "poc/slint-makepad-ui-eval", draw_text: {color: (COLOR_TEXT_MUTED), text_style: {font_size: 9.0}}}
+                                    <Label> {text: "another-one", draw_text: {color: (COLOR_TEXT), text_style: <THEME_FONT_REGULAR> {font_size: 13.0}}}
+                                    <Label> {text: "poc/slint-makepad-ui-eval", draw_text: {color: (COLOR_TEXT_MUTED), text_style: <THEME_FONT_REGULAR> {font_size: 11.5}}}
                                 }
 
                                 row_idle = <View> {
@@ -91,8 +96,8 @@ live_design! {
                                     flow: Down
                                     show_bg: true
                                     draw_bg: {color: (COLOR_CHROME)}
-                                    <Label> {text: "mobile-eval", draw_text: {color: (COLOR_TEXT), text_style: {font_size: 11.0}}}
-                                    <Label> {text: "iroh-only terminal baseline", draw_text: {color: (COLOR_TEXT_MUTED), text_style: {font_size: 9.0}}}
+                                    <Label> {text: "mobile-eval", draw_text: {color: (COLOR_TEXT), text_style: <THEME_FONT_REGULAR> {font_size: 13.0}}}
+                                    <Label> {text: "iroh-only terminal baseline", draw_text: {color: (COLOR_TEXT_MUTED), text_style: <THEME_FONT_REGULAR> {font_size: 11.5}}}
                                 }
                             }
 
@@ -103,13 +108,16 @@ live_design! {
                                 flow: Down
                                 show_bg: true
                                 draw_bg: {color: (COLOR_TERMINAL)}
-                                <Label> {text: "$ cargo run -p makepad-poc", draw_text: {color: (COLOR_TEXT), text_style: {font_size: 10.0}}}
-                                <Label> {text: "fixture grid: iroh + alacritty_terminal wiring lands after chrome parity", draw_text: {color: (COLOR_TEXT_MUTED), text_style: {font_size: 9.0}}}
+                                <Label> {text: "$ cargo run -p makepad-poc", draw_text: {color: (COLOR_TEXT), text_style: <THEME_FONT_CODE> {font_size: 13.0}}}
+                                <Label> {text: "fixture grid: iroh + alacritty_terminal wiring lands after chrome parity", draw_text: {color: (COLOR_TEXT_MUTED), text_style: <THEME_FONT_REGULAR> {font_size: 11.5}}}
+                                <Label> {text: "terminal text canary: iIl1| O0 {} [] () <> ~ ` ' \"", draw_text: {color: (COLOR_TEXT), text_style: <THEME_FONT_CODE> {font_size: 13.0}}}
+                                <Label> {text: "0123456789 abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ", draw_text: {color: (COLOR_TEXT_MUTED), text_style: <THEME_FONT_CODE> {font_size: 13.0}}}
                             }
                         }
                     }
 
                     modal_scrim = <View> {
+                        visible: false
                         width: Fill, height: Fill
                         align: {x: 0.5, y: 0.5}
                         show_bg: true
@@ -123,10 +131,10 @@ live_design! {
                             show_bg: true
                             draw_bg: {color: (COLOR_CARD)}
 
-                            <Label> {text: "New task", draw_text: {color: (COLOR_TEXT), text_style: {font_size: 15.0}}}
-                            <Label> {text: "Fixture modal used to compare form ergonomics.", draw_text: {color: (COLOR_TEXT_MUTED), text_style: {font_size: 9.0}}}
-                            task_name = <TextInput> {width: Fill, height: 36, empty_message: "Task name"}
-                            branch_name = <TextInput> {width: Fill, height: 36, empty_message: "Branch name"}
+                            <Label> {text: "New task", draw_text: {color: (COLOR_TEXT), text_style: <THEME_FONT_BOLD> {font_size: 16.0}}}
+                            <Label> {text: "Fixture modal used to compare form ergonomics.", draw_text: {color: (COLOR_TEXT_MUTED), text_style: <THEME_FONT_REGULAR> {font_size: 11.5}}}
+                            task_name = <TextInput> {width: Fill, height: 36, empty_text: "Task name"}
+                            branch_name = <TextInput> {width: Fill, height: 36, empty_text: "Branch name"}
                             create_button = <Button> {width: 104, height: 34, text: "Create"}
                         }
                     }
@@ -153,5 +161,17 @@ impl LiveRegister for App {
 impl AppMain for App {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
         self.ui.handle_event(cx, event, &mut Scope::empty());
+
+        let Event::Actions(actions) = event else {
+            return;
+        };
+
+        if self.ui.button(id!(new_task_button)).clicked(actions) {
+            self.ui.view(id!(modal_scrim)).set_visible(cx, true);
+        }
+
+        if self.ui.button(id!(create_button)).clicked(actions) {
+            self.ui.view(id!(modal_scrim)).set_visible(cx, false);
+        }
     }
 }

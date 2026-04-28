@@ -66,12 +66,12 @@ export component AppWindow inherits Window {
     in property <color> text_primary;
     in property <color> text_secondary;
     in property <color> text_muted;
-    in-out property <bool> modal_open: true;
+    in-out property <bool> modal_open: false;
     callback close_requested();
 
     title: "AnotherOne Slint POC";
-    width: 1180px;
-    height: 760px;
+    preferred-width: 1180px;
+    preferred-height: 760px;
     background: terminal_bg;
 
     Rectangle {
@@ -93,6 +93,17 @@ export component AppWindow inherits Window {
                 color: text_primary;
                 font-size: 14px;
                 font-weight: 700;
+            }
+
+            Button {
+                x: parent.width - 160px;
+                y: 8px;
+                width: 96px;
+                height: 28px;
+                text: "New task";
+                clicked => {
+                    root.modal_open = true;
+                }
             }
 
             Button {
