@@ -25,6 +25,9 @@ const RETRY_DELAY: Duration = Duration::from_secs(1);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x17191d;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
+const SHELL_COLOR_SMOKE_PROBE: &[u8] =
+    b"printf '\\033[31mRED \\033[32mGREEN \\033[34mBLUE\\033[0m DEFAULT\\n'\nprintf 'SLINT_POC_IROH_ALACRITTY_READY\\n'\r";
+const SHELL_READINESS_PROBE: &[u8] = b"printf 'SLINT_POC_IROH_ALACRITTY_READY\\n'\r";
 
 fn main() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
@@ -178,13 +181,11 @@ async fn run_terminal_session(
         },
     )
     .await?;
-    frame::write_frame(
-        &mut send,
-        frame::TY_DATA,
-        b"printf 'SLINT_POC_IROH_ALACRITTY_READY\\n'\r",
-    )
-    .await
-    .context("send readiness probe")?;
+    if let Some(probe) = startup_probe() {
+        frame::write_frame(&mut send, frame::TY_DATA, probe)
+            .await
+            .context("send startup probe")?;
+    }
 
     set_terminal_status(
         app_weak,
@@ -371,6 +372,14 @@ fn control_key_byte(ch: char) -> Option<Vec<u8>> {
         Some(vec![0])
     } else {
         None
+    }
+}
+
+fn startup_probe() -> Option<&'static [u8]> {
+    match std::env::var("SLINT_POC_STARTUP_PROBE").as_deref() {
+        Ok("shell-color") => Some(SHELL_COLOR_SMOKE_PROBE),
+        Ok("shell-ready") => Some(SHELL_READINESS_PROBE),
+        _ => None,
     }
 }
 
@@ -830,5 +839,31 @@ fn window_size_from_grid(size: TerminalSize) -> WindowSize {
         num_cols: size.cols,
         cell_width: 8,
         cell_height: 16,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_surface_preserves_ansi_foreground_colors() {
+        let mut terminal = AlacrittySnapshot::new(40, 4);
+        let _ = terminal.apply_output(b"\x1b[31mRED \x1b[32mGREEN \x1b[34mBLUE\x1b[0m DEFAULT");
+
+        let surface = terminal.snapshot_surface();
+
+        assert_run_color(&surface, "RED", 0xffe06c75);
+        assert_run_color(&surface, "GREEN", 0xff98c379);
+        assert_run_color(&surface, "BLUE", 0xff61afef);
+    }
+
+    fn assert_run_color(surface: &TerminalSurface, text: &str, expected: u32) {
+        let run = surface
+            .text_runs
+            .iter()
+            .find(|run| run.text.as_str().contains(text))
+            .unwrap_or_else(|| panic!("missing terminal run containing {text:?}"));
+        assert_eq!(run.color.as_argb_encoded(), expected);
     }
 }
