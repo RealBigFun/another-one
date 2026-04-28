@@ -404,6 +404,9 @@ fn set_terminal_surface(app_weak: &slint::Weak<AppWindow>, surface: TerminalSurf
             app.set_terminal_cursor_spans(slint::ModelRc::new(slint::VecModel::from(
                 surface.cursor_spans,
             )));
+            app.set_terminal_link_spans(slint::ModelRc::new(slint::VecModel::from(
+                surface.link_spans,
+            )));
             app.set_terminal_runs(slint::ModelRc::new(slint::VecModel::from(
                 surface.text_runs,
             )));
@@ -531,6 +534,7 @@ struct TerminalSurface {
     text_runs: Vec<TerminalTextRun>,
     background_spans: Vec<TerminalBackgroundSpan>,
     cursor_spans: Vec<TerminalCursorSpan>,
+    link_spans: Vec<TerminalLinkSpan>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -655,6 +659,16 @@ impl AlacrittySnapshot {
                         cell_count,
                         style.background,
                         false,
+                    );
+                }
+
+                if let Some(hyperlink) = cell.hyperlink() {
+                    maybe_push_link_span(
+                        &mut surface.link_spans,
+                        viewport_line,
+                        visual_column,
+                        cell_count,
+                        hyperlink.uri(),
                     );
                 }
 
@@ -816,6 +830,34 @@ fn cursor_shape_name(shape: CursorShape) -> Option<&'static str> {
         CursorShape::Beam => Some("beam"),
         CursorShape::HollowBlock => Some("hollow-block"),
     }
+}
+
+fn maybe_push_link_span(
+    spans: &mut Vec<TerminalLinkSpan>,
+    line: usize,
+    column: usize,
+    cell_count: usize,
+    uri: &str,
+) {
+    let line = to_i32(line);
+    let column = to_i32(column);
+    let cell_count = to_i32(cell_count);
+    if let Some(last) = spans.last_mut() {
+        if last.line == line
+            && last.column + last.cell_count == column
+            && last.uri.as_str() == uri
+        {
+            last.cell_count += cell_count;
+            return;
+        }
+    }
+
+    spans.push(TerminalLinkSpan {
+        line,
+        column,
+        cell_count,
+        uri: uri.into(),
+    });
 }
 
 fn visible_cell_text(cell: &alacritty_terminal::term::cell::Cell) -> Option<String> {
@@ -1143,6 +1185,21 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_surface_preserves_osc8_hyperlink_spans() {
+        let mut terminal = AlacrittySnapshot::new(40, 4);
+        let _ = terminal
+            .apply_output(b"\x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\ tail");
+
+        let surface = terminal.snapshot_surface();
+
+        let link = single_link_span(&surface);
+        assert_eq!(link.line, 0);
+        assert_eq!(link.column, 0);
+        assert_eq!(link.cell_count, 4);
+        assert_eq!(link.uri.as_str(), "https://example.test");
+    }
+
+    #[test]
     fn cursor_shape_name_maps_hollow_block() {
         assert_eq!(cursor_shape_name(CursorShape::HollowBlock), Some("hollow-block"));
     }
@@ -1251,6 +1308,11 @@ mod tests {
     fn single_cursor_span(surface: &TerminalSurface) -> &TerminalCursorSpan {
         assert_eq!(surface.cursor_spans.len(), 1);
         &surface.cursor_spans[0]
+    }
+
+    fn single_link_span(surface: &TerminalSurface) -> &TerminalLinkSpan {
+        assert_eq!(surface.link_spans.len(), 1);
+        &surface.link_spans[0]
     }
 
     fn encode_key_bytes(text: &str, modes: TerminalInputModeState) -> Vec<u8> {

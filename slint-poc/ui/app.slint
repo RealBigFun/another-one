@@ -24,6 +24,13 @@ export struct TerminalCursorSpan {
     color: color,
 }
 
+export struct TerminalLinkSpan {
+    line: int,
+    column: int,
+    cell-count: int,
+    uri: string,
+}
+
 component SidebarRow inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
@@ -95,6 +102,7 @@ export component AppWindow inherits Window {
     in property <[TerminalTextRun]> terminal_runs;
     in property <[TerminalBackgroundSpan]> terminal_background_spans;
     in property <[TerminalCursorSpan]> terminal_cursor_spans;
+    in property <[TerminalLinkSpan]> terminal_link_spans;
     callback close_requested();
     callback terminal_key(string, bool, bool, bool);
 
