@@ -110,6 +110,10 @@ Implemented coverage:
   input: focus reports are only sent after `?1004`, mouse clicks/motion only
   after mouse reporting modes, SGR mouse is preferred after `?1006`, and legacy
   X10 encoding remains the fallback.
+- Terminal viewport geometry is derived from Slint layout and sent back to Rust
+  as row/column counts. Rust clamps the size, resizes the local Alacritty
+  snapshot, forwards `Control::TabResize`, and clears transient selection state
+  so drawer/window resizing does not keep stale `100x34` terminal dimensions.
 - The render loop no longer uses an always-on 33 ms ticker. PTY output schedules
   a dirty-only coalesced flush; idle panes do not wake from a frame interval.
 
@@ -137,4 +141,4 @@ Evidence:
 - Slint visual proof for grapheme/wide-cell rendering, ANSI/indexed/truecolor
   colors, cursor states, selection, and restored/failed tab states.
 - Release-window idle CPU and memory measurements for the Slint terminal pane.
-- Manual resize responsiveness proof while collapsing/expanding drawers.
+- Manual resize responsiveness capture while collapsing/expanding drawers.

@@ -200,6 +200,10 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
             shift,
         }));
     });
+    let resize_event_tx = client_event_tx.clone();
+    app.on_terminal_resized(move |cols, rows| {
+        let _ = resize_event_tx.send(SlintClientEvent::TerminalResize { cols, rows });
+    });
     let project_event_tx = client_event_tx.clone();
     app.on_project_selected(move |project_id| {
         let _ = project_event_tx.send(SlintClientEvent::SelectProject(project_id.to_string()));
@@ -806,7 +810,15 @@ async fn run_terminal_session(
         }
     };
 
-    attach_terminal_target(&mut send, &mut next_request_id, &attached_target, true).await?;
+    let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
+    attach_terminal_target(
+        &mut send,
+        &mut next_request_id,
+        &attached_target,
+        terminal.size,
+        true,
+    )
+    .await?;
     if let Some(probe) = startup_probe() {
         send_terminal_input(
             &mut send,
@@ -822,12 +834,14 @@ async fn run_terminal_session(
     set_terminal_status(
         app_weak,
         format!(
-            "terminal: attached {}/{} at {TERMINAL_COLS}x{TERMINAL_ROWS}",
-            attached_target.section_id, attached_target.tab_id
+            "terminal: attached {}/{} at {}x{}",
+            attached_target.section_id,
+            attached_target.tab_id,
+            terminal.size.cols,
+            terminal.size.rows
         ),
     );
 
-    let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
     let mut dirty = true;
     let mut last_flush = Instant::now()
         .checked_sub(TERMINAL_FRAME_INTERVAL)
@@ -909,6 +923,34 @@ async fn run_terminal_session(
                                     );
                                 }
                             }
+                        }
+                    }
+                    SlintClientEvent::TerminalResize { cols, rows } => {
+                        let next_size = TerminalSize {
+                            cols: clamp_terminal_dimension(cols, 20, 240),
+                            rows: clamp_terminal_dimension(rows, 8, 120),
+                        };
+                        if terminal.size != next_size {
+                            terminal.resize(next_size);
+                            send_terminal_resize(&mut send, &mut next_request_id, next_size)
+                                .await
+                                .context("send terminal resize")?;
+                            set_terminal_surface(app_weak, terminal.snapshot_surface());
+                            selection_drag_anchor = None;
+                            selection_range = None;
+                            set_terminal_selection(app_weak, Vec::new());
+                            dirty = false;
+                            pending_flush_at = None;
+                            set_terminal_status(
+                                app_weak,
+                                format!(
+                                    "terminal: attached {}/{} at {}x{}",
+                                    attached_target.section_id,
+                                    attached_target.tab_id,
+                                    next_size.cols,
+                                    next_size.rows
+                                ),
+                            );
                         }
                     }
                     SlintClientEvent::SelectProject(project_id) => {
@@ -1070,9 +1112,17 @@ async fn run_terminal_session(
                                         section_id,
                                         tab_id: "0".to_string(),
                                     };
-                                    attach_terminal_target(&mut send, &mut next_request_id, &target, true).await?;
+                                    attach_terminal_target(
+                                        &mut send,
+                                        &mut next_request_id,
+                                        &target,
+                                        terminal.size,
+                                        true,
+                                    )
+                                    .await?;
                                     attached_target = target;
-                                    terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
+                                    terminal =
+                                        AlacrittySnapshot::new(terminal.size.cols, terminal.size.rows);
                                     set_terminal_surface(app_weak, terminal.snapshot_surface());
                                     selection_drag_anchor = None;
                                     selection_range = None;
@@ -1152,6 +1202,10 @@ enum SlintClientEvent {
     TerminalKey(SlintKeyEvent),
     TerminalFocus(bool),
     TerminalPointer(SlintPointerEvent),
+    TerminalResize {
+        cols: i32,
+        rows: i32,
+    },
     SelectProject(String),
     SelectTask(String),
     SelectTab(String),
@@ -1190,6 +1244,10 @@ fn next_terminal_flush_deadline(now: Instant, last_flush: Instant) -> Instant {
     }
 }
 
+fn clamp_terminal_dimension(value: i32, min: u16, max: u16) -> u16 {
+    value.clamp(i32::from(min), i32::from(max)) as u16
+}
+
 async fn switch_terminal_target<W>(
     app_weak: &slint::Weak<AppWindow>,
     send: &mut W,
@@ -1215,17 +1273,20 @@ where
         return Ok(());
     }
 
-    attach_terminal_target(send, next_request_id, &next_target, true).await?;
+    attach_terminal_target(send, next_request_id, &next_target, terminal.size, true).await?;
     *current_target = next_target;
-    *terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
+    *terminal = AlacrittySnapshot::new(terminal.size.cols, terminal.size.rows);
     set_terminal_surface(app_weak, terminal.snapshot_surface());
     *dirty = false;
     *pending_flush_at = None;
     set_terminal_status(
         app_weak,
         format!(
-            "terminal: attached {}/{} at {TERMINAL_COLS}x{TERMINAL_ROWS}",
-            current_target.section_id, current_target.tab_id
+            "terminal: attached {}/{} at {}x{}",
+            current_target.section_id,
+            current_target.tab_id,
+            terminal.size.cols,
+            terminal.size.rows
         ),
     );
 
@@ -1236,6 +1297,7 @@ async fn attach_terminal_target<W>(
     send: &mut W,
     next_request_id: &mut u64,
     target: &TerminalTarget,
+    size: TerminalSize,
     persist_active: bool,
 ) -> anyhow::Result<()>
 where
@@ -1270,12 +1332,23 @@ where
         },
     )
     .await?;
+    send_terminal_resize(send, next_request_id, size).await
+}
+
+async fn send_terminal_resize<W>(
+    send: &mut W,
+    next_request_id: &mut u64,
+    size: TerminalSize,
+) -> anyhow::Result<()>
+where
+    W: frame::WriteAllAsync + Unpin,
+{
     send_control(
         send,
         next_request_id,
         Control::TabResize {
-            cols: TERMINAL_COLS,
-            rows: TERMINAL_ROWS,
+            cols: size.cols,
+            rows: size.rows,
         },
     )
     .await
@@ -1649,7 +1722,7 @@ impl EventListener for RuntimeEventProxy {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TerminalSize {
     cols: u16,
     rows: u16,
@@ -1717,6 +1790,15 @@ impl AlacrittySnapshot {
     fn apply_output(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
         self.parser.advance(&mut self.term, bytes);
         self.pending_pty_writes()
+    }
+
+    fn resize(&mut self, size: TerminalSize) {
+        if self.size == size {
+            return;
+        }
+
+        self.size = size;
+        self.term.resize(size);
     }
 
     fn input_modes(&self) -> TerminalInputModeState {
@@ -2430,6 +2512,24 @@ mod tests {
         let deadline = next_terminal_flush_deadline(now, last_flush);
 
         assert_eq!(deadline, now);
+    }
+
+    #[test]
+    fn clamp_terminal_dimension_respects_bounds() {
+        assert_eq!(clamp_terminal_dimension(5, 20, 240), 20);
+        assert_eq!(clamp_terminal_dimension(120, 20, 240), 120);
+        assert_eq!(clamp_terminal_dimension(400, 20, 240), 240);
+    }
+
+    #[test]
+    fn terminal_resize_updates_snapshot_dimensions() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+
+        terminal.resize(TerminalSize { cols: 40, rows: 8 });
+
+        assert_eq!(terminal.size, TerminalSize { cols: 40, rows: 8 });
+        assert_eq!(terminal.term.columns(), 40);
+        assert_eq!(terminal.term.screen_lines(), 8);
     }
 
     #[test]
