@@ -1,10 +1,13 @@
 import {
     AoButton,
+    AoCheckbox,
     AoIconButton,
+    AoMenu,
     AoModalCard,
     AoProjectRow,
     AoResourceIndicator,
     AoSectionLabel,
+    AoSegmentedControl,
     AoSplitButton,
     AoStateCard,
     AoStatusPill,
@@ -12,7 +15,9 @@ import {
     AoTaskRow,
     AoTextInput,
     AoToast,
+    MenuEntry,
     ProjectSidebarEntry,
+    SegmentEntry,
     TaskSidebarEntry,
     TerminalTabChip,
 } from "components.slint";
@@ -87,8 +92,12 @@ export component AppWindow inherits Window {
     in-out property <string> toast_kind: "info";
     in-out property <string> toast_message: "";
     in-out property <string> toast_detail: "";
+    in-out property <bool> component_fixture_mode: false;
+    in-out property <bool> fixture_checkbox_checked: true;
 
     in property <[ProjectSidebarEntry]> project_rows;
+    in property <[MenuEntry]> fixture_menu_entries;
+    in property <[SegmentEntry]> fixture_segments;
     in property <[TaskSidebarEntry]> task_rows;
     in property <[TerminalTabChip]> tab_chips;
     in property <[TerminalTextRun]> terminal_runs;
@@ -724,7 +733,318 @@ export component AppWindow inherits Window {
             }
         }
 
-        if modal_open: Rectangle {
+        if component_fixture_mode: Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            background: terminal_bg;
+            clip: true;
+
+            Text {
+                x: 28px;
+                y: 24px;
+                text: "Slint component state fixture";
+                color: text_primary;
+                font-family: "monospace";
+                font-size: 20px;
+                font-weight: 900;
+            }
+
+            Text {
+                x: 28px;
+                y: 54px;
+                width: parent.width - 56px;
+                text: "Deterministic review board for GPUI-equivalent controls, rows, menus, inputs, status cards, and toast surfaces.";
+                color: text_muted;
+                font-family: "monospace";
+                font-size: 12px;
+            }
+
+            AoSectionLabel {
+                x: 32px;
+                y: 96px;
+                text: "CONTROLS";
+                label-color: text_muted;
+            }
+
+            AoButton {
+                x: 32px;
+                y: 122px;
+                width: 96px;
+                label: "Normal";
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+            }
+
+            AoButton {
+                x: 140px;
+                y: 122px;
+                width: 96px;
+                label: "Active";
+                active: true;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+            }
+
+            AoButton {
+                x: 248px;
+                y: 122px;
+                width: 104px;
+                label: "Loading";
+                loading: true;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+            }
+
+            AoButton {
+                x: 364px;
+                y: 122px;
+                width: 118px;
+                label: "Destruct";
+                destructive: true;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+                danger-color: danger_color;
+            }
+
+            AoButton {
+                x: 494px;
+                y: 122px;
+                width: 104px;
+                label: "Disabled";
+                disabled: true;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+            }
+
+            AoIconButton {
+                x: 620px;
+                y: 122px;
+                width: 32px;
+                icon: "+";
+                control-label: "Fixture icon normal";
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                icon-color: text_secondary;
+            }
+
+            AoSplitButton {
+                x: 664px;
+                y: 122px;
+                width: 148px;
+                label: "Actions";
+                active: true;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+            }
+
+            AoCheckbox {
+                x: 32px;
+                y: 170px;
+                width: 190px;
+                checked <=> root.fixture_checkbox_checked;
+                label: "Checked option";
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+                danger-color: danger_color;
+            }
+
+            AoCheckbox {
+                x: 240px;
+                y: 170px;
+                width: 190px;
+                checked: false;
+                label: "Validation error";
+                error: true;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+                danger-color: danger_color;
+            }
+
+            AoSegmentedControl {
+                x: 452px;
+                y: 168px;
+                width: 360px;
+                entries: root.fixture_segments;
+                bg: sunken_bg;
+                hover-bg: overlay_active;
+                border: border_color;
+                focus-ring: focus_ring;
+                text-color: text_primary;
+                muted-color: text_muted;
+            }
+
+            AoSectionLabel {
+                x: 32px;
+                y: 224px;
+                text: "PROJECT ROWS";
+                label-color: text_muted;
+            }
+
+            for project[index] in root.project_rows: AoProjectRow {
+                x: 28px;
+                y: 248px + index * 72px;
+                width: 360px;
+                entry: project;
+                overlay-hover: root.overlay_hover;
+                overlay-active: root.overlay_active;
+                text-primary: root.text_primary;
+                text-secondary: root.text_secondary;
+                text-muted: root.text_muted;
+                focus-ring: root.focus_ring;
+                danger-color: root.danger_color;
+                warning-color: root.warning_color;
+            }
+
+            AoSectionLabel {
+                x: 420px;
+                y: 224px;
+                text: "TASK ROWS";
+                label-color: text_muted;
+            }
+
+            for task[index] in root.task_rows: AoTaskRow {
+                x: 416px;
+                y: 248px + index * 64px;
+                width: 380px;
+                entry: task;
+                overlay-hover: root.overlay_hover;
+                overlay-active: root.overlay_active;
+                text-primary: root.text_primary;
+                text-secondary: root.text_secondary;
+                text-muted: root.text_muted;
+                success-color: root.success_color;
+                row-border-color: root.border_color;
+                focus-ring: root.focus_ring;
+                danger-color: root.danger_color;
+                warning-color: root.warning_color;
+            }
+
+            AoSectionLabel {
+                x: 840px;
+                y: 96px;
+                text: "INPUTS / CARDS";
+                label-color: text_muted;
+            }
+
+            AoTextInput {
+                x: 840px;
+                y: 122px;
+                width: 260px;
+                placeholder-text: "Focused field target";
+                text: "Agent launch args";
+                field-bg: sunken_bg;
+                field-border: border_color;
+                focus-border: focus_ring;
+                error-color: danger_color;
+            }
+
+            AoTextInput {
+                x: 840px;
+                y: 170px;
+                width: 260px;
+                placeholder-text: "Validation error";
+                text: "";
+                field-bg: sunken_bg;
+                field-border: border_color;
+                focus-border: focus_ring;
+                error-color: danger_color;
+                error: true;
+            }
+
+            AoStateCard {
+                x: 840px;
+                y: 224px;
+                width: 260px;
+                title: "Loading";
+                body: "Waiting for daemon";
+                state: "loading";
+                card-bg: card_bg;
+                card-border-color: border_color;
+                text-primary: text_primary;
+                text-muted: text_muted;
+                success-color: success_color;
+                warning-color: warning_color;
+                danger-color: danger_color;
+            }
+
+            AoStateCard {
+                x: 840px;
+                y: 340px;
+                width: 260px;
+                title: "Error";
+                body: "Transport unavailable";
+                state: "error";
+                card-bg: card_bg;
+                card-border-color: border_color;
+                text-primary: text_primary;
+                text-muted: text_muted;
+                success-color: success_color;
+                warning-color: warning_color;
+                danger-color: danger_color;
+            }
+
+            AoMenu {
+                x: 840px;
+                y: 468px;
+                width: 260px;
+                height: 136px;
+                entries: root.fixture_menu_entries;
+                card-bg: card_bg;
+                menu-border-color: border_color;
+                overlay-hover: overlay_hover;
+                overlay-active: overlay_active;
+                text-primary: text_primary;
+                text-muted: text_muted;
+                danger-color: danger_color;
+                focus-ring: focus_ring;
+            }
+
+            AoToast {
+                x: 32px;
+                y: parent.height - 92px;
+                width: 420px;
+                kind: "error";
+                message: "Fixture toast";
+                detail: "Error copy/action affordances route through AoToast.";
+                card-bg: card_bg;
+                toast-border-color: border_color;
+                text-primary: text_primary;
+                text-muted: text_muted;
+                success-color: success_color;
+                warning-color: warning_color;
+                danger-color: danger_color;
+            }
+        }
+
+        if modal_open && !component_fixture_mode: Rectangle {
             width: parent.width;
             height: parent.height;
             background: #00000080;
@@ -830,7 +1150,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        if toast_message != "": AoToast {
+        if toast_message != "" && !component_fixture_mode: AoToast {
             x: parent.width - 402px;
             y: parent.height - footer-height - self.height - 16px;
             width: 386px;

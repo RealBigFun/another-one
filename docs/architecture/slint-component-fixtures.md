@@ -19,6 +19,10 @@ Component fixtures are the review surface for base components before full views 
 
 ## Capture Requirements
 
+- Run the Slint component fixture board with
+  `ANOTHERONE_SLINT_FIXTURE=component-states target/debug/slint-poc`. This mode
+  bypasses daemon startup and renders the deterministic base-component state
+  board for capture/diff work.
 - Capture dark mode first because GPUI dark is the current product baseline.
 - Capture light mode after the Style epic defines explicit light tokens.
 - Store screenshots under a deterministic visual artifact path once the harness exists.

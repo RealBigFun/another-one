@@ -23,6 +23,7 @@ Captured on: 2026-04-28, Hyprland workspace 1, monitor `DP-4`.
 - `captures/terminal-fidelity-fixture.png`: Slint terminal fidelity fixture showing ANSI named colors, indexed color 208, RGB truecolor, combining marks, CJK wide cells, emoji, OSC8 link underline, selection overlay, and underline cursor state.
 - `captures/modal/new-task.png`: deterministic Slint visual-state fixture using `ANOTHERONE_SLINT_VISUAL_STATE=new-task-modal`.
 - `captures/toast/error.png`: deterministic Slint visual-state fixture using `ANOTHERONE_SLINT_VISUAL_STATE=toast-error`.
+- `captures/components/state-fixture.png`: deterministic Slint base-component fixture using `ANOTHERONE_SLINT_FIXTURE=component-states`; captured as a floating 1380x860 Hyprland window.
 
 ## Metrics
 

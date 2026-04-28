@@ -188,6 +188,11 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
         app.on_close_requested(|| std::process::exit(0));
         return app.run();
     }
+    if std::env::var("ANOTHERONE_SLINT_FIXTURE").as_deref() == Ok("component-states") {
+        seed_component_state_fixture(&app);
+        app.on_close_requested(|| std::process::exit(0));
+        return app.run();
+    }
 
     let (client_event_tx, client_event_rx) = mpsc::unbounded_channel::<SlintClientEvent>();
     let terminal_event_tx = client_event_tx.clone();
@@ -443,6 +448,187 @@ fn seed_terminal_fidelity_fixture(app: &AppWindow) {
         "terminal fidelity fixture: ANSI/indexed/truecolor, graphemes, wide cells, OSC8 link, selection, cursor"
             .into(),
     );
+}
+
+fn seed_component_state_fixture(app: &AppWindow) {
+    app.set_component_fixture_mode(true);
+    app.set_active_project_name("component-fixture".into());
+    app.set_active_task_name("Base component states".into());
+    app.set_active_branch_name("slint-component-fixture".into());
+    app.set_active_worktree_name("fixture-mode".into());
+    app.set_project_summary("fixture rows".into());
+    app.set_project_rows(slint::ModelRc::new(slint::VecModel::from(vec![
+        ProjectSidebarEntry {
+            id: "project-active".into(),
+            name: "active project".into(),
+            path: "~/another-one".into(),
+            branch: "slint-daemon-poc-clean".into(),
+            initials: "A".into(),
+            accent: project_accent_color("project-active"),
+            active: true,
+            loading: false,
+            error: false,
+            expanded: true,
+            task_count_label: "5".into(),
+        },
+        ProjectSidebarEntry {
+            id: "project-loading".into(),
+            name: "loading project".into(),
+            path: "~/daemon".into(),
+            branch: "waiting".into(),
+            initials: "L".into(),
+            accent: project_accent_color("project-loading"),
+            active: false,
+            loading: true,
+            error: false,
+            expanded: true,
+            task_count_label: "...".into(),
+        },
+        ProjectSidebarEntry {
+            id: "project-error".into(),
+            name: "errored project".into(),
+            path: "~/missing".into(),
+            branch: "unavailable".into(),
+            initials: "E".into(),
+            accent: project_accent_color("project-error"),
+            active: false,
+            loading: false,
+            error: true,
+            expanded: false,
+            task_count_label: "0".into(),
+        },
+    ])));
+    app.set_task_rows(slint::ModelRc::new(slint::VecModel::from(vec![
+        TaskSidebarEntry {
+            id: "task-active".into(),
+            title: "Active running task".into(),
+            branch: "feature/slint".into(),
+            metadata: "active | +12 -3".into(),
+            initials: "R".into(),
+            accent: project_accent_color("task-active"),
+            active: true,
+            pinned: true,
+            running: true,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        },
+        TaskSidebarEntry {
+            id: "task-editing".into(),
+            title: "Rename in progress".into(),
+            branch: "feature/edit".into(),
+            metadata: "editing".into(),
+            initials: "E".into(),
+            accent: project_accent_color("task-editing"),
+            active: false,
+            pinned: false,
+            running: false,
+            loading: false,
+            error: false,
+            editing: true,
+            delete_confirm: false,
+        },
+        TaskSidebarEntry {
+            id: "task-loading".into(),
+            title: "Loading daemon state".into(),
+            branch: "feature/loading".into(),
+            metadata: "loading".into(),
+            initials: "L".into(),
+            accent: project_accent_color("task-loading"),
+            active: false,
+            pinned: false,
+            running: false,
+            loading: true,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        },
+        TaskSidebarEntry {
+            id: "task-delete".into(),
+            title: "Delete confirmation".into(),
+            branch: "feature/delete".into(),
+            metadata: "confirm delete".into(),
+            initials: "D".into(),
+            accent: project_accent_color("task-delete"),
+            active: false,
+            pinned: false,
+            running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: true,
+        },
+        TaskSidebarEntry {
+            id: "task-error".into(),
+            title: "Errored task".into(),
+            branch: "feature/error".into(),
+            metadata: "failed".into(),
+            initials: "X".into(),
+            accent: project_accent_color("task-error"),
+            active: false,
+            pinned: false,
+            running: false,
+            loading: false,
+            error: true,
+            editing: false,
+            delete_confirm: false,
+        },
+    ])));
+    app.set_fixture_segments(slint::ModelRc::new(slint::VecModel::from(vec![
+        SegmentEntry {
+            id: "light".into(),
+            label: "Light".into(),
+            selected: false,
+            disabled: false,
+        },
+        SegmentEntry {
+            id: "dark".into(),
+            label: "Dark".into(),
+            selected: true,
+            disabled: false,
+        },
+        SegmentEntry {
+            id: "system".into(),
+            label: "System".into(),
+            selected: false,
+            disabled: true,
+        },
+    ])));
+    app.set_fixture_menu_entries(slint::ModelRc::new(slint::VecModel::from(vec![
+        MenuEntry {
+            id: "open".into(),
+            label: "Open task".into(),
+            shortcut: "Enter".into(),
+            selected: false,
+            disabled: false,
+            destructive: false,
+        },
+        MenuEntry {
+            id: "pin".into(),
+            label: "Pin task".into(),
+            shortcut: "P".into(),
+            selected: true,
+            disabled: false,
+            destructive: false,
+        },
+        MenuEntry {
+            id: "disabled".into(),
+            label: "Unavailable".into(),
+            shortcut: "".into(),
+            selected: false,
+            disabled: true,
+            destructive: false,
+        },
+        MenuEntry {
+            id: "delete".into(),
+            label: "Delete task".into(),
+            shortcut: "Del".into(),
+            selected: false,
+            disabled: false,
+            destructive: true,
+        },
+    ])));
 }
 
 fn apply_terminal_surface(app: &AppWindow, surface: TerminalSurface) {
