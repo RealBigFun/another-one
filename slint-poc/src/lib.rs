@@ -12,7 +12,9 @@ use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
 use anyhow::Context;
-use daemon_sandbox::frame::{self, Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope};
+use daemon_sandbox::frame::{
+    self, Control, ControlEnvelope, TerminalInputEvent, WorkerReply, WorkerReplyEnvelope,
+};
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, EndpointId};
 use tokio::sync::mpsc;
@@ -35,10 +37,10 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     slint::set_xdg_app_id("com.anotherone.SlintPoc")?;
     apply_tokens(&app);
 
-    let (input_tx, input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<TerminalInputEvent>();
     app.on_terminal_key(move |text, control, alt, _shift| {
         if let Some(bytes) = encode_terminal_key(text.as_str(), control, alt) {
-            let _ = input_tx.send(bytes);
+            let _ = input_tx.send(TerminalInputEvent::Key { bytes });
         }
     });
 
@@ -78,7 +80,7 @@ fn argb(a: u8, r: u8, g: u8, b: u8) -> slint::Color {
 
 fn spawn_terminal_worker(
     app_weak: slint::Weak<AppWindow>,
-    mut input_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut input_rx: mpsc::UnboundedReceiver<TerminalInputEvent>,
 ) {
     std::thread::spawn(move || {
         let runtime = match tokio::runtime::Runtime::new() {
@@ -109,7 +111,7 @@ fn spawn_terminal_worker(
 
 async fn run_terminal_session(
     app_weak: &slint::Weak<AppWindow>,
-    input_rx: &mut mpsc::UnboundedReceiver<Vec<u8>>,
+    input_rx: &mut mpsc::UnboundedReceiver<TerminalInputEvent>,
 ) -> anyhow::Result<()> {
     set_terminal_status(app_weak, "terminal: loading /tmp/daemon-sandbox.ticket");
     let (endpoint_id, direct_addrs) = wait_for_ticket(app_weak).await?;
@@ -196,9 +198,15 @@ async fn run_terminal_session(
     )
     .await?;
     if let Some(probe) = startup_probe() {
-        frame::write_frame(&mut send, frame::TY_DATA, probe)
-            .await
-            .context("send startup probe")?;
+        send_terminal_input(
+            &mut send,
+            &mut next_request_id,
+            TerminalInputEvent::Key {
+                bytes: probe.to_vec(),
+            },
+        )
+        .await
+        .context("send startup probe")?;
     }
 
     set_terminal_status(
@@ -216,7 +224,7 @@ async fn run_terminal_session(
                 let Some(input) = maybe_input else {
                     anyhow::bail!("input channel closed");
                 };
-                frame::write_frame(&mut send, frame::TY_DATA, &input)
+                send_terminal_input(&mut send, &mut next_request_id, input)
                     .await
                     .context("send terminal input")?;
             }
@@ -228,7 +236,11 @@ async fn run_terminal_session(
                     frame::TY_DATA => {
                         let replies = terminal.apply_output(&payload);
                         for reply in replies {
-                            frame::write_frame(&mut send, frame::TY_DATA, &reply)
+                            send_terminal_input(
+                                &mut send,
+                                &mut next_request_id,
+                                TerminalInputEvent::PtyReply { bytes: reply },
+                            )
                                 .await
                                 .context("send terminal protocol reply")?;
                         }
@@ -252,6 +264,17 @@ async fn run_terminal_session(
             }
         }
     }
+}
+
+async fn send_terminal_input<W>(
+    send: &mut W,
+    next_request_id: &mut u64,
+    event: TerminalInputEvent,
+) -> anyhow::Result<()>
+where
+    W: frame::WriteAllAsync + Unpin,
+{
+    send_control(send, next_request_id, Control::TabInput { event }).await
 }
 
 async fn send_control<W>(

@@ -13,8 +13,9 @@
 //! framing (see [`crate::frame`]). Per-connection state machine:
 //! zero or one attached tab at a time; on `AttachTab` the daemon
 //! subscribes to that tab's live PTY broadcast and forwards bytes
-//! as `TY_DATA` frames. Inbound `TY_DATA` is routed to the attached
-//! tab's PTY input.
+//! as `TY_DATA` frames. New clients send terminal input through
+//! `Control::TabInput`; inbound `TY_DATA` is still accepted for
+//! legacy clients.
 
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -56,8 +57,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// user-facing copy here would leak product UX text to an on-path
 /// observer. Clients match on this byte string and expand it into
 /// localisable copy ("Pairing expired — please re-scan the QR")
-/// in the UI. Keep in lockstep with the substring match in
-/// `mobile/lib/src/transport_iroh.dart::_statusForError`.
+/// in the UI.
 pub const CLOSE_REASON_UNPAIRED: &[u8] = b"anotherone/unpaired";
 
 /// QUIC close reason for a peer whose `Control::Hello.protocol_version`
@@ -368,6 +368,15 @@ fn route_pty_input(registry: &dyn DaemonRegistry, attached: Option<&Attached>, p
     registry.tab_input(&att.section_id, &att.tab_id, payload);
 }
 
+fn route_terminal_input_event(
+    registry: &dyn DaemonRegistry,
+    attached: Option<&Attached>,
+    event: &frame::TerminalInputEvent,
+) {
+    let bytes = event.pty_bytes();
+    route_pty_input(registry, attached, &bytes);
+}
+
 /// Validate a `Control::Hello` from an unpaired peer. On match, consume
 /// the nonce (so a second reader of the same QR can't re-pair) and
 /// append the peer's `NodeId` to the allowlist. Any other control
@@ -425,6 +434,9 @@ async fn handle_control(
             if let Some(att) = attached.as_ref() {
                 registry.tab_resize(viewer_id, &att.section_id, &att.tab_id, cols, rows);
             }
+        }
+        Control::TabInput { event } => {
+            route_terminal_input_event(registry.as_ref(), attached.as_ref(), &event);
         }
         Control::ListProjects => {
             let projects = registry.list_projects();
@@ -1588,7 +1600,7 @@ fn peer_status(remote_id: &str, path: &Path) -> anyhow::Result<PeerStatus> {
 /// the desktop bootstrap (`another-one-ojm.9`) to pre-allowlist its
 /// own loopback-client NodeId so dialing the embedded daemon over
 /// iroh skips the Hello dance, leaving the pair nonce intact for
-/// real mobile pairing flows.
+/// real device pairing flows.
 ///
 /// Idempotent — duplicate appends are harmless because `peer_status`
 /// short-circuits on the first match.
@@ -1615,10 +1627,10 @@ pub fn persist_pairing(remote_id: &str, path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build the `iroh://…?direct=…&relay=…&pair=…` URL the mobile
-/// client dials. The trailing `pair=<hex>` encodes the current TOFU
-/// nonce; the mobile client echoes it back as the `pair_token` field
-/// of [`Control::Hello`] on its first control frame.
+/// Build the `iroh://…?direct=…&relay=…&pair=…` URL remote clients
+/// dial. The trailing `pair=<hex>` encodes the current TOFU nonce;
+/// the client echoes it back as the `pair_token` field of
+/// [`Control::Hello`] on its first control frame.
 pub(crate) fn build_pairing_url_with_token(addr: &EndpointAddr, pair_token: &str) -> String {
     let direct = addr
         .ip_addrs()
@@ -1647,8 +1659,8 @@ pub(crate) fn build_pairing_url_with_token(addr: &EndpointAddr, pair_token: &str
 }
 
 /// Render a PNG of the pairing QR into a byte vec. No filesystem —
-/// embedders hand the bytes straight to their UI (GPUI image,
-/// Flutter image, terminal PNG dumper, etc.).
+/// embedders hand the bytes straight to their UI (GPUI image, Slint
+/// image, terminal PNG dumper, etc.).
 pub(crate) fn render_qr_png_bytes(text: &str) -> anyhow::Result<Vec<u8>> {
     use image::{ImageFormat, Luma};
     use qrcode::QrCode;
@@ -1794,6 +1806,59 @@ mod tests {
         route_pty_input(&registry, None, b"\x1b[<64;1;1M");
 
         assert!(registry.inputs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn route_terminal_input_event_encodes_typed_paste() {
+        let registry = RecordingRegistry::default();
+        let attached = Attached {
+            section_id: "section-1".to_string(),
+            tab_id: "tab-1".to_string(),
+            forwarder: None,
+        };
+        let event = frame::TerminalInputEvent::Paste {
+            text: "hello".to_string(),
+            bracketed: true,
+        };
+
+        route_terminal_input_event(&registry, Some(&attached), &event);
+
+        let inputs = registry.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].2, b"\x1b[200~hello\x1b[201~");
+    }
+
+    #[tokio::test]
+    async fn handle_control_routes_tab_input_to_attached_tab() {
+        let registry = Arc::new(RecordingRegistry::default());
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        let (outbound_tx, _outbound_rx) = mpsc::channel(1);
+        let data_generation = Arc::new(AtomicU64::new(0));
+        let mut attached = Some(Attached {
+            section_id: "section-1".to_string(),
+            tab_id: "tab-1".to_string(),
+            forwarder: None,
+        });
+
+        handle_control(
+            11,
+            Control::TabInput {
+                event: frame::TerminalInputEvent::Focus { focused: true },
+            },
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("tab input control routes");
+
+        let inputs = registry.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].0, "section-1");
+        assert_eq!(inputs[0].1, "tab-1");
+        assert_eq!(inputs[0].2, b"\x1b[I");
     }
 
     #[tokio::test]

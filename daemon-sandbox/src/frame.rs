@@ -17,6 +17,7 @@
 //! smoke test (`bin/iroh-client.rs`). See [[docs/architecture/transport-abstraction]].
 
 use another_one_core::agents::TerminalRestoreStatus;
+pub use another_one_core::terminal_types::TerminalInputEvent;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
@@ -52,8 +53,8 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 /// `request_id == 0` is reserved for **push frames** the daemon
 /// emits unsolicited (PTY bytes for an attached tab, future
 /// project-tree refresh broadcasts, etc.). Clients MUST NOT use 0
-/// as a request id when issuing calls — the dispatch table in the
-/// Dart layer treats id 0 as "this is not a reply to anyone."
+/// as a request id when issuing calls — client dispatch tables should
+/// treat id 0 as "this is not a reply to anyone."
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlEnvelope {
     pub request_id: u64,
@@ -118,10 +119,17 @@ pub enum Control {
     /// Resize the currently-attached tab's PTY. Silently no-ops
     /// when nothing is attached.
     TabResize { cols: u16, rows: u16 },
+    /// Typed terminal input intent for the currently-attached tab.
+    /// This supersedes client→daemon `TY_DATA` input for Slint and
+    /// keeps keyboard, paste, focus, mouse, and parser-generated PTY
+    /// replies on the JSON control protocol. Resize remains
+    /// [`Control::TabResize`] because it targets PTY geometry rather
+    /// than stdin bytes.
+    TabInput { event: TerminalInputEvent },
     /// Ask the daemon to launch the task's tab as a live PTY if it
     /// isn't running. If already running, no-op. After this call,
-    /// [`AttachTab`] will succeed. Both the desktop GUI and mobile
-    /// are equal citizens in launching — neither is a "master" that
+    /// [`AttachTab`] will succeed. Both local and remote clients are
+    /// equal citizens in launching — neither is a "master" that
     /// gates the other.
     LaunchTab { section_id: String, tab_id: String },
     /// Add an on-disk project directory to the daemon's project
@@ -145,11 +153,10 @@ pub enum Control {
     /// can drop any stale UI rows.
     RemoveProject { project_id: String },
     /// Snapshot of the host's "Open In" config — installed-and-enabled
-    /// apps + the user's preferred default. Drives the mobile titlebar
-    /// split-button's primary icon + the chevron dropdown. Reading it
-    /// remotely is fine (display-only); the actual app launch
-    /// (`open_project_in_app`) stays host-local — see the comment on
-    /// `connection.dart::openProjectInApp` for why. Reply:
+    /// apps + the user's preferred default. Drives client titlebar
+    /// open-in controls. Reading it remotely is fine (display-only);
+    /// the actual app launch (`open_project_in_app`) stays host-local.
+    /// Reply:
     /// [`WorkerReply::OpenInStateAck`].
     OpenInState,
     /// List the merged project + global custom actions for `project_id`,
@@ -646,7 +653,7 @@ pub enum Control {
 /// worker's reply type. We deliberately do *not* derive Serialize on
 /// the core reply types themselves — those structs are shaped for the
 /// desktop's GPUI state, with nested `Result<_, String>` and internal
-/// metadata the mobile UI doesn't need. This wire type is the curated
+/// metadata remote clients don't need. This wire type is the curated
 /// subset we commit to as a public protocol.
 ///
 /// Wire-compat rules:
@@ -656,12 +663,10 @@ pub enum Control {
 ///   serde's "unknown variant" error. To stay forwards-compatible,
 ///   clients SHOULD decode into a shape that tolerates unknown
 ///   variants (e.g., decode to `serde_json::Value` first, then try
-///   `WorkerReply`). The current Flutter client just logs-and-ignores
-///   unknown frame *types* (via the `0x02` discriminator itself), so
-///   until it upgrades to variant-awareness, the daemon should only
-///   emit variants the contemporaneous client supports. Track client
-///   capability out of band (ALPN version bump or a hello frame) when
-///   we move beyond this slice.
+///   `WorkerReply`). Until clients advertise variant-awareness, the
+///   daemon should only emit variants the contemporaneous client
+///   supports. Track client capability out of band (ALPN version bump
+///   or a hello frame) when we move beyond this slice.
 /// - Mutators carry an inline state snapshot — see the "Push vs
 ///   pull" comment block immediately above.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1277,10 +1282,9 @@ pub struct OpenInAppWire {
 }
 
 /// Wire projection of the host's Open In state.
-/// Mobile's titlebar uses `preferred_app_id` for its primary-action
+/// Remote titlebars use `preferred_app_id` for their primary-action
 /// icon and `enabled_apps` for the chevron dropdown. Actual app
-/// launch stays host-local on the daemon (see `openProjectInApp`'s
-/// docstring in `connection.dart`).
+/// launch stays host-local on the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenInStateWire {
     /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
@@ -1605,5 +1609,36 @@ impl ReadExactish for iroh::endpoint::RecvStream {
 impl WriteAllAsync for iroh::endpoint::SendStream {
     async fn write_all_async(&mut self, data: &[u8]) -> anyhow::Result<()> {
         self.write_all(data).await.map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Control, ControlEnvelope, TerminalInputEvent};
+
+    #[test]
+    fn tab_input_control_round_trips_through_json_envelope() {
+        let envelope = ControlEnvelope {
+            request_id: 7,
+            control: Control::TabInput {
+                event: TerminalInputEvent::Mouse {
+                    bytes: b"\x1b[<0;12;34M".to_vec(),
+                },
+            },
+        };
+
+        let encoded = serde_json::to_vec(&envelope).expect("control envelope serializes");
+        let decoded: ControlEnvelope =
+            serde_json::from_slice(&encoded).expect("control envelope deserializes");
+
+        match decoded.control {
+            Control::TabInput {
+                event: TerminalInputEvent::Mouse { bytes },
+            } => {
+                assert_eq!(decoded.request_id, 7);
+                assert_eq!(bytes, b"\x1b[<0;12;34M");
+            }
+            other => panic!("unexpected decoded control: {other:?}"),
+        }
     }
 }
