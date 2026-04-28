@@ -91,11 +91,14 @@ export component AppWindow inherits Window {
     preferred-height: 860px;
     background: terminal_bg;
 
-    property <length> titlebar-height: 38px;
-    property <length> footer-height: 38px;
+    property <bool> mobile-layout: root.width < 760px;
+    property <bool> tablet-layout: root.width >= 760px && root.width < 1180px;
+    property <string> layout_label: mobile-layout ? "mobile" : tablet-layout ? "tablet" : "desktop";
+    property <length> titlebar-height: mobile-layout ? 52px : 38px;
+    property <length> footer-height: mobile-layout ? 0px : 38px;
     property <length> gutter-width: 4px;
-    property <length> sidebar-width: root.width > 980px ? 318px : 252px;
-    property <length> right-width: root.width > 1180px ? 292px : 4px;
+    property <length> sidebar-width: mobile-layout ? 0px : tablet-layout ? 252px : 318px;
+    property <length> right-width: root.width >= 1280px ? 292px : 0px;
     property <length> body-top: titlebar-height;
     property <length> body-height: root.height - titlebar-height - footer-height;
 
@@ -142,7 +145,7 @@ export component AppWindow inherits Window {
                 font-size: 10px;
             }
 
-            AoStatusPill {
+            if !root.mobile-layout: AoStatusPill {
                 x: parent.width - 720px;
                 y: 7px;
                 width: 190px;
@@ -152,7 +155,7 @@ export component AppWindow inherits Window {
                 text-color: text_primary;
             }
 
-            AoButton {
+            if !root.mobile-layout: AoButton {
                 x: parent.width - 520px;
                 y: 6px;
                 width: 138px;
@@ -164,7 +167,7 @@ export component AppWindow inherits Window {
                 text-color: text_primary;
             }
 
-            AoButton {
+            if !root.mobile-layout: AoButton {
                 x: parent.width - 374px;
                 y: 6px;
                 width: 120px;
@@ -176,7 +179,7 @@ export component AppWindow inherits Window {
                 text-color: text_secondary;
             }
 
-            AoStatusPill {
+            if !root.mobile-layout: AoStatusPill {
                 x: parent.width - 244px;
                 y: 7px;
                 width: 184px;
@@ -202,7 +205,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        Rectangle {
+        if !root.mobile-layout: Rectangle {
             x: 0px;
             y: body-top;
             width: sidebar-width;
@@ -291,7 +294,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        Rectangle {
+        if !root.mobile-layout: Rectangle {
             x: sidebar-width;
             y: body-top;
             width: gutter-width;
@@ -300,14 +303,14 @@ export component AppWindow inherits Window {
         }
 
         terminal_surface := Rectangle {
-            x: sidebar-width + gutter-width;
+            x: root.mobile-layout ? 0px : sidebar-width + gutter-width;
             y: body-top;
-            width: parent.width - sidebar-width - right-width - gutter-width * 2;
+            width: root.mobile-layout ? parent.width : parent.width - sidebar-width - right-width - gutter-width * 2;
             height: body-height;
             background: terminal_bg;
             clip: true;
-            property <length> terminal-left: 24px;
-            property <length> terminal-top: 76px;
+            property <length> terminal-left: root.mobile-layout ? 12px : 24px;
+            property <length> terminal-top: root.mobile-layout ? 112px : 76px;
             property <length> terminal-cell-width: 8px;
             property <length> terminal-cell-height: 16px;
 
@@ -353,6 +356,38 @@ export component AppWindow inherits Window {
                 width: parent.width;
                 height: 1px;
                 background: divider_color;
+            }
+
+            if root.mobile-layout: Rectangle {
+                x: 10px;
+                y: 50px;
+                width: parent.width - 20px;
+                height: 48px;
+                border-radius: 12px;
+                background: card_bg;
+                border-width: 1px;
+                border-color: border_color;
+
+                Text {
+                    x: 12px;
+                    y: 8px;
+                    width: parent.width - 24px;
+                    text: active_task_name;
+                    color: text_primary;
+                    font-family: "monospace";
+                    font-size: 13px;
+                    font-weight: 800;
+                }
+
+                Text {
+                    x: 12px;
+                    y: 28px;
+                    width: parent.width - 24px;
+                    text: active_branch_name + " / " + active_worktree_name;
+                    color: text_muted;
+                    font-family: "monospace";
+                    font-size: 11px;
+                }
             }
 
             terminal_touch := TouchArea {
@@ -417,7 +452,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        Rectangle {
+        if !root.mobile-layout && root.right-width > 0px: Rectangle {
             x: parent.width - right-width;
             y: body-top;
             width: right-width;
@@ -513,7 +548,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        Rectangle {
+        if !root.mobile-layout: Rectangle {
             x: 0px;
             y: parent.height - footer-height;
             width: parent.width;
@@ -565,10 +600,20 @@ export component AppWindow inherits Window {
             }
 
             AoStatusPill {
-                x: parent.width - 136px;
+                x: parent.width - 258px;
                 y: 7px;
                 width: 122px;
                 label: "theme " + appearance_label;
+                bg: transparent;
+                border: transparent;
+                text-color: text_muted;
+            }
+
+            AoStatusPill {
+                x: parent.width - 136px;
+                y: 7px;
+                width: 122px;
+                label: layout_label;
                 bg: transparent;
                 border: transparent;
                 text-color: text_muted;
