@@ -41,6 +41,13 @@ export struct MenuEntry {
     destructive: bool,
 }
 
+export struct SegmentEntry {
+    id: string,
+    label: string,
+    selected: bool,
+    disabled: bool,
+}
+
 export component AoButton inherits Rectangle {
     in property <string> label;
     in property <string> control-label: label;
@@ -51,6 +58,7 @@ export component AoButton inherits Rectangle {
     in property <color> bg;
     in property <color> hover-bg;
     in property <color> border;
+    in property <color> focus-ring: border;
     in property <color> text-color;
     in property <color> danger-color: text-color;
     callback clicked();
@@ -60,15 +68,28 @@ export component AoButton inherits Rectangle {
     accessible-label: control-label;
     border-radius: 8px;
     border-width: 1px;
-    border-color: active ? border : transparent;
+    border-color: button-focus.has-focus ? focus-ring : active ? border : transparent;
     opacity: disabled ? 0.45 : 1.0;
-    background: active ? bg : touch.has-hover && !disabled ? hover-bg : transparent;
+    background: active || touch.pressed ? bg : touch.has-hover && !disabled ? hover-bg : transparent;
+
+    button-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if !root.disabled && !root.loading && (event.text == "\n" || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
 
     touch := TouchArea {
         width: parent.width;
         height: parent.height;
         clicked => {
-            if !root.disabled {
+            button-focus.focus();
+            if !root.disabled && !root.loading {
                 root.clicked();
             }
         }
@@ -94,6 +115,7 @@ export component AoIconButton inherits Rectangle {
     in property <color> bg;
     in property <color> hover-bg;
     in property <color> border;
+    in property <color> focus-ring: border;
     in property <color> icon-color;
     callback clicked();
 
@@ -102,15 +124,28 @@ export component AoIconButton inherits Rectangle {
     accessible-role: button;
     accessible-label: control-label;
     border-radius: 8px;
-    border-width: active ? 1px : 0px;
-    border-color: border;
-    background: active ? bg : icon-touch.has-hover && !disabled ? hover-bg : transparent;
+    border-width: active || icon-focus.has-focus ? 1px : 0px;
+    border-color: icon-focus.has-focus ? focus-ring : border;
+    background: active || icon-touch.pressed ? bg : icon-touch.has-hover && !disabled ? hover-bg : transparent;
     opacity: disabled ? 0.42 : 1.0;
+
+    icon-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if !root.disabled && (event.text == "\n" || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
 
     icon-touch := TouchArea {
         width: parent.width;
         height: parent.height;
         clicked => {
+            icon-focus.focus();
             if !root.disabled {
                 root.clicked();
             }
@@ -139,6 +174,7 @@ export component AoSplitButton inherits Rectangle {
     in property <color> bg;
     in property <color> hover-bg;
     in property <color> border;
+    in property <color> focus-ring: border;
     in property <color> text-color;
     callback clicked();
     callback menu-clicked();
@@ -148,9 +184,33 @@ export component AoSplitButton inherits Rectangle {
     accessible-label: control-label;
     border-radius: 8px;
     border-width: 1px;
-    border-color: border;
-    background: active ? bg : split-touch.has-hover && !disabled ? hover-bg : transparent;
+    border-color: split-focus.has-focus || menu-focus.has-focus ? focus-ring : border;
+    background: active || split-touch.pressed || menu-touch.pressed ? bg : (split-touch.has-hover || menu-touch.has-hover) && !disabled ? hover-bg : transparent;
     opacity: disabled ? 0.45 : 1.0;
+
+    split-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if !root.disabled && (event.text == "\n" || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    menu-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if !root.disabled && (event.text == "\n" || event.text == " ") {
+                root.menu-clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
 
     split-touch := TouchArea {
         x: 0px;
@@ -158,6 +218,7 @@ export component AoSplitButton inherits Rectangle {
         width: parent.width - 30px;
         height: parent.height;
         clicked => {
+            split-focus.focus();
             if !root.disabled {
                 root.clicked();
             }
@@ -181,6 +242,7 @@ export component AoSplitButton inherits Rectangle {
         accessible-role: button;
         accessible-label: root.menu-control-label;
         clicked => {
+            menu-focus.focus();
             if !root.disabled {
                 root.menu-clicked();
             }
@@ -208,6 +270,150 @@ export component AoSplitButton inherits Rectangle {
         font-family: "monospace";
         font-size: 11px;
         font-weight: 900;
+    }
+}
+
+export component AoCheckbox inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> label;
+    in property <string> control-label: label;
+    in property <bool> disabled: false;
+    in property <bool> error: false;
+    in property <color> bg;
+    in property <color> hover-bg;
+    in property <color> border;
+    in property <color> focus-ring: border;
+    in property <color> text-color;
+    in property <color> danger-color: text-color;
+    callback toggled(bool);
+
+    height: 28px;
+    accessible-role: checkbox;
+    accessible-label: control-label;
+    border-radius: 7px;
+    opacity: disabled ? 0.45 : 1.0;
+
+    checkbox-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if !root.disabled && (event.text == "\n" || event.text == " ") {
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            checkbox-focus.focus();
+            if !root.disabled {
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+            }
+        }
+    }
+
+    Rectangle {
+        x: 0px;
+        y: 5px;
+        width: 18px;
+        height: 18px;
+        border-radius: 5px;
+        border-width: 1px;
+        border-color: root.error ? root.danger-color : checkbox-focus.has-focus ? root.focus-ring : root.border;
+        background: root.checked ? root.bg : touch.has-hover && !root.disabled ? root.hover-bg : transparent;
+    }
+
+    if checked: Text {
+        x: 4px;
+        y: 6px;
+        width: 10px;
+        text: "x";
+        color: text-color;
+        font-family: "monospace";
+        font-size: 11px;
+        font-weight: 900;
+    }
+
+    Text {
+        x: 28px;
+        y: 6px;
+        width: parent.width - 28px;
+        text: label;
+        color: error ? danger-color : text-color;
+        font-family: "monospace";
+        font-size: 12px;
+        font-weight: 700;
+    }
+}
+
+export component AoSegmentedControl inherits Rectangle {
+    in property <[SegmentEntry]> entries;
+    in property <color> bg;
+    in property <color> hover-bg;
+    in property <color> border;
+    in property <color> focus-ring: border;
+    in property <color> text-color;
+    in property <color> muted-color;
+    callback selected(string);
+
+    height: 30px;
+    border-radius: 9px;
+    border-width: 1px;
+    border-color: border;
+    background: bg;
+    clip: true;
+
+    for entry[index] in entries: Rectangle {
+        x: index * parent.width / max(1, entries.length);
+        y: 3px;
+        width: parent.width / max(1, entries.length);
+        height: parent.height - 6px;
+        border-radius: 7px;
+        border-width: segment-focus.has-focus ? 1px : 0px;
+        border-color: root.focus-ring;
+        background: entry.selected ? root.hover-bg : segment-touch.has-hover && !entry.disabled ? root.hover-bg.with-alpha(0.64) : transparent;
+        opacity: entry.disabled ? 0.45 : 1.0;
+
+        segment-focus := FocusScope {
+            width: 0px;
+            height: 0px;
+            key-pressed(event) => {
+                if !entry.disabled && (event.text == "\n" || event.text == " ") {
+                    root.selected(entry.id);
+                    return accept;
+                }
+                return reject;
+            }
+        }
+
+        segment-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            clicked => {
+                segment-focus.focus();
+                if !entry.disabled {
+                    root.selected(entry.id);
+                }
+            }
+        }
+
+        Text {
+            x: 8px;
+            y: 6px;
+            width: parent.width - 16px;
+            horizontal-alignment: center;
+            text: entry.label;
+            color: entry.selected ? root.text-color : root.muted-color;
+            font-family: "monospace";
+            font-size: 11px;
+            font-weight: entry.selected ? 800 : 600;
+        }
     }
 }
 
@@ -649,19 +855,35 @@ export component AoMenuItem inherits Rectangle {
     in property <color> text-primary;
     in property <color> text-muted;
     in property <color> danger-color;
+    in property <color> focus-ring: overlay-active;
     callback clicked(string);
 
     height: 30px;
     accessible-role: button;
     accessible-label: entry.label;
     border-radius: 8px;
+    border-width: item-focus.has-focus ? 1px : 0px;
+    border-color: focus-ring;
     background: entry.selected ? overlay-active : item-touch.has-hover && !entry.disabled ? overlay-hover : transparent;
     opacity: entry.disabled ? 0.45 : 1.0;
+
+    item-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if !root.entry.disabled && (event.text == "\n" || event.text == " ") {
+                root.clicked(root.entry.id);
+                return accept;
+            }
+            return reject;
+        }
+    }
 
     item-touch := TouchArea {
         width: parent.width;
         height: parent.height;
         clicked => {
+            item-focus.focus();
             if !root.entry.disabled {
                 root.clicked(root.entry.id);
             }
@@ -700,6 +922,7 @@ export component AoMenu inherits Rectangle {
     in property <color> text-primary;
     in property <color> text-muted;
     in property <color> danger-color;
+    in property <color> focus-ring: overlay-active;
     callback item-clicked(string);
 
     border-radius: 12px;
@@ -717,6 +940,7 @@ export component AoMenu inherits Rectangle {
         text-primary: root.text-primary;
         text-muted: root.text-muted;
         danger-color: root.danger-color;
+        focus-ring: root.focus-ring;
         clicked(id) => {
             root.item-clicked(id);
         }

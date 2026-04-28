@@ -4,9 +4,11 @@ This matrix defines the GPUI state surface each Slint base component must cover 
 
 | Component | Normal | Hover | Active/selected | Focus | Disabled | Loading | Error/destructive | GPUI source |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `AoButton` | implemented | implemented | implemented | pending focus ring | implemented | implemented | implemented destructive | `desktop/src/titlebar.rs`, `desktop/src/settings_page.rs` |
-| `AoIconButton` | implemented | implemented | implemented | pending focus ring | implemented | n/a | n/a | `desktop/src/titlebar.rs`, `desktop/src/left_sidebar.rs` |
-| `AoSplitButton` | implemented | implemented | implemented | pending focus ring | implemented | n/a | n/a | `desktop/src/titlebar.rs` |
+| `AoButton` | implemented | implemented | implemented | implemented focus ring + keyboard activation | implemented | implemented | implemented destructive | `desktop/src/titlebar.rs`, `desktop/src/settings_page.rs` |
+| `AoIconButton` | implemented | implemented | implemented | implemented focus ring + keyboard activation | implemented | n/a | n/a | `desktop/src/titlebar.rs`, `desktop/src/left_sidebar.rs` |
+| `AoSplitButton` | implemented | implemented primary/menu regions | implemented | implemented separate primary/menu focus rings + keyboard activation | implemented | n/a | n/a | `desktop/src/titlebar.rs` |
+| `AoCheckbox` | implemented | implemented | implemented checked | implemented focus ring + keyboard toggle | implemented | n/a | implemented validation tint | `desktop/src/settings_page.rs` |
+| `AoSegmentedControl` | implemented | implemented | implemented selected segment | implemented segment focus ring + keyboard activation | implemented per segment | n/a | n/a | `desktop/src/settings_page.rs`, `desktop/src/app.rs` |
 | `AoStatusPill` | implemented | n/a | implemented semantic palette | n/a | n/a | n/a | implemented danger | `desktop/src/titlebar.rs`, `desktop/src/app.rs` |
 | `AoResourceIndicator` | implemented | n/a | warning/danger implemented | n/a | n/a | n/a | danger implemented | `desktop/src/titlebar.rs`, `desktop/src/app.rs` |
 | `AoSectionLabel` | implemented | n/a | n/a | n/a | n/a | n/a | n/a | `desktop/src/left_sidebar.rs`, `desktop/src/right_sidebar.rs` |
@@ -18,10 +20,10 @@ This matrix defines the GPUI state surface each Slint base component must cover 
 | `AoStateCard` | implemented | n/a | n/a | n/a | n/a | implemented | implemented | `desktop/src/right_sidebar.rs`, `desktop/src/project_page.rs` |
 | `AoTextInput` | implemented | n/a | n/a | implemented via `LineEdit` border | implemented | n/a | implemented validation border | `desktop/src/settings_page.rs`, `desktop/src/create_branch_modal.rs` |
 | `AoModalCard` | implemented | n/a | n/a | pending modal focus trap | n/a | pending | pending | `desktop/src/create_branch_modal.rs` |
-| `AoToast` | implemented | copy/dismiss hover through icon buttons | n/a | copy button focus pending | n/a | n/a | implemented error state | `desktop/src/app.rs` |
+| `AoToast` | implemented | copy/dismiss hover through icon buttons | n/a | implemented through icon-button focus rings | n/a | n/a | implemented error state | `desktop/src/app.rs` |
 | `AoTooltip` | implemented | n/a | n/a | n/a | n/a | n/a | n/a | `desktop/src/app.rs` |
-| `AoMenuItem` | implemented | implemented | implemented selected | pending focus ring | implemented | n/a | implemented destructive | `desktop/src/titlebar.rs`, `desktop/src/left_sidebar.rs` |
-| `AoMenu` | implemented | item-owned | item-owned | pending menu focus trap | item-owned | n/a | item-owned | `desktop/src/titlebar.rs`, `desktop/src/left_sidebar.rs` |
+| `AoMenuItem` | implemented | implemented | implemented selected | implemented focus ring + keyboard activation | implemented | n/a | implemented destructive | `desktop/src/titlebar.rs`, `desktop/src/left_sidebar.rs` |
+| `AoMenu` | implemented | item-owned | item-owned | item focus implemented; trap remains parent-view responsibility | item-owned | n/a | item-owned | `desktop/src/titlebar.rs`, `desktop/src/left_sidebar.rs` |
 
 ## Acceptance Notes
 
@@ -35,6 +37,8 @@ This matrix defines the GPUI state surface each Slint base component must cover 
 - Button: normal, hover, active, focus, disabled, loading, destructive.
 - Icon button: normal, hover, active, disabled, required label.
 - Split button: primary hover, dropdown hover, active, disabled.
+- Checkbox: checked, unchecked, focus, disabled, validation error.
+- Segmented control: selected, hover, focus, disabled segment.
 - Sidebar row: normal, hover, active, pinned, running, editing, delete-confirm.
 - Tab chip: normal, hover, active, pinned, running, failed restore, launching.
 - Text input: empty, filled, focused, selected text, validation error, disabled.

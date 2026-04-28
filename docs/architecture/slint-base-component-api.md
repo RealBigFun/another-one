@@ -6,33 +6,53 @@ The Slint component layer lives in `slint-poc/ui/components.slint`. This catalog
 
 ### `AoButton`
 
-Props: `label`, `control-label`, `active`, `disabled`, `loading`, `destructive`, `bg`, `hover-bg`, `border`, `text-color`, `danger-color`.
+Props: `label`, `control-label`, `active`, `disabled`, `loading`, `destructive`, `bg`, `hover-bg`, `border`, `focus-ring`, `text-color`, `danger-color`.
 
 Events: `clicked()`.
 
-States: normal, hover, active, disabled, loading, destructive.
+States: normal, hover, pressed, focused, active, disabled, loading, destructive. Focused buttons activate from Space/Enter-equivalent text events.
 
 Baseline use: titlebar buttons, footer buttons, sidebar add buttons, modal primary action.
 
 ### `AoIconButton`
 
-Props: `icon`, required `control-label`, `active`, `disabled`, `bg`, `hover-bg`, `border`, `icon-color`.
+Props: `icon`, required `control-label`, `active`, `disabled`, `bg`, `hover-bg`, `border`, `focus-ring`, `icon-color`.
 
 Events: `clicked()`.
 
-States: normal, hover, active, disabled.
+States: normal, hover, pressed, focused, active, disabled.
 
 Baseline use: titlebar drawer/close controls, footer icon-only controls, terminal tab add, modal close.
 
 ### `AoSplitButton`
 
-Props: `label`, `control-label`, `menu-control-label`, `active`, `disabled`, `bg`, `hover-bg`, `border`, `text-color`.
+Props: `label`, `control-label`, `menu-control-label`, `active`, `disabled`, `bg`, `hover-bg`, `border`, `focus-ring`, `text-color`.
 
 Events: `clicked()`, `menu-clicked()`.
 
-States: normal, hover, active, disabled, separate primary/menu hit regions.
+States: normal, primary hover, menu hover, pressed, focused primary, focused menu, active, disabled, separate primary/menu hit regions.
 
 Baseline use: titlebar Actions/Open-In style split controls.
+
+### `AoCheckbox`
+
+Props: `checked`, `label`, `control-label`, `disabled`, `error`, `bg`, `hover-bg`, `border`, `focus-ring`, `text-color`, `danger-color`.
+
+Events: `toggled(bool checked)`.
+
+States: checked, unchecked, hover, focused, disabled, validation error.
+
+Baseline use: settings toggles, modal options, confirmation rows.
+
+### `AoSegmentedControl`
+
+Props: `entries`, `bg`, `hover-bg`, `border`, `focus-ring`, `text-color`, `muted-color`.
+
+Events: `selected(string id)`.
+
+States: normal, hover, focused segment, selected segment, disabled segment.
+
+Baseline use: appearance selection, settings scope switches, inspector tab-style controls where a full tab strip is too heavy.
 
 ### `AoStatusPill`
 
@@ -146,11 +166,11 @@ Baseline use: new-task, create-branch, add-agent, confirm dialogs.
 
 ### `AoMenuItem`
 
-Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `danger-color`.
+Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `danger-color`, `focus-ring`.
 
 Events: `clicked(string id)`.
 
-States: normal, hover, selected, disabled, destructive, shortcut label.
+States: normal, hover, focused, selected, disabled, destructive, shortcut label.
 
 Baseline use: titlebar dropdown items, task/project menus, terminal tab menus.
 

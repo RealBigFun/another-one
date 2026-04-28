@@ -7,6 +7,7 @@ Component fixtures are the review surface for base components before full views 
 | Fixture | Required states | GPUI reference source | Slint target |
 | --- | --- | --- | --- |
 | `button-row` | normal, hover, active, focus, disabled, loading, destructive | `desktop/src/titlebar.rs`, `desktop/src/settings_page.rs` | `AoButton`, `AoIconButton`, `AoSplitButton` |
+| `choice-controls` | checkbox checked/unchecked/focus/error/disabled; segmented selected/hover/focus/disabled | `desktop/src/settings_page.rs`, `desktop/src/app.rs` | `AoCheckbox`, `AoSegmentedControl` |
 | `sidebar-project-row` | normal, hover, active, menu-hover, add-hover, GitHub-hover | `desktop/src/left_sidebar.rs` | `AoProjectRow` |
 | `sidebar-task-row` | normal, hover, active, pinned, running, rename, delete-confirm | `desktop/src/left_sidebar.rs` | `AoTaskRow` |
 | `terminal-tabs` | active, inactive, pinned, running, failed restore, launching | `desktop/src/app.rs`, `desktop/src/titlebar.rs` | `AoTabChip` |
