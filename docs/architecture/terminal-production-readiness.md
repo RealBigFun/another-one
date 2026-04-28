@@ -94,8 +94,15 @@ Implemented coverage:
 - Styled run boundaries split correctly after wide cells.
 - Beam and underline cursors render as cursor spans; hidden cursors emit no
   cursor span; hollow-block cursor mapping is represented for the Slint layer.
+- OSC8 hyperlinks render as terminal link spans; primary-click fallback resolves
+  the clicked cell to a URI and opens through the platform seam when terminal
+  mouse reporting is disabled.
 - The Slint key path encodes cursor keys after reading active Alacritty modes,
   so application-cursor mode switches arrow/home/end sequences from CSI to SS3.
+- The Slint pointer/focus path reads Alacritty terminal modes before sending
+  input: focus reports are only sent after `?1004`, mouse clicks/motion only
+  after mouse reporting modes, SGR mouse is preferred after `?1006`, and legacy
+  X10 encoding remains the fallback.
 - The render loop no longer uses an always-on 33 ms ticker. PTY output schedules
   a dirty-only coalesced flush; idle panes do not wake from a frame interval.
 

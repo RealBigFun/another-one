@@ -95,6 +95,8 @@ export component AppWindow inherits Window {
     callback task_selected(string);
     callback tab_selected(string);
     callback terminal_key(string, bool, bool, bool);
+    callback terminal_focus_changed(bool);
+    callback terminal_pointer_event(string, string, int, int, bool, bool, bool);
     callback submit_new_task(string, string);
     callback toast_dismissed();
     callback toast_copy_requested();
@@ -416,11 +418,28 @@ export component AppWindow inherits Window {
                 clicked => {
                     terminal_focus.focus();
                 }
+                pointer-event(event) => {
+                    if self.mouse-x >= terminal_surface.terminal-left && self.mouse-y >= terminal_surface.terminal-top {
+                        terminal_focus.focus();
+                        root.terminal_pointer_event(
+                            event.kind == PointerEventKind.down ? "down" : event.kind == PointerEventKind.up ? "up" : event.kind == PointerEventKind.move ? "move" : "cancel",
+                            event.button == PointerEventButton.left ? "left" : event.button == PointerEventButton.middle ? "middle" : event.button == PointerEventButton.right ? "right" : "other",
+                            max(0, floor((self.mouse-x - terminal_surface.terminal-left) / terminal_surface.terminal-cell-width)),
+                            max(0, floor((self.mouse-y - terminal_surface.terminal-top) / terminal_surface.terminal-cell-height)),
+                            event.modifiers.control,
+                            event.modifiers.alt,
+                            event.modifiers.shift,
+                        );
+                    }
+                }
             }
 
             terminal_focus := FocusScope {
                 width: 0px;
                 height: 0px;
+                focus-changed-event => {
+                    root.terminal_focus_changed(self.has-focus);
+                }
                 key-pressed(event) => {
                     root.terminal_key(
                         event.text,

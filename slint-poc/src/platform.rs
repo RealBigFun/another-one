@@ -32,6 +32,26 @@ pub(crate) fn current_platform_profile() -> SlintPlatformProfile {
     current_platform_profile_for_target(std::env::consts::OS)
 }
 
+pub(crate) fn open_uri(uri: &str) -> Result<(), String> {
+    let uri = uri.trim();
+    if uri.is_empty() {
+        return Err("empty URI".to_string());
+    }
+
+    let Some(program) = open_uri_program_for_target(std::env::consts::OS) else {
+        return Err(format!(
+            "opening links is not supported on {}",
+            std::env::consts::OS
+        ));
+    };
+
+    std::process::Command::new(program)
+        .arg(uri)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("failed to run {program}: {error}"))
+}
+
 fn current_platform_profile_for_target(target_os: &str) -> SlintPlatformProfile {
     match target_os {
         "android" => SlintPlatformProfile {
@@ -72,6 +92,14 @@ fn current_platform_profile_for_target(target_os: &str) -> SlintPlatformProfile 
     }
 }
 
+fn open_uri_program_for_target(target_os: &str) -> Option<&'static str> {
+    match target_os {
+        "linux" => Some("xdg-open"),
+        "macos" => Some("open"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +123,17 @@ mod tests {
         let profile = current_platform_profile_for_target("windows");
         assert_eq!(profile.target, "unsupported");
         assert_eq!(profile.window_label, "unsupported-window");
+    }
+
+    #[test]
+    fn open_uri_program_uses_desktop_platform_tools() {
+        assert_eq!(open_uri_program_for_target("linux"), Some("xdg-open"));
+        assert_eq!(open_uri_program_for_target("macos"), Some("open"));
+    }
+
+    #[test]
+    fn open_uri_program_is_absent_on_mobile_targets() {
+        assert_eq!(open_uri_program_for_target("android"), None);
+        assert_eq!(open_uri_program_for_target("ios"), None);
     }
 }

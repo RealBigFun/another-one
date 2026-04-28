@@ -57,6 +57,22 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
             alt,
         }));
     });
+    let focus_event_tx = client_event_tx.clone();
+    app.on_terminal_focus_changed(move |focused| {
+        let _ = focus_event_tx.send(SlintClientEvent::TerminalFocus(focused));
+    });
+    let pointer_event_tx = client_event_tx.clone();
+    app.on_terminal_pointer_event(move |kind, button, column, line, control, alt, shift| {
+        let _ = pointer_event_tx.send(SlintClientEvent::TerminalPointer(SlintPointerEvent {
+            kind: kind.to_string(),
+            button: button.to_string(),
+            column,
+            line,
+            control,
+            alt,
+            shift,
+        }));
+    });
     let project_event_tx = client_event_tx.clone();
     app.on_project_selected(move |project_id| {
         let _ = project_event_tx.send(SlintClientEvent::SelectProject(project_id.to_string()));
@@ -705,6 +721,33 @@ async fn run_terminal_session(
                                 .context("send terminal input")?;
                         }
                     }
+                    SlintClientEvent::TerminalFocus(focused) => {
+                        if terminal.input_modes().focus_in_out {
+                            send_terminal_input(
+                                &mut send,
+                                &mut next_request_id,
+                                TerminalInputEvent::Focus { focused },
+                            )
+                            .await
+                            .context("send terminal focus input")?;
+                        }
+                    }
+                    SlintClientEvent::TerminalPointer(input) => {
+                        let input_modes = terminal.input_modes();
+                        if let Some(event) = encode_terminal_pointer_event(&input, input_modes) {
+                            send_terminal_input(&mut send, &mut next_request_id, event)
+                                .await
+                                .context("send terminal pointer input")?;
+                        } else if input.is_primary_down() {
+                            let surface = terminal.snapshot_surface();
+                            if let Some(uri) = link_uri_at(&surface.link_spans, input.line, input.column) {
+                                match platform::open_uri(&uri) {
+                                    Ok(()) => set_toast(app_weak, "info", "Opened terminal link", uri),
+                                    Err(error) => set_toast(app_weak, "error", "Could not open terminal link", error),
+                                }
+                            }
+                        }
+                    }
                     SlintClientEvent::SelectProject(project_id) => {
                         if let Some(target) = target_for_project_id(&projects, &project_id) {
                             switch_terminal_target(
@@ -891,8 +934,27 @@ struct SlintKeyEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct SlintPointerEvent {
+    kind: String,
+    button: String,
+    column: i32,
+    line: i32,
+    control: bool,
+    alt: bool,
+    shift: bool,
+}
+
+impl SlintPointerEvent {
+    fn is_primary_down(&self) -> bool {
+        self.kind == "down" && self.button == "left"
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum SlintClientEvent {
     TerminalKey(SlintKeyEvent),
+    TerminalFocus(bool),
+    TerminalPointer(SlintPointerEvent),
     SelectProject(String),
     SelectTask(String),
     SelectTab(String),
@@ -906,6 +968,11 @@ enum SlintClientEvent {
 struct TerminalInputModeState {
     app_cursor: bool,
     bracketed_paste: bool,
+    focus_in_out: bool,
+    mouse_report_click: bool,
+    mouse_drag: bool,
+    mouse_motion: bool,
+    sgr_mouse: bool,
 }
 
 async fn wait_for_terminal_flush(deadline: Option<Instant>) {
@@ -1172,6 +1239,113 @@ fn encode_terminal_key(
     Some(TerminalInputEvent::Key { bytes })
 }
 
+fn encode_terminal_pointer_event(
+    input: &SlintPointerEvent,
+    modes: TerminalInputModeState,
+) -> Option<TerminalInputEvent> {
+    if !mouse_reporting_enabled(modes) {
+        return None;
+    }
+
+    let column = u16::try_from(input.column).ok()?;
+    let line = u16::try_from(input.line).ok()?;
+    let modifiers = mouse_modifier_bits(input);
+    let release = input.kind == "up";
+    let code = match input.kind.as_str() {
+        "down" | "up" => mouse_button_code(&input.button)?.checked_add(modifiers)?,
+        "move" => {
+            if !modes.mouse_motion && !modes.mouse_drag {
+                return None;
+            }
+            let button = if input.button == "other" {
+                if modes.mouse_motion {
+                    3
+                } else {
+                    return None;
+                }
+            } else {
+                mouse_button_code(&input.button)?
+            };
+            32u8.checked_add(button)?.checked_add(modifiers)?
+        }
+        _ => return None,
+    };
+
+    let bytes = if modes.sgr_mouse {
+        encode_sgr_mouse_button(code, column, line, release)
+    } else {
+        let legacy_code = if release {
+            3u8.checked_add(modifiers)?
+        } else {
+            code
+        };
+        encode_legacy_mouse_button(legacy_code, column, line)?
+    };
+
+    Some(TerminalInputEvent::Mouse { bytes })
+}
+
+fn mouse_reporting_enabled(modes: TerminalInputModeState) -> bool {
+    modes.mouse_report_click || modes.mouse_drag || modes.mouse_motion
+}
+
+fn mouse_button_code(button: &str) -> Option<u8> {
+    match button {
+        "left" => Some(0),
+        "middle" => Some(1),
+        "right" => Some(2),
+        _ => None,
+    }
+}
+
+fn mouse_modifier_bits(input: &SlintPointerEvent) -> u8 {
+    let mut bits = 0;
+    if input.shift {
+        bits |= 4;
+    }
+    if input.alt {
+        bits |= 8;
+    }
+    if input.control {
+        bits |= 16;
+    }
+    bits
+}
+
+fn encode_sgr_mouse_button(code: u8, column: u16, line: u16, release: bool) -> Vec<u8> {
+    let suffix = if release { 'm' } else { 'M' };
+    format!(
+        "\x1b[<{code};{};{}{suffix}",
+        u32::from(column) + 1,
+        u32::from(line) + 1
+    )
+    .into_bytes()
+}
+
+fn encode_legacy_mouse_button(code: u8, column: u16, line: u16) -> Option<Vec<u8>> {
+    Some(vec![
+        0x1b,
+        b'[',
+        b'M',
+        code.checked_add(32)?,
+        legacy_mouse_coord(column)?,
+        legacy_mouse_coord(line)?,
+    ])
+}
+
+fn legacy_mouse_coord(coord: u16) -> Option<u8> {
+    u8::try_from(u32::from(coord) + 33).ok()
+}
+
+fn link_uri_at(spans: &[TerminalLinkSpan], line: i32, column: i32) -> Option<String> {
+    spans
+        .iter()
+        .find(|span| {
+            span.line == line && column >= span.column && column < span.column + span.cell_count
+        })
+        .map(|span| span.uri.to_string())
+}
+
 fn cursor_key_sequence(final_byte: u8, app_cursor: bool) -> Vec<u8> {
     if app_cursor {
         vec![0x1b, b'O', final_byte]
@@ -1287,6 +1461,11 @@ impl AlacrittySnapshot {
         TerminalInputModeState {
             app_cursor: mode.contains(TermMode::APP_CURSOR),
             bracketed_paste: mode.contains(TermMode::BRACKETED_PASTE),
+            focus_in_out: mode.contains(TermMode::FOCUS_IN_OUT),
+            mouse_report_click: mode.contains(TermMode::MOUSE_REPORT_CLICK),
+            mouse_drag: mode.contains(TermMode::MOUSE_DRAG),
+            mouse_motion: mode.contains(TermMode::MOUSE_MOTION),
+            sgr_mouse: mode.contains(TermMode::SGR_MOUSE),
         }
     }
 
@@ -1952,6 +2131,29 @@ mod tests {
     }
 
     #[test]
+    fn input_modes_track_focus_reporting_mode() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        assert!(!terminal.input_modes().focus_in_out);
+
+        let _ = terminal.apply_output(b"\x1b[?1004h");
+
+        assert!(terminal.input_modes().focus_in_out);
+    }
+
+    #[test]
+    fn input_modes_track_sgr_mouse_reporting_mode() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        assert!(!terminal.input_modes().mouse_report_click);
+        assert!(!terminal.input_modes().sgr_mouse);
+
+        let _ = terminal.apply_output(b"\x1b[?1000h\x1b[?1006h");
+
+        let modes = terminal.input_modes();
+        assert!(modes.mouse_report_click);
+        assert!(modes.sgr_mouse);
+    }
+
+    #[test]
     fn encode_terminal_key_uses_normal_cursor_sequences() {
         let bytes = encode_key_bytes("\u{f700}", TerminalInputModeState::default());
 
@@ -1964,7 +2166,7 @@ mod tests {
             "\u{f700}",
             TerminalInputModeState {
                 app_cursor: true,
-                bracketed_paste: false,
+                ..TerminalInputModeState::default()
             },
         );
 
@@ -1976,8 +2178,8 @@ mod tests {
         let bytes = encode_key_bytes(
             "alpha\nbeta",
             TerminalInputModeState {
-                app_cursor: false,
                 bracketed_paste: true,
+                ..TerminalInputModeState::default()
             },
         );
 
@@ -1997,6 +2199,92 @@ mod tests {
             .pty_bytes();
 
         assert_eq!(bytes, b"\x1bx");
+    }
+
+    #[test]
+    fn encode_terminal_pointer_event_uses_sgr_mouse_press() {
+        let event = pointer_event("down", "left", 11, 33);
+        let modes = TerminalInputModeState {
+            mouse_report_click: true,
+            sgr_mouse: true,
+            ..TerminalInputModeState::default()
+        };
+
+        let bytes = encode_terminal_pointer_event(&event, modes)
+            .expect("pointer should encode")
+            .pty_bytes();
+
+        assert_eq!(bytes, b"\x1b[<0;12;34M");
+    }
+
+    #[test]
+    fn encode_terminal_pointer_event_uses_sgr_mouse_release() {
+        let event = pointer_event("up", "left", 11, 33);
+        let modes = TerminalInputModeState {
+            mouse_report_click: true,
+            sgr_mouse: true,
+            ..TerminalInputModeState::default()
+        };
+
+        let bytes = encode_terminal_pointer_event(&event, modes)
+            .expect("pointer should encode")
+            .pty_bytes();
+
+        assert_eq!(bytes, b"\x1b[<0;12;34m");
+    }
+
+    #[test]
+    fn encode_terminal_pointer_event_uses_legacy_mouse_when_sgr_is_disabled() {
+        let event = pointer_event("down", "left", 0, 0);
+        let modes = TerminalInputModeState {
+            mouse_report_click: true,
+            ..TerminalInputModeState::default()
+        };
+
+        let bytes = encode_terminal_pointer_event(&event, modes)
+            .expect("pointer should encode")
+            .pty_bytes();
+
+        assert_eq!(bytes, b"\x1b[M !!");
+    }
+
+    #[test]
+    fn encode_terminal_pointer_event_reports_motion_only_when_enabled() {
+        let event = pointer_event("move", "other", 2, 4);
+        let modes = TerminalInputModeState {
+            mouse_motion: true,
+            sgr_mouse: true,
+            ..TerminalInputModeState::default()
+        };
+
+        let bytes = encode_terminal_pointer_event(&event, modes)
+            .expect("motion should encode")
+            .pty_bytes();
+
+        assert_eq!(bytes, b"\x1b[<35;3;5M");
+    }
+
+    #[test]
+    fn encode_terminal_pointer_event_ignores_mouse_when_reporting_disabled() {
+        let event = pointer_event("down", "left", 11, 33);
+
+        let encoded = encode_terminal_pointer_event(&event, TerminalInputModeState::default());
+
+        assert!(encoded.is_none());
+    }
+
+    #[test]
+    fn link_uri_at_returns_uri_for_cell_range() {
+        let spans = vec![TerminalLinkSpan {
+            line: 2,
+            column: 8,
+            cell_count: 4,
+            uri: "https://example.test".into(),
+        }];
+
+        let uri = link_uri_at(&spans, 2, 10);
+
+        assert_eq!(uri.as_deref(), Some("https://example.test"));
     }
 
     #[test]
@@ -2084,6 +2372,18 @@ mod tests {
         encode_terminal_key(&event, modes)
             .expect("key should encode")
             .pty_bytes()
+    }
+
+    fn pointer_event(kind: &str, button: &str, column: i32, line: i32) -> SlintPointerEvent {
+        SlintPointerEvent {
+            kind: kind.to_string(),
+            button: button.to_string(),
+            column,
+            line,
+            control: false,
+            alt: false,
+            shift: false,
+        }
     }
 
     fn project_tree_for_submit_tests(
