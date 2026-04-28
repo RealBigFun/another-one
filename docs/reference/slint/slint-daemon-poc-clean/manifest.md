@@ -7,6 +7,8 @@ Captured on: 2026-04-28, Hyprland workspace 1, monitor `DP-4`.
 ## Captures
 
 - `captures/workspace-shell-dark.png`: Slint client shell in dark mode, captured from the live `AnotherOne` / `com.anotherone.Slint` window.
+- `captures/terminal-resize-wide.png`: Slint terminal shell before compositor-driven resize.
+- `captures/terminal-resize-after.png`: Slint terminal shell after compositor-driven resize; used as manual responsiveness evidence for terminal dimension recalculation.
 
 ## Notes
 

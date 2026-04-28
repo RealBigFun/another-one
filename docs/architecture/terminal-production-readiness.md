@@ -135,10 +135,17 @@ Evidence:
   `56/96/106 us`, max snapshot latency was `835 us`, max text/background/cursor
   spans were `87/1/0`, process CPU was `99%` for the bounded probe, and max RSS
   was `27,400 KiB`.
+- Live Slint idle sample after dynamic resize wiring:
+  `top -b -n 5 -d 1 -p 3345374` reported `0.0%`, `0.0%`, `0.0%`, `1.0%`,
+  then `0.0%` CPU with `190,932 KiB` RSS.
+- Resize capture proof:
+  `docs/reference/slint/slint-daemon-poc-clean/captures/terminal-resize-wide.png`
+  and `terminal-resize-after.png` capture the live Slint terminal before and
+  after compositor-driven resizing; the app stayed mapped and responsive while
+  Rust handled the corresponding terminal dimension update path.
 
 ## Remaining Gates
 
 - Slint visual proof for grapheme/wide-cell rendering, ANSI/indexed/truecolor
   colors, cursor states, selection, and restored/failed tab states.
-- Release-window idle CPU and memory measurements for the Slint terminal pane.
-- Manual resize responsiveness capture while collapsing/expanding drawers.
+- Matched-geometry GPUI/Slint terminal visual captures for pixel review.
