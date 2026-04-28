@@ -5,19 +5,44 @@ edition = "2021"
 publish = false
 build = "build.rs"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 alacritty_terminal = "0.26.0"
 anyhow = "1"
 daemon-sandbox = { path = "../daemon-sandbox" }
 iroh = "0.98.1"
 serde_json = "1"
-slint = "1.15"
+slint = { version = "1.15", features = ["backend-android-activity-06"] }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # GPUI enables yeslogic-fontconfig-sys/dlopen in the workspace. Mirror that
 # through fontique so Slint's normal dependency graph uses the dlopen path too.
 fontique = { version = "0.8.0", default-features = false, features = ["fontconfig-dlopen"] }
+
+[package.metadata.android]
+package = "com.anotherone.slintpoc"
+build_targets = ["aarch64-linux-android"]
+apk_name = "anotherone-slint-poc"
+strip = "strip"
+
+[package.metadata.android.sdk]
+min_sdk_version = 23
+target_sdk_version = 35
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[package.metadata.android.application]
+label = "AnotherOne Slint POC"
+theme = "@android:style/Theme.DeviceDefault.NoActionBar"
+
+[package.metadata.android.application.activity]
+label = "AnotherOne Slint POC"
+exported = true
+orientation = "landscape"
 
 [build-dependencies]
 slint-build = "1.15"
