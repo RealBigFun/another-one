@@ -117,11 +117,11 @@ export component AppWindow inherits Window {
     property <bool> mobile-layout: root.width < 760px;
     property <bool> tablet-layout: root.width >= 760px && root.width < 1180px;
     property <string> layout_label: mobile-layout ? "mobile" : tablet-layout ? "tablet" : "desktop";
-    property <length> titlebar-height: mobile-layout ? 52px : 38px;
+    property <length> titlebar-height: mobile-layout ? 52px : 42px;
     property <length> footer-height: mobile-layout ? 0px : 38px;
-    property <length> gutter-width: 4px;
-    property <length> sidebar-width: mobile-layout ? 0px : tablet-layout ? 252px : 318px;
-    property <length> right-width: root.width >= 1280px ? 292px : 0px;
+    property <length> gutter-width: 0px;
+    property <length> sidebar-width: mobile-layout ? 0px : tablet-layout ? 252px : 282px;
+    property <length> right-width: root.width >= 1280px ? 464px : 0px;
     property <length> body-top: titlebar-height;
     property <length> body-height: root.height - titlebar-height - footer-height;
 
@@ -339,7 +339,7 @@ export component AppWindow inherits Window {
             background: terminal_bg;
             clip: true;
             property <length> terminal-left: root.mobile-layout ? 12px : 24px;
-            property <length> terminal-top: root.mobile-layout ? 112px : 76px;
+            property <length> terminal-top: root.mobile-layout ? 132px : 76px;
             property <length> terminal-cell-width: 8px;
             property <length> terminal-cell-height: 16px;
             property <int> terminal-cols: max(20, floor((self.width - terminal-left - 24px) / terminal-cell-width));
@@ -469,7 +469,7 @@ export component AppWindow inherits Window {
 
             Text {
                 x: terminal_surface.terminal-left;
-                y: 52px;
+                y: root.mobile-layout ? 104px : 52px;
                 width: parent.width - 48px;
                 text: root.terminal_status;
                 color: text_secondary;

@@ -182,6 +182,7 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     style::apply_theme(&app);
     app.set_platform_label(platform_profile.label().into());
     seed_shell_model(&app);
+    seed_visual_state_fixture(&app);
     if std::env::var("ANOTHERONE_SLINT_FIXTURE").as_deref() == Ok("terminal-fidelity") {
         seed_terminal_fidelity_fixture(&app);
         app.on_close_requested(|| std::process::exit(0));
@@ -354,6 +355,26 @@ fn seed_shell_model(app: &AppWindow) {
             pinned: false,
         },
     ])));
+}
+
+fn seed_visual_state_fixture(app: &AppWindow) {
+    let Ok(state) = std::env::var("ANOTHERONE_SLINT_VISUAL_STATE") else {
+        return;
+    };
+
+    match state.as_str() {
+        "new-task-modal" => {
+            app.set_modal_open(true);
+            app.set_new_task_name("Review GPUI parity".into());
+            app.set_new_task_branch("slint-visual-fixture".into());
+        }
+        "toast-error" => {
+            app.set_toast_kind("error".into());
+            app.set_toast_message("Could not open terminal link".into());
+            app.set_toast_detail("https://example.test returned an unsupported platform action".into());
+        }
+        _ => {}
+    }
 }
 
 fn seed_terminal_fidelity_fixture(app: &AppWindow) {

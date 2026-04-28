@@ -1,0 +1,9 @@
+{
+  "metric": "ImageMagick AE output",
+  "desktop_main_dark": "8.75244e+10 (1.33554e+06)",
+  "titlebar_default": "1.60882e+09 (24549)",
+  "sidebar_project_list_default": "4.92849e+09 (75204)",
+  "right_sidebar_changes": "9.21592e+09 (140626)",
+  "image_size": {"width": 1902, "height": 1023},
+  "note": "First-pass raw diffs without dynamic masks; expected to fail final pixel thresholds until view/content parity advances."
+}
