@@ -1700,11 +1700,27 @@ fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tempfile::tempdir;
 
     #[derive(Default)]
     struct RecordingRegistry {
         inputs: Mutex<Vec<(String, String, Vec<u8>)>>,
+        observed: Mutex<Vec<(String, String, String)>>,
+        disconnected: Mutex<Vec<String>>,
+        launches: Mutex<Vec<(String, String)>>,
+        resizes: Mutex<Vec<(String, String, String, u16, u16)>>,
+        senders: Mutex<HashMap<(String, String), broadcast::Sender<Vec<u8>>>>,
+    }
+
+    impl RecordingRegistry {
+        fn register_live_tab(&self, section_id: &str, tab_id: &str) {
+            let (sender, _receiver) = broadcast::channel(8);
+            self.senders
+                .lock()
+                .unwrap()
+                .insert((section_id.to_string(), tab_id.to_string()), sender);
+        }
     }
 
     impl DaemonRegistry for RecordingRegistry {
@@ -1717,7 +1733,32 @@ mod tests {
             _section_id: &str,
             _tab_id: &str,
         ) -> Option<broadcast::Receiver<Vec<u8>>> {
-            None
+            self.senders
+                .lock()
+                .unwrap()
+                .get(&(_section_id.to_string(), _tab_id.to_string()))
+                .map(broadcast::Sender::subscribe)
+        }
+
+        fn attach_tab_with_replay(
+            &self,
+            _viewer_id: &str,
+            section_id: &str,
+            tab_id: &str,
+        ) -> Option<crate::registry::TabAttachment> {
+            self.attach_tab(section_id, tab_id)
+                .map(|receiver| crate::registry::TabAttachment {
+                    replay: Vec::new(),
+                    receiver,
+                })
+        }
+
+        fn note_tab_output_observed(&self, viewer_id: &str, section_id: &str, tab_id: &str) {
+            self.observed.lock().unwrap().push((
+                viewer_id.to_string(),
+                section_id.to_string(),
+                tab_id.to_string(),
+            ));
         }
 
         fn tab_input(&self, section_id: &str, tab_id: &str, bytes: &[u8]) {
@@ -1730,12 +1771,33 @@ mod tests {
 
         fn tab_resize(
             &self,
-            _viewer_id: &str,
-            _section_id: &str,
-            _tab_id: &str,
-            _cols: u16,
-            _rows: u16,
+            viewer_id: &str,
+            section_id: &str,
+            tab_id: &str,
+            cols: u16,
+            rows: u16,
         ) {
+            self.resizes.lock().unwrap().push((
+                viewer_id.to_string(),
+                section_id.to_string(),
+                tab_id.to_string(),
+                cols,
+                rows,
+            ));
+        }
+
+        fn viewer_disconnected(&self, viewer_id: &str) {
+            self.disconnected
+                .lock()
+                .unwrap()
+                .push(viewer_id.to_string());
+        }
+
+        fn launch_tab(&self, section_id: &str, tab_id: &str) {
+            self.launches
+                .lock()
+                .unwrap()
+                .push((section_id.to_string(), tab_id.to_string()));
         }
     }
 
@@ -1859,6 +1921,193 @@ mod tests {
         assert_eq!(inputs[0].0, "section-1");
         assert_eq!(inputs[0].1, "tab-1");
         assert_eq!(inputs[0].2, b"\x1b[I");
+    }
+
+    #[tokio::test]
+    async fn handle_control_detach_cleans_live_attachment() {
+        let registry = Arc::new(RecordingRegistry::default());
+        registry.register_live_tab("section-1", "tab-1");
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        let (outbound_tx, _outbound_rx) = mpsc::channel(8);
+        let data_generation = Arc::new(AtomicU64::new(0));
+        let mut attached = None;
+
+        handle_control(
+            1,
+            Control::AttachTab {
+                section_id: "section-1".to_string(),
+                tab_id: "tab-1".to_string(),
+            },
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("attach routes");
+
+        handle_control(
+            2,
+            Control::DetachTab,
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("detach routes");
+
+        assert!(attached.is_none());
+        assert_eq!(data_generation.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            registry.observed.lock().unwrap().as_slice(),
+            &[(
+                "viewer-1".to_string(),
+                "section-1".to_string(),
+                "tab-1".to_string()
+            )]
+        );
+        assert_eq!(
+            registry.disconnected.lock().unwrap().as_slice(),
+            &["viewer-1".to_string(), "viewer-1".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_control_reattach_advances_generation_and_clears_prior_viewer_state() {
+        let registry = Arc::new(RecordingRegistry::default());
+        registry.register_live_tab("section-1", "tab-1");
+        registry.register_live_tab("section-2", "tab-2");
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        let (outbound_tx, _outbound_rx) = mpsc::channel(8);
+        let data_generation = Arc::new(AtomicU64::new(0));
+        let mut attached = None;
+
+        handle_control(
+            1,
+            Control::AttachTab {
+                section_id: "section-1".to_string(),
+                tab_id: "tab-1".to_string(),
+            },
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("first attach routes");
+        assert_eq!(data_generation.load(Ordering::Relaxed), 1);
+
+        handle_control(
+            2,
+            Control::AttachTab {
+                section_id: "section-1".to_string(),
+                tab_id: "tab-1".to_string(),
+            },
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("same-target reattach routes");
+        assert_eq!(data_generation.load(Ordering::Relaxed), 1);
+
+        handle_control(
+            3,
+            Control::AttachTab {
+                section_id: "section-2".to_string(),
+                tab_id: "tab-2".to_string(),
+            },
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("retarget attach routes");
+
+        assert_eq!(data_generation.load(Ordering::Relaxed), 2);
+        let attached = attached.take().expect("new target remains attached");
+        assert_eq!(attached.section_id, "section-2");
+        assert_eq!(attached.tab_id, "tab-2");
+        attached.abort_forwarder();
+
+        assert_eq!(
+            registry.disconnected.lock().unwrap().as_slice(),
+            &["viewer-1".to_string(), "viewer-1".to_string()]
+        );
+        assert_eq!(registry.observed.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn pending_attach_keeps_resize_and_launch_routable() {
+        let registry = Arc::new(RecordingRegistry::default());
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        let (outbound_tx, _outbound_rx) = mpsc::channel(8);
+        let data_generation = Arc::new(AtomicU64::new(0));
+        let mut attached = None;
+
+        handle_control(
+            1,
+            Control::AttachTab {
+                section_id: "pending-section".to_string(),
+                tab_id: "pending-tab".to_string(),
+            },
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("pending attach records target");
+        handle_control(
+            2,
+            Control::TabResize { cols: 90, rows: 30 },
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("resize routes to pending target");
+        handle_control(
+            3,
+            Control::LaunchTab {
+                section_id: "pending-section".to_string(),
+                tab_id: "pending-tab".to_string(),
+            },
+            &registry_dyn,
+            &outbound_tx,
+            &data_generation,
+            &mut attached,
+            "viewer-1",
+        )
+        .await
+        .expect("launch routes");
+
+        assert_eq!(data_generation.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            registry.resizes.lock().unwrap().as_slice(),
+            &[(
+                "viewer-1".to_string(),
+                "pending-section".to_string(),
+                "pending-tab".to_string(),
+                90,
+                30
+            )]
+        );
+        assert_eq!(
+            registry.launches.lock().unwrap().as_slice(),
+            &[("pending-section".to_string(), "pending-tab".to_string())]
+        );
     }
 
     #[tokio::test]

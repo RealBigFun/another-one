@@ -1,0 +1,87 @@
+# Terminal Production Readiness
+
+This document tracks the Rust daemon and Slint client terminal contract. The
+GPUI terminal remains the behavioral baseline, but active implementation is the
+Rust daemon plus Slint renderer/client path.
+
+## Scope
+
+- Daemon transport owns PTY lifecycle, attach/detach state, resize routing,
+  input routing, and stale-output rejection.
+- Slint client owns terminal parsing/rendering, user input capture, visual
+  fidelity, and renderer performance.
+- Raw `TY_DATA` daemon-to-client output remains the PTY byte stream.
+- Slint client-to-daemon input should use typed control frames rather than raw
+  `TY_DATA` input frames.
+
+## Input And Reply Contract
+
+- `Control::TabInput` carries `TerminalInputEvent`.
+- `TerminalInputEvent` is owned by `another_one_core::terminal_types` so build
+  targets and UI shells share the same event model.
+- Keyboard, text, paste, focus, mouse protocol bytes, and parser-generated PTY
+  replies are represented explicitly.
+- Resize remains `Control::TabResize`, because it changes PTY geometry rather
+  than stdin bytes.
+- Legacy inbound `TY_DATA` input is accepted by the daemon for compatibility.
+
+Evidence:
+
+- `cargo test -p another-one-core terminal_input_event`
+- `cargo test -p daemon-sandbox tab_input`
+- `cargo test -p daemon-sandbox terminal_input`
+- `cargo check -p slint-poc`
+
+## Lifecycle Contract
+
+Each Iroh control stream has at most one attached terminal tab. Attachment state
+is `(section_id, tab_id, forwarder)`.
+
+Attach:
+
+- Attaching a different target increments `data_generation`.
+- Reattaching the same target keeps the existing generation.
+- Replacing a live attachment calls `note_tab_output_observed` and aborts the old
+  forwarder.
+- Attaching a different target clears the viewer's prior resize/focus claims via
+  `viewer_disconnected`.
+- If the runtime is not live yet, the daemon records a pending attachment with no
+  forwarder so resize/input/launch intent still targets the requested tab.
+
+Detach:
+
+- Detach increments `data_generation`.
+- Detach aborts any live forwarder.
+- Detach observes buffered output for the previous live tab.
+- Detach clears the viewer's resize/focus claims with `viewer_disconnected`.
+- Input while detached is dropped.
+
+Stale output:
+
+- Outbound `TY_DATA` frames are tagged with the attachment generation active when
+  the forwarder queued them.
+- The writer drops `TY_DATA` frames whose generation no longer matches the
+  current connection generation.
+- This generation gate is the successor to the older 200 ms stale-byte ignore
+  window; it is deterministic and does not depend on wall-clock timing.
+
+Evidence:
+
+- `cargo test -p daemon-sandbox handle_control`
+- `cargo test -p daemon-sandbox pending_attach`
+
+Covered cases:
+
+- live attach then detach cleans state and advances generation;
+- same-target reattach preserves generation;
+- retarget attach advances generation and clears prior viewer state;
+- pending attach keeps resize and launch routing available;
+- typed input reaches the attached tab;
+- input without attachment is dropped.
+
+## Remaining Gates
+
+- Slint visual proof for grapheme/wide-cell rendering, ANSI/indexed/truecolor
+  colors, cursor states, selection, and restored/failed tab states.
+- Slint renderer throughput proof under sustained PTY output.
+- Idle CPU and memory measurements for the Slint terminal pane.
