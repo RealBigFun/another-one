@@ -270,6 +270,9 @@ export component AppWindow inherits Window {
                 text-primary: root.text_primary;
                 text-secondary: root.text_secondary;
                 text-muted: root.text_muted;
+                focus-ring: root.focus_ring;
+                danger-color: root.danger_color;
+                warning-color: root.warning_color;
                 clicked(project-id) => {
                     root.project_selected(project-id);
                 }
@@ -317,6 +320,9 @@ export component AppWindow inherits Window {
                 text-muted: root.text_muted;
                 success-color: root.success_color;
                 row-border-color: root.border_color;
+                focus-ring: root.focus_ring;
+                danger-color: root.danger_color;
+                warning-color: root.warning_color;
                 clicked(task-id) => {
                     root.task_selected(task-id);
                 }

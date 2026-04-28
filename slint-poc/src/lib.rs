@@ -279,6 +279,9 @@ fn seed_shell_model(app: &AppWindow) {
             initials: "A".into(),
             accent: project_accent_color("another-one"),
             active: true,
+            loading: false,
+            error: false,
+            expanded: true,
             task_count_label: "3".into(),
         },
         ProjectSidebarEntry {
@@ -289,6 +292,9 @@ fn seed_shell_model(app: &AppWindow) {
             initials: "D".into(),
             accent: project_accent_color("daemon-sandbox"),
             active: false,
+            loading: false,
+            error: false,
+            expanded: true,
             task_count_label: "1".into(),
         },
         ProjectSidebarEntry {
@@ -299,6 +305,9 @@ fn seed_shell_model(app: &AppWindow) {
             initials: "S".into(),
             accent: project_accent_color("slint-platform"),
             active: false,
+            loading: false,
+            error: false,
+            expanded: false,
             task_count_label: "2".into(),
         },
     ])));
@@ -313,6 +322,10 @@ fn seed_shell_model(app: &AppWindow) {
             active: true,
             pinned: true,
             running: true,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
         },
         TaskSidebarEntry {
             id: "terminal-ready".into(),
@@ -324,6 +337,10 @@ fn seed_shell_model(app: &AppWindow) {
             active: false,
             pinned: false,
             running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
         },
         TaskSidebarEntry {
             id: "style-system".into(),
@@ -335,6 +352,10 @@ fn seed_shell_model(app: &AppWindow) {
             active: false,
             pinned: false,
             running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
         },
     ])));
     app.set_tab_chips(slint::ModelRc::new(slint::VecModel::from(vec![
@@ -555,6 +576,9 @@ fn workspace_shell_model(
                 initials: initials(&project.name).into(),
                 accent: project_accent_color(&project.id),
                 active,
+                loading: false,
+                error: false,
+                expanded: active,
                 task_count_label: project.tasks.len().to_string().into(),
             }
         })
@@ -575,6 +599,10 @@ fn workspace_shell_model(
                     active: task.section_id == active_section_id,
                     pinned: task.pinned,
                     running,
+                    loading: false,
+                    error: false,
+                    editing: false,
+                    delete_confirm: false,
                 }
             })
         })

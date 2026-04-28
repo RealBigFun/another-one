@@ -96,21 +96,21 @@ Baseline use: project and task initials chips.
 
 ### `AoProjectRow`
 
-Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `text-secondary`.
+Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `text-secondary`, `focus-ring`, `danger-color`, `warning-color`.
 
-Events: `clicked(string project_id)`.
+Events: `clicked(string project_id)`, `menu-clicked(string project_id)`, `add-clicked(string project_id)`, `github-clicked(string project_id)`.
 
-States: normal, hover, active. Project menu/GitHub/add affordances are not implemented yet.
+States: normal, hover, focused, active, expanded/collapsed disclosure, loading, error, add-hover, GitHub-hover, menu-hover.
 
 Baseline use: left sidebar project rows.
 
 ### `AoTaskRow`
 
-Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `text-secondary`, `success-color`, `row-border-color`.
+Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `text-secondary`, `success-color`, `row-border-color`, `focus-ring`, `danger-color`, `warning-color`.
 
-Events: `clicked(string task_id)`.
+Events: `clicked(string task_id)`, `menu-clicked(string task_id)`, `rename-clicked(string task_id)`, `delete-clicked(string task_id)`.
 
-States: normal, hover, active, pinned, running. Rename/delete/menu/error states are not implemented yet.
+States: normal, hover, focused, active, pinned, running, loading, error, editing, delete-confirm, rename-hover, delete-hover, menu-hover.
 
 Baseline use: left sidebar task/worktree rows.
 

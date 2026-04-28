@@ -8,6 +8,9 @@ export struct ProjectSidebarEntry {
     initials: string,
     accent: color,
     active: bool,
+    loading: bool,
+    error: bool,
+    expanded: bool,
     task-count-label: string,
 }
 
@@ -21,6 +24,10 @@ export struct TaskSidebarEntry {
     active: bool,
     pinned: bool,
     running: bool,
+    loading: bool,
+    error: bool,
+    editing: bool,
+    delete-confirm: bool,
 }
 
 export struct TerminalTabChip {
@@ -512,16 +519,37 @@ export component AoProjectRow inherits Rectangle {
     in property <color> text-primary;
     in property <color> text-muted;
     in property <color> text-secondary;
+    in property <color> focus-ring: overlay-active;
+    in property <color> danger-color: text-primary;
+    in property <color> warning-color: text-secondary;
     callback clicked(string);
+    callback menu-clicked(string);
+    callback add-clicked(string);
+    callback github-clicked(string);
 
     height: 66px;
     border-radius: 11px;
-    background: entry.active ? overlay-active : row-touch.has-hover ? overlay-hover : transparent;
+    border-width: row-focus.has-focus || entry.active || entry.error ? 1px : 0px;
+    border-color: entry.error ? danger-color : row-focus.has-focus ? focus-ring : overlay-active;
+    background: entry.active || row-touch.pressed ? overlay-active : row-touch.has-hover ? overlay-hover : transparent;
+
+    row-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked(root.entry.id);
+                return accept;
+            }
+            return reject;
+        }
+    }
 
     row-touch := TouchArea {
         width: parent.width;
         height: parent.height;
         clicked => {
+            row-focus.focus();
             root.clicked(root.entry.id);
         }
     }
@@ -546,11 +574,23 @@ export component AoProjectRow inherits Rectangle {
     }
 
     Text {
+        x: parent.width - 84px;
+        y: 10px;
+        width: 18px;
+        horizontal-alignment: center;
+        text: entry.expanded ? "v" : ">";
+        color: text-muted;
+        font-family: "monospace";
+        font-size: 10px;
+        font-weight: 900;
+    }
+
+    Text {
         x: 52px;
         y: 29px;
         width: parent.width - 74px;
-        text: entry.branch;
-        color: text-muted;
+        text: entry.loading ? "loading project..." : entry.error ? "project unavailable" : entry.branch;
+        color: entry.error ? danger-color : entry.loading ? warning-color : text-muted;
         font-family: "monospace";
         font-size: 11px;
     }
@@ -576,6 +616,84 @@ export component AoProjectRow inherits Rectangle {
         font-family: "monospace";
         font-size: 10px;
     }
+
+    if row-touch.has-hover || row-focus.has-focus: Rectangle {
+        x: parent.width - 112px;
+        y: 38px;
+        width: 96px;
+        height: 20px;
+        border-radius: 7px;
+        background: overlay-hover;
+
+        Text {
+            x: 7px;
+            y: 5px;
+            text: "+";
+            color: text-secondary;
+            font-family: "monospace";
+            font-size: 10px;
+            font-weight: 900;
+        }
+
+        add-touch := TouchArea {
+            x: 0px;
+            y: 0px;
+            width: 28px;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "New task for " + root.entry.name;
+            clicked => {
+                row-focus.focus();
+                root.add-clicked(root.entry.id);
+            }
+        }
+
+        Text {
+            x: 39px;
+            y: 5px;
+            text: "gh";
+            color: text-secondary;
+            font-family: "monospace";
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        github-touch := TouchArea {
+            x: 30px;
+            y: 0px;
+            width: 34px;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "Open repository for " + root.entry.name;
+            clicked => {
+                row-focus.focus();
+                root.github-clicked(root.entry.id);
+            }
+        }
+
+        Text {
+            x: 76px;
+            y: 5px;
+            text: "...";
+            color: text-secondary;
+            font-family: "monospace";
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        menu-touch := TouchArea {
+            x: 66px;
+            y: 0px;
+            width: 30px;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "Project menu for " + root.entry.name;
+            clicked => {
+                row-focus.focus();
+                root.menu-clicked(root.entry.id);
+            }
+        }
+    }
 }
 
 export component AoTaskRow inherits Rectangle {
@@ -587,18 +705,37 @@ export component AoTaskRow inherits Rectangle {
     in property <color> text-secondary;
     in property <color> success-color;
     in property <color> row-border-color;
+    in property <color> focus-ring: row-border-color;
+    in property <color> danger-color: text-primary;
+    in property <color> warning-color: text-secondary;
     callback clicked(string);
+    callback menu-clicked(string);
+    callback rename-clicked(string);
+    callback delete-clicked(string);
 
     height: 58px;
     border-radius: 10px;
-    background: entry.active ? overlay-active : row-touch.has-hover ? overlay-hover : transparent;
-    border-width: entry.active ? 1px : 0px;
-    border-color: row-border-color;
+    background: entry.active || row-touch.pressed ? overlay-active : row-touch.has-hover ? overlay-hover : transparent;
+    border-width: entry.active || row-focus.has-focus || entry.error || entry.delete-confirm ? 1px : 0px;
+    border-color: entry.delete-confirm || entry.error ? danger-color : row-focus.has-focus ? focus-ring : row-border-color;
+
+    row-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked(root.entry.id);
+                return accept;
+            }
+            return reject;
+        }
+    }
 
     row-touch := TouchArea {
         width: parent.width;
         height: parent.height;
         clicked => {
+            row-focus.focus();
             root.clicked(root.entry.id);
         }
     }
@@ -615,8 +752,8 @@ export component AoTaskRow inherits Rectangle {
         x: 52px;
         y: 10px;
         width: parent.width - 94px;
-        text: entry.title;
-        color: text-primary;
+        text: entry.editing ? entry.title + " |" : entry.title;
+        color: entry.error || entry.delete-confirm ? danger-color : text-primary;
         font-family: "monospace";
         font-size: 13px;
         font-weight: 800;
@@ -626,8 +763,8 @@ export component AoTaskRow inherits Rectangle {
         x: 52px;
         y: 30px;
         width: parent.width - 70px;
-        text: entry.metadata;
-        color: text-muted;
+        text: entry.loading ? "loading task..." : entry.error ? "task unavailable" : entry.delete-confirm ? "confirm delete" : entry.metadata;
+        color: entry.error || entry.delete-confirm ? danger-color : entry.loading ? warning-color : text-muted;
         font-family: "monospace";
         font-size: 11px;
     }
@@ -650,6 +787,84 @@ export component AoTaskRow inherits Rectangle {
         border-radius: 4px;
         background: entry.running ? success-color : text-muted;
         opacity: entry.running ? 1.0 : 0.36;
+    }
+
+    if row-touch.has-hover || row-focus.has-focus || entry.delete-confirm: Rectangle {
+        x: parent.width - 118px;
+        y: 34px;
+        width: 104px;
+        height: 20px;
+        border-radius: 7px;
+        background: entry.delete-confirm ? danger-color.with-alpha(0.18) : overlay-hover;
+
+        Text {
+            x: 8px;
+            y: 5px;
+            text: "ren";
+            color: text-secondary;
+            font-family: "monospace";
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        rename-touch := TouchArea {
+            x: 0px;
+            y: 0px;
+            width: 36px;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "Rename task " + root.entry.title;
+            clicked => {
+                row-focus.focus();
+                root.rename-clicked(root.entry.id);
+            }
+        }
+
+        Text {
+            x: 47px;
+            y: 5px;
+            text: "del";
+            color: entry.delete-confirm ? danger-color : text-secondary;
+            font-family: "monospace";
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        delete-touch := TouchArea {
+            x: 38px;
+            y: 0px;
+            width: 36px;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: entry.delete-confirm ? "Confirm delete task " + root.entry.title : "Delete task " + root.entry.title;
+            clicked => {
+                row-focus.focus();
+                root.delete-clicked(root.entry.id);
+            }
+        }
+
+        Text {
+            x: 84px;
+            y: 5px;
+            text: "...";
+            color: text-secondary;
+            font-family: "monospace";
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        menu-touch := TouchArea {
+            x: 74px;
+            y: 0px;
+            width: 30px;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "Task menu for " + root.entry.title;
+            clicked => {
+                row-focus.focus();
+                root.menu-clicked(root.entry.id);
+            }
+        }
     }
 }
 
