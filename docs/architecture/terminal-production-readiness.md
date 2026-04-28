@@ -97,6 +97,13 @@ Implemented coverage:
 - OSC8 hyperlinks render as terminal link spans; primary-click fallback resolves
   the clicked cell to a URI and opens through the platform seam when terminal
   mouse reporting is disabled.
+- Terminal selection is represented as batched cell spans in the Slint layer.
+  Pointer drags select only when terminal mouse reporting is disabled; selected
+  text is extracted from the Alacritty grid so wide cells and combining marks
+  copy as text rather than as lossy codepoints.
+- Ctrl+C copies an active terminal selection through a narrow platform clipboard
+  seam; without a selection it remains terminal input and can still reach the
+  PTY as interrupt input.
 - The Slint key path encodes cursor keys after reading active Alacritty modes,
   so application-cursor mode switches arrow/home/end sequences from CSI to SS3.
 - The Slint pointer/focus path reads Alacritty terminal modes before sending

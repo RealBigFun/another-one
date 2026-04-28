@@ -1,3 +1,6 @@
+use std::io::Write;
+use std::process::{Command, Stdio};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SlintInputPolicy {
     DesktopKeyboard,
@@ -45,11 +48,60 @@ pub(crate) fn open_uri(uri: &str) -> Result<(), String> {
         ));
     };
 
-    std::process::Command::new(program)
+    Command::new(program)
         .arg(uri)
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("failed to run {program}: {error}"))
+}
+
+pub(crate) fn copy_text(text: &str) -> Result<(), String> {
+    if text.is_empty() {
+        return Err("empty selection".to_string());
+    }
+
+    let programs = copy_programs_for_target(std::env::consts::OS);
+    if programs.is_empty() {
+        return Err(format!(
+            "copying terminal selections is not supported on {}",
+            std::env::consts::OS
+        ));
+    }
+
+    let mut errors = Vec::new();
+    for &program in programs {
+        match write_clipboard_program(program, text) {
+            Ok(()) => return Ok(()),
+            Err(error) => errors.push(error),
+        }
+    }
+
+    Err(format!("clipboard command failed: {}", errors.join("; ")))
+}
+
+fn write_clipboard_program(program: ClipboardProgram, text: &str) -> Result<(), String> {
+    let mut child = Command::new(program.name)
+        .args(program.args)
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("{}: {error}", program.name))?;
+
+    let Some(mut stdin) = child.stdin.take() else {
+        return Err(format!("{}: stdin unavailable", program.name));
+    };
+    stdin
+        .write_all(text.as_bytes())
+        .map_err(|error| format!("{}: {error}", program.name))?;
+    drop(stdin);
+
+    let status = child
+        .wait()
+        .map_err(|error| format!("{}: {error}", program.name))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{} exited with {status}", program.name))
+    }
 }
 
 fn current_platform_profile_for_target(target_os: &str) -> SlintPlatformProfile {
@@ -100,6 +152,32 @@ fn open_uri_program_for_target(target_os: &str) -> Option<&'static str> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ClipboardProgram {
+    name: &'static str,
+    args: &'static [&'static str],
+}
+
+fn copy_programs_for_target(target_os: &str) -> &'static [ClipboardProgram] {
+    match target_os {
+        "linux" => &[
+            ClipboardProgram {
+                name: "wl-copy",
+                args: &[],
+            },
+            ClipboardProgram {
+                name: "xclip",
+                args: &["-selection", "clipboard"],
+            },
+        ],
+        "macos" => &[ClipboardProgram {
+            name: "pbcopy",
+            args: &[],
+        }],
+        _ => &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +213,35 @@ mod tests {
     fn open_uri_program_is_absent_on_mobile_targets() {
         assert_eq!(open_uri_program_for_target("android"), None);
         assert_eq!(open_uri_program_for_target("ios"), None);
+    }
+
+    #[test]
+    fn copy_programs_use_desktop_clipboard_tools() {
+        assert_eq!(
+            copy_programs_for_target("linux"),
+            &[
+                ClipboardProgram {
+                    name: "wl-copy",
+                    args: &[],
+                },
+                ClipboardProgram {
+                    name: "xclip",
+                    args: &["-selection", "clipboard"],
+                },
+            ]
+        );
+        assert_eq!(
+            copy_programs_for_target("macos"),
+            &[ClipboardProgram {
+                name: "pbcopy",
+                args: &[],
+            }]
+        );
+    }
+
+    #[test]
+    fn copy_programs_are_absent_on_mobile_targets() {
+        assert!(copy_programs_for_target("android").is_empty());
+        assert!(copy_programs_for_target("ios").is_empty());
     }
 }

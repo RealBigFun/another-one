@@ -706,6 +706,8 @@ async fn run_terminal_session(
         .checked_sub(TERMINAL_FRAME_INTERVAL)
         .unwrap_or_else(Instant::now);
     let mut pending_flush_at = Some(Instant::now());
+    let mut selection_drag_anchor = None;
+    let mut selection_range = None;
 
     loop {
         tokio::select! {
@@ -715,6 +717,18 @@ async fn run_terminal_session(
                 };
                 match event {
                     SlintClientEvent::TerminalKey(input) => {
+                        if is_copy_shortcut(&input) {
+                            if let Some((anchor, focus)) = selection_range {
+                                let selected_text = terminal.selected_text(anchor, focus);
+                                if !selected_text.is_empty() {
+                                    match platform::copy_text(&selected_text) {
+                                        Ok(()) => set_toast(app_weak, "info", "Copied terminal selection", format!("{} bytes", selected_text.len())),
+                                        Err(error) => set_toast(app_weak, "error", "Could not copy terminal selection", error),
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
                         if let Some(event) = encode_terminal_key(&input, terminal.input_modes()) {
                             send_terminal_input(&mut send, &mut next_request_id, event)
                                 .await
@@ -745,6 +759,28 @@ async fn run_terminal_session(
                                     Ok(()) => set_toast(app_weak, "info", "Opened terminal link", uri),
                                     Err(error) => set_toast(app_weak, "error", "Could not open terminal link", error),
                                 }
+                            } else if let Some(point) = input.terminal_point() {
+                                selection_drag_anchor = Some(point);
+                                selection_range = None;
+                                set_terminal_selection(app_weak, Vec::new());
+                            }
+                        } else if input.is_primary_move() {
+                            if let (Some(anchor), Some(focus)) = (selection_drag_anchor, input.terminal_point()) {
+                                selection_range = normalized_selection_points(anchor, focus);
+                                set_terminal_selection(
+                                    app_weak,
+                                    selection_spans_for_points(anchor, focus, terminal.size.cols, terminal.size.rows),
+                                );
+                            }
+                        } else if input.is_primary_up() {
+                            if let Some(anchor) = selection_drag_anchor.take() {
+                                if let Some(focus) = input.terminal_point() {
+                                    selection_range = normalized_selection_points(anchor, focus);
+                                    set_terminal_selection(
+                                        app_weak,
+                                        selection_spans_for_points(anchor, focus, terminal.size.cols, terminal.size.rows),
+                                    );
+                                }
                             }
                         }
                     }
@@ -762,6 +798,9 @@ async fn run_terminal_session(
                                 &mut pending_flush_at,
                             )
                             .await?;
+                            selection_drag_anchor = None;
+                            selection_range = None;
+                            set_terminal_selection(app_weak, Vec::new());
                         } else {
                             set_terminal_status(app_weak, format!("terminal: project has no attachable tab: {project_id}"));
                         }
@@ -780,6 +819,9 @@ async fn run_terminal_session(
                                 &mut pending_flush_at,
                             )
                             .await?;
+                            selection_drag_anchor = None;
+                            selection_range = None;
+                            set_terminal_selection(app_weak, Vec::new());
                         } else {
                             set_terminal_status(app_weak, format!("terminal: task has no attachable tab: {task_id}"));
                         }
@@ -798,6 +840,9 @@ async fn run_terminal_session(
                                 &mut pending_flush_at,
                             )
                             .await?;
+                            selection_drag_anchor = None;
+                            selection_range = None;
+                            set_terminal_selection(app_weak, Vec::new());
                         } else {
                             set_terminal_status(app_weak, format!("terminal: unknown tab: {tab_id}"));
                         }
@@ -902,6 +947,9 @@ async fn run_terminal_session(
                                     attached_target = target;
                                     terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
                                     set_terminal_surface(app_weak, terminal.snapshot_surface());
+                                    selection_drag_anchor = None;
+                                    selection_range = None;
+                                    set_terminal_selection(app_weak, Vec::new());
                                     dirty = false;
                                     pending_flush_at = None;
                                     send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
@@ -948,6 +996,28 @@ impl SlintPointerEvent {
     fn is_primary_down(&self) -> bool {
         self.kind == "down" && self.button == "left"
     }
+
+    fn is_primary_move(&self) -> bool {
+        self.kind == "move"
+    }
+
+    fn is_primary_up(&self) -> bool {
+        self.kind == "up" && self.button == "left"
+    }
+
+    fn terminal_point(&self) -> Option<TerminalCellPoint> {
+        Some(TerminalCellPoint {
+            line: self.line,
+            column: self.column,
+        })
+        .filter(|point| point.line >= 0 && point.column >= 0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct TerminalCellPoint {
+    line: i32,
+    column: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1191,6 +1261,19 @@ fn set_terminal_surface(app_weak: &slint::Weak<AppWindow>, surface: TerminalSurf
     });
 }
 
+fn set_terminal_selection(app_weak: &slint::Weak<AppWindow>, spans: Vec<TerminalSelectionSpan>) {
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_terminal_selection_spans(slint::ModelRc::new(slint::VecModel::from(spans)));
+        }
+    });
+}
+
+fn is_copy_shortcut(input: &SlintKeyEvent) -> bool {
+    input.control && !input.alt && input.text.eq_ignore_ascii_case("c")
+}
+
 fn encode_terminal_key(
     input: &SlintKeyEvent,
     modes: TerminalInputModeState,
@@ -1344,6 +1427,59 @@ fn link_uri_at(spans: &[TerminalLinkSpan], line: i32, column: i32) -> Option<Str
             span.line == line && column >= span.column && column < span.column + span.cell_count
         })
         .map(|span| span.uri.to_string())
+}
+
+fn selection_spans_for_points(
+    anchor: TerminalCellPoint,
+    focus: TerminalCellPoint,
+    columns: u16,
+    rows: u16,
+) -> Vec<TerminalSelectionSpan> {
+    let Some((start, end)) = normalized_selection_points(anchor, focus) else {
+        return Vec::new();
+    };
+    let columns = i32::from(columns);
+    let rows = i32::from(rows);
+    if columns <= 0 || rows <= 0 {
+        return Vec::new();
+    }
+
+    let first_line = start.line.clamp(0, rows.saturating_sub(1));
+    let last_line = end.line.clamp(0, rows.saturating_sub(1));
+    let mut spans = Vec::new();
+
+    for line in first_line..=last_line {
+        let column_start = if line == start.line { start.column } else { 0 }.clamp(0, columns);
+        let column_end = if line == end.line {
+            end.column.saturating_add(1)
+        } else {
+            columns
+        }
+        .clamp(0, columns);
+
+        if column_end > column_start {
+            spans.push(TerminalSelectionSpan {
+                line,
+                column: column_start,
+                cell_count: column_end - column_start,
+            });
+        }
+    }
+
+    spans
+}
+
+fn normalized_selection_points(
+    anchor: TerminalCellPoint,
+    focus: TerminalCellPoint,
+) -> Option<(TerminalCellPoint, TerminalCellPoint)> {
+    (anchor != focus).then(|| {
+        if anchor <= focus {
+            (anchor, focus)
+        } else {
+            (focus, anchor)
+        }
+    })
 }
 
 fn cursor_key_sequence(final_byte: u8, app_cursor: bool) -> Vec<u8> {
@@ -1599,6 +1735,51 @@ impl AlacrittySnapshot {
 
         surface
     }
+
+    fn selected_text(&self, anchor: TerminalCellPoint, focus: TerminalCellPoint) -> String {
+        let spans = selection_spans_for_points(anchor, focus, self.size.cols, self.size.rows);
+        if spans.is_empty() {
+            return String::new();
+        }
+
+        let renderable = self.term.renderable_content();
+        let display_offset = renderable.display_offset;
+        let mut lines = Vec::new();
+
+        for span in spans {
+            let Some(line) = usize::try_from(span.line).ok() else {
+                continue;
+            };
+            let point = viewport_to_point(display_offset, Point::new(line, Column(0)));
+            let grid_line = &self.term.grid()[point.line];
+            let span_start = span.column;
+            let span_end = span.column + span.cell_count;
+            let mut text = String::new();
+            let mut visual_column = 0;
+
+            for column in 0..self.size.cols as usize {
+                let cell = &grid_line[Column(column)];
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+
+                let cell_count = terminal_cell_width(cell);
+                let cell_start = to_i32(visual_column);
+                let cell_end = to_i32(visual_column + cell_count);
+                if span_start < cell_end && span_end > cell_start {
+                    text.push_str(&selected_cell_text(cell));
+                }
+                visual_column += cell_count;
+            }
+
+            lines.push(text.trim_end().to_string());
+        }
+
+        lines.join("\n")
+    }
 }
 
 fn joins_previous_terminal_grapheme(
@@ -1756,6 +1937,20 @@ fn visible_cell_text(cell: &alacritty_terminal::term::cell::Cell) -> Option<Stri
     }
 
     Some(text)
+}
+
+fn selected_cell_text(cell: &alacritty_terminal::term::cell::Cell) -> String {
+    if cell.flags.contains(Flags::HIDDEN) {
+        return String::new();
+    }
+
+    let mut text = String::new();
+    text.push(cell.c);
+    for zero_width in cell.zerowidth().into_iter().flatten() {
+        text.push(*zero_width);
+    }
+
+    text
 }
 
 fn cell_is_render_blank(cell: &alacritty_terminal::term::cell::Cell) -> bool {
@@ -2285,6 +2480,51 @@ mod tests {
         let uri = link_uri_at(&spans, 2, 10);
 
         assert_eq!(uri.as_deref(), Some("https://example.test"));
+    }
+
+    #[test]
+    fn selection_spans_cover_multi_line_ranges() {
+        let spans = selection_spans_for_points(
+            TerminalCellPoint { line: 1, column: 6 },
+            TerminalCellPoint { line: 3, column: 2 },
+            10,
+            5,
+        );
+
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].line, 1);
+        assert_eq!(spans[0].column, 6);
+        assert_eq!(spans[0].cell_count, 4);
+        assert_eq!(spans[1].line, 2);
+        assert_eq!(spans[1].column, 0);
+        assert_eq!(spans[1].cell_count, 10);
+        assert_eq!(spans[2].line, 3);
+        assert_eq!(spans[2].column, 0);
+        assert_eq!(spans[2].cell_count, 3);
+    }
+
+    #[test]
+    fn selected_text_preserves_wide_and_combining_terminal_text() {
+        let mut terminal = AlacrittySnapshot::new(20, 4);
+        let _ = terminal.apply_output("A界e\u{301}Z".as_bytes());
+
+        let selected = terminal.selected_text(
+            TerminalCellPoint { line: 0, column: 1 },
+            TerminalCellPoint { line: 0, column: 3 },
+        );
+
+        assert_eq!(selected, "界e\u{301}");
+    }
+
+    #[test]
+    fn is_copy_shortcut_requires_control_c_without_alt() {
+        let event = SlintKeyEvent {
+            text: "c".to_string(),
+            control: true,
+            alt: false,
+        };
+
+        assert!(is_copy_shortcut(&event));
     }
 
     #[test]

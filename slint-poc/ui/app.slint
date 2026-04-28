@@ -48,6 +48,12 @@ export struct TerminalLinkSpan {
     uri: string,
 }
 
+export struct TerminalSelectionSpan {
+    line: int,
+    column: int,
+    cell-count: int,
+}
+
 export component AppWindow inherits Window {
     in property <color> chrome_bg;
     in property <color> card_bg;
@@ -89,6 +95,7 @@ export component AppWindow inherits Window {
     in property <[TerminalBackgroundSpan]> terminal_background_spans;
     in property <[TerminalCursorSpan]> terminal_cursor_spans;
     in property <[TerminalLinkSpan]> terminal_link_spans;
+    in property <[TerminalSelectionSpan]> terminal_selection_spans;
 
     callback close_requested();
     callback project_selected(string);
@@ -467,6 +474,14 @@ export component AppWindow inherits Window {
                 width: span.cell-count * terminal_surface.terminal-cell-width;
                 height: terminal_surface.terminal-cell-height;
                 background: span.color;
+            }
+
+            for span in root.terminal_selection_spans: Rectangle {
+                x: terminal_surface.terminal-left + span.column * terminal_surface.terminal-cell-width;
+                y: terminal_surface.terminal-top + span.line * terminal_surface.terminal-cell-height;
+                width: span.cell-count * terminal_surface.terminal-cell-width;
+                height: terminal_surface.terminal-cell-height;
+                background: focus_ring.with-alpha(0.34);
             }
 
             for run in root.terminal_runs: Text {
