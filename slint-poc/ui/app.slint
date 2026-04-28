@@ -493,6 +493,14 @@ export component AppWindow inherits Window {
                 background: focus_ring.with-alpha(0.34);
             }
 
+            for link in root.terminal_link_spans: Rectangle {
+                x: terminal_surface.terminal-left + link.column * terminal_surface.terminal-cell-width;
+                y: terminal_surface.terminal-top + (link.line + 1) * terminal_surface.terminal-cell-height - 2px;
+                width: link.cell-count * terminal_surface.terminal-cell-width;
+                height: 1px;
+                background: focus_ring.with-alpha(0.92);
+            }
+
             for run in root.terminal_runs: Text {
                 x: terminal_surface.terminal-left + run.column * terminal_surface.terminal-cell-width;
                 y: terminal_surface.terminal-top + run.line * terminal_surface.terminal-cell-height;

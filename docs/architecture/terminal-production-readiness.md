@@ -148,9 +148,17 @@ Evidence:
   Slint terminal renderer without dialing the daemon, using ANSI color,
   combining-mark, wide-cell, emoji, OSC8 link, selection, and cursor fixture
   data. This is the capture path for matched terminal visual evidence.
+- Slint terminal fidelity fixture capture:
+  `docs/reference/slint/slint-daemon-poc-clean/captures/terminal-fidelity-fixture.png`
+  was captured from the Hyprland-mapped fixture window. It visibly covers ANSI
+  named colors, indexed color 208, RGB truecolor, combining marks, CJK wide
+  cells, emoji, OSC8 link underline, selection overlay, and underline cursor
+  state.
 
-## Remaining Gates
+## Downstream View Proof
 
-- Slint visual proof for grapheme/wide-cell rendering, ANSI/indexed/truecolor
-  colors, cursor states, selection, and restored/failed tab states.
-- Matched-geometry GPUI/Slint terminal visual captures for pixel review.
+- Matched-geometry GPUI/Slint terminal visual captures remain part of the
+  broader view visual-fidelity task.
+- Restored, failed, launching, and disconnected terminal state cards are view
+  proof surfaces. They consume this terminal renderer contract but are not
+  daemon/renderer blockers.

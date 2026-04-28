@@ -37,11 +37,14 @@ if [ -z "$PACKAGE_NAME" ]; then
 fi
 
 stat_mtime() {
-  if stat -f '%m' "$1" >/dev/null 2>&1; then
-    stat -f '%m %N' "$1"
-  else
-    stat -c '%Y %n' "$1"
-  fi
+  case "$(uname -s)" in
+    Darwin | FreeBSD | OpenBSD | NetBSD)
+      stat -f '%m %N' "$1"
+      ;;
+    *)
+      stat -c '%Y %n' "$1"
+      ;;
+  esac
 }
 
 snapshot_tree() {

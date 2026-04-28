@@ -40,6 +40,7 @@ const SHELL_COLOR_SMOKE_PROBE: &[u8] =
 const SHELL_READINESS_PROBE: &[u8] = b"printf 'ANOTHERONE_SLINT_READY\\n'\r";
 const TERMINAL_FIDELITY_FIXTURE: &[u8] = concat!(
     "\x1b[31mRED \x1b[32mGREEN \x1b[34mBLUE\x1b[0m DEFAULT\r\n",
+    "\x1b[38;5;208mINDEXED_208\x1b[0m \x1b[38;2;125;90;255mTRUECOLOR_RGB\x1b[0m\r\n",
     "Combining: e\u{301} CJK: \u{754c} Emoji: \u{1f469}\u{200d}\u{1f4bb}\r\n",
     "\x1b]8;;https://example.test\x1b\\OSC8_LINK\x1b]8;;\x1b\\ plain text\r\n",
     "\x1b[4 qUnderline cursor fixture"
@@ -373,8 +374,31 @@ fn seed_terminal_fidelity_fixture(app: &AppWindow) {
             34,
         ),
     )));
+    app.set_active_project_name("terminal-fidelity-fixture".into());
+    app.set_active_task_name("Slint terminal visual gate".into());
+    app.set_active_branch_name("slint-daemon-poc-clean".into());
+    app.set_active_worktree_name("fixture-mode".into());
+    app.set_project_summary("fixture".into());
+    app.set_tab_chips(slint::ModelRc::new(slint::VecModel::from(vec![
+        TerminalTabChip {
+            id: "terminal-fidelity".into(),
+            title: "Fidelity".into(),
+            provider: "fixture".into(),
+            active: true,
+            running: false,
+            pinned: true,
+        },
+        TerminalTabChip {
+            id: "cursor-selection-link".into(),
+            title: "Cursor/Link".into(),
+            provider: "fixture".into(),
+            active: false,
+            running: false,
+            pinned: false,
+        },
+    ])));
     app.set_terminal_status(
-        "terminal fixture: ANSI colors, combining marks, wide cells, OSC8 link, selection, cursor"
+        "terminal fidelity fixture: ANSI/indexed/truecolor, graphemes, wide cells, OSC8 link, selection, cursor"
             .into(),
     );
 }
@@ -2413,6 +2437,18 @@ mod tests {
         assert_run_color(&surface, "RED", 0xffe06c75);
         assert_run_color(&surface, "GREEN", 0xff98c379);
         assert_run_color(&surface, "BLUE", 0xff61afef);
+    }
+
+    #[test]
+    fn snapshot_surface_preserves_indexed_and_truecolor_foreground_colors() {
+        let mut terminal = AlacrittySnapshot::new(60, 4);
+        let _ = terminal
+            .apply_output(b"\x1b[38;5;208mINDEXED\x1b[0m \x1b[38;2;125;90;255mRGB\x1b[0m");
+
+        let surface = terminal.snapshot_surface();
+
+        assert_run_color(&surface, "INDEXED", 0xffff8700);
+        assert_run_color(&surface, "RGB", 0xff7d5aff);
     }
 
     #[test]
