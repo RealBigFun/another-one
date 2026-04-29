@@ -15,8 +15,13 @@ export struct SettingsGeneralRow {
     title: string,
     detail: string,
     status: string,
+    status-detail: string,
     enabled: bool,
     action-label: string,
+    action-enabled: bool,
+    secondary-action-label: string,
+    secondary-action-enabled: bool,
+    toggle-row: bool,
 }
 
 export struct SettingsAgentRow {
@@ -26,6 +31,9 @@ export struct SettingsAgentRow {
     args-label: string,
     enabled: bool,
     default-agent: bool,
+    validation: string,
+    action-label: string,
+    action-enabled: bool,
 }
 
 export struct SettingsOpenInRow {
@@ -33,6 +41,7 @@ export struct SettingsOpenInRow {
     label: string,
     detail: string,
     enabled: bool,
+    status: string,
 }
 
 export struct SettingsGitActionPanel {
@@ -42,13 +51,19 @@ export struct SettingsGitActionPanel {
     placeholder: string,
     script-preview: string,
     custom: bool,
+    action-enabled: bool,
+    status: string,
 }
 
 export struct SettingsShortcutRow {
     id: string,
     label: string,
     binding: string,
+    default-binding: string,
     capturing: bool,
+    status-detail: string,
+    reset-enabled: bool,
+    clear-enabled: bool,
 }
 
 export struct SettingsMcpRow {
@@ -58,6 +73,9 @@ export struct SettingsMcpRow {
     source: string,
     provider-summary: string,
     installed: bool,
+    action-label: string,
+    action-enabled: bool,
+    status: string,
 }
 
 component SettingsRowChrome inherits Rectangle {
@@ -74,10 +92,16 @@ component SettingsSummaryCard inherits Rectangle {
     in property <string> title;
     in property <string> detail;
     in property <string> value;
+    in property <string> action-label: "";
+    in property <bool> action-enabled: true;
     in property <color> card-bg;
     in property <color> border;
+    in property <color> focus-ring: border;
+    in property <color> hover-bg: card-bg;
+    in property <color> active-bg: card-bg;
     in property <color> text-primary;
     in property <color> text-secondary;
+    callback action-clicked();
 
     height: 70px;
     border-radius: 12px;
@@ -106,7 +130,7 @@ component SettingsSummaryCard inherits Rectangle {
         font-size: 11px;
     }
 
-    Text {
+    if root.action-label == "": Text {
         x: parent.width - 122px;
         y: 25px;
         width: 104px;
@@ -116,6 +140,23 @@ component SettingsSummaryCard inherits Rectangle {
         font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
         font-weight: 600;
+    }
+
+    if root.action-label != "": AoButton {
+        x: parent.width - 126px;
+        y: 22px;
+        width: 108px;
+        label: root.action-label;
+        control-label: root.title + " " + root.action-label;
+        disabled: !root.action-enabled;
+        bg: root.active-bg;
+        hover-bg: root.hover-bg;
+        border: root.border;
+        focus-ring: root.focus-ring;
+        text-color: root.text-primary;
+        clicked => {
+            root.action-clicked();
+        }
     }
 }
 
@@ -176,20 +217,24 @@ export component SettingsView inherits Rectangle {
     callback toggle-requested(string, string, bool);
     callback action-requested(string, string);
 
+    property <bool> compact: root.width < 760px;
+    property <length> sidebar-width: root.compact ? 156px : 180px;
+    property <length> page-padding: root.compact ? 20px : 32px;
+
     background: #1e1f22;
     clip: true;
 
     Rectangle {
         x: 0px;
         y: 0px;
-        width: 180px;
+        width: root.sidebar-width;
         height: parent.height;
         background: root.chrome-bg;
 
         AoButton {
             x: 12px;
             y: 48px;
-            width: 132px;
+            width: root.sidebar-width - 48px;
             label: "< Back to app";
             control-label: "Back to app";
             active: false;
@@ -206,7 +251,7 @@ export component SettingsView inherits Rectangle {
         for entry[index] in root.nav-entries: Rectangle {
             x: 8px;
             y: 94px + index * 34px;
-            width: 164px;
+            width: root.sidebar-width - 16px;
             height: 30px;
             border-radius: 5px;
             background: entry.id == root.active-section ? root.overlay-active : nav-touch.has-hover ? root.overlay-hover : transparent;
@@ -250,18 +295,18 @@ export component SettingsView inherits Rectangle {
     }
 
     Rectangle {
-        x: 180px;
+        x: root.sidebar-width;
         y: 0px;
-        width: parent.width - 180px;
+        width: parent.width - root.sidebar-width;
         height: parent.height;
         background: #1e1f22;
         clip: true;
 
         if root.active-section == "general": Rectangle {
-            x: 32px;
-            y: 32px;
-            width: min(parent.width - 64px, 860px);
-            height: parent.height - 64px;
+            x: root.page-padding;
+            y: root.page-padding;
+            width: min(parent.width - root.page-padding - root.page-padding, 860px);
+            height: parent.height - root.page-padding - root.page-padding;
 
             SectionHeader {
                 width: parent.width;
@@ -275,7 +320,7 @@ export component SettingsView inherits Rectangle {
                 x: 0px;
                 y: 96px;
                 width: parent.width;
-                height: root.general-rows.length * 68px;
+                height: root.general-rows.length * 82px;
                 border-radius: 12px;
                 border-width: 1px;
                 border-color: root.settings-border-color;
@@ -284,9 +329,9 @@ export component SettingsView inherits Rectangle {
 
                 for row[index] in root.general-rows: SettingsRowChrome {
                     x: 0px;
-                    y: index * 68px;
+                    y: index * 82px;
                     width: parent.width;
-                    height: 68px;
+                    height: 82px;
                     row-index: index;
                     row-bg: root.sunken-bg;
                     divider: root.settings-border-color;
@@ -305,28 +350,84 @@ export component SettingsView inherits Rectangle {
                     Text {
                         x: 18px;
                         y: 36px;
-                        width: parent.width - 260px;
+                        width: parent.width - 380px;
                         text: row.detail;
                         color: root.text-secondary;
                         font-family: "Lilex Nerd Font Mono";
                         font-size: 11px;
                     }
 
-                    AoButton {
-                        x: parent.width - 152px;
-                        y: 19px;
-                        width: 132px;
-                        label: row.action-label == "" ? row.status : row.action-label;
+                    Text {
+                        x: 18px;
+                        y: 56px;
+                        width: parent.width - 380px;
+                        text: row.status-detail;
+                        color: root.text-muted;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 10px;
+                    }
+
+                    AoStatusPill {
+                        x: parent.width - (row.secondary-action-label == "" ? 248px : 356px);
+                        y: 27px;
+                        width: 102px;
+                        label: row.status;
+                        bg: row.enabled ? root.overlay-active : root.card-bg;
+                        border: root.settings-border-color;
+                        text-color: row.enabled ? root.text-primary : root.text-secondary;
+                    }
+
+                    if row.toggle-row: AoCheckbox {
+                        x: parent.width - 138px;
+                        y: 26px;
+                        width: 118px;
+                        checked: row.enabled;
+                        label: row.enabled ? "Enabled" : "Disabled";
                         control-label: row.title;
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        danger-color: root.danger-color;
+                        toggled(value) => {
+                            root.toggle-requested("general", row.id, value);
+                        }
+                    }
+
+                    if !row.toggle-row && row.action-label != "": AoButton {
+                        x: parent.width - (row.secondary-action-label == "" ? 128px : 236px);
+                        y: 28px;
+                        width: 108px;
+                        label: row.action-label;
+                        control-label: row.title + " " + row.action-label;
                         active: row.enabled;
-                        disabled: row.action-label == "";
+                        disabled: !row.action-enabled;
                         bg: root.overlay-active;
                         hover-bg: root.overlay-hover;
                         border: root.settings-border-color;
                         focus-ring: root.focus-ring;
                         text-color: root.text-primary;
                         clicked => {
-                            root.action-requested("general", row.id);
+                            root.action-requested("general.primary", row.id);
+                        }
+                    }
+
+                    if !row.toggle-row && row.secondary-action-label != "": AoButton {
+                        x: parent.width - 128px;
+                        y: 28px;
+                        width: 108px;
+                        label: row.secondary-action-label;
+                        control-label: row.title + " " + row.secondary-action-label;
+                        active: row.secondary-action-enabled;
+                        disabled: !row.secondary-action-enabled;
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("general.secondary", row.id);
                         }
                     }
                 }
@@ -334,10 +435,10 @@ export component SettingsView inherits Rectangle {
         }
 
         if root.active-section == "agents": Rectangle {
-            x: 32px;
-            y: 32px;
-            width: min(parent.width - 64px, 860px);
-            height: parent.height - 64px;
+            x: root.page-padding;
+            y: root.page-padding;
+            width: min(parent.width - root.page-padding - root.page-padding, 860px);
+            height: parent.height - root.page-padding - root.page-padding;
 
             SectionHeader {
                 width: parent.width;
@@ -377,7 +478,7 @@ export component SettingsView inherits Rectangle {
                 x: 0px;
                 y: 260px;
                 width: parent.width;
-                height: root.agent-rows.length * 58px;
+                height: root.agent-rows.length * 70px;
                 border-radius: 12px;
                 border-width: 1px;
                 border-color: root.settings-border-color;
@@ -386,9 +487,9 @@ export component SettingsView inherits Rectangle {
 
                 for row[index] in root.agent-rows: SettingsRowChrome {
                     x: 0px;
-                    y: index * 58px;
+                    y: index * 70px;
                     width: parent.width;
-                    height: 58px;
+                    height: 70px;
                     row-index: index;
                     row-bg: root.sunken-bg;
                     divider: root.settings-border-color;
@@ -414,9 +515,19 @@ export component SettingsView inherits Rectangle {
                         font-size: 11px;
                     }
 
+                    Text {
+                        x: 18px;
+                        y: 49px;
+                        width: parent.width - 360px;
+                        text: row.validation;
+                        color: root.text-muted;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 10px;
+                    }
+
                     AoButton {
                         x: parent.width - 292px;
-                        y: 16px;
+                        y: 22px;
                         width: 112px;
                         label: row.default-agent ? "Default" : "Make default";
                         active: row.default-agent;
@@ -432,7 +543,7 @@ export component SettingsView inherits Rectangle {
 
                     AoCheckbox {
                         x: parent.width - 158px;
-                        y: 15px;
+                        y: 21px;
                         width: 138px;
                         checked: row.enabled;
                         label: row.enabled ? "Enabled" : "Disabled";
@@ -452,10 +563,10 @@ export component SettingsView inherits Rectangle {
         }
 
         if root.active-section == "open-in": Rectangle {
-            x: 32px;
-            y: 32px;
-            width: min(parent.width - 64px, 860px);
-            height: parent.height - 64px;
+            x: root.page-padding;
+            y: root.page-padding;
+            width: min(parent.width - root.page-padding - root.page-padding, 860px);
+            height: parent.height - root.page-padding - root.page-padding;
 
             SectionHeader {
                 width: parent.width;
@@ -501,7 +612,7 @@ export component SettingsView inherits Rectangle {
                     Text {
                         x: 18px;
                         y: 11px;
-                        width: parent.width - 210px;
+                        width: parent.width - 330px;
                         text: row.label;
                         color: root.text-primary;
                         font-family: "Lilex Nerd Font Mono";
@@ -512,11 +623,21 @@ export component SettingsView inherits Rectangle {
                     Text {
                         x: 18px;
                         y: 31px;
-                        width: parent.width - 210px;
+                        width: parent.width - 330px;
                         text: row.detail;
                         color: root.text-secondary;
                         font-family: "Lilex Nerd Font Mono";
                         font-size: 11px;
+                    }
+
+                    AoStatusPill {
+                        x: parent.width - 282px;
+                        y: 15px;
+                        width: 104px;
+                        label: row.status;
+                        bg: root.card-bg;
+                        border: root.settings-border-color;
+                        text-color: root.text-secondary;
                     }
 
                     AoCheckbox {
@@ -541,10 +662,10 @@ export component SettingsView inherits Rectangle {
         }
 
         if root.active-section == "git-actions": Rectangle {
-            x: 32px;
-            y: 32px;
-            width: min(parent.width - 64px, 960px);
-            height: parent.height - 64px;
+            x: root.page-padding;
+            y: root.page-padding;
+            width: min(parent.width - root.page-padding - root.page-padding, 960px);
+            height: parent.height - root.page-padding - root.page-padding;
 
             SectionHeader {
                 width: parent.width;
@@ -579,11 +700,21 @@ export component SettingsView inherits Rectangle {
                 Text {
                     x: 18px;
                     y: 34px;
-                    width: parent.width - 220px;
+                    width: parent.width - 340px;
                     text: panel.detail;
                     color: root.text-secondary;
                     font-family: "Lilex Nerd Font Mono";
                     font-size: 11px;
+                }
+
+                AoStatusPill {
+                    x: parent.width - 280px;
+                    y: 17px;
+                    width: 96px;
+                    label: panel.status;
+                    bg: panel.custom ? root.overlay-active : root.card-bg;
+                    border: root.settings-border-color;
+                    text-color: panel.custom ? root.text-primary : root.text-secondary;
                 }
 
                 AoButton {
@@ -592,6 +723,7 @@ export component SettingsView inherits Rectangle {
                     width: 144px;
                     label: "Reset to Default";
                     active: panel.custom;
+                    disabled: !panel.action-enabled;
                     bg: root.overlay-active;
                     hover-bg: root.overlay-hover;
                     border: root.settings-border-color;
@@ -627,10 +759,10 @@ export component SettingsView inherits Rectangle {
         }
 
         if root.active-section == "keybindings": Rectangle {
-            x: 32px;
-            y: 32px;
-            width: min(parent.width - 64px, 860px);
-            height: parent.height - 64px;
+            x: root.page-padding;
+            y: root.page-padding;
+            width: min(parent.width - root.page-padding - root.page-padding, 860px);
+            height: parent.height - root.page-padding - root.page-padding;
 
             SectionHeader {
                 width: parent.width;
@@ -647,10 +779,18 @@ export component SettingsView inherits Rectangle {
                 title: "Capture rules";
                 detail: "Use at least one modifier key. Duplicate shortcuts are blocked.";
                 value: "Edit / Reset";
+                action-label: "Reset All";
+                action-enabled: true;
                 card-bg: root.card-bg;
                 border: root.settings-border-color;
+                focus-ring: root.focus-ring;
+                hover-bg: root.overlay-hover;
+                active-bg: root.overlay-active;
                 text-primary: root.text-primary;
                 text-secondary: root.text-secondary;
+                action-clicked => {
+                    root.action-requested("keybindings.reset-all", "all");
+                }
             }
 
             Rectangle {
@@ -675,7 +815,7 @@ export component SettingsView inherits Rectangle {
 
                     Text {
                         x: 18px;
-                        y: 17px;
+                        y: 11px;
                         width: parent.width - 420px;
                         text: row.label;
                         color: root.text-primary;
@@ -684,11 +824,21 @@ export component SettingsView inherits Rectangle {
                         font-weight: 600;
                     }
 
+                    Text {
+                        x: 18px;
+                        y: 31px;
+                        width: parent.width - 420px;
+                        text: row.status-detail;
+                        color: root.text-muted;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 10px;
+                    }
+
                     AoStatusPill {
                         x: parent.width - 392px;
                         y: 13px;
                         width: 164px;
-                        label: row.capturing ? "Press shortcut now" : row.binding;
+                        label: row.capturing ? "Press shortcut now" : row.binding == "" ? "Unassigned" : row.binding;
                         bg: root.card-bg;
                         border: root.settings-border-color;
                         text-color: row.capturing ? root.text-primary : root.text-secondary;
@@ -698,7 +848,7 @@ export component SettingsView inherits Rectangle {
                         x: parent.width - 212px;
                         y: 13px;
                         width: 58px;
-                        label: row.capturing ? "Listen" : "Edit";
+                        label: row.capturing ? "Listening" : "Edit";
                         active: row.capturing;
                         bg: root.overlay-active;
                         hover-bg: root.overlay-hover;
@@ -715,6 +865,7 @@ export component SettingsView inherits Rectangle {
                         y: 13px;
                         width: 58px;
                         label: "Reset";
+                        disabled: !row.reset-enabled;
                         bg: root.overlay-active;
                         hover-bg: root.overlay-hover;
                         border: root.settings-border-color;
@@ -731,6 +882,7 @@ export component SettingsView inherits Rectangle {
                         width: 60px;
                         label: "Clear";
                         destructive: true;
+                        disabled: !row.clear-enabled;
                         bg: root.overlay-active;
                         hover-bg: root.overlay-hover;
                         border: root.settings-border-color;
@@ -746,10 +898,10 @@ export component SettingsView inherits Rectangle {
         }
 
         if root.active-section == "mcp": Rectangle {
-            x: 32px;
-            y: 32px;
-            width: min(parent.width - 64px, 920px);
-            height: parent.height - 64px;
+            x: root.page-padding;
+            y: root.page-padding;
+            width: min(parent.width - root.page-padding - root.page-padding, 920px);
+            height: parent.height - root.page-padding - root.page-padding;
 
             SectionHeader {
                 width: parent.width;
@@ -801,7 +953,7 @@ export component SettingsView inherits Rectangle {
                         x: 18px;
                         y: 34px;
                         width: parent.width - 340px;
-                        text: row.detail;
+                        text: row.detail + "  /  " + row.status;
                         color: root.text-secondary;
                         font-family: "Lilex Nerd Font Mono";
                         font-size: 11px;
@@ -821,8 +973,9 @@ export component SettingsView inherits Rectangle {
                         x: parent.width - 112px;
                         y: 19px;
                         width: 92px;
-                        label: row.installed ? "Remove" : "Add";
+                        label: row.action-label;
                         active: row.installed;
+                        disabled: !row.action-enabled;
                         bg: root.overlay-active;
                         hover-bg: root.overlay-hover;
                         border: root.settings-border-color;

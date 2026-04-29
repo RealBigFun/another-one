@@ -28,20 +28,20 @@ Source of truth: `desktop/src/settings_page.rs`, `desktop/src/mcp_page.rs`, `des
 
 - GPUI persists settings through `ProjectStore` for UI preferences, shortcuts, open-in selections, agent settings, and git-action scripts.
 - MCP is not project-store owned; `McpRegistry` is the canonical source and `sync_all()` pushes enabled server state to each provider's native config.
-- Slint first slice adds typed view models in `slint-poc/ui/settings.slint` and seeds them from `slint-poc/src/settings.rs`.
-- Current Slint data is intentionally model-backed/static because daemon settings controls are not yet projected into the Slint client protocol.
-- User-facing setting action/toggle callbacks in the Slint slice route through `AoToast` by setting the app toast properties from Rust.
+- Slint first slice adds typed view models in `slint-poc/ui/settings.slint` and seeds/updates them from `slint-poc/src/settings.rs`.
+- Current Slint data is intentionally local model state because daemon settings controls are not yet projected into the Slint client protocol.
+- User-facing setting action/toggle callbacks in the Slint slice mutate the local settings model where possible and route status/errors through `AoToast` by setting the app toast properties from Rust.
 
 ## Behavior States
 
-- Sidebar nav states: normal, hover, active, and keyboard activation through a focus scope.
-- General row states: static status, enabled action, disabled action.
-- Agent row states: enabled/disabled, default/not-default, argv-token summary.
-- Open In row states: enabled/disabled and detected-app summary.
-- Git Actions panel states: default/custom template and reset action.
-- Keybinding row states: normal binding display, listening/capture display, edit/reset/clear actions.
-- MCP row states: installed/add prompt, provider summary, remove/add action.
-- Deferred behavior: real mutation persistence, text editing/capture logic, MCP provider-column error state, exact scroll virtualization, and visual-diff captures.
+- Sidebar nav states: normal, hover, active, keyboard activation through a focus scope, and model-level transient reset on section change.
+- General row states: toggle row, static build row, update check/install affordances, status detail, enabled/disabled actions.
+- Agent row states: enabled/disabled, default/not-default, argv-token summary, and validation helper text; disabling the default reconciles to the GPUI fallback order.
+- Open In row states: enabled/hidden, detected-app summary, and menu-visible status.
+- Git Actions panel states: default/custom template, reset action, default script preview, and status pill.
+- Keybinding row states: normal binding display, listening/capture display, unassigned display, edit/reset/clear/reset-all actions, and section-change capture reset.
+- MCP row states: catalog prompt, registry/built-in/custom status, provider summary, add/remove action, and disabled actions for non-removable rows.
+- Deferred behavior: daemon-backed persistence, real text editing/capture input, app-level clipboard/update wiring, MCP provider-column error state, exact scroll virtualization, and visual-diff captures.
 
 ## Slint Mapping
 
@@ -51,10 +51,12 @@ Source of truth: `desktop/src/settings_page.rs`, `desktop/src/mcp_page.rs`, `des
 - `AppWindow` owns `settings_open`, `settings_active_section`, and the typed settings row models.
 - The footer settings icon opens the Slint settings surface; `Back to app` closes it without touching daemon or GPUI state.
 - `settings::seed_settings_model` preserves GPUI labels and section relationships for the first production slice.
+- `settings::wire_settings_callbacks` now owns a local `SettingsState` so Slint-only actions/toggles have deterministic row semantics without requiring app-level wiring.
+- `SettingsView` includes compact-width sidebar/content spacing rules for settings internals while preserving the existing app-level full-window mount.
 
 ## Verification
 
-- Source-contract assertions in `slint-poc/src/settings.rs` compare Slint settings labels against GPUI/core sources.
+- Source-contract assertions in `slint-poc/src/settings.rs` compare Slint settings labels, section inventory, Open In inventory, Git Actions default prompt fragments, MCP provider summaries, nav reset behavior, agent default fallback, and shortcut clear/reset behavior against GPUI/core sources.
 - Required commands for this slice:
   - `cargo fmt -p slint-poc`
   - `cargo check -p slint-poc`
