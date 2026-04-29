@@ -103,6 +103,7 @@ export struct RightInspectorRow {
     can-unstage: bool,
     untracked: bool,
     expanded: bool,
+    pending: bool,
 }
 
 export component AoButton inherits Rectangle {
@@ -1944,7 +1945,16 @@ export component AoInspectorSectionRow inherits Rectangle {
         positive: false;
     }
 
-    if entry.group == "staged": AoAssetIconButton {
+    if entry.pending: Image {
+        x: parent.width - 30px;
+        y: 16px;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../../desktop/assets/icons/icons__refresh.svg");
+        colorize: root.icon-color;
+    }
+
+    if entry.group == "staged" && !entry.pending: AoAssetIconButton {
         x: parent.width - 38px;
         y: 8px;
         width: 28px;
@@ -1960,7 +1970,7 @@ export component AoInspectorSectionRow inherits Rectangle {
         }
     }
 
-    if entry.group == "unstaged": AoAssetIconButton {
+    if entry.group == "unstaged" && !entry.pending: AoAssetIconButton {
         x: parent.width - 38px;
         y: 8px;
         width: 28px;
@@ -2048,7 +2058,16 @@ export component AoInspectorFileRow inherits Rectangle {
         positive: false;
     }
 
-    if entry.group == "staged": AoAssetIconButton {
+    if entry.pending: Image {
+        x: parent.width - 30px;
+        y: 10px;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../../desktop/assets/icons/icons__refresh.svg");
+        colorize: root.icon-color;
+    }
+
+    if entry.group == "staged" && !entry.pending: AoAssetIconButton {
         x: parent.width - 38px;
         y: 3px;
         width: 28px;
@@ -2065,7 +2084,7 @@ export component AoInspectorFileRow inherits Rectangle {
         }
     }
 
-    if entry.group == "unstaged": AoAssetIconButton {
+    if entry.group == "unstaged" && !entry.pending: AoAssetIconButton {
         x: parent.width - 70px;
         y: 3px;
         width: 28px;
@@ -2082,7 +2101,7 @@ export component AoInspectorFileRow inherits Rectangle {
         }
     }
 
-    if entry.group == "unstaged": AoAssetIconButton {
+    if entry.group == "unstaged" && !entry.pending: AoAssetIconButton {
         x: parent.width - 38px;
         y: 3px;
         width: 28px;

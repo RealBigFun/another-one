@@ -1094,6 +1094,7 @@ fn set_right_inspector_changes_with_collapsed(
     project_id: &str,
     files: Option<Vec<frame::ChangedFileWire>>,
     collapsed_sections: &HashSet<String>,
+    pending_actions: &HashSet<String>,
 ) {
     match files {
         None => set_right_inspector_state(
@@ -1119,6 +1120,7 @@ fn set_right_inspector_changes_with_collapsed(
                 project_id,
                 &files,
                 collapsed_sections,
+                pending_actions,
             );
             set_right_inspector_state(
                 app_weak,
@@ -1590,6 +1592,7 @@ fn right_inspector_rows_for_changed_files_with_collapsed(
     project_id: &str,
     files: &[frame::ChangedFileWire],
     collapsed_sections: &HashSet<String>,
+    pending_actions: &HashSet<String>,
 ) -> (Vec<RightInspectorRow>, String) {
     let mut staged = Vec::new();
     let mut unstaged = Vec::new();
@@ -1615,6 +1618,7 @@ fn right_inspector_rows_for_changed_files_with_collapsed(
     let mut row_y = 0;
     if !staged.is_empty() {
         let expanded = !collapsed_sections.contains("staged");
+        let pending = pending_actions.contains("section:staged");
         rows.push(right_inspector_section_row_with_expanded(
             project_id,
             "staged",
@@ -1624,17 +1628,25 @@ fn right_inspector_rows_for_changed_files_with_collapsed(
             staged_deletions,
             row_y,
             expanded,
+            pending,
         ));
         row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
         if expanded {
             for file in &staged {
-                rows.push(right_inspector_file_row(project_id, "staged", file, row_y));
+                rows.push(right_inspector_file_row(
+                    project_id,
+                    "staged",
+                    file,
+                    row_y,
+                    pending_actions,
+                ));
                 row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
             }
         }
     }
     if !unstaged.is_empty() {
         let expanded = !collapsed_sections.contains("unstaged");
+        let pending = pending_actions.contains("section:unstaged");
         rows.push(right_inspector_section_row_with_expanded(
             project_id,
             "unstaged",
@@ -1644,12 +1656,17 @@ fn right_inspector_rows_for_changed_files_with_collapsed(
             unstaged_deletions,
             row_y,
             expanded,
+            pending,
         ));
         row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
         if expanded {
             for file in &unstaged {
                 rows.push(right_inspector_file_row(
-                    project_id, "unstaged", file, row_y,
+                    project_id,
+                    "unstaged",
+                    file,
+                    row_y,
+                    pending_actions,
                 ));
                 row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
             }
@@ -1670,7 +1687,7 @@ fn right_inspector_section_row(
     row_y: i32,
 ) -> RightInspectorRow {
     right_inspector_section_row_with_expanded(
-        project_id, group, title, file_count, additions, deletions, row_y, true,
+        project_id, group, title, file_count, additions, deletions, row_y, true, false,
     )
 }
 
@@ -1683,6 +1700,7 @@ fn right_inspector_section_row_with_expanded(
     deletions: i32,
     row_y: i32,
     expanded: bool,
+    pending: bool,
 ) -> RightInspectorRow {
     RightInspectorRow {
         kind: "section".into(),
@@ -1704,6 +1722,7 @@ fn right_inspector_section_row_with_expanded(
         can_unstage: group == "staged",
         untracked: false,
         expanded,
+        pending,
     }
 }
 
@@ -1712,6 +1731,7 @@ fn right_inspector_file_row(
     group: &str,
     file: &frame::ChangedFileWire,
     row_y: i32,
+    pending_actions: &HashSet<String>,
 ) -> RightInspectorRow {
     let status = changed_file_status_char(file, group);
     let (file_name, parent_dir) = file_name_and_parent(&file.path);
@@ -1721,15 +1741,12 @@ fn right_inspector_file_row(
         (file.unstaged_additions, file.unstaged_deletions)
     };
 
+    let id = right_inspector_changed_file_row_id(group, file.original_path.as_deref(), &file.path);
+
     RightInspectorRow {
         kind: "file".into(),
         group: group.into(),
-        id: format!(
-            "{group}:{}:{}",
-            file.original_path.as_deref().unwrap_or(""),
-            file.path
-        )
-        .into(),
+        id: id.clone().into(),
         project_id: project_id.into(),
         path: file.path.clone().into(),
         original_path: file.original_path.clone().unwrap_or_default().into(),
@@ -1746,6 +1763,7 @@ fn right_inspector_file_row(
         can_unstage: changed_file_has_staged_changes(file),
         untracked: file.untracked,
         expanded: false,
+        pending: pending_actions.contains(&id),
     }
 }
 
@@ -1792,6 +1810,7 @@ fn right_inspector_rows_for_commits_with_expansions(
             can_unstage: false,
             untracked: false,
             expanded,
+            pending: false,
         });
         row_y += RIGHT_INSPECTOR_COMMIT_ROW_HEIGHT;
 
@@ -1872,6 +1891,14 @@ fn right_inspector_commit_key(project_id: &str, commit_id: &str) -> String {
     format!("{project_id}:{commit_id}")
 }
 
+fn right_inspector_changed_file_row_id(
+    group: &str,
+    original_path: Option<&str>,
+    path: &str,
+) -> String {
+    format!("{group}:{}:{path}", original_path.unwrap_or(""))
+}
+
 fn right_inspector_rows_for_checks(
     project_id: &str,
     checks: &[frame::Check],
@@ -1922,6 +1949,7 @@ fn right_inspector_rows_for_checks(
             can_unstage: false,
             untracked: false,
             expanded: false,
+            pending: false,
         });
         row_y += RIGHT_INSPECTOR_CHECK_ROW_HEIGHT;
     }
@@ -1995,6 +2023,7 @@ fn right_inspector_compare_file_row(
         can_unstage: false,
         untracked: false,
         expanded: false,
+        pending: false,
     }
 }
 
@@ -2434,6 +2463,8 @@ async fn run_terminal_session(
         project_id_for_target(&projects, &attached_target).unwrap_or_default();
     let mut right_inspector_changed_files: Option<Vec<frame::ChangedFileWire>> = None;
     let mut collapsed_inspector_sections = HashSet::new();
+    let mut pending_inspector_changed_actions = HashSet::new();
+    let mut pending_inspector_changed_action_requests = HashMap::new();
     let mut right_inspector_recent_commits: Option<frame::RecentCommitsWire> = None;
     let mut expanded_inspector_commits = HashSet::new();
     let mut inspector_commit_file_change_states = HashMap::new();
@@ -2582,6 +2613,10 @@ async fn run_terminal_session(
                             set_project_overview_placeholder(app_weak, project);
                             right_inspector_project_id = project_id;
                             set_right_inspector_compare_target(app_weak, None);
+                            right_inspector_changed_files = None;
+                            collapsed_inspector_sections.clear();
+                            pending_inspector_changed_actions.clear();
+                            pending_inspector_changed_action_requests.clear();
                             right_inspector_recent_commits = None;
                             expanded_inspector_commits.clear();
                             inspector_commit_file_change_states.clear();
@@ -2622,6 +2657,10 @@ async fn run_terminal_session(
                                 project_id_for_target(&projects, &attached_target)
                                     .unwrap_or_default();
                             set_right_inspector_compare_target(app_weak, None);
+                            right_inspector_changed_files = None;
+                            collapsed_inspector_sections.clear();
+                            pending_inspector_changed_actions.clear();
+                            pending_inspector_changed_action_requests.clear();
                             right_inspector_recent_commits = None;
                             expanded_inspector_commits.clear();
                             inspector_commit_file_change_states.clear();
@@ -2659,6 +2698,10 @@ async fn run_terminal_session(
                                 project_id_for_target(&projects, &attached_target)
                                     .unwrap_or_default();
                             set_right_inspector_compare_target(app_weak, None);
+                            right_inspector_changed_files = None;
+                            collapsed_inspector_sections.clear();
+                            pending_inspector_changed_actions.clear();
+                            pending_inspector_changed_action_requests.clear();
                             right_inspector_recent_commits = None;
                             expanded_inspector_commits.clear();
                             inspector_commit_file_change_states.clear();
@@ -2726,6 +2769,22 @@ async fn run_terminal_session(
                         .await?;
                     }
                     SlintClientEvent::StageChangedFile { path, original_path } => {
+                        let action_key = right_inspector_changed_file_row_id(
+                            "unstaged",
+                            original_path.as_deref(),
+                            &path,
+                        );
+                        let request_id = next_request_id;
+                        pending_inspector_changed_actions.insert(action_key.clone());
+                        pending_inspector_changed_action_requests.insert(request_id, action_key);
+                        set_right_inspector_changes_with_collapsed(
+                            app_weak,
+                            "changes",
+                            &right_inspector_project_id,
+                            right_inspector_changed_files.clone(),
+                            &collapsed_inspector_sections,
+                            &pending_inspector_changed_actions,
+                        );
                         send_control(
                             &mut send,
                             &mut next_request_id,
@@ -2739,6 +2798,22 @@ async fn run_terminal_session(
                         .context("stage changed file")?;
                     }
                     SlintClientEvent::UnstageChangedFile { path, original_path } => {
+                        let action_key = right_inspector_changed_file_row_id(
+                            "staged",
+                            original_path.as_deref(),
+                            &path,
+                        );
+                        let request_id = next_request_id;
+                        pending_inspector_changed_actions.insert(action_key.clone());
+                        pending_inspector_changed_action_requests.insert(request_id, action_key);
+                        set_right_inspector_changes_with_collapsed(
+                            app_weak,
+                            "changes",
+                            &right_inspector_project_id,
+                            right_inspector_changed_files.clone(),
+                            &collapsed_inspector_sections,
+                            &pending_inspector_changed_actions,
+                        );
                         send_control(
                             &mut send,
                             &mut next_request_id,
@@ -2756,6 +2831,22 @@ async fn run_terminal_session(
                         original_path,
                         untracked,
                     } => {
+                        let action_key = right_inspector_changed_file_row_id(
+                            "unstaged",
+                            original_path.as_deref(),
+                            &path,
+                        );
+                        let request_id = next_request_id;
+                        pending_inspector_changed_actions.insert(action_key.clone());
+                        pending_inspector_changed_action_requests.insert(request_id, action_key);
+                        set_right_inspector_changes_with_collapsed(
+                            app_weak,
+                            "changes",
+                            &right_inspector_project_id,
+                            right_inspector_changed_files.clone(),
+                            &collapsed_inspector_sections,
+                            &pending_inspector_changed_actions,
+                        );
                         send_control(
                             &mut send,
                             &mut next_request_id,
@@ -2829,10 +2920,23 @@ async fn run_terminal_session(
                                 &right_inspector_project_id,
                                 right_inspector_changed_files.clone(),
                                 &collapsed_inspector_sections,
+                                &pending_inspector_changed_actions,
                             );
                         }
                     }
                     SlintClientEvent::StageAllChanges => {
+                        let action_key = "section:unstaged".to_string();
+                        let request_id = next_request_id;
+                        pending_inspector_changed_actions.insert(action_key.clone());
+                        pending_inspector_changed_action_requests.insert(request_id, action_key);
+                        set_right_inspector_changes_with_collapsed(
+                            app_weak,
+                            "changes",
+                            &right_inspector_project_id,
+                            right_inspector_changed_files.clone(),
+                            &collapsed_inspector_sections,
+                            &pending_inspector_changed_actions,
+                        );
                         send_control(
                             &mut send,
                             &mut next_request_id,
@@ -2844,6 +2948,18 @@ async fn run_terminal_session(
                         .context("stage all changes")?;
                     }
                     SlintClientEvent::UnstageAllChanges => {
+                        let action_key = "section:staged".to_string();
+                        let request_id = next_request_id;
+                        pending_inspector_changed_actions.insert(action_key.clone());
+                        pending_inspector_changed_action_requests.insert(request_id, action_key);
+                        set_right_inspector_changes_with_collapsed(
+                            app_weak,
+                            "changes",
+                            &right_inspector_project_id,
+                            right_inspector_changed_files.clone(),
+                            &collapsed_inspector_sections,
+                            &pending_inspector_changed_actions,
+                        );
                         send_control(
                             &mut send,
                             &mut next_request_id,
@@ -2955,6 +3071,10 @@ async fn run_terminal_session(
                                                 project_id_for_target(&projects, &attached_target)
                                                     .unwrap_or_default();
                                             set_right_inspector_compare_target(app_weak, None);
+                                            right_inspector_changed_files = None;
+                                            collapsed_inspector_sections.clear();
+                                            pending_inspector_changed_actions.clear();
+                                            pending_inspector_changed_action_requests.clear();
                                             right_inspector_recent_commits = None;
                                             expanded_inspector_commits.clear();
                                             inspector_commit_file_change_states.clear();
@@ -2977,6 +3097,10 @@ async fn run_terminal_session(
                                             project_id_for_target(&projects, &attached_target)
                                                 .unwrap_or_default();
                                         set_right_inspector_compare_target(app_weak, None);
+                                        right_inspector_changed_files = None;
+                                        collapsed_inspector_sections.clear();
+                                        pending_inspector_changed_actions.clear();
+                                        pending_inspector_changed_action_requests.clear();
                                         right_inspector_recent_commits = None;
                                         expanded_inspector_commits.clear();
                                         inspector_commit_file_change_states.clear();
@@ -2986,6 +3110,26 @@ async fn run_terminal_session(
                                     }
                                 }
                                 WorkerReply::Err { message, .. } => {
+                                    if let Some(action_key) =
+                                        pending_inspector_changed_action_requests.remove(&request_id)
+                                    {
+                                        pending_inspector_changed_actions.remove(&action_key);
+                                        set_right_inspector_changes_with_collapsed(
+                                            app_weak,
+                                            "changes",
+                                            &right_inspector_project_id,
+                                            right_inspector_changed_files.clone(),
+                                            &collapsed_inspector_sections,
+                                            &pending_inspector_changed_actions,
+                                        );
+                                        set_toast(
+                                            app_weak,
+                                            "warning",
+                                            "Changed-file action failed",
+                                            message,
+                                        );
+                                        continue;
+                                    }
                                     if let Some(commit_key) =
                                         pending_inspector_commit_file_requests.remove(&request_id)
                                     {
@@ -3028,12 +3172,20 @@ async fn run_terminal_session(
                                         &right_inspector_project_id,
                                         files,
                                         &collapsed_inspector_sections,
+                                        &pending_inspector_changed_actions,
                                     );
                                 }
                                 WorkerReply::StageChangedFileAck { changed_files }
                                 | WorkerReply::UnstageChangedFileAck { changed_files }
                                 | WorkerReply::StageAllChangesAck { changed_files }
                                 | WorkerReply::UnstageAllChangesAck { changed_files } => {
+                                    if let Some(action_key) =
+                                        pending_inspector_changed_action_requests.remove(&request_id)
+                                    {
+                                        pending_inspector_changed_actions.remove(&action_key);
+                                    } else {
+                                        pending_inspector_changed_actions.clear();
+                                    }
                                     right_inspector_changed_files = Some(changed_files.clone());
                                     set_right_inspector_changes_with_collapsed(
                                         app_weak,
@@ -3041,6 +3193,7 @@ async fn run_terminal_session(
                                         &right_inspector_project_id,
                                         Some(changed_files),
                                         &collapsed_inspector_sections,
+                                        &pending_inspector_changed_actions,
                                     );
                                     set_toast(
                                         app_weak,
@@ -3050,6 +3203,13 @@ async fn run_terminal_session(
                                     );
                                 }
                                 WorkerReply::DiscardChangedFileAck { changed_files } => {
+                                    if let Some(action_key) =
+                                        pending_inspector_changed_action_requests.remove(&request_id)
+                                    {
+                                        pending_inspector_changed_actions.remove(&action_key);
+                                    } else {
+                                        pending_inspector_changed_actions.clear();
+                                    }
                                     right_inspector_changed_files = Some(changed_files.clone());
                                     set_right_inspector_changes_with_collapsed(
                                         app_weak,
@@ -3057,6 +3217,7 @@ async fn run_terminal_session(
                                         &right_inspector_project_id,
                                         Some(changed_files),
                                         &collapsed_inspector_sections,
+                                        &pending_inspector_changed_actions,
                                     );
                                     set_toast(
                                         app_weak,
@@ -3069,6 +3230,13 @@ async fn run_terminal_session(
                                     changed_files,
                                     failures,
                                 } => {
+                                    if let Some(action_key) =
+                                        pending_inspector_changed_action_requests.remove(&request_id)
+                                    {
+                                        pending_inspector_changed_actions.remove(&action_key);
+                                    } else {
+                                        pending_inspector_changed_actions.clear();
+                                    }
                                     right_inspector_changed_files = Some(changed_files.clone());
                                     set_right_inspector_changes_with_collapsed(
                                         app_weak,
@@ -3076,6 +3244,7 @@ async fn run_terminal_session(
                                         &right_inspector_project_id,
                                         Some(changed_files),
                                         &collapsed_inspector_sections,
+                                        &pending_inspector_changed_actions,
                                     );
                                     if failures.is_empty() {
                                         set_toast(
@@ -4753,6 +4922,7 @@ mod tests {
             "icons__badge-x.svg",
             "icons__badge-clock.svg",
             "icons__external-link.svg",
+            "icons__refresh.svg",
         ] {
             assert!(
                 app_source.contains(asset) || components_source.contains(asset),
@@ -4909,6 +5079,7 @@ mod tests {
             "project-a",
             &files,
             &HashSet::new(),
+            &HashSet::new(),
         );
 
         assert_eq!(summary, "1 staged, 2 unstaged");
@@ -4932,8 +5103,12 @@ mod tests {
         let files = vec![changed_file_wire("src/lib.rs", "M", "M", 2, 1, 3, 0, false)];
         let collapsed = HashSet::from(["unstaged".to_string()]);
 
-        let (rows, summary) =
-            right_inspector_rows_for_changed_files_with_collapsed("project-a", &files, &collapsed);
+        let (rows, summary) = right_inspector_rows_for_changed_files_with_collapsed(
+            "project-a",
+            &files,
+            &collapsed,
+            &HashSet::new(),
+        );
 
         assert_eq!(summary, "1 staged, 1 unstaged");
         assert!(rows
@@ -4948,6 +5123,29 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn right_inspector_rows_mark_pending_file_and_section_actions() {
+        let files = vec![changed_file_wire("src/lib.rs", "M", "M", 2, 1, 3, 0, false)];
+        let pending = HashSet::from([
+            "section:staged".to_string(),
+            right_inspector_changed_file_row_id("unstaged", None, "src/lib.rs"),
+        ]);
+
+        let (rows, _summary) = right_inspector_rows_for_changed_files_with_collapsed(
+            "project-a",
+            &files,
+            &HashSet::new(),
+            &pending,
+        );
+
+        assert!(rows.iter().any(|row| {
+            row.kind.as_str() == "section" && row.group.as_str() == "staged" && row.pending
+        }));
+        assert!(rows.iter().any(|row| {
+            row.kind.as_str() == "file" && row.group.as_str() == "unstaged" && row.pending
+        }));
     }
 
     #[test]
