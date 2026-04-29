@@ -3160,12 +3160,32 @@ pub fn remove_task_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()
 
     if output.status.success() {
         Ok(())
+    } else if is_git_worktree_not_working_tree_error(&output) && worktree_path.exists() {
+        remove_worktree_path_from_disk(worktree_path)
     } else {
         Err(format_git_command_failure(
             "Could not delete the worktree",
             &output,
         ))
     }
+}
+
+fn is_git_worktree_not_working_tree_error(output: &Output) -> bool {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stderr.contains("is not a working tree") || stdout.contains("is not a working tree")
+}
+
+fn remove_worktree_path_from_disk(worktree_path: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(worktree_path)
+        .map_err(|error| format!("Could not inspect the worktree folder: {error}"))?;
+
+    if metadata.file_type().is_dir() {
+        std::fs::remove_dir_all(worktree_path)
+    } else {
+        std::fs::remove_file(worktree_path)
+    }
+    .map_err(|error| format!("Could not delete the worktree folder: {error}"))
 }
 
 pub fn delete_local_branch(repo_path: &Path, branch_name: &str) -> Result<(), String> {
@@ -3736,13 +3756,14 @@ mod tests {
         git_diff_command_args, git_stdout, parse_branch_commit_entries,
         parse_branch_compare_name_status_entries, parse_branch_compare_numstat_entries,
         parse_git_diff_patch, parse_recent_branch_commit_page, project_action_agent_launch_args,
-        read_changed_file_diff, read_project_git_state, review_worktree_slug, slugify_branch_name,
-        unique_branch_name_for_repo, worktree_parent_dir_with_root, BranchCompareNameStatusEntry,
-        BranchCompareNumStatEntry, CreateBranchMode, DiffRowKind, GitDiffSelection, GitDiffSource,
-        PersistedSectionState, PersistedTerminalTab, Project, ProjectAction, ProjectActionAccess,
-        ProjectActionIcon, ProjectActionKind, ProjectActionScope, ProjectBranchSettingField,
-        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
-        RepoRecord, StoreFile, Task, TaskKind, TaskWorktreeBranchMode, UiState,
+        read_changed_file_diff, read_project_git_state, remove_task_worktree, review_worktree_slug,
+        slugify_branch_name, unique_branch_name_for_repo, worktree_parent_dir_with_root,
+        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, CreateBranchMode, DiffRowKind,
+        GitDiffSelection, GitDiffSource, PersistedSectionState, PersistedTerminalTab, Project,
+        ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind,
+        ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings, ProjectCheckoutState,
+        ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task, TaskKind,
+        TaskWorktreeBranchMode, UiState,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -4117,6 +4138,23 @@ mod tests {
         assert!(
             error.contains(&repo.path().display().to_string()),
             "error should include checkout path, was {error:?}"
+        );
+    }
+
+    #[test]
+    fn remove_task_worktree_deletes_plain_directory_when_git_says_it_is_not_a_working_tree() {
+        let repo = init_repo();
+        let worktree_path = repo.path().parent().unwrap().join("plain-task-folder");
+        fs::create_dir_all(&worktree_path).expect("plain task folder should exist");
+        fs::write(worktree_path.join("notes.txt"), "leftover task data\n")
+            .expect("task folder file should write");
+
+        remove_task_worktree(repo.path(), &worktree_path)
+            .expect("plain task folder should be deleted");
+
+        assert!(
+            !worktree_path.exists(),
+            "plain task folder should be removed from disk"
         );
     }
 
