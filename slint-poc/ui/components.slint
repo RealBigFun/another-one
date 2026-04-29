@@ -825,6 +825,7 @@ export component AoSidebarProjectRow inherits Rectangle {
     in property <color> danger-color: text-primary;
     in property <color> warning-color: text-muted;
     callback clicked(string);
+    callback toggle-clicked(string);
     callback menu-clicked(string);
     callback add-clicked(string);
     callback github-clicked(string);
@@ -1126,6 +1127,7 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
     in property <color> danger-color: text-primary;
     in property <color> warning-color: text-muted;
     callback clicked(string);
+    callback toggle-clicked(string);
     callback menu-clicked(string);
     callback add-clicked(string);
     callback github-clicked(string);
@@ -1193,6 +1195,17 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
             height: 12px;
             source: entry.expanded ? @image-url("../../desktop/assets/icons/icons__chevron-down.svg") : @image-url("../../desktop/assets/icons/icons__chevron-right.svg");
             colorize: icon-color;
+        }
+
+        toggle-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: (entry.expanded ? "Collapse " : "Expand ") + root.entry.name;
+            clicked => {
+                project-focus.focus();
+                root.toggle-clicked(root.entry.group-id);
+            }
         }
     }
 

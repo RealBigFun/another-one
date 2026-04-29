@@ -279,6 +279,11 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     app.on_project_selected(move |project_id| {
         let _ = project_event_tx.send(SlintClientEvent::SelectProject(project_id.to_string()));
     });
+    let project_group_event_tx = client_event_tx.clone();
+    app.on_project_group_toggled(move |group_id| {
+        let _ =
+            project_group_event_tx.send(SlintClientEvent::ToggleProjectGroup(group_id.to_string()));
+    });
     let project_github_event_tx = client_event_tx.clone();
     app.on_project_github_open_requested(move |uri| {
         let _ =
@@ -1345,12 +1350,14 @@ fn set_workspace_tree(
     active_section_id: &str,
     active_tab_id: &str,
     project_github_urls: &ProjectGithubUrls,
+    collapsed_project_groups: &HashSet<String>,
 ) {
     let model = workspace_shell_model(
         projects,
         active_section_id,
         active_tab_id,
         project_github_urls,
+        collapsed_project_groups,
     );
     let app_weak = app_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
@@ -1824,6 +1831,7 @@ fn workspace_shell_model(
     active_section_id: &str,
     active_tab_id: &str,
     project_github_urls: &ProjectGithubUrls,
+    collapsed_project_groups: &HashSet<String>,
 ) -> WorkspaceShellModel {
     let active_project = projects
         .iter()
@@ -1869,7 +1877,12 @@ fn workspace_shell_model(
             }
         })
         .collect::<Vec<_>>();
-    let sidebar_rows = sidebar_tree_rows(projects, active_section_id, project_github_urls);
+    let sidebar_rows = sidebar_tree_rows(
+        projects,
+        active_section_id,
+        project_github_urls,
+        collapsed_project_groups,
+    );
 
     let mut task_entries = projects
         .iter()
@@ -2081,6 +2094,7 @@ fn sidebar_tree_rows(
     projects: &[frame::ProjectSummary],
     active_section_id: &str,
     project_github_urls: &ProjectGithubUrls,
+    collapsed_project_groups: &HashSet<String>,
 ) -> Vec<SidebarTreeEntry> {
     let mut rows = Vec::new();
     let mut row_y = SIDEBAR_TREE_TOP;
@@ -2094,10 +2108,7 @@ fn sidebar_tree_rows(
                 .then_with(|| left.name.cmp(&right.name))
         });
         let has_children = !tasks.is_empty();
-        // The desktop stores explicit expansion state. The daemon projection
-        // does not carry it yet, so Slint keeps groups expanded to preserve the
-        // source relationship instead of hiding child rows behind fake state.
-        let expanded = has_children;
+        let expanded = has_children && !collapsed_project_groups.contains(&project.id);
 
         rows.push(SidebarTreeEntry {
             kind: "project".into(),
@@ -3233,6 +3244,7 @@ async fn run_terminal_session(
     let mut pending_open_in_state_requests = HashSet::new();
     let mut pending_open_in_app_requests = HashMap::new();
     let mut pending_add_project_requests = HashMap::new();
+    let mut collapsed_project_groups = HashSet::new();
     send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
     set_terminal_status(app_weak, "terminal: requesting sandbox project tree");
     let (mut projects, mut attached_target) = loop {
@@ -3260,6 +3272,7 @@ async fn run_terminal_session(
                     &target.section_id,
                     &target.tab_id,
                     &project_github_urls,
+                    &collapsed_project_groups,
                 );
                 break (projects, target);
             }
@@ -3473,6 +3486,21 @@ async fn run_terminal_session(
                             );
                         }
                     }
+                    SlintClientEvent::ToggleProjectGroup(project_id) => {
+                        if collapsed_project_groups.contains(&project_id) {
+                            collapsed_project_groups.remove(&project_id);
+                        } else {
+                            collapsed_project_groups.insert(project_id);
+                        }
+                        set_workspace_tree(
+                            app_weak,
+                            &projects,
+                            &attached_target.section_id,
+                            &attached_target.tab_id,
+                            &project_github_urls,
+                            &collapsed_project_groups,
+                        );
+                    }
                     SlintClientEvent::OpenProjectGithubLink(uri) => match platform::open_uri(&uri)
                     {
                         Ok(()) => set_toast(app_weak, "info", "Opened GitHub", uri),
@@ -3522,6 +3550,7 @@ async fn run_terminal_session(
                                 &mut next_request_id,
                                 &projects,
                                 &project_github_urls,
+                                &collapsed_project_groups,
                                 &mut attached_target,
                                 target,
                                 &mut terminal,
@@ -3564,6 +3593,7 @@ async fn run_terminal_session(
                                 &mut next_request_id,
                                 &projects,
                                 &project_github_urls,
+                                &collapsed_project_groups,
                                 &mut attached_target,
                                 target,
                                 &mut terminal,
@@ -4022,6 +4052,7 @@ async fn run_terminal_session(
                                             &attached_target.section_id,
                                             &attached_target.tab_id,
                                             &project_github_urls,
+                                            &collapsed_project_groups,
                                         );
                                         if right_inspector_project_id.is_empty() {
                                             right_inspector_project_id =
@@ -4044,6 +4075,7 @@ async fn run_terminal_session(
                                             &mut next_request_id,
                                             &projects,
                                             &project_github_urls,
+                                            &collapsed_project_groups,
                                             &mut attached_target,
                                             target,
                                             &mut terminal,
@@ -4078,6 +4110,7 @@ async fn run_terminal_session(
                                             &attached_target.section_id,
                                             &attached_target.tab_id,
                                             &project_github_urls,
+                                            &collapsed_project_groups,
                                         );
                                     }
                                 }
@@ -4144,6 +4177,7 @@ async fn run_terminal_session(
                                         &attached_target.section_id,
                                         &attached_target.tab_id,
                                         &project_github_urls,
+                                        &collapsed_project_groups,
                                     );
                                     set_toast(app_weak, "success", "Project added", project.name);
                                     send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
@@ -4215,6 +4249,7 @@ async fn run_terminal_session(
                                             &attached_target.section_id,
                                             &attached_target.tab_id,
                                             &project_github_urls,
+                                            &collapsed_project_groups,
                                         );
                                         continue;
                                     }
@@ -4795,6 +4830,7 @@ pub(crate) enum SlintClientEvent {
         rows: i32,
     },
     SelectProject(String),
+    ToggleProjectGroup(String),
     OpenProjectGithubLink(String),
     OpenInApp(String),
     AddProjectPath(String),
@@ -4889,6 +4925,7 @@ async fn switch_terminal_target<W>(
     next_request_id: &mut u64,
     projects: &[frame::ProjectSummary],
     project_github_urls: &ProjectGithubUrls,
+    collapsed_project_groups: &HashSet<String>,
     current_target: &mut TerminalTarget,
     next_target: TerminalTarget,
     terminal: &mut AlacrittySnapshot,
@@ -4904,6 +4941,7 @@ where
         &next_target.section_id,
         &next_target.tab_id,
         project_github_urls,
+        collapsed_project_groups,
     );
 
     if *current_target == next_target {
@@ -6472,7 +6510,8 @@ mod tests {
             Some("https://github.com/example/project-a".to_string()),
         );
 
-        let model = workspace_shell_model(&projects, "section-pin", "0", &github_urls);
+        let model =
+            workspace_shell_model(&projects, "section-pin", "0", &github_urls, &HashSet::new());
         let rows = model
             .sidebar_rows
             .iter()
@@ -6535,6 +6574,46 @@ mod tests {
     }
 
     #[test]
+    fn workspace_shell_model_hides_child_tasks_when_project_group_is_collapsed() {
+        let projects = vec![sidebar_project(
+            "project-a",
+            "Project A",
+            vec![sidebar_task(
+                "task-a",
+                "Task A",
+                "feature/task-a",
+                false,
+                "section-a",
+            )],
+        )];
+        let collapsed_groups = HashSet::from(["project-a".to_string()]);
+
+        let model = workspace_shell_model(
+            &projects,
+            "section-a",
+            "0",
+            &ProjectGithubUrls::new(),
+            &collapsed_groups,
+        );
+        let rows = model
+            .sidebar_rows
+            .iter()
+            .map(|row| {
+                (
+                    row.kind.as_str().to_string(),
+                    row.name.as_str().to_string(),
+                    row.expanded,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            rows,
+            vec![("project".to_string(), "Project A".to_string(), false)]
+        );
+    }
+
+    #[test]
     fn workspace_shell_model_uses_gpui_sidebar_task_metadata_rules() {
         let mut same_name_task = sidebar_task(
             "task-same",
@@ -6565,6 +6644,7 @@ mod tests {
             "section-readable",
             "0",
             &ProjectGithubUrls::new(),
+            &HashSet::new(),
         );
         let rows = model
             .sidebar_rows
@@ -6608,8 +6688,13 @@ mod tests {
         .expect("failed tab summary fixture should deserialize");
         let projects = vec![sidebar_project("project-a", "Project A", vec![task])];
 
-        let model =
-            workspace_shell_model(&projects, "section-fail", "0", &ProjectGithubUrls::new());
+        let model = workspace_shell_model(
+            &projects,
+            "section-fail",
+            "0",
+            &ProjectGithubUrls::new(),
+            &HashSet::new(),
+        );
 
         assert_eq!(model.terminal_panel_state, "failed");
         assert_eq!(model.terminal_panel_title, "Terminal launch failed");

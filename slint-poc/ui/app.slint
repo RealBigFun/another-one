@@ -212,6 +212,7 @@ export component AppWindow inherits Window {
 
     callback close_requested();
     callback project_selected(string);
+    callback project_group_toggled(string);
     callback project_github_open_requested(string);
     callback open_in_app_requested(string);
     callback task_selected(string);
@@ -538,6 +539,9 @@ export component AppWindow inherits Window {
                     warning-color: root.warning_color;
                     clicked(project-id) => {
                         root.project_selected(project-id);
+                    }
+                    toggle-clicked(group-id) => {
+                        root.project_group_toggled(group-id);
                     }
                     menu-clicked(project-id) => {
                         root.titlebar_actions_menu_open = false;
