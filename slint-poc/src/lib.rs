@@ -283,6 +283,10 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
         let _ =
             project_github_event_tx.send(SlintClientEvent::OpenProjectGithubLink(uri.to_string()));
     });
+    let open_in_event_tx = client_event_tx.clone();
+    app.on_open_in_app_requested(move |app_id| {
+        let _ = open_in_event_tx.send(SlintClientEvent::OpenInApp(app_id.to_string()));
+    });
     let task_event_tx = client_event_tx.clone();
     app.on_task_selected(move |task_id| {
         let _ = task_event_tx.send(SlintClientEvent::SelectTask(task_id.to_string()));
@@ -401,12 +405,35 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     });
     let copy_toast_app = app.as_weak();
     app.on_toast_copy_requested(move || {
-        set_toast(
-            &copy_toast_app,
-            "info",
-            "Notification copy is not wired yet",
-            "Toast details remain visible for manual copy.",
-        );
+        let Some(app) = copy_toast_app.upgrade() else {
+            return;
+        };
+        let message = app.get_toast_message().to_string();
+        let detail = app.get_toast_detail().to_string();
+        let text = toast_clipboard_text(&message, &detail);
+        if text.is_empty() {
+            set_toast(
+                &copy_toast_app,
+                "warning",
+                "No notification to copy",
+                "There is no visible toast message.",
+            );
+            return;
+        }
+        match platform::copy_text(&text) {
+            Ok(()) => set_toast(
+                &copy_toast_app,
+                "success",
+                "Notification copied",
+                "Toast message and detail are on the clipboard.",
+            ),
+            Err(error) => set_toast(
+                &copy_toast_app,
+                "error",
+                "Could not copy notification",
+                error,
+            ),
+        }
     });
     let appearance_app = app.as_weak();
     app.on_appearance_cycle_requested(move || {
@@ -1191,6 +1218,16 @@ fn seed_component_state_fixture(app: &AppWindow) {
             destructive: true,
         },
     ])));
+    app.set_titlebar_open_in_entries(slint::ModelRc::new(slint::VecModel::from(vec![
+        MenuEntry {
+            id: "__open-in-loading".into(),
+            label: "Loading apps".into(),
+            shortcut: "".into(),
+            selected: false,
+            disabled: true,
+            destructive: false,
+        },
+    ])));
 }
 
 fn apply_terminal_surface(app: &AppWindow, surface: TerminalSurface) {
@@ -1214,6 +1251,7 @@ struct WorkspaceShellModel {
     project_rows: Vec<ProjectSidebarEntry>,
     task_rows: Vec<TaskSidebarEntry>,
     tab_chips: Vec<TerminalTabChip>,
+    active_project_id: String,
     active_project_name: String,
     active_task_name: String,
     active_branch_name: String,
@@ -1264,6 +1302,7 @@ fn set_workspace_tree(
             )));
             app.set_task_rows(slint::ModelRc::new(slint::VecModel::from(model.task_rows)));
             app.set_tab_chips(slint::ModelRc::new(slint::VecModel::from(model.tab_chips)));
+            app.set_active_project_id(model.active_project_id.into());
             app.set_active_project_name(model.active_project_name.into());
             app.set_active_task_name(model.active_task_name.into());
             app.set_active_branch_name(model.active_branch_name.into());
@@ -1310,6 +1349,77 @@ fn clear_toast(app_weak: &slint::Weak<AppWindow>) {
             app.set_toast_kind("info".into());
             app.set_toast_message("".into());
             app.set_toast_detail("".into());
+        }
+    });
+}
+
+fn toast_clipboard_text(message: &str, detail: &str) -> String {
+    match (message.trim(), detail.trim()) {
+        ("", "") => String::new(),
+        (message, "") => message.to_string(),
+        ("", detail) => detail.to_string(),
+        (message, detail) => format!("{message}\n{detail}"),
+    }
+}
+
+fn open_in_menu_entries(state: &frame::OpenInStateWire) -> (String, Vec<MenuEntry>) {
+    let preferred_app_id = state.preferred_app_id.clone().unwrap_or_default();
+    if state.enabled_apps.is_empty() {
+        return (
+            String::new(),
+            vec![MenuEntry {
+                id: "__no-open-in-apps".into(),
+                label: "No apps enabled".into(),
+                shortcut: "".into(),
+                selected: false,
+                disabled: true,
+                destructive: false,
+            }],
+        );
+    }
+
+    let entries = state
+        .enabled_apps
+        .iter()
+        .map(|app| MenuEntry {
+            id: app.id.clone().into(),
+            label: app.label.clone().into(),
+            shortcut: "".into(),
+            selected: app.id == preferred_app_id,
+            disabled: false,
+            destructive: false,
+        })
+        .collect();
+    (preferred_app_id, entries)
+}
+
+fn set_open_in_state(app_weak: &slint::Weak<AppWindow>, state: frame::OpenInStateWire) {
+    let (preferred_app_id, entries) = open_in_menu_entries(&state);
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_titlebar_preferred_open_in_app_id(preferred_app_id.into());
+            app.set_titlebar_open_in_entries(slint::ModelRc::new(slint::VecModel::from(entries)));
+        }
+    });
+}
+
+fn set_open_in_unavailable(app_weak: &slint::Weak<AppWindow>, detail: impl Into<String>) {
+    let detail = detail.into();
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_titlebar_preferred_open_in_app_id("".into());
+            app.set_titlebar_open_in_entries(slint::ModelRc::new(slint::VecModel::from(vec![
+                MenuEntry {
+                    id: "__open-in-unavailable".into(),
+                    label: detail.into(),
+                    shortcut: "".into(),
+                    selected: false,
+                    disabled: true,
+                    destructive: false,
+                },
+            ])));
         }
     });
 }
@@ -1637,6 +1747,9 @@ fn workspace_shell_model(
         project_rows,
         task_rows: task_entries,
         tab_chips,
+        active_project_id: active_project
+            .map(|project| project.id.clone())
+            .unwrap_or_default(),
         active_project_name: active_project
             .map(|project| project.name.clone())
             .unwrap_or_else(|| "another-one".to_string()),
@@ -2455,6 +2568,23 @@ fn project_id_for_target(
     })
 }
 
+fn active_project_id_for_open_in(
+    projects: &[frame::ProjectSummary],
+    target: &TerminalTarget,
+    selected_project_id: &str,
+) -> Option<String> {
+    let selected_project_id = selected_project_id.trim();
+    if !selected_project_id.is_empty()
+        && projects
+            .iter()
+            .any(|project| project.id == selected_project_id)
+    {
+        return Some(selected_project_id.to_string());
+    }
+
+    project_id_for_target(projects, target)
+}
+
 fn normalized_source_branch(
     projects: &[frame::ProjectSummary],
     target: &TerminalTarget,
@@ -2762,6 +2892,15 @@ async fn request_open_in_settings(
     send_control(send, next_request_id, Control::ReadOpenInSettings).await
 }
 
+async fn request_open_in_state(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+) -> anyhow::Result<u64> {
+    let request_id = *next_request_id;
+    send_control(send, next_request_id, Control::OpenInState).await?;
+    Ok(request_id)
+}
+
 async fn request_git_action_scripts(
     send: &mut (impl frame::WriteAllAsync + Unpin),
     next_request_id: &mut u64,
@@ -2888,6 +3027,8 @@ async fn run_terminal_session(
     let mut next_request_id = 1_u64;
     let mut project_github_urls = ProjectGithubUrls::new();
     let mut pending_project_github_requests = HashMap::new();
+    let mut pending_open_in_state_requests = HashSet::new();
+    let mut pending_open_in_app_requests = HashMap::new();
     send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
     set_terminal_status(app_weak, "terminal: requesting sandbox project tree");
     let (mut projects, mut attached_target) = loop {
@@ -2951,6 +3092,11 @@ async fn run_terminal_session(
     )
     .await?;
     request_settings_data(&mut send, &mut next_request_id).await?;
+    pending_open_in_state_requests.insert(
+        request_open_in_state(&mut send, &mut next_request_id)
+            .await
+            .context("request open-in state")?,
+    );
 
     let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
     attach_terminal_target(
@@ -3127,6 +3273,40 @@ async fn run_terminal_session(
                             set_toast(app_weak, "error", "Could not open GitHub", error)
                         }
                     },
+                    SlintClientEvent::OpenInApp(app_id) => {
+                        let app_id = app_id.trim().to_string();
+                        if app_id.is_empty() || app_id.starts_with("__") {
+                            set_toast(
+                                app_weak,
+                                "warning",
+                                "No Open In app selected",
+                                "Enable an app in Settings → Open In before launching.",
+                            );
+                            continue;
+                        }
+                        let Some(project_id) = active_project_id_for_open_in(
+                            &projects,
+                            &attached_target,
+                            &right_inspector_project_id,
+                        ) else {
+                            set_toast(
+                                app_weak,
+                                "error",
+                                "No active project",
+                                "Select a daemon-backed project before using Open In.",
+                            );
+                            continue;
+                        };
+                        let request_id = next_request_id;
+                        pending_open_in_app_requests.insert(request_id, app_id.clone());
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::OpenProjectInApp { project_id, app_id },
+                        )
+                        .await
+                        .context("open project in app")?;
+                    }
                     SlintClientEvent::SelectTask(task_id) => {
                         if let Some(target) = target_for_task_id(&projects, &task_id) {
                             switch_terminal_target(
@@ -3641,10 +3821,35 @@ async fn run_terminal_session(
                                 WorkerReply::OpenInSettingsAck { view } => {
                                     settings::apply_open_in_settings(app_weak, view);
                                 }
+                                WorkerReply::OpenInStateAck { state } => {
+                                    pending_open_in_state_requests.remove(&request_id);
+                                    set_open_in_state(app_weak, state);
+                                }
                                 WorkerReply::SetOpenInAppEnabledAck => {
                                     request_open_in_settings(&mut send, &mut next_request_id)
                                         .await
                                         .context("refresh open-in settings")?;
+                                    pending_open_in_state_requests.insert(
+                                        request_open_in_state(&mut send, &mut next_request_id)
+                                            .await
+                                            .context("refresh open-in state")?,
+                                    );
+                                }
+                                WorkerReply::OpenProjectInAppAck => {
+                                    let app_id = pending_open_in_app_requests
+                                        .remove(&request_id)
+                                        .unwrap_or_else(|| "selected app".to_string());
+                                    set_toast(
+                                        app_weak,
+                                        "success",
+                                        "Opened project",
+                                        format!("Open In target: {app_id}"),
+                                    );
+                                    pending_open_in_state_requests.insert(
+                                        request_open_in_state(&mut send, &mut next_request_id)
+                                            .await
+                                            .context("refresh open-in state after launch")?,
+                                    );
                                 }
                                 WorkerReply::GitActionScriptsAck { view } => {
                                     settings::apply_git_action_scripts(app_weak, view);
@@ -3677,6 +3882,21 @@ async fn run_terminal_session(
                                         .context("refresh MCP settings")?;
                                 }
                                 WorkerReply::Err { message, .. } => {
+                                    if pending_open_in_state_requests.remove(&request_id) {
+                                        set_open_in_unavailable(app_weak, "Open In unavailable");
+                                        continue;
+                                    }
+                                    if let Some(app_id) =
+                                        pending_open_in_app_requests.remove(&request_id)
+                                    {
+                                        set_toast(
+                                            app_weak,
+                                            "error",
+                                            "Could not open project",
+                                            format!("{app_id}: {message}"),
+                                        );
+                                        continue;
+                                    }
                                     if let Some(project_id) =
                                         pending_project_github_requests.remove(&request_id)
                                     {
@@ -4223,6 +4443,7 @@ pub(crate) enum SlintClientEvent {
     },
     SelectProject(String),
     OpenProjectGithubLink(String),
+    OpenInApp(String),
     SelectTask(String),
     SelectTab(String),
     AddTerminalTab,
@@ -4567,6 +4788,7 @@ fn set_project_overview_placeholder(
     github_url: &str,
 ) {
     let app_weak = app_weak.clone();
+    let project_id = project.id.clone();
     let project_name = project.name.clone();
     let branch_name = project
         .current_branch
@@ -4579,6 +4801,7 @@ fn set_project_overview_placeholder(
     let status = format!("project overview: {project_name} (Slint project page parity pending)");
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(app) = app_weak.upgrade() {
+            app.set_active_project_id(project_id.into());
             app.set_active_project_name(project_name.into());
             app.set_active_task_name("Project overview".into());
             app.set_active_branch_name(branch_name.into());
@@ -5557,6 +5780,69 @@ mod tests {
         assert!(app_source.contains("right_sidebar_toggle.svg"));
         assert!(!app_source.contains("text: active_project_name;"));
         assert!(!app_source.contains("y: 25px;\n                text: active_task_name;"));
+    }
+
+    #[test]
+    fn slint_titlebar_open_in_is_daemon_backed_not_fixture_backed() {
+        let app_source = include_str!("../ui/app.slint");
+
+        assert!(app_source.contains("titlebar_open_in_entries"));
+        assert!(app_source.contains("open_in_app_requested"));
+        assert!(app_source.contains("titlebar_preferred_open_in_app_id"));
+        assert!(!app_source.contains("toast_message = \"Open In action selected\""));
+        assert!(!app_source.contains("entries: root.fixture_menu_entries;\n            card-bg: root.card_bg;\n            overlay-border-color: root.border_color;\n            overlay-hover: root.overlay_hover;\n            overlay-active: root.overlay_active;\n            text-primary: root.text_primary;\n            text-muted: root.text_muted;\n            danger-color: root.danger_color;\n            focus-ring: root.focus_ring;\n            dismissed => {\n                root.titlebar_open_in_menu_open = false;"));
+    }
+
+    #[test]
+    fn open_in_menu_entries_mark_preferred_app_and_empty_state() {
+        let state = frame::OpenInStateWire {
+            enabled_apps: vec![
+                frame::OpenInAppWire {
+                    id: "cursor".to_string(),
+                    label: "Cursor".to_string(),
+                    description: "Open in Cursor".to_string(),
+                    icon_path: "icons/cursor.svg".to_string(),
+                },
+                frame::OpenInAppWire {
+                    id: "zed".to_string(),
+                    label: "Zed".to_string(),
+                    description: "Open in Zed".to_string(),
+                    icon_path: "icons/zed.svg".to_string(),
+                },
+            ],
+            preferred_app_id: Some("zed".to_string()),
+        };
+
+        let (preferred, entries) = open_in_menu_entries(&state);
+
+        assert_eq!(preferred, "zed");
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id.as_str() == "zed" && entry.selected));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id.as_str() == "cursor" && !entry.selected));
+
+        let empty = frame::OpenInStateWire {
+            enabled_apps: Vec::new(),
+            preferred_app_id: None,
+        };
+        let (preferred, entries) = open_in_menu_entries(&empty);
+
+        assert_eq!(preferred, "");
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].disabled);
+    }
+
+    #[test]
+    fn toast_clipboard_text_joins_message_and_detail() {
+        assert_eq!(
+            toast_clipboard_text("Could not open", "xdg-open failed"),
+            "Could not open\nxdg-open failed"
+        );
+        assert_eq!(toast_clipboard_text("Saved", ""), "Saved");
+        assert_eq!(toast_clipboard_text("", "detail"), "detail");
+        assert_eq!(toast_clipboard_text("", ""), "");
     }
 
     #[test]

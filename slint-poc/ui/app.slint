@@ -127,12 +127,14 @@ export component AppWindow inherits Window {
     in-out property <bool> action_modal_open: false;
     in-out property <string> action_modal_title: "Add Action";
     in-out property <string> terminal_status: "terminal: waiting for daemon-sandbox ticket";
+    in-out property <string> active_project_id: "";
     in-out property <string> active_project_name: "another-one";
     in-out property <string> active_task_name: "Slint migration";
     in-out property <string> active_branch_name: "slint-daemon-poc-clean";
     in-out property <string> active_worktree_name: "mellow-river-guides-wt";
     in-out property <string> active_project_path: "~/.another-one/worktrees/another-one/mellow-river-guides-wt";
     in-out property <string> active_project_github_url: "";
+    in-out property <string> titlebar_preferred_open_in_app_id: "";
     in-out property <string> build_chip_label: "dev · unknown";
     in-out property <string> debug_banner_text: "DEBUG BUILD - not for daily use";
     in-out property <string> terminal_panel_state: "ready";
@@ -176,6 +178,7 @@ export component AppWindow inherits Window {
     in property <[ProjectSidebarEntry]> project_rows;
     in property <[SidebarTreeEntry]> sidebar_rows;
     in property <[MenuEntry]> fixture_menu_entries;
+    in property <[MenuEntry]> titlebar_open_in_entries;
     in property <[SegmentEntry]> fixture_segments;
     in property <[TaskSidebarEntry]> task_rows;
     in property <[TerminalTabChip]> tab_chips;
@@ -196,6 +199,7 @@ export component AppWindow inherits Window {
     callback close_requested();
     callback project_selected(string);
     callback project_github_open_requested(string);
+    callback open_in_app_requested(string);
     callback task_selected(string);
     callback tab_selected(string);
     callback tab_close_requested(string);
@@ -331,17 +335,29 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if !root.mobile-layout: AoButton {
+            if !root.mobile-layout: AoSplitButton {
                 x: parent.width - 596px;
                 y: 6px;
                 width: 120px;
                 label: "Open In";
+                control-label: "Open active project in preferred app";
+                menu-control-label: "Open Open In menu";
                 active: false;
                 bg: overlay_active;
                 hover-bg: overlay_hover;
                 border: border_color;
                 text-color: text_secondary;
                 clicked => {
+                    root.resource_popover_open = false;
+                    root.titlebar_actions_menu_open = false;
+                    if root.titlebar_preferred_open_in_app_id != "" {
+                        root.titlebar_open_in_menu_open = false;
+                        root.open_in_app_requested(root.titlebar_preferred_open_in_app_id);
+                    } else {
+                        root.titlebar_open_in_menu_open = !root.titlebar_open_in_menu_open;
+                    }
+                }
+                menu-clicked => {
                     root.resource_popover_open = false;
                     root.titlebar_actions_menu_open = false;
                     root.titlebar_open_in_menu_open = !root.titlebar_open_in_menu_open;
@@ -1468,7 +1484,7 @@ export component AppWindow inherits Window {
             menu-y: titlebar-height + 8px;
             menu-width: 240px;
             menu-height: 104px;
-            entries: root.fixture_menu_entries;
+            entries: root.titlebar_open_in_entries;
             card-bg: root.card_bg;
             overlay-border-color: root.border_color;
             overlay-hover: root.overlay_hover;
@@ -1482,9 +1498,7 @@ export component AppWindow inherits Window {
             }
             item-selected(id) => {
                 root.titlebar_open_in_menu_open = false;
-                root.toast_kind = "info";
-                root.toast_message = "Open In action selected";
-                root.toast_detail = id;
+                root.open_in_app_requested(id);
             }
         }
 
