@@ -39,11 +39,15 @@ use daemon_sandbox::frame::{
 };
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
-use another_one_core::agents::{AgentProviderKind, AGENTS};
+use another_one_core::agents::{
+    AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, AGENTS,
+};
 use another_one_core::mcp::catalog;
 use another_one_core::mcp::registry::McpRegistry;
 use another_one_core::mcp::{McpServer, McpSource, McpTransport};
-use another_one_core::project_store::{ProjectKind as CoreProjectKind, ProjectStore};
+use another_one_core::project_store::{
+    PersistedSectionState, PersistedTerminalTab, ProjectKind as CoreProjectKind, ProjectStore,
+};
 use another_one_core::section::SectionId;
 use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
 
@@ -98,6 +102,10 @@ pub(crate) struct RegistryState {
     /// different path today for legacy reasons; both produce the same
     /// end state (a live entry in `broadcasts` + `writers`).
     pub(crate) pending_tab_launches: Vec<TabLaunchRequest>,
+    /// Tab-close requests from daemon clients. The daemon thread can
+    /// update persisted state immediately, but live PTY teardown must
+    /// run on the GPUI thread that owns `LiveTerminalRuntime`.
+    pub(crate) pending_tab_closures: Vec<TabCloseRequest>,
     /// Keys currently mid-spawn. Populated when either path
     /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
     /// kicks off a `spawn_terminal_launch`; cleared on
@@ -117,6 +125,7 @@ impl RegistryState {
             writers: HashMap::new(),
             pending_resizes: Vec::new(),
             pending_tab_launches: Vec::new(),
+            pending_tab_closures: Vec::new(),
             in_flight_launches: HashSet::new(),
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
@@ -163,6 +172,11 @@ pub(crate) struct TabLaunchRequest {
     pub key: TerminalRuntimeKey,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TabCloseRequest {
+    pub key: TerminalRuntimeKey,
+}
+
 /// A pending tab resize request from a mobile client. The daemon's
 /// `tab_resize` impl pushes one of these onto
 /// `RegistryState.pending_resizes`; `AnotherOneApp` drains them on the
@@ -198,6 +212,33 @@ impl DesktopTerminalRegistry {
             state.project_store = ProjectStore::load();
             f(&mut state.project_store)
         })
+    }
+
+    fn mutate_persisted_section<R>(
+        &self,
+        section_id: &str,
+        f: impl FnOnce(&mut PersistedSectionState) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let section = SectionId::from_store_key(section_id)
+            .ok_or_else(|| format!("malformed section id: {section_id}"))?;
+        let section_key = section.store_key();
+        let result = self
+            .with_fresh_project_store(|store| {
+                let mut persisted = store
+                    .terminal_sections
+                    .get(&section_key)
+                    .cloned()
+                    .ok_or_else(|| format!("unknown section: {section_key}"))?;
+                let result = f(&mut persisted)?;
+                store.set_terminal_section(section_key.clone(), persisted);
+                store.set_last_active_section_key(Some(section_key.clone()));
+                Ok::<R, String>(result)
+            })
+            .ok_or_else(registry_unavailable)??;
+        self.with_state(|state| {
+            state.project_store = ProjectStore::load();
+        });
+        Ok(result)
     }
 }
 
@@ -375,6 +416,78 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             }
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
+    }
+
+    fn add_agent_to_section(&self, section_id: &str, agent_id: &str) -> Result<String, String> {
+        let launch_config = launch_config_for_agent_id(agent_id)?;
+        let tab_id = self.mutate_persisted_section(section_id, |section| {
+            let tab_id = uuid::Uuid::new_v4().to_string();
+            section.next_tab_id = section.next_tab_id.saturating_add(1);
+            section
+                .tabs
+                .push(persisted_tab_for_launch_config(&tab_id, launch_config));
+            section.active_tab_id = tab_id.clone();
+            Ok(tab_id)
+        })?;
+        self.launch_tab(section_id, &tab_id);
+        Ok(tab_id)
+    }
+
+    fn activate_section_tab(&self, section_id: &str, tab_id: &str) -> Result<(), String> {
+        self.mutate_persisted_section(section_id, |section| {
+            if !section.tabs.iter().any(|tab| tab.id == tab_id) {
+                return Err(format!("unknown tab: {tab_id}"));
+            }
+            section.active_tab_id = tab_id.to_string();
+            Ok(())
+        })
+    }
+
+    fn close_section_tab(&self, section_id: &str, tab_id: &str) -> Result<String, String> {
+        let active_tab_id = self.mutate_persisted_section(section_id, |section| {
+            let removed_index = section
+                .tabs
+                .iter()
+                .position(|tab| tab.id == tab_id)
+                .ok_or_else(|| format!("unknown tab: {tab_id}"))?;
+            let removed_was_active = section.active_tab_id == tab_id;
+            section.tabs.remove(removed_index);
+            if section.tabs.is_empty() {
+                section.active_tab_id.clear();
+            } else if removed_was_active
+                || !section
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == section.active_tab_id)
+            {
+                let next_index = removed_index.min(section.tabs.len().saturating_sub(1));
+                section.active_tab_id = section.tabs[next_index].id.clone();
+            }
+            Ok(section.active_tab_id.clone())
+        })?;
+        if let Some(key) = key_from_wire(section_id, tab_id) {
+            self.with_state(|state| {
+                remove_registry_tab_state(state, &key);
+                state.pending_tab_closures.push(TabCloseRequest { key });
+            });
+        }
+        Ok(active_tab_id)
+    }
+
+    fn toggle_section_tab_pinned(&self, section_id: &str, tab_id: &str) -> Result<bool, String> {
+        self.mutate_persisted_section(section_id, |section| {
+            let tab = section
+                .tabs
+                .iter_mut()
+                .find(|tab| tab.id == tab_id)
+                .ok_or_else(|| format!("unknown tab: {tab_id}"))?;
+            tab.pinned = !tab.pinned;
+            let pinned = tab.pinned;
+            let active_tab_id = section.active_tab_id.clone();
+            section.tabs.sort_by_key(|tab| !tab.pinned);
+            section.active_tab_id = active_tab_id;
+            Ok(pinned)
+        })
     }
 
     fn open_in_state(&self) -> Option<OpenInStateWire> {
@@ -623,6 +736,49 @@ fn key_from_wire(section_id: &str, tab_id: &str) -> Option<TerminalRuntimeKey> {
         section_id: section,
         tab_id: tab_id.to_string(),
     })
+}
+
+fn launch_config_for_agent_id(agent_id: &str) -> Result<TerminalLaunchConfig, String> {
+    if agent_id.is_empty() {
+        return Ok(TerminalLaunchConfig::default());
+    }
+    let agent = AGENTS
+        .iter()
+        .find(|agent| agent.id == agent_id)
+        .ok_or_else(|| format!("unknown agent: {agent_id}"))?;
+    let provider = agent
+        .provider
+        .ok_or_else(|| format!("agent has no terminal provider: {agent_id}"))?;
+    Ok(TerminalLaunchConfig::for_provider(provider))
+}
+
+fn persisted_tab_for_launch_config(
+    tab_id: &str,
+    launch_config: TerminalLaunchConfig,
+) -> PersistedTerminalTab {
+    PersistedTerminalTab {
+        id: tab_id.to_string(),
+        title: launch_config.default_title(),
+        pinned: false,
+        fixed_title: None,
+        provider: launch_config.provider,
+        launch_config: Some(launch_config),
+        restore_status: TerminalRestoreStatus::NotStarted,
+        failure_message: None,
+        failure_details: None,
+    }
+}
+
+fn remove_registry_tab_state(state: &mut RegistryState, key: &TerminalRuntimeKey) {
+    state.broadcasts.remove(key);
+    state.writers.remove(key);
+    state.active_viewers.remove(key);
+    state.effective_sizes.remove(key);
+    state.in_flight_launches.remove(key);
+    state
+        .pending_tab_launches
+        .retain(|request| request.key != *key);
+    state.viewer_focus.retain(|_, focus_key| focus_key != key);
 }
 
 /// Build the `ProjectList` snapshot from the current `RegistryState`.
@@ -1166,5 +1322,31 @@ mod tests {
             new_task.default_binding,
             ShortcutAction::NewTask.default_binding()
         );
+    }
+
+    #[test]
+    fn tab_launch_config_maps_empty_agent_to_shell() {
+        let config = launch_config_for_agent_id("").expect("empty agent id maps to shell");
+
+        assert_eq!(config.provider, None);
+        assert_eq!(config.default_title(), "Terminal");
+    }
+
+    #[test]
+    fn tab_launch_config_rejects_unknown_agent() {
+        let error = launch_config_for_agent_id("not-a-real-agent").unwrap_err();
+
+        assert!(error.contains("unknown agent"));
+    }
+
+    #[test]
+    fn persisted_tab_uses_launch_config_title_and_provider() {
+        let config = TerminalLaunchConfig::for_provider(AgentProviderKind::ClaudeCode);
+        let tab = persisted_tab_for_launch_config("tab-1", config);
+
+        assert_eq!(tab.id, "tab-1");
+        assert_eq!(tab.title, "Claude Code");
+        assert_eq!(tab.provider, Some(AgentProviderKind::ClaudeCode));
+        assert_eq!(tab.restore_status, TerminalRestoreStatus::NotStarted);
     }
 }

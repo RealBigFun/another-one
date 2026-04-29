@@ -5050,6 +5050,7 @@ impl AnotherOneApp {
             }
             std::mem::take(&mut state.pending_tab_launches)
         };
+        self.project_store = ProjectStore::load();
         let mut changed = false;
         for request in pending {
             if self.live_terminal_runtimes.contains_key(&request.key)
@@ -5118,6 +5119,25 @@ impl AnotherOneApp {
             cx.notify();
         }
         changed
+    }
+
+    pub(crate) fn drain_pending_tab_closures(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::TabCloseRequest> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_tab_closures.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_tab_closures)
+        };
+        for request in pending {
+            self.cleanup_removed_tab(&request.key.section_id, request.key.tab_id);
+        }
+        self.project_store = ProjectStore::load();
+        self.sync_registry_project_store();
+        cx.notify();
+        true
     }
 
     pub(crate) fn drain_pending_tab_resizes(&mut self, cx: &mut Context<Self>) -> bool {
@@ -11411,6 +11431,7 @@ impl Render for AnotherOneApp {
                                 this.sync_registry_project_store();
                             }
                             should_notify |= this.drain_daemon_handle(cx);
+                            should_notify |= this.drain_pending_tab_closures(cx);
                             should_notify |= this.drain_pending_tab_launches(cx);
                             should_notify |= this.drain_pending_tab_resizes(cx);
                             should_notify |= this.drain_updater_events(cx);
