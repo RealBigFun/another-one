@@ -5,8 +5,8 @@
 //! sites are ergonomic. The underlying numeric values (HSL channels,
 //! pixel sizes) are the *real* tokens and are duplicated in
 //! [`docs/design/tokens.json`][tokens-json] for future cross-platform
-//! consumption (Flutter mobile, a shared `core` crate after Phase 1 of
-//! the mobile plan, etc.). Keep that file in lockstep when editing here.
+//! consumption by Slint clients and any non-GPUI shells. Keep that file
+//! in lockstep when editing here.
 //!
 //! [tokens-json]: ../../docs/design/tokens.json
 //!
@@ -121,6 +121,22 @@ pub fn overlay_hover_strong() -> Hsla {
 /// input stack.
 pub fn overlay_active() -> Hsla {
     hsla(0., 0., 1.0, 0.10)
+}
+
+/// Sidebar selected row fill. GPUI left sidebar uses a quieter active fill
+/// than generic buttons.
+pub fn sidebar_row_active_bg() -> Hsla {
+    hsla(0., 0., 1.0, 0.03)
+}
+
+/// Sidebar selected row border.
+pub fn sidebar_row_active_border() -> Hsla {
+    hsla(0., 0., 1.0, 0.18)
+}
+
+/// Sidebar glyph color for disclosure and row action icons.
+pub fn sidebar_icon() -> Hsla {
+    hsla(0., 0., 0.55, 1.)
 }
 
 // ─────────────────────────────────────────────────────────────────────────

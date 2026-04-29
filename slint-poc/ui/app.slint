@@ -15,8 +15,8 @@ import {
     AoResourceIndicator,
     AoSectionLabel,
     AoSegmentedControl,
-    AoSidebarProjectRow,
-    AoSidebarTaskRow,
+    AoSidebarProjectTreeRow,
+    AoSidebarTaskTreeRow,
     AoSplitButton,
     AoStateCard,
     AoStatusPill,
@@ -27,6 +27,7 @@ import {
     MenuEntry,
     ProjectSidebarEntry,
     SegmentEntry,
+    SidebarTreeEntry,
     TaskSidebarEntry,
     TerminalTabChip,
 } from "components.slint";
@@ -75,6 +76,9 @@ export component AppWindow inherits Window {
     in property <color> terminal_bg;
     in property <color> overlay_hover;
     in property <color> overlay_active;
+    in property <color> sidebar_active_bg;
+    in property <color> sidebar_active_border;
+    in property <color> sidebar_icon_color;
     in property <color> border_color;
     in property <color> divider_color;
     in property <color> focus_ring;
@@ -101,6 +105,7 @@ export component AppWindow inherits Window {
     in-out property <string> platform_label: "linux / keyboard";
     in-out property <string> new_task_name: "";
     in-out property <string> new_task_branch: "";
+    in-out property <string> new_task_project_id: "";
     in-out property <string> toast_kind: "info";
     in-out property <string> toast_message: "";
     in-out property <string> toast_detail: "";
@@ -108,6 +113,7 @@ export component AppWindow inherits Window {
     in-out property <bool> fixture_checkbox_checked: true;
 
     in property <[ProjectSidebarEntry]> project_rows;
+    in property <[SidebarTreeEntry]> sidebar_rows;
     in property <[MenuEntry]> fixture_menu_entries;
     in property <[SegmentEntry]> fixture_segments;
     in property <[TaskSidebarEntry]> task_rows;
@@ -126,7 +132,7 @@ export component AppWindow inherits Window {
     callback terminal_focus_changed(bool);
     callback terminal_pointer_event(string, string, int, int, bool, bool, bool);
     callback terminal_resized(int, int);
-    callback submit_new_task(string, string);
+    callback submit_new_task(string, string, string);
     callback toast_dismissed();
     callback toast_copy_requested();
 
@@ -297,83 +303,65 @@ export component AppWindow inherits Window {
                 font-size: 10px;
             }
 
-            for project[index] in root.project_rows: AoSidebarProjectRow {
-                x: 4px;
-                y: 40px + index * 36px;
-                width: parent.width - 8px;
-                entry: project;
-                overlay-hover: root.overlay_hover;
-                overlay-active: root.overlay_active;
-                text-primary: root.text_primary;
-                text-muted: root.text_muted;
-                focus-ring: root.focus_ring;
-                danger-color: root.danger_color;
-                warning-color: root.warning_color;
-                clicked(project-id) => {
-                    root.project_selected(project-id);
-                }
-                add-clicked(project-id) => {
-                    root.modal_open = true;
-                }
-            }
-
-            Rectangle {
-                x: 12px;
-                y: 52px + root.project_rows.length * 36px;
-                width: parent.width - 24px;
-                height: 1px;
-                background: divider_color;
-            }
-
-            AoSectionLabel {
+            if root.sidebar_rows.length == 0: Text {
                 x: 16px;
-                y: 68px + root.project_rows.length * 36px;
-                text: "OPEN TASKS";
-                label-color: text_muted;
-            }
-
-            AoButton {
-                clicked => {
-                    root.modal_open = true;
-                }
-                x: parent.width - 112px;
-                y: 61px + root.project_rows.length * 36px;
-                width: 96px;
-                label: "New task";
-                active: true;
-                bg: overlay_active;
-                hover-bg: overlay_hover;
-                border: border_color;
-                text-color: text_primary;
-            }
-
-            if root.task_rows.length == 0: Text {
-                x: 16px;
-                y: 100px + root.project_rows.length * 36px;
+                y: 54px;
                 width: parent.width - 32px;
-                text: "No open tasks";
+                text: "Click + to add a project";
                 color: text_muted;
                 font-family: "Lilex Nerd Font Mono";
                 font-size: 11px;
             }
 
-            for task[index] in root.task_rows: AoSidebarTaskRow {
-                x: 14px;
-                y: 98px + root.project_rows.length * 36px + index * 46px;
-                width: parent.width - 18px;
-                entry: task;
-                overlay-hover: root.overlay_hover;
-                overlay-active: root.overlay_active;
-                text-primary: root.text_primary;
-                text-secondary: root.text_secondary;
-                text-muted: root.text_muted;
-                success-color: root.success_color;
-                row-border-color: root.border_color;
-                focus-ring: root.focus_ring;
-                danger-color: root.danger_color;
-                warning-color: root.warning_color;
-                clicked(task-id) => {
-                    root.task_selected(task-id);
+            for row[index] in root.sidebar_rows: Rectangle {
+                x: 0px;
+                y: row.row-y * 1px;
+                width: parent.width;
+                height: row.row-height * 1px;
+
+                if row.kind == "project": AoSidebarProjectTreeRow {
+                    x: 4px;
+                    y: 0px;
+                    width: parent.width - 8px;
+                    entry: row;
+                    overlay-hover: root.overlay_hover;
+                    overlay-active: root.sidebar_active_bg;
+                    active-border: root.sidebar_active_border;
+                    icon-color: root.sidebar_icon_color;
+                    text-primary: root.text_primary;
+                    text-muted: root.text_muted;
+                    focus-ring: root.focus_ring;
+                    danger-color: root.danger_color;
+                    warning-color: root.warning_color;
+                    clicked(project-id) => {
+                        root.project_selected(project-id);
+                    }
+                    add-clicked(project-id) => {
+                        root.new_task_project_id = project-id;
+                        root.modal_open = true;
+                    }
+                }
+
+                if row.kind == "task": AoSidebarTaskTreeRow {
+                    x: 14px;
+                    y: 0px;
+                    width: parent.width - 18px;
+                    entry: row;
+                    overlay-hover: root.overlay_hover;
+                    overlay-active: root.sidebar_active_bg;
+                    active-border: root.sidebar_active_border;
+                    icon-color: root.sidebar_icon_color;
+                    text-primary: root.text_primary;
+                    text-secondary: root.text_secondary;
+                    text-muted: root.text_muted;
+                    success-color: root.success_color;
+                    row-border-color: root.border_color;
+                    focus-ring: root.focus_ring;
+                    danger-color: root.danger_color;
+                    warning-color: root.warning_color;
+                    clicked(task-id) => {
+                        root.task_selected(task-id);
+                    }
                 }
             }
         }
@@ -790,6 +778,7 @@ export component AppWindow inherits Window {
                 border: border_color;
                 icon-color: text_secondary;
                 clicked => {
+                    root.new_task_project_id = "";
                     root.modal_open = true;
                 }
             }
@@ -1250,6 +1239,7 @@ export component AppWindow inherits Window {
                     icon-color: root.text_secondary;
                     clicked => {
                         root.modal_open = false;
+                        root.new_task_project_id = "";
                     }
                 }
 
@@ -1303,6 +1293,7 @@ export component AppWindow inherits Window {
                     text-color: text_secondary;
                     clicked => {
                         root.modal_open = false;
+                        root.new_task_project_id = "";
                     }
                 }
 
@@ -1318,10 +1309,11 @@ export component AppWindow inherits Window {
                     border: border_color;
                     text-color: text_primary;
                     clicked => {
-                        root.submit_new_task(root.new_task_name, root.new_task_branch);
+                        root.submit_new_task(root.new_task_name, root.new_task_branch, root.new_task_project_id);
                         root.modal_open = false;
                         root.new_task_name = "";
                         root.new_task_branch = "";
+                        root.new_task_project_id = "";
                     }
                 }
             }

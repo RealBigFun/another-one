@@ -28,6 +28,33 @@ export struct TaskSidebarEntry {
     delete-confirm: bool,
 }
 
+export struct SidebarTreeEntry {
+    kind: string,
+    id: string,
+    group-id: string,
+    project-id: string,
+    task-id: string,
+    row-y: int,
+    row-height: int,
+    name: string,
+    branch: string,
+    metadata: string,
+    path: string,
+    initials: string,
+    accent: color,
+    active: bool,
+    expanded: bool,
+    has-children: bool,
+    task-count-label: string,
+    pinned: bool,
+    worktree: bool,
+    running: bool,
+    loading: bool,
+    error: bool,
+    editing: bool,
+    delete-confirm: bool,
+}
+
 export struct TerminalTabChip {
     id: string,
     title: string,
@@ -515,6 +542,8 @@ export component AoProjectRow inherits Rectangle {
     in property <ProjectSidebarEntry> entry;
     in property <color> overlay-hover;
     in property <color> overlay-active;
+    in property <color> active-border: overlay-active;
+    in property <color> icon-color: text-muted;
     in property <color> text-primary;
     in property <color> text-muted;
     in property <color> text-secondary;
@@ -989,6 +1018,268 @@ export component AoSidebarTaskRow inherits Rectangle {
                 } else {
                     root.menu-clicked(root.entry.id);
                 }
+            }
+        }
+    }
+}
+
+export component AoSidebarProjectTreeRow inherits Rectangle {
+    in property <SidebarTreeEntry> entry;
+    in property <color> overlay-hover;
+    in property <color> overlay-active;
+    in property <color> active-border: overlay-active;
+    in property <color> icon-color: text-muted;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> focus-ring: overlay-active;
+    in property <color> danger-color: text-primary;
+    in property <color> warning-color: text-muted;
+    callback clicked(string);
+    callback menu-clicked(string);
+    callback add-clicked(string);
+
+    height: 34px;
+    border-radius: 8px;
+    border-width: project-focus.has-focus || entry.active || entry.error ? 1px : 0px;
+    border-color: entry.error ? danger-color : project-focus.has-focus ? focus-ring : active-border;
+    background: entry.active || project-touch.pressed ? overlay-active : project-touch.has-hover ? overlay-hover : transparent;
+
+    project-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked(root.entry.project-id);
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    project-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            project-focus.focus();
+            root.clicked(root.entry.project-id);
+        }
+    }
+
+    AoAvatar {
+        x: 8px;
+        y: 5px;
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        label: entry.initials;
+        accent: entry.accent;
+        text-color: text-primary;
+    }
+
+    Text {
+        x: 42px;
+        y: 8px;
+        width: parent.width - 96px;
+        text: entry.loading ? "loading project..." : entry.error ? "project unavailable" : entry.name;
+        color: entry.error ? danger-color : entry.loading ? warning-color : text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    if entry.has-children: Rectangle {
+        x: parent.width - 54px;
+        y: 9px;
+        width: 18px;
+        height: 18px;
+        background: transparent;
+
+        Image {
+            x: 3px;
+            y: 2px;
+            width: 12px;
+            height: 12px;
+            source: entry.expanded ? @image-url("../../desktop/assets/icons/icons__chevron-down.svg") : @image-url("../../desktop/assets/icons/icons__chevron-right.svg");
+            colorize: icon-color;
+        }
+    }
+
+    if project-touch.has-hover || project-focus.has-focus: Rectangle {
+        x: parent.width - 62px;
+        y: 6px;
+        width: 52px;
+        height: 22px;
+        border-radius: 7px;
+        background: overlay-hover;
+
+        Image {
+            x: 7px;
+            y: 4px;
+            width: 14px;
+            height: 14px;
+            source: @image-url("../../desktop/assets/icons/icons__ellipsis.svg");
+            colorize: icon-color;
+        }
+
+        menu-touch := TouchArea {
+            x: 0px;
+            y: 0px;
+            width: 28px;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "Project menu for " + root.entry.name;
+            clicked => {
+                project-focus.focus();
+                root.menu-clicked(root.entry.project-id);
+            }
+        }
+
+        Image {
+            x: 35px;
+            y: 4px;
+            width: 14px;
+            height: 14px;
+            source: @image-url("../../desktop/assets/icons/icons__plus.svg");
+            colorize: icon-color;
+        }
+
+        add-touch := TouchArea {
+            x: 28px;
+            y: 0px;
+            width: 24px;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "New task for " + root.entry.name;
+            clicked => {
+                project-focus.focus();
+                root.add-clicked(root.entry.project-id);
+            }
+        }
+    }
+}
+
+export component AoSidebarTaskTreeRow inherits Rectangle {
+    in property <SidebarTreeEntry> entry;
+    in property <color> overlay-hover;
+    in property <color> overlay-active;
+    in property <color> active-border: row-border-color;
+    in property <color> icon-color: text-muted;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> text-secondary;
+    in property <color> success-color;
+    in property <color> row-border-color;
+    in property <color> focus-ring: row-border-color;
+    in property <color> danger-color: text-primary;
+    in property <color> warning-color: text-secondary;
+    callback clicked(string);
+    callback menu-clicked(string);
+    callback rename-clicked(string);
+    callback delete-clicked(string);
+
+    height: 44px;
+    border-radius: 8px;
+    border-width: entry.active || task-focus.has-focus || entry.error || entry.delete-confirm ? 1px : 0px;
+    border-color: entry.delete-confirm || entry.error ? danger-color : task-focus.has-focus ? focus-ring : active-border;
+    background: entry.active || task-touch.pressed ? overlay-active : task-touch.has-hover ? overlay-hover : transparent;
+
+    task-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked(root.entry.task-id);
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    task-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            task-focus.focus();
+            root.clicked(root.entry.task-id);
+        }
+    }
+
+    Rectangle {
+        x: 12px;
+        y: 16px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: entry.running ? success-color : text-muted;
+        opacity: entry.running ? 1.0 : 0.38;
+    }
+
+    Text {
+        x: 28px;
+        y: 6px;
+        width: parent.width - 116px;
+        text: entry.editing ? entry.name + " |" : entry.name;
+        color: entry.error || entry.delete-confirm ? danger-color : text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    if entry.worktree: Image {
+        x: parent.width - (entry.pinned ? 96px : 78px);
+        y: 9px;
+        width: 11px;
+        height: 11px;
+        source: @image-url("../../desktop/assets/icons/icons__git-split.svg");
+        colorize: icon-color;
+    }
+
+    if entry.pinned: Image {
+        x: parent.width - 78px;
+        y: 9px;
+        width: 11px;
+        height: 11px;
+        source: @image-url("../../desktop/assets/icons/icons__pin-off.svg");
+        colorize: icon-color;
+    }
+
+    Text {
+        x: 28px;
+        y: 24px;
+        width: parent.width - 64px;
+        text: entry.loading ? "loading task..." : entry.error ? "task unavailable" : entry.delete-confirm ? "confirm delete" : entry.branch + (entry.metadata != "" ? " • " + entry.metadata : "");
+        color: entry.error || entry.delete-confirm ? danger-color : entry.loading ? warning-color : text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+    }
+
+    if task-touch.has-hover || task-focus.has-focus || entry.delete-confirm: Rectangle {
+        x: parent.width - 86px;
+        y: 21px;
+        width: 24px;
+        height: 22px;
+        border-radius: 7px;
+        background: entry.delete-confirm ? danger-color.with-alpha(0.18) : overlay-hover;
+
+        Image {
+            x: 5px;
+            y: 5px;
+            width: 13px;
+            height: 13px;
+            source: @image-url("../../desktop/assets/icons/icons__trash.svg");
+            colorize: entry.delete-confirm ? danger-color : icon-color;
+        }
+
+        menu-touch := TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: entry.delete-confirm ? "Confirm delete task " + root.entry.name : "Delete task " + root.entry.name;
+            clicked => {
+                task-focus.focus();
+                root.delete-clicked(root.entry.task-id);
             }
         }
     }

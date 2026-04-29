@@ -40,6 +40,9 @@ struct SlintTheme {
     terminal_bg: slint::Color,
     overlay_hover: slint::Color,
     overlay_active: slint::Color,
+    sidebar_active_bg: slint::Color,
+    sidebar_active_border: slint::Color,
+    sidebar_icon_color: slint::Color,
     border_color: slint::Color,
     divider_color: slint::Color,
     focus_ring: slint::Color,
@@ -64,6 +67,9 @@ pub(crate) fn apply_theme(app: &AppWindow) {
     app.set_terminal_bg(theme.terminal_bg);
     app.set_overlay_hover(theme.overlay_hover);
     app.set_overlay_active(theme.overlay_active);
+    app.set_sidebar_active_bg(theme.sidebar_active_bg);
+    app.set_sidebar_active_border(theme.sidebar_active_border);
+    app.set_sidebar_icon_color(theme.sidebar_icon_color);
     app.set_border_color(theme.border_color);
     app.set_divider_color(theme.divider_color);
     app.set_focus_ring(theme.focus_ring);
@@ -120,6 +126,9 @@ impl SlintTheme {
             terminal_bg: rgb(0x17191d),
             overlay_hover: rgba(0x0f, 0xff, 0xff, 0xff),
             overlay_active: rgba(0x1a, 0xff, 0xff, 0xff),
+            sidebar_active_bg: rgba(0x08, 0xff, 0xff, 0xff),
+            sidebar_active_border: rgba(0x2e, 0xff, 0xff, 0xff),
+            sidebar_icon_color: rgb(0x8c8c8c),
             border_color: rgba(0x16, 0xff, 0xff, 0xff),
             divider_color: rgba(0x10, 0xff, 0xff, 0xff),
             focus_ring: rgb(0x5d7ad5),
@@ -141,6 +150,9 @@ impl SlintTheme {
             terminal_bg: rgb(0xf8f7f2),
             overlay_hover: rgba(0x10, 0x00, 0x00, 0x00),
             overlay_active: rgba(0x1c, 0x00, 0x00, 0x00),
+            sidebar_active_bg: rgba(0x08, 0x00, 0x00, 0x00),
+            sidebar_active_border: rgba(0x2e, 0x00, 0x00, 0x00),
+            sidebar_icon_color: rgb(0x6b7280),
             border_color: rgba(0x22, 0x00, 0x00, 0x00),
             divider_color: rgba(0x18, 0x00, 0x00, 0x00),
             focus_ring: rgb(0x4f68bd),

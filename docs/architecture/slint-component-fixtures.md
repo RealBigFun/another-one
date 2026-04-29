@@ -8,8 +8,8 @@ Component fixtures are the review surface for base components before full views 
 | --- | --- | --- | --- |
 | `button-row` | normal, hover, active, focus, disabled, loading, destructive | `desktop/src/titlebar.rs`, `desktop/src/settings_page.rs` | `AoButton`, `AoIconButton`, `AoSplitButton` |
 | `choice-controls` | checkbox checked/unchecked/focus/error/disabled; segmented selected/hover/focus/disabled | `desktop/src/settings_page.rs`, `desktop/src/app.rs` | `AoCheckbox`, `AoSegmentedControl` |
-| `sidebar-project-row` | normal, hover, active, menu-hover, add-hover, GitHub-hover | `desktop/src/left_sidebar.rs` | `AoProjectRow` |
-| `sidebar-task-row` | normal, hover, active, pinned, running, rename, delete-confirm | `desktop/src/left_sidebar.rs` | `AoTaskRow` |
+| `sidebar-project-row` | normal, hover, active, menu-hover, add-hover, GitHub-hover | `desktop/src/left_sidebar.rs` | `AoProjectRow`; production tree row is `AoSidebarProjectTreeRow` |
+| `sidebar-task-row` | normal, hover, active, pinned, running, rename, delete-confirm | `desktop/src/left_sidebar.rs` | `AoTaskRow`; production tree row is `AoSidebarTaskTreeRow` |
 | `terminal-tabs` | active, inactive, pinned, running, failed restore, launching | `desktop/src/app.rs`, `desktop/src/titlebar.rs` | `AoTabChip` |
 | `modal-new-task` | empty, focused field, validation error, create disabled/enabled | new-task modal paths in `desktop/src/app.rs` | `AoModalCard`, `AoTextInput`, `AoButton` |
 | `right-sidebar-cards` | empty, loading, changed files, commits, checks failure | `desktop/src/right_sidebar.rs` | `AoCard`, `AoStateCard` |

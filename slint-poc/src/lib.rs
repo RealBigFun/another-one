@@ -31,6 +31,9 @@ const RETRY_DELAY: Duration = Duration::from_secs(1);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(33);
 const TERMINAL_RESIZE_DEBOUNCE: Duration = Duration::from_millis(80);
+const SIDEBAR_TREE_TOP: i32 = 40;
+const SIDEBAR_PROJECT_ROW_HEIGHT: i32 = 36;
+const SIDEBAR_TASK_ROW_HEIGHT: i32 = 46;
 const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x17191d;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
 const PROJECT_ACCENTS: [u32; 8] = [
@@ -237,10 +240,11 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
         let _ = tab_event_tx.send(SlintClientEvent::SelectTab(tab_id.to_string()));
     });
     let submit_event_tx = client_event_tx.clone();
-    app.on_submit_new_task(move |task_name, source_branch| {
+    app.on_submit_new_task(move |task_name, source_branch, project_id| {
         let _ = submit_event_tx.send(SlintClientEvent::SubmitNewTask {
             task_name: task_name.to_string(),
             source_branch: source_branch.to_string(),
+            project_id: project_id.to_string(),
         });
     });
     let dismiss_toast_app = app.as_weak();
@@ -276,6 +280,164 @@ pub fn android_main(app: slint::android::AndroidApp) {
 }
 
 fn seed_shell_model(app: &AppWindow) {
+    app.set_sidebar_rows(slint::ModelRc::new(slint::VecModel::from(vec![
+        SidebarTreeEntry {
+            kind: "project".into(),
+            id: "project:another-one".into(),
+            group_id: "another-one".into(),
+            project_id: "another-one".into(),
+            task_id: "".into(),
+            row_y: 40,
+            row_height: 36,
+            name: "another-one".into(),
+            branch: "slint-daemon-poc-clean".into(),
+            metadata: "".into(),
+            path: "~/.another-one/worktrees/another-one".into(),
+            initials: "A".into(),
+            accent: project_accent_color("another-one"),
+            active: false,
+            expanded: true,
+            has_children: true,
+            task_count_label: "3".into(),
+            pinned: false,
+            worktree: false,
+            running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        },
+        SidebarTreeEntry {
+            kind: "task".into(),
+            id: "task:slint-build".into(),
+            group_id: "another-one".into(),
+            project_id: "another-one".into(),
+            task_id: "slint-build".into(),
+            row_y: 76,
+            row_height: 46,
+            name: "Slint build".into(),
+            branch: "slint-daemon-poc-clean".into(),
+            metadata: "active | +0 -0".into(),
+            path: "".into(),
+            initials: "S".into(),
+            accent: project_accent_color("slint-build"),
+            active: true,
+            expanded: false,
+            has_children: false,
+            task_count_label: "".into(),
+            pinned: true,
+            worktree: true,
+            running: true,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        },
+        SidebarTreeEntry {
+            kind: "task".into(),
+            id: "task:terminal-ready".into(),
+            group_id: "another-one".into(),
+            project_id: "another-one".into(),
+            task_id: "terminal-ready".into(),
+            row_y: 122,
+            row_height: 46,
+            name: "Terminal readiness".into(),
+            branch: "terminal-production".into(),
+            metadata: "in progress | renderer".into(),
+            path: "".into(),
+            initials: "T".into(),
+            accent: project_accent_color("terminal-ready"),
+            active: false,
+            expanded: false,
+            has_children: false,
+            task_count_label: "".into(),
+            pinned: false,
+            worktree: true,
+            running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        },
+        SidebarTreeEntry {
+            kind: "task".into(),
+            id: "task:style-system".into(),
+            group_id: "another-one".into(),
+            project_id: "another-one".into(),
+            task_id: "style-system".into(),
+            row_y: 168,
+            row_height: 46,
+            name: "Style system".into(),
+            branch: "gpui baseline".into(),
+            metadata: "blocked | visual corpus".into(),
+            path: "".into(),
+            initials: "G".into(),
+            accent: project_accent_color("style-system"),
+            active: false,
+            expanded: false,
+            has_children: false,
+            task_count_label: "".into(),
+            pinned: false,
+            worktree: true,
+            running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        },
+        SidebarTreeEntry {
+            kind: "project".into(),
+            id: "project:daemon-sandbox".into(),
+            group_id: "daemon-sandbox".into(),
+            project_id: "daemon-sandbox".into(),
+            task_id: "".into(),
+            row_y: 214,
+            row_height: 36,
+            name: "daemon-sandbox".into(),
+            branch: "daemon transport".into(),
+            metadata: "".into(),
+            path: "daemon-sandbox".into(),
+            initials: "D".into(),
+            accent: project_accent_color("daemon-sandbox"),
+            active: false,
+            expanded: true,
+            has_children: false,
+            task_count_label: "0".into(),
+            pinned: false,
+            worktree: false,
+            running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        },
+        SidebarTreeEntry {
+            kind: "project".into(),
+            id: "project:slint-platform".into(),
+            group_id: "slint-platform".into(),
+            project_id: "slint-platform".into(),
+            task_id: "".into(),
+            row_y: 250,
+            row_height: 36,
+            name: "slint-platform".into(),
+            branch: "platform traits".into(),
+            metadata: "".into(),
+            path: "slint-platform".into(),
+            initials: "S".into(),
+            accent: project_accent_color("slint-platform"),
+            active: false,
+            expanded: false,
+            has_children: true,
+            task_count_label: "2".into(),
+            pinned: false,
+            worktree: false,
+            running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        },
+    ])));
     app.set_project_rows(slint::ModelRc::new(slint::VecModel::from(vec![
         ProjectSidebarEntry {
             id: "another-one".into(),
@@ -656,6 +818,7 @@ fn apply_terminal_surface(app: &AppWindow, surface: TerminalSurface) {
 
 #[derive(Default)]
 struct WorkspaceShellModel {
+    sidebar_rows: Vec<SidebarTreeEntry>,
     project_rows: Vec<ProjectSidebarEntry>,
     task_rows: Vec<TaskSidebarEntry>,
     tab_chips: Vec<TerminalTabChip>,
@@ -683,6 +846,9 @@ fn set_workspace_tree(
     let app_weak = app_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(app) = app_weak.upgrade() {
+            app.set_sidebar_rows(slint::ModelRc::new(slint::VecModel::from(
+                model.sidebar_rows,
+            )));
             app.set_project_rows(slint::ModelRc::new(slint::VecModel::from(
                 model.project_rows,
             )));
@@ -777,6 +943,7 @@ fn workspace_shell_model(
             }
         })
         .collect::<Vec<_>>();
+    let sidebar_rows = sidebar_tree_rows(projects, active_section_id);
 
     let mut task_entries = projects
         .iter()
@@ -833,6 +1000,7 @@ fn workspace_shell_model(
         .unwrap_or_default();
 
     WorkspaceShellModel {
+        sidebar_rows,
         project_rows,
         task_rows: task_entries,
         tab_chips,
@@ -856,20 +1024,102 @@ fn workspace_shell_model(
     }
 }
 
+fn sidebar_tree_rows(
+    projects: &[frame::ProjectSummary],
+    active_section_id: &str,
+) -> Vec<SidebarTreeEntry> {
+    let mut rows = Vec::new();
+    let mut row_y = SIDEBAR_TREE_TOP;
+
+    for project in projects {
+        let mut tasks = project.tasks.iter().collect::<Vec<_>>();
+        tasks.sort_by(|left, right| {
+            right
+                .pinned
+                .cmp(&left.pinned)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        let has_children = !tasks.is_empty();
+        // The desktop stores explicit expansion state. The daemon projection
+        // does not carry it yet, so Slint keeps groups expanded to preserve the
+        // source relationship instead of hiding child rows behind fake state.
+        let expanded = has_children;
+
+        rows.push(SidebarTreeEntry {
+            kind: "project".into(),
+            id: format!("project:{}", project.id).into(),
+            group_id: project.id.clone().into(),
+            project_id: project.id.clone().into(),
+            task_id: "".into(),
+            row_y,
+            row_height: SIDEBAR_PROJECT_ROW_HEIGHT,
+            name: project.name.clone().into(),
+            branch: project
+                .current_branch
+                .as_deref()
+                .unwrap_or_else(|| project_kind_label(project.kind))
+                .into(),
+            metadata: "".into(),
+            path: compact_path(&project.path).into(),
+            initials: initials(&project.name).into(),
+            accent: project_accent_color(&project.id),
+            active: false,
+            expanded,
+            has_children,
+            task_count_label: tasks.len().to_string().into(),
+            pinned: false,
+            worktree: false,
+            running: false,
+            loading: false,
+            error: false,
+            editing: false,
+            delete_confirm: false,
+        });
+        row_y += SIDEBAR_PROJECT_ROW_HEIGHT;
+
+        if expanded {
+            for task in tasks {
+                let running = task.tabs.iter().any(|tab| tab.running);
+                let worktree =
+                    !task.target_project_id.is_empty() && task.target_project_id != project.id;
+                rows.push(SidebarTreeEntry {
+                    kind: "task".into(),
+                    id: format!("task:{}", task.id).into(),
+                    group_id: project.id.clone().into(),
+                    project_id: project.id.clone().into(),
+                    task_id: task.id.clone().into(),
+                    row_y,
+                    row_height: SIDEBAR_TASK_ROW_HEIGHT,
+                    name: task.name.clone().into(),
+                    branch: task.branch_name.clone().into(),
+                    metadata: task_metadata(task, running).into(),
+                    path: "".into(),
+                    initials: initials(&task.name).into(),
+                    accent: project_accent_color(&project.id),
+                    active: task.section_id == active_section_id,
+                    expanded: false,
+                    has_children: false,
+                    task_count_label: "".into(),
+                    pinned: task.pinned,
+                    worktree,
+                    running,
+                    loading: false,
+                    error: false,
+                    editing: false,
+                    delete_confirm: false,
+                });
+                row_y += SIDEBAR_TASK_ROW_HEIGHT;
+            }
+        }
+    }
+
+    rows
+}
+
 fn first_attachable_target(projects: &[frame::ProjectSummary]) -> Option<TerminalTarget> {
     projects
         .iter()
         .find_map(|project| project.tasks.iter().find_map(target_for_task))
-}
-
-fn target_for_project_id(
-    projects: &[frame::ProjectSummary],
-    project_id: &str,
-) -> Option<TerminalTarget> {
-    projects
-        .iter()
-        .find(|project| project.id == project_id)
-        .and_then(|project| project.tasks.iter().find_map(target_for_task))
 }
 
 fn target_for_task_id(projects: &[frame::ProjectSummary], task_id: &str) -> Option<TerminalTarget> {
@@ -1259,24 +1509,16 @@ async fn run_terminal_session(
                         }
                     }
                     SlintClientEvent::SelectProject(project_id) => {
-                        if let Some(target) = target_for_project_id(&projects, &project_id) {
-                            switch_terminal_target(
-                                app_weak,
-                                &mut send,
-                                &mut next_request_id,
-                                &projects,
-                                &mut attached_target,
-                                target,
-                                &mut terminal,
-                                &mut dirty,
-                                &mut pending_flush_at,
-                            )
-                            .await?;
+                        if let Some(project) = projects.iter().find(|project| project.id == project_id) {
+                            set_project_overview_placeholder(app_weak, project);
                             selection_drag_anchor = None;
                             selection_range = None;
                             set_terminal_selection(app_weak, Vec::new());
                         } else {
-                            set_terminal_status(app_weak, format!("terminal: project has no attachable tab: {project_id}"));
+                            set_terminal_status(
+                                app_weak,
+                                format!("project unavailable: {project_id}"),
+                            );
                         }
                     }
                     SlintClientEvent::SelectTask(task_id) => {
@@ -1321,17 +1563,42 @@ async fn run_terminal_session(
                             set_terminal_status(app_weak, format!("terminal: unknown tab: {tab_id}"));
                         }
                     }
-                    SlintClientEvent::SubmitNewTask { task_name, source_branch } => {
+                    SlintClientEvent::SubmitNewTask {
+                        task_name,
+                        source_branch,
+                        project_id,
+                    } => {
                         let task_name = task_name.trim().to_string();
                         if task_name.is_empty() {
                             set_toast(app_weak, "error", "Task name is required", "Enter a task name before creating a task.");
                             continue;
                         }
-                        let Some(project_id) = project_id_for_target(&projects, &attached_target) else {
-                            set_toast(app_weak, "error", "No active project", "Select a daemon-backed project before creating a task.");
-                            continue;
+                        let project_id = if project_id.trim().is_empty() {
+                            let Some(project_id) = project_id_for_target(&projects, &attached_target) else {
+                                set_toast(app_weak, "error", "No active project", "Select a daemon-backed project before creating a task.");
+                                continue;
+                            };
+                            project_id
+                        } else {
+                            project_id.trim().to_string()
                         };
-                        let Some(source_branch) = normalized_source_branch(&projects, &attached_target, &source_branch) else {
+                        let requested_source_branch = source_branch.trim();
+                        let source_branch = if !requested_source_branch.is_empty() {
+                            Some(requested_source_branch.to_string())
+                        } else {
+                            projects
+                                .iter()
+                                .find(|project| project.id == project_id)
+                                .and_then(|project| project.current_branch.clone())
+                                .or_else(|| {
+                                    normalized_source_branch(
+                                        &projects,
+                                        &attached_target,
+                                        requested_source_branch,
+                                    )
+                                })
+                        };
+                        let Some(source_branch) = source_branch else {
                             set_toast(app_weak, "error", "No source branch", "Enter a source branch before creating a worktree task.");
                             continue;
                         };
@@ -1546,6 +1813,7 @@ enum SlintClientEvent {
     SubmitNewTask {
         task_name: String,
         source_branch: String,
+        project_id: String,
     },
 }
 
@@ -1779,6 +2047,32 @@ fn set_terminal_status(app_weak: &slint::Weak<AppWindow>, status: impl Into<Stri
     let status = status.into();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(app) = app_weak.upgrade() {
+            app.set_terminal_status(status.into());
+        }
+    });
+}
+
+fn set_project_overview_placeholder(
+    app_weak: &slint::Weak<AppWindow>,
+    project: &frame::ProjectSummary,
+) {
+    let app_weak = app_weak.clone();
+    let project_name = project.name.clone();
+    let branch_name = project
+        .current_branch
+        .as_deref()
+        .unwrap_or_else(|| project_kind_label(project.kind))
+        .to_string();
+    let worktree_name = worktree_name(&project.path);
+    let project_path = project.path.clone();
+    let status = format!("project overview: {project_name} (Slint project page parity pending)");
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_active_project_name(project_name.into());
+            app.set_active_task_name("Project overview".into());
+            app.set_active_branch_name(branch_name.into());
+            app.set_active_worktree_name(worktree_name.into());
+            app.set_active_project_path(project_path.into());
             app.set_terminal_status(status.into());
         }
     });
@@ -2710,6 +3004,109 @@ mod tests {
     }
 
     #[test]
+    fn slint_sidebar_uses_gpui_project_tree_contract() {
+        let app_source = include_str!("../ui/app.slint");
+
+        assert!(app_source.contains("sidebar_rows"));
+        assert!(app_source.contains("AoSidebarProjectTreeRow"));
+        assert!(app_source.contains("AoSidebarTaskTreeRow"));
+        assert!(!app_source.contains("OPEN TASKS"));
+    }
+
+    #[test]
+    fn workspace_shell_model_nests_tasks_under_each_project() {
+        let projects = vec![
+            sidebar_project(
+                "project-a",
+                "Project A",
+                vec![
+                    sidebar_task(
+                        "task-low",
+                        "Later task",
+                        "feature/later",
+                        false,
+                        "section-low",
+                    ),
+                    sidebar_task(
+                        "task-pin",
+                        "Pinned task",
+                        "feature/pinned",
+                        true,
+                        "section-pin",
+                    ),
+                ],
+            ),
+            sidebar_project(
+                "project-b",
+                "Project B",
+                vec![sidebar_task(
+                    "task-b",
+                    "Other task",
+                    "feature/other",
+                    false,
+                    "section-b",
+                )],
+            ),
+        ];
+
+        let model = workspace_shell_model(&projects, "section-pin", "0");
+        let rows = model
+            .sidebar_rows
+            .iter()
+            .map(|row| {
+                (
+                    row.kind.as_str().to_string(),
+                    row.group_id.as_str().to_string(),
+                    row.project_id.as_str().to_string(),
+                    row.task_id.as_str().to_string(),
+                    row.active,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "project".to_string(),
+                    "project-a".to_string(),
+                    "project-a".to_string(),
+                    String::new(),
+                    false,
+                ),
+                (
+                    "task".to_string(),
+                    "project-a".to_string(),
+                    "project-a".to_string(),
+                    "task-pin".to_string(),
+                    true,
+                ),
+                (
+                    "task".to_string(),
+                    "project-a".to_string(),
+                    "project-a".to_string(),
+                    "task-low".to_string(),
+                    false,
+                ),
+                (
+                    "project".to_string(),
+                    "project-b".to_string(),
+                    "project-b".to_string(),
+                    String::new(),
+                    false,
+                ),
+                (
+                    "task".to_string(),
+                    "project-b".to_string(),
+                    "project-b".to_string(),
+                    "task-b".to_string(),
+                    false,
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn snapshot_surface_preserves_ansi_foreground_colors() {
         let mut terminal = AlacrittySnapshot::new(40, 4);
         let _ = terminal.apply_output(b"\x1b[31mRED \x1b[32mGREEN \x1b[34mBLUE\x1b[0m DEFAULT");
@@ -3228,6 +3625,53 @@ mod tests {
             control: false,
             alt: false,
             shift: false,
+        }
+    }
+
+    fn sidebar_project(
+        id: &str,
+        name: &str,
+        tasks: Vec<frame::TaskSummary>,
+    ) -> frame::ProjectSummary {
+        frame::ProjectSummary {
+            id: id.to_string(),
+            name: name.to_string(),
+            path: format!("/repo/{id}"),
+            kind: frame::ProjectKind::Root,
+            current_branch: Some("main".to_string()),
+            tasks,
+        }
+    }
+
+    fn sidebar_task(
+        id: &str,
+        name: &str,
+        branch_name: &str,
+        pinned: bool,
+        section_id: &str,
+    ) -> frame::TaskSummary {
+        frame::TaskSummary {
+            id: id.to_string(),
+            name: name.to_string(),
+            section_id: section_id.to_string(),
+            branch_name: branch_name.to_string(),
+            active_tab_id: "0".to_string(),
+            tabs: vec![frame::TabSummary {
+                id: "0".to_string(),
+                title: "Shell".to_string(),
+                provider: Some(frame::AgentProvider::Shell),
+                running: true,
+                pinned: false,
+                fixed_title: None,
+                restore_status: Default::default(),
+                failure_message: None,
+                failure_details: None,
+            }],
+            pinned,
+            last_commit_relative: String::new(),
+            lines_added: 0,
+            lines_removed: 0,
+            target_project_id: String::new(),
         }
     }
 

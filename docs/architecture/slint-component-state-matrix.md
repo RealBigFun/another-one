@@ -15,6 +15,8 @@ This matrix defines the GPUI state surface each Slint base component must cover 
 | `AoAvatar` | implemented | inherited from parent row | inherited from parent row | inherited from parent row | n/a | n/a | n/a | `desktop/src/left_sidebar.rs` |
 | `AoProjectRow` | implemented | implemented row + add/GitHub/menu affordances | implemented active/expanded | implemented focus ring + keyboard activation | n/a | implemented loading copy | implemented error tint | `desktop/src/left_sidebar.rs` |
 | `AoTaskRow` | implemented | implemented row + rename/delete/menu affordances | implemented active/pinned/running/editing/delete-confirm | implemented focus ring + keyboard activation | n/a | implemented loading copy | implemented error/destructive tint | `desktop/src/left_sidebar.rs` |
+| `AoSidebarProjectTreeRow` | implemented | implemented row + add/menu affordances | implemented expanded | implemented focus ring + keyboard activation | n/a | implemented loading copy | implemented error tint | `desktop/src/left_sidebar.rs` |
+| `AoSidebarTaskTreeRow` | implemented | implemented row + rename/delete/menu affordances | implemented active/pinned/running/editing/delete-confirm | implemented focus ring + keyboard activation | n/a | implemented loading copy | implemented error/destructive tint | `desktop/src/left_sidebar.rs` |
 | `AoTabChip` | implemented | implemented | implemented | pending | n/a | pending | failed restore pending | `desktop/src/app.rs`, `desktop/src/titlebar.rs` |
 | `AoCard` | implemented | n/a | n/a | n/a | n/a | pending | pending | `desktop/src/right_sidebar.rs`, `desktop/src/project_page.rs` |
 | `AoStateCard` | implemented | n/a | n/a | n/a | n/a | implemented | implemented | `desktop/src/right_sidebar.rs`, `desktop/src/project_page.rs` |

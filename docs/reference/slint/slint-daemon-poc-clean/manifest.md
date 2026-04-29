@@ -17,7 +17,7 @@ Captured on: 2026-04-28, Hyprland workspace 1, monitor `DP-4`.
 - `captures/titlebar/default.png`: crop from `window/desktop-main-dark.png`.
 - `captures/sidebar/project-list-default.png`: crop from `window/desktop-main-dark.png`.
 - `captures/sidebar/task-list-active.png`: crop from `window/desktop-main-dark.png`.
-- `captures/sidebar/compact-project-task-list.png`: live Slint sidebar proof using compact GPUI-derived project/task rows, active states, task metadata, and the New Task action.
+- `captures/sidebar/grouped-project-tree.png`: live Slint sidebar proof using the GPUI project-tree relationship: one `PROJECTS` section, root project rows, nested task/worktree rows, shared desktop SVG assets, and sidebar-specific active/icon colors.
 - `captures/terminal/text-quality.png`: crop from `window/desktop-main-dark.png`.
 - `captures/right-sidebar/changes.png`: crop from `window/desktop-main-dark.png`.
 - `captures/terminal-resize-wide.png`: Slint terminal shell before compositor-driven resize.

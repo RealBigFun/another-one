@@ -112,7 +112,17 @@ Events: `clicked(string project_id)`, `menu-clicked(string project_id)`, `add-cl
 
 States: normal, hover, focused, active, expanded/collapsed disclosure, loading, error, project menu, GitHub, and add-task affordances.
 
-Baseline use: production left sidebar compact project rows from `desktop/src/left_sidebar.rs`.
+Baseline use: legacy compact sidebar row fixture. Production navigation uses `AoSidebarProjectTreeRow` so project rows own nested task/worktree rows.
+
+### `AoSidebarProjectTreeRow`
+
+Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `focus-ring`, `danger-color`, `warning-color`.
+
+Events: `clicked(string project_id)`, `menu-clicked(string project_id)`, `add-clicked(string project_id)`.
+
+States: normal, hover, focused, active when the project overview is active, expanded/collapsed disclosure, loading, error, project menu, and add-task affordance. GitHub affordance is intentionally absent until daemon data exposes a repository URL.
+
+Baseline use: production left sidebar root project rows from `desktop/src/left_sidebar.rs`.
 
 ### `AoTaskRow`
 
@@ -132,7 +142,17 @@ Events: `clicked(string task_id)`, `menu-clicked(string task_id)`, `rename-click
 
 States: normal, hover, focused, active, pinned, running, loading, error, editing, delete-confirm, rename, and menu affordances.
 
-Baseline use: production left sidebar compact task/worktree rows from `desktop/src/left_sidebar.rs`.
+Baseline use: legacy compact sidebar row fixture. Production navigation uses `AoSidebarTaskTreeRow` as children of project rows.
+
+### `AoSidebarTaskTreeRow`
+
+Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `text-secondary`, `success-color`, `row-border-color`, `focus-ring`, `danger-color`, `warning-color`.
+
+Events: `clicked(string task_id)`, `menu-clicked(string task_id)`, `rename-clicked(string task_id)`, `delete-clicked(string task_id)`.
+
+States: normal, hover, focused, active terminal task, pinned, running, loading, error, editing, delete-confirm, rename, and menu affordances.
+
+Baseline use: production left sidebar task/worktree child rows from `desktop/src/left_sidebar.rs`.
 
 ### `AoTabChip`
 
