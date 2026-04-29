@@ -2099,6 +2099,7 @@ export component AoInspectorCommitRow inherits Rectangle {
     in property <color> text-primary;
     in property <color> text-muted;
     in property <color> hover-bg;
+    callback toggled(string, string);
 
     height: 42px;
     border-radius: 7px;
@@ -2107,6 +2108,9 @@ export component AoInspectorCommitRow inherits Rectangle {
     touch := TouchArea {
         width: parent.width;
         height: parent.height;
+        clicked => {
+            root.toggled(root.entry.project-id, root.entry.path);
+        }
     }
 
     Image {
@@ -2114,7 +2118,7 @@ export component AoInspectorCommitRow inherits Rectangle {
         y: 17px;
         width: 8px;
         height: 8px;
-        source: @image-url("../../desktop/assets/icons/icons__chevron-right.svg");
+        source: root.entry.file-count-label == "expanded" ? @image-url("../../desktop/assets/icons/icons__chevron-down.svg") : @image-url("../../desktop/assets/icons/icons__chevron-right.svg");
         colorize: root.text-muted;
     }
 

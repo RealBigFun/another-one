@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -74,6 +74,13 @@ pub struct TerminalRenderProbeReport {
     pub max_background_spans: usize,
     pub max_cursor_spans: usize,
     pub rss_kib: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+enum InspectorCommitFileChangesState {
+    Loading,
+    Loaded(Vec<frame::BranchCompareFileWire>),
+    Failed,
 }
 
 impl TerminalRenderProbeReport {
@@ -317,6 +324,13 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
             path: path.to_string(),
             original_path: empty_string_to_none(original_path.as_str()),
             untracked,
+        });
+    });
+    let inspector_commit_event_tx = client_event_tx.clone();
+    app.on_inspector_commit_toggled(move |project_id, commit_id| {
+        let _ = inspector_commit_event_tx.send(SlintClientEvent::ToggleInspectorCommit {
+            project_id: project_id.to_string(),
+            commit_id: commit_id.to_string(),
         });
     });
     let inspector_stage_all_event_tx = client_event_tx.clone();
@@ -1100,6 +1114,56 @@ fn set_right_inspector_changes(
     }
 }
 
+fn set_right_inspector_commits(
+    app_weak: &slint::Weak<AppWindow>,
+    project_id: &str,
+    view: &frame::RecentCommitsWire,
+    expanded_commits: &HashSet<String>,
+    file_change_states: &HashMap<String, InspectorCommitFileChangesState>,
+) {
+    if view.commits.is_empty() {
+        set_right_inspector_state(
+            app_weak,
+            "commits",
+            "clean",
+            "No commits yet",
+            "No commits were found on this branch.",
+            view.current_branch
+                .clone()
+                .map(|branch| format!("Branch: {branch}"))
+                .unwrap_or_else(|| format!("Project: {project_id}")),
+            Vec::new(),
+        );
+        return;
+    }
+
+    let summary = if view.has_more {
+        format!("{} commits shown; more are available.", view.commits.len())
+    } else {
+        format!("{} recent commits.", view.commits.len())
+    };
+    let detail = view
+        .current_branch
+        .clone()
+        .map(|branch| format!("Branch: {branch}"))
+        .unwrap_or_else(|| format!("Project: {project_id}"));
+    let rows = right_inspector_rows_for_commits_with_expansions(
+        project_id,
+        view,
+        expanded_commits,
+        file_change_states,
+    );
+    set_right_inspector_state(
+        app_weak,
+        "commits",
+        "dirty",
+        "Recent commits",
+        summary,
+        detail,
+        rows,
+    );
+}
+
 fn set_right_inspector_error(
     app_weak: &slint::Weak<AppWindow>,
     mode: &str,
@@ -1640,9 +1704,11 @@ fn right_inspector_file_row(
     }
 }
 
-fn right_inspector_rows_for_commits(
+fn right_inspector_rows_for_commits_with_expansions(
     project_id: &str,
     view: &frame::RecentCommitsWire,
+    expanded_commits: &HashSet<String>,
+    file_change_states: &HashMap<String, InspectorCommitFileChangesState>,
 ) -> Vec<RightInspectorRow> {
     let mut rows = Vec::new();
     let mut row_y = 0;
@@ -1659,6 +1725,8 @@ fn right_inspector_rows_for_commits(
     row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
 
     for commit in &view.commits {
+        let commit_key = right_inspector_commit_key(project_id, &commit.id);
+        let expanded = expanded_commits.contains(&commit_key);
         rows.push(RightInspectorRow {
             kind: "commit".into(),
             group: "commits".into(),
@@ -1674,15 +1742,88 @@ fn right_inspector_rows_for_commits(
             status_color: slint::Color::from_argb_encoded(0xff949494),
             additions_label: "".into(),
             deletions_label: "".into(),
-            file_count_label: "".into(),
+            file_count_label: if expanded { "expanded" } else { "" }.into(),
             can_stage: false,
             can_unstage: false,
             untracked: false,
         });
         row_y += RIGHT_INSPECTOR_COMMIT_ROW_HEIGHT;
+
+        if expanded {
+            let state = file_change_states.get(&commit_key);
+            rows.extend(right_inspector_commit_detail_rows(
+                project_id, commit, state, &mut row_y,
+            ));
+        }
     }
 
     rows
+}
+
+fn right_inspector_commit_detail_rows(
+    project_id: &str,
+    commit: &frame::CommitWire,
+    state: Option<&InspectorCommitFileChangesState>,
+    row_y: &mut i32,
+) -> Vec<RightInspectorRow> {
+    let mut rows = Vec::new();
+    let (title, count, additions, deletions) = match state {
+        Some(InspectorCommitFileChangesState::Loaded(files)) if !files.is_empty() => {
+            let additions = files.iter().map(|file| file.additions.max(0)).sum();
+            let deletions = files.iter().map(|file| file.deletions.max(0)).sum();
+            let title = if files.len() == 1 {
+                "1 file changed".to_string()
+            } else {
+                format!("{} files changed", files.len())
+            };
+            (title, files.len(), additions, deletions)
+        }
+        Some(InspectorCommitFileChangesState::Loaded(_)) => {
+            ("No file changes in this commit.".to_string(), 0, 0, 0)
+        }
+        Some(InspectorCommitFileChangesState::Failed) => {
+            ("Couldn't load file changes.".to_string(), 0, 0, 0)
+        }
+        _ => ("Loading file changes...".to_string(), 0, 0, 0),
+    };
+
+    rows.push(right_inspector_section_row(
+        project_id,
+        "commit-files",
+        &title,
+        count,
+        additions,
+        deletions,
+        *row_y,
+    ));
+    *row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
+
+    if let Some(InspectorCommitFileChangesState::Loaded(files)) = state {
+        for file in files {
+            rows.push(right_inspector_commit_file_row(
+                project_id, &commit.id, file, *row_y,
+            ));
+            *row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
+        }
+    }
+
+    rows
+}
+
+fn right_inspector_commit_file_row(
+    project_id: &str,
+    commit_id: &str,
+    file: &frame::BranchCompareFileWire,
+    row_y: i32,
+) -> RightInspectorRow {
+    let mut row = right_inspector_compare_file_row(project_id, file, row_y);
+    row.group = "commit-file".into();
+    row.id = format!("commit-file:{commit_id}:{}", file.path).into();
+    row
+}
+
+fn right_inspector_commit_key(project_id: &str, commit_id: &str) -> String {
+    format!("{project_id}:{commit_id}")
 }
 
 fn right_inspector_rows_for_checks(
@@ -2243,6 +2384,10 @@ async fn run_terminal_session(
     let mut right_inspector_mode = "changes".to_string();
     let mut right_inspector_project_id =
         project_id_for_target(&projects, &attached_target).unwrap_or_default();
+    let mut right_inspector_recent_commits: Option<frame::RecentCommitsWire> = None;
+    let mut expanded_inspector_commits = HashSet::new();
+    let mut inspector_commit_file_change_states = HashMap::new();
+    let mut pending_inspector_commit_file_requests = HashMap::new();
     request_right_inspector_data(
         app_weak,
         &mut send,
@@ -2387,6 +2532,10 @@ async fn run_terminal_session(
                             set_project_overview_placeholder(app_weak, project);
                             right_inspector_project_id = project_id;
                             set_right_inspector_compare_target(app_weak, None);
+                            right_inspector_recent_commits = None;
+                            expanded_inspector_commits.clear();
+                            inspector_commit_file_change_states.clear();
+                            pending_inspector_commit_file_requests.clear();
                             request_right_inspector_data(
                                 app_weak,
                                 &mut send,
@@ -2423,6 +2572,10 @@ async fn run_terminal_session(
                                 project_id_for_target(&projects, &attached_target)
                                     .unwrap_or_default();
                             set_right_inspector_compare_target(app_weak, None);
+                            right_inspector_recent_commits = None;
+                            expanded_inspector_commits.clear();
+                            inspector_commit_file_change_states.clear();
+                            pending_inspector_commit_file_requests.clear();
                             request_right_inspector_data(
                                 app_weak,
                                 &mut send,
@@ -2456,6 +2609,10 @@ async fn run_terminal_session(
                                 project_id_for_target(&projects, &attached_target)
                                     .unwrap_or_default();
                             set_right_inspector_compare_target(app_weak, None);
+                            right_inspector_recent_commits = None;
+                            expanded_inspector_commits.clear();
+                            inspector_commit_file_change_states.clear();
+                            pending_inspector_commit_file_requests.clear();
                             request_right_inspector_data(
                                 app_weak,
                                 &mut send,
@@ -2561,6 +2718,47 @@ async fn run_terminal_session(
                         )
                         .await
                         .context("discard changed file")?;
+                    }
+                    SlintClientEvent::ToggleInspectorCommit {
+                        project_id,
+                        commit_id,
+                    } => {
+                        if project_id != right_inspector_project_id {
+                            continue;
+                        }
+                        let commit_key = right_inspector_commit_key(&project_id, &commit_id);
+                        if !expanded_inspector_commits.insert(commit_key.clone()) {
+                            expanded_inspector_commits.remove(&commit_key);
+                        } else if !matches!(
+                            inspector_commit_file_change_states.get(&commit_key),
+                            Some(InspectorCommitFileChangesState::Loading)
+                                | Some(InspectorCommitFileChangesState::Loaded(_))
+                        ) {
+                            inspector_commit_file_change_states
+                                .insert(commit_key.clone(), InspectorCommitFileChangesState::Loading);
+                            let request_id = next_request_id;
+                            pending_inspector_commit_file_requests.insert(request_id, commit_key);
+                            send_control(
+                                &mut send,
+                                &mut next_request_id,
+                                Control::ReadCommitFileChanges {
+                                    project_id,
+                                    commit_id,
+                                },
+                            )
+                            .await
+                            .context("read commit file changes")?;
+                        }
+
+                        if let Some(view) = right_inspector_recent_commits.as_ref() {
+                            set_right_inspector_commits(
+                                app_weak,
+                                &right_inspector_project_id,
+                                view,
+                                &expanded_inspector_commits,
+                                &inspector_commit_file_change_states,
+                            );
+                        }
                     }
                     SlintClientEvent::StageAllChanges => {
                         send_control(
@@ -2669,6 +2867,7 @@ async fn run_terminal_session(
                     }
                     frame::TY_WORKER_REPLY => {
                         if let Ok(envelope) = serde_json::from_slice::<WorkerReplyEnvelope>(&payload) {
+                            let request_id = envelope.request_id;
                             match envelope.reply {
                                 WorkerReply::ProjectList { projects: latest_projects } => {
                                     projects = latest_projects;
@@ -2684,6 +2883,10 @@ async fn run_terminal_session(
                                                 project_id_for_target(&projects, &attached_target)
                                                     .unwrap_or_default();
                                             set_right_inspector_compare_target(app_weak, None);
+                                            right_inspector_recent_commits = None;
+                                            expanded_inspector_commits.clear();
+                                            inspector_commit_file_change_states.clear();
+                                            pending_inspector_commit_file_requests.clear();
                                         }
                                     } else if let Some(target) = first_attachable_target(&projects) {
                                         switch_terminal_target(
@@ -2702,11 +2905,40 @@ async fn run_terminal_session(
                                             project_id_for_target(&projects, &attached_target)
                                                 .unwrap_or_default();
                                         set_right_inspector_compare_target(app_weak, None);
+                                        right_inspector_recent_commits = None;
+                                        expanded_inspector_commits.clear();
+                                        inspector_commit_file_change_states.clear();
+                                        pending_inspector_commit_file_requests.clear();
                                     } else {
                                         set_terminal_status(app_weak, "terminal: project tree has no attachable tabs");
                                     }
                                 }
                                 WorkerReply::Err { message, .. } => {
+                                    if let Some(commit_key) =
+                                        pending_inspector_commit_file_requests.remove(&request_id)
+                                    {
+                                        inspector_commit_file_change_states.insert(
+                                            commit_key,
+                                            InspectorCommitFileChangesState::Failed,
+                                        );
+                                        if let Some(view) = right_inspector_recent_commits.as_ref()
+                                        {
+                                            set_right_inspector_commits(
+                                                app_weak,
+                                                &right_inspector_project_id,
+                                                view,
+                                                &expanded_inspector_commits,
+                                                &inspector_commit_file_change_states,
+                                            );
+                                        }
+                                        set_toast(
+                                            app_weak,
+                                            "warning",
+                                            "Could not load commit files",
+                                            message,
+                                        );
+                                        continue;
+                                    }
                                     set_terminal_status(app_weak, format!("terminal worker error: {message}"));
                                     set_right_inspector_error(
                                         app_weak,
@@ -2783,51 +3015,49 @@ async fn run_terminal_session(
                                 }
                                 WorkerReply::RecentCommitsAck { view } => {
                                     match view {
-                                        None => set_right_inspector_state(
-                                            app_weak,
-                                            "commits",
-                                            "unavailable",
-                                            "Commits unavailable",
-                                            "The daemon did not recognize the active project.",
-                                            format!("Project: {right_inspector_project_id}"),
-                                            Vec::new(),
-                                        ),
-                                        Some(view) if view.commits.is_empty() => {
+                                        None => {
+                                            right_inspector_recent_commits = None;
                                             set_right_inspector_state(
                                                 app_weak,
                                                 "commits",
-                                                "clean",
-                                                "No commits yet",
-                                                "No commits were found on this branch.",
-                                                view.current_branch
-                                                    .map(|branch| format!("Branch: {branch}"))
-                                                    .unwrap_or_else(|| format!("Project: {right_inspector_project_id}")),
+                                                "unavailable",
+                                                "Commits unavailable",
+                                                "The daemon did not recognize the active project.",
+                                                format!("Project: {right_inspector_project_id}"),
                                                 Vec::new(),
                                             );
                                         }
                                         Some(view) => {
-                                            let summary = if view.has_more {
-                                                format!("{} commits shown; more are available.", view.commits.len())
-                                            } else {
-                                                format!("{} recent commits.", view.commits.len())
-                                            };
-                                            let detail = view
-                                                .current_branch
-                                                .clone()
-                                                .map(|branch| format!("Branch: {branch}"))
-                                                .unwrap_or_else(|| format!("Project: {right_inspector_project_id}"));
-                                            let rows = right_inspector_rows_for_commits(
+                                            right_inspector_recent_commits = Some(view.clone());
+                                            set_right_inspector_commits(
+                                                app_weak,
                                                 &right_inspector_project_id,
                                                 &view,
+                                                &expanded_inspector_commits,
+                                                &inspector_commit_file_change_states,
                                             );
-                                            set_right_inspector_state(
+                                        }
+                                    }
+                                }
+                                WorkerReply::CommitFileChangesAck { files } => {
+                                    if let Some(commit_key) =
+                                        pending_inspector_commit_file_requests.remove(&request_id)
+                                    {
+                                        let state = match files {
+                                            Some(files) => {
+                                                InspectorCommitFileChangesState::Loaded(files)
+                                            }
+                                            None => InspectorCommitFileChangesState::Failed,
+                                        };
+                                        inspector_commit_file_change_states.insert(commit_key, state);
+                                        if let Some(view) = right_inspector_recent_commits.as_ref()
+                                        {
+                                            set_right_inspector_commits(
                                                 app_weak,
-                                                "commits",
-                                                "dirty",
-                                                "Recent commits",
-                                                summary,
-                                                detail,
-                                                rows,
+                                                &right_inspector_project_id,
+                                                view,
+                                                &expanded_inspector_commits,
+                                                &inspector_commit_file_change_states,
                                             );
                                         }
                                     }
@@ -3181,6 +3411,10 @@ enum SlintClientEvent {
         path: String,
         original_path: Option<String>,
         untracked: bool,
+    },
+    ToggleInspectorCommit {
+        project_id: String,
+        commit_id: String,
     },
     StageAllChanges,
     UnstageAllChanges,
@@ -4444,6 +4678,7 @@ mod tests {
         }
         assert!(app_source.contains("#262a30"));
         assert!(app_source.contains("right_inspector_compare_available"));
+        assert!(app_source.contains("inspector_commit_toggled"));
         assert!(app_source.contains("inspector_discard_confirm_open"));
         assert!(app_source.contains("Confirm Discard"));
         assert!(app_source.contains("This action cannot be undone."));
@@ -4617,7 +4852,12 @@ mod tests {
             }],
         };
 
-        let rows = right_inspector_rows_for_commits("project-a", &view);
+        let rows = right_inspector_rows_for_commits_with_expansions(
+            "project-a",
+            &view,
+            &HashSet::new(),
+            &HashMap::new(),
+        );
 
         assert_eq!(rows[0].kind.as_str(), "section");
         assert_eq!(
@@ -4628,6 +4868,45 @@ mod tests {
         assert_eq!(rows[1].title.as_str(), "feat: wire inspector");
         assert_eq!(rows[1].parent_dir.as_str(), "Mason - 2 minutes ago");
         assert_eq!(rows[1].status.as_str(), "abcdef0");
+    }
+
+    #[test]
+    fn right_inspector_rows_render_expanded_commit_files() {
+        let view = frame::RecentCommitsWire {
+            current_branch: Some("feature/right-inspector".to_string()),
+            has_more: false,
+            commits: vec![frame::CommitWire {
+                id: "abcdef012345".to_string(),
+                short_id: "abcdef0".to_string(),
+                subject: "feat: wire inspector".to_string(),
+                author_name: "Mason".to_string(),
+                authored_relative: "2 minutes ago".to_string(),
+            }],
+        };
+        let commit_key = right_inspector_commit_key("project-a", "abcdef012345");
+        let expanded = HashSet::from([commit_key.clone()]);
+        let states = HashMap::from([(
+            commit_key,
+            InspectorCommitFileChangesState::Loaded(vec![frame::BranchCompareFileWire {
+                path: "slint-poc/src/lib.rs".to_string(),
+                original_path: None,
+                status: "M".to_string(),
+                additions: 4,
+                deletions: 2,
+            }]),
+        )]);
+
+        let rows = right_inspector_rows_for_commits_with_expansions(
+            "project-a",
+            &view,
+            &expanded,
+            &states,
+        );
+
+        assert_eq!(rows[1].file_count_label.as_str(), "expanded");
+        assert_eq!(rows[2].title.as_str(), "1 file changed");
+        assert_eq!(rows[3].group.as_str(), "commit-file");
+        assert_eq!(rows[3].additions_label.as_str(), "+4");
     }
 
     #[test]
