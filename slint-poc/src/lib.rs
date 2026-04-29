@@ -204,7 +204,6 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     style::apply_theme(&app);
     app.set_platform_label(platform_profile.label().into());
     settings::seed_settings_model(&app);
-    settings::wire_settings_callbacks(&app);
     seed_shell_model(&app);
     seed_visual_state_fixture(&app);
     if std::env::var("ANOTHERONE_SLINT_FIXTURE").as_deref() == Ok("terminal-fidelity") {
@@ -219,6 +218,8 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     }
 
     let (client_event_tx, client_event_rx) = mpsc::unbounded_channel::<SlintClientEvent>();
+    let settings_event_tx = client_event_tx.clone();
+    settings::wire_settings_callbacks(&app, settings_event_tx);
     let terminal_event_tx = client_event_tx.clone();
     app.on_terminal_key(move |text, control, alt, _shift| {
         let _ = terminal_event_tx.send(SlintClientEvent::TerminalKey(SlintKeyEvent {
@@ -2426,6 +2427,139 @@ async fn request_right_inspector_data(
     Ok(())
 }
 
+async fn request_settings_data(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+) -> anyhow::Result<()> {
+    send_control(send, next_request_id, Control::ReadAgentSettings)
+        .await
+        .context("read agent settings")?;
+    send_control(send, next_request_id, Control::ReadOpenInSettings)
+        .await
+        .context("read open-in settings")?;
+    send_control(send, next_request_id, Control::ReadGitActionScripts)
+        .await
+        .context("read git action scripts")?;
+    send_control(send, next_request_id, Control::ReadShortcutSettings)
+        .await
+        .context("read shortcut settings")?;
+    send_control(send, next_request_id, Control::ReadMcpSettings)
+        .await
+        .context("read MCP settings")?;
+    Ok(())
+}
+
+async fn request_agent_settings(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+) -> anyhow::Result<()> {
+    send_control(send, next_request_id, Control::ReadAgentSettings).await
+}
+
+async fn request_open_in_settings(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+) -> anyhow::Result<()> {
+    send_control(send, next_request_id, Control::ReadOpenInSettings).await
+}
+
+async fn request_git_action_scripts(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+) -> anyhow::Result<()> {
+    send_control(send, next_request_id, Control::ReadGitActionScripts).await
+}
+
+async fn request_shortcut_settings(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+) -> anyhow::Result<()> {
+    send_control(send, next_request_id, Control::ReadShortcutSettings).await
+}
+
+async fn request_mcp_settings(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+) -> anyhow::Result<()> {
+    send_control(send, next_request_id, Control::ReadMcpSettings).await
+}
+
+async fn send_settings_request(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+    request: settings::SettingsRequest,
+) -> anyhow::Result<()> {
+    match request {
+        settings::SettingsRequest::SetAgentEnabled { agent_id, enabled } => {
+            send_control(
+                send,
+                next_request_id,
+                Control::SetAgentEnabled { agent_id, enabled },
+            )
+            .await
+        }
+        settings::SettingsRequest::SetDefaultAgent { agent_id } => {
+            send_control(send, next_request_id, Control::SetDefaultAgent { agent_id }).await
+        }
+        settings::SettingsRequest::SetOpenInAppEnabled { app_id, enabled } => {
+            send_control(
+                send,
+                next_request_id,
+                Control::SetOpenInAppEnabled { app_id, enabled },
+            )
+            .await
+        }
+        settings::SettingsRequest::ResetGitActionScript { script_id } => match script_id.as_str() {
+            "commit" => send_control(send, next_request_id, Control::ResetGitCommitScript).await,
+            "pull-request" => send_control(send, next_request_id, Control::ResetGitPrScript).await,
+            _ => Ok(()),
+        },
+        settings::SettingsRequest::ResetShortcut { action_id } => {
+            send_control(
+                send,
+                next_request_id,
+                Control::ResetShortcutBinding { action_id },
+            )
+            .await
+        }
+        settings::SettingsRequest::ClearShortcut { action_id } => {
+            send_control(
+                send,
+                next_request_id,
+                Control::SetShortcutBinding {
+                    action_id,
+                    binding: String::new(),
+                },
+            )
+            .await
+        }
+        settings::SettingsRequest::ResetAllShortcuts => {
+            for action_id in settings::SETTINGS_SHORTCUT_IDS {
+                send_control(
+                    send,
+                    next_request_id,
+                    Control::ResetShortcutBinding {
+                        action_id: action_id.to_string(),
+                    },
+                )
+                .await?;
+            }
+            Ok(())
+        }
+        settings::SettingsRequest::McpAddFromCatalog { catalog_id } => {
+            send_control(
+                send,
+                next_request_id,
+                Control::McpAddFromCatalog { catalog_id },
+            )
+            .await
+        }
+        settings::SettingsRequest::McpRemove { entry_id } => {
+            send_control(send, next_request_id, Control::McpRemove { entry_id }).await
+        }
+    }
+}
+
 async fn run_terminal_session(
     app_weak: &slint::Weak<AppWindow>,
     client_event_rx: &mut mpsc::UnboundedReceiver<SlintClientEvent>,
@@ -2501,6 +2635,7 @@ async fn run_terminal_session(
         &right_inspector_project_id,
     )
     .await?;
+    request_settings_data(&mut send, &mut next_request_id).await?;
 
     let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
     attach_terminal_target(
@@ -3054,6 +3189,11 @@ async fn run_terminal_session(
                             format!("Source branch: {source_branch}"),
                         );
                     }
+                    SlintClientEvent::Settings(request) => {
+                        send_settings_request(&mut send, &mut next_request_id, request)
+                            .await
+                            .context("send settings request")?;
+                    }
                 }
             }
             frame = frame::read_frame(&mut recv) => {
@@ -3132,6 +3272,54 @@ async fn run_terminal_session(
                                     } else {
                                         set_terminal_status(app_weak, "terminal: project tree has no attachable tabs");
                                     }
+                                }
+                                WorkerReply::AgentSettingsAck { view } => {
+                                    settings::apply_agent_settings(app_weak, view);
+                                }
+                                WorkerReply::SetAgentEnabledAck { .. }
+                                | WorkerReply::SetDefaultAgentAck { .. }
+                                | WorkerReply::SetAgentLaunchArgsAck { .. } => {
+                                    request_agent_settings(&mut send, &mut next_request_id)
+                                        .await
+                                        .context("refresh agent settings")?;
+                                }
+                                WorkerReply::OpenInSettingsAck { view } => {
+                                    settings::apply_open_in_settings(app_weak, view);
+                                }
+                                WorkerReply::SetOpenInAppEnabledAck => {
+                                    request_open_in_settings(&mut send, &mut next_request_id)
+                                        .await
+                                        .context("refresh open-in settings")?;
+                                }
+                                WorkerReply::GitActionScriptsAck { view } => {
+                                    settings::apply_git_action_scripts(app_weak, view);
+                                }
+                                WorkerReply::SetGitCommitScriptAck { .. }
+                                | WorkerReply::ResetGitCommitScriptAck { .. }
+                                | WorkerReply::SetGitPrScriptAck { .. }
+                                | WorkerReply::ResetGitPrScriptAck { .. } => {
+                                    request_git_action_scripts(&mut send, &mut next_request_id)
+                                        .await
+                                        .context("refresh git action scripts")?;
+                                }
+                                WorkerReply::ShortcutSettingsAck { view } => {
+                                    settings::apply_shortcut_settings(app_weak, view);
+                                }
+                                WorkerReply::SetShortcutBindingAck
+                                | WorkerReply::ResetShortcutBindingAck => {
+                                    request_shortcut_settings(&mut send, &mut next_request_id)
+                                        .await
+                                        .context("refresh shortcut settings")?;
+                                }
+                                WorkerReply::McpSettingsAck { view } => {
+                                    settings::apply_mcp_settings(app_weak, view);
+                                }
+                                WorkerReply::McpAddFromCatalogAck
+                                | WorkerReply::McpToggleAck
+                                | WorkerReply::McpRemoveAck => {
+                                    request_mcp_settings(&mut send, &mut next_request_id)
+                                        .await
+                                        .context("refresh MCP settings")?;
                                 }
                                 WorkerReply::Err { message, .. } => {
                                     if let Some(action_key) =
@@ -3657,7 +3845,7 @@ struct TerminalCellPoint {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum SlintClientEvent {
+pub(crate) enum SlintClientEvent {
     TerminalKey(SlintKeyEvent),
     TerminalFocus(bool),
     TerminalPointer(SlintPointerEvent),
@@ -3698,6 +3886,7 @@ enum SlintClientEvent {
         source_branch: String,
         project_id: String,
     },
+    Settings(settings::SettingsRequest),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

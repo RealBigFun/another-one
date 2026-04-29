@@ -1,10 +1,12 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use daemon_sandbox::frame;
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use tokio::sync::mpsc;
 
 use crate::{
     AppWindow, SettingsAgentRow, SettingsGeneralRow, SettingsGitActionPanel, SettingsMcpRow,
-    SettingsNavEntry, SettingsOpenInRow, SettingsShortcutRow,
+    SettingsNavEntry, SettingsOpenInRow, SettingsShortcutRow, SlintClientEvent,
 };
 
 pub(crate) const SETTINGS_SECTION_IDS: [&str; 6] = [
@@ -26,6 +28,17 @@ pub(crate) const SETTINGS_SECTION_LABELS: [&str; 6] = [
 ];
 
 const DEFAULT_AGENT_ID: &str = "pi";
+
+pub(crate) const SETTINGS_SHORTCUT_IDS: [&str; 8] = [
+    "cycle-projects",
+    "new-tab-in-current-task",
+    "new-task",
+    "close-current-tab",
+    "next-tab",
+    "previous-tab",
+    "next-task",
+    "previous-task",
+];
 
 const DEFAULT_COMMIT_SCRIPT: &str = concat!(
     "Generate a git commit message for these staged changes.\n",
@@ -53,7 +66,10 @@ pub(crate) fn seed_settings_model(app: &AppWindow) {
     SettingsState::baseline().apply_to(app);
 }
 
-pub(crate) fn wire_settings_callbacks(app: &AppWindow) {
+pub(crate) fn wire_settings_callbacks(
+    app: &AppWindow,
+    settings_event_tx: mpsc::UnboundedSender<SlintClientEvent>,
+) {
     let state = Rc::new(RefCell::new(SettingsState::baseline()));
 
     let nav_state = Rc::clone(&state);
@@ -62,6 +78,7 @@ pub(crate) fn wire_settings_callbacks(app: &AppWindow) {
         if let Some(app) = nav_app.upgrade() {
             let feedback = {
                 let mut state = nav_state.borrow_mut();
+                state.sync_from(&app);
                 let feedback = state.select_section(section.as_str());
                 state.apply_to(&app);
                 feedback
@@ -74,31 +91,52 @@ pub(crate) fn wire_settings_callbacks(app: &AppWindow) {
 
     let action_state = Rc::clone(&state);
     let action_app = app.as_weak();
+    let action_tx = settings_event_tx.clone();
     app.on_settings_action_requested(move |scope, id| {
         if let Some(app) = action_app.upgrade() {
-            let feedback = {
+            let (request, feedback) = {
                 let mut state = action_state.borrow_mut();
+                state.sync_from(&app);
+                let request = state.request_for_action(scope.as_str(), id.as_str());
                 let feedback = state.handle_action(scope.as_str(), id.as_str());
                 state.apply_to(&app);
-                feedback
+                (request, feedback)
             };
             feedback.show(&app);
+            send_settings_request(&action_tx, request, &app);
         }
     });
 
     let toggle_state = Rc::clone(&state);
     let toggle_app = app.as_weak();
+    let toggle_tx = settings_event_tx;
     app.on_settings_toggle_requested(move |scope, id, enabled| {
         if let Some(app) = toggle_app.upgrade() {
-            let feedback = {
+            let (request, feedback) = {
                 let mut state = toggle_state.borrow_mut();
+                state.sync_from(&app);
+                let request = state.request_for_toggle(scope.as_str(), id.as_str(), enabled);
                 let feedback = state.handle_toggle(scope.as_str(), id.as_str(), enabled);
                 state.apply_to(&app);
-                feedback
+                (request, feedback)
             };
             feedback.show(&app);
+            send_settings_request(&toggle_tx, request, &app);
         }
     });
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsRequest {
+    SetAgentEnabled { agent_id: String, enabled: bool },
+    SetDefaultAgent { agent_id: String },
+    SetOpenInAppEnabled { app_id: String, enabled: bool },
+    ResetGitActionScript { script_id: String },
+    ResetShortcut { action_id: String },
+    ClearShortcut { action_id: String },
+    ResetAllShortcuts,
+    McpAddFromCatalog { catalog_id: String },
+    McpRemove { entry_id: String },
 }
 
 #[derive(Clone)]
@@ -133,6 +171,16 @@ impl SettingsState {
         app.set_settings_git_action_panels(model(self.git_action_panels.clone()));
         app.set_settings_shortcut_rows(model(self.shortcut_rows.clone()));
         app.set_settings_mcp_rows(model(self.mcp_rows.clone()));
+    }
+
+    fn sync_from(&mut self, app: &AppWindow) {
+        self.active_section = app.get_settings_active_section();
+        self.general_rows = collect_model(app.get_settings_general_rows());
+        self.agent_rows = collect_model(app.get_settings_agent_rows());
+        self.open_in_rows = collect_model(app.get_settings_open_in_rows());
+        self.git_action_panels = collect_model(app.get_settings_git_action_panels());
+        self.shortcut_rows = collect_model(app.get_settings_shortcut_rows());
+        self.mcp_rows = collect_model(app.get_settings_mcp_rows());
     }
 
     fn select_section(&mut self, section: &str) -> Option<SettingsFeedback> {
@@ -179,6 +227,68 @@ impl SettingsState {
             "agents" => self.toggle_agent(id, enabled),
             "open-in" => self.toggle_open_in_app(id, enabled),
             _ => SettingsFeedback::warning(format!("No Slint settings toggle for {scope} / {id}.")),
+        }
+    }
+
+    fn request_for_action(&self, scope: &str, id: &str) -> Option<SettingsRequest> {
+        match scope {
+            "agents.default" => self
+                .agent_rows
+                .iter()
+                .find(|row| row.id == id && row.enabled && !row.default_agent)
+                .map(|_| SettingsRequest::SetDefaultAgent {
+                    agent_id: id.to_string(),
+                }),
+            "git-actions.reset" if self.git_action_panels.iter().any(|panel| panel.id == id) => {
+                Some(SettingsRequest::ResetGitActionScript {
+                    script_id: id.to_string(),
+                })
+            }
+            "keybindings.reset" if self.shortcut_rows.iter().any(|row| row.id == id) => {
+                Some(SettingsRequest::ResetShortcut {
+                    action_id: id.to_string(),
+                })
+            }
+            "keybindings.clear" if self.shortcut_rows.iter().any(|row| row.id == id) => {
+                Some(SettingsRequest::ClearShortcut {
+                    action_id: id.to_string(),
+                })
+            }
+            "keybindings.reset-all" => Some(SettingsRequest::ResetAllShortcuts),
+            "mcp" => self
+                .mcp_rows
+                .iter()
+                .find(|row| row.id == id && row.action_enabled)
+                .map(|row| {
+                    if row.installed {
+                        SettingsRequest::McpRemove {
+                            entry_id: id.to_string(),
+                        }
+                    } else {
+                        SettingsRequest::McpAddFromCatalog {
+                            catalog_id: id.to_string(),
+                        }
+                    }
+                }),
+            _ => None,
+        }
+    }
+
+    fn request_for_toggle(&self, scope: &str, id: &str, enabled: bool) -> Option<SettingsRequest> {
+        match scope {
+            "agents" if self.agent_rows.iter().any(|row| row.id == id) => {
+                Some(SettingsRequest::SetAgentEnabled {
+                    agent_id: id.to_string(),
+                    enabled,
+                })
+            }
+            "open-in" if self.open_in_rows.iter().any(|row| row.id == id) => {
+                Some(SettingsRequest::SetOpenInAppEnabled {
+                    app_id: id.to_string(),
+                    enabled,
+                })
+            }
+            _ => None,
         }
     }
 
@@ -439,6 +549,69 @@ fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(items))
 }
 
+fn collect_model<T: Clone + 'static>(items: ModelRc<T>) -> Vec<T> {
+    (0..items.row_count())
+        .filter_map(|index| items.row_data(index))
+        .collect()
+}
+
+pub(crate) fn apply_agent_settings(
+    app_weak: &slint::Weak<AppWindow>,
+    view: frame::AgentSettingsViewWire,
+) {
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_settings_agent_rows(model(agent_rows_from_daemon(&view)));
+        }
+    });
+}
+
+pub(crate) fn apply_open_in_settings(
+    app_weak: &slint::Weak<AppWindow>,
+    view: frame::OpenInSettingsViewWire,
+) {
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_settings_open_in_rows(model(open_in_rows_from_daemon(&view)));
+        }
+    });
+}
+
+pub(crate) fn apply_git_action_scripts(
+    app_weak: &slint::Weak<AppWindow>,
+    view: frame::GitActionScriptsView,
+) {
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_settings_git_action_panels(model(git_action_panels_from_daemon(&view)));
+        }
+    });
+}
+
+pub(crate) fn apply_shortcut_settings(
+    app_weak: &slint::Weak<AppWindow>,
+    view: frame::ShortcutSettingsView,
+) {
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_settings_shortcut_rows(model(shortcut_rows_from_daemon(&view)));
+        }
+    });
+}
+
+pub(crate) fn apply_mcp_settings(app_weak: &slint::Weak<AppWindow>, view: frame::McpSettingsView) {
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_settings_mcp_rows(model(mcp_rows_from_daemon(&view)));
+        }
+    });
+}
+
 fn is_known_settings_section(section: &str) -> bool {
     SETTINGS_SECTION_IDS.contains(&section)
 }
@@ -452,6 +625,195 @@ fn settings_nav_entries() -> Vec<SettingsNavEntry> {
             label: shared(label),
         })
         .collect()
+}
+
+fn agent_rows_from_daemon(view: &frame::AgentSettingsViewWire) -> Vec<SettingsAgentRow> {
+    view.agents
+        .iter()
+        .map(|row| {
+            let args_label = if row.launch_args.is_empty() {
+                "No extra args".to_string()
+            } else {
+                row.launch_args.join(" ")
+            };
+            SettingsAgentRow {
+                id: shared(row.id.clone()),
+                label: shared(row.label.clone()),
+                detail: shared(format!(
+                    "Extra argv tokens passed to {} on every launch and resume.",
+                    row.label
+                )),
+                args_label: shared(args_label),
+                enabled: row.enabled,
+                default_agent: row.is_default,
+                validation: shared("Arg tokens reject empty values and whitespace."),
+                action_label: shared("Make default"),
+                action_enabled: row.enabled && !row.is_default,
+            }
+        })
+        .collect()
+}
+
+fn open_in_rows_from_daemon(view: &frame::OpenInSettingsViewWire) -> Vec<SettingsOpenInRow> {
+    view.available_apps
+        .iter()
+        .map(|row| SettingsOpenInRow {
+            id: shared(row.id.clone()),
+            label: shared(row.label.clone()),
+            detail: shared(row.description.clone()),
+            enabled: row.enabled,
+            status: shared(if row.enabled { "Enabled" } else { "Hidden" }),
+        })
+        .collect()
+}
+
+fn git_action_panels_from_daemon(
+    view: &frame::GitActionScriptsView,
+) -> Vec<SettingsGitActionPanel> {
+    vec![
+        git_action_panel_from_daemon(
+            "commit",
+            "Commit message instructions",
+            "Paste commit generation instructions here.",
+            &view.commit_script,
+            view.commit_using_default,
+        ),
+        git_action_panel_from_daemon(
+            "pull-request",
+            "PR title/body instructions",
+            "Paste PR title/body instructions here.",
+            &view.pr_script,
+            view.pr_using_default,
+        ),
+    ]
+}
+
+fn git_action_panel_from_daemon(
+    id: &str,
+    title: &str,
+    placeholder: &str,
+    script: &str,
+    using_default: bool,
+) -> SettingsGitActionPanel {
+    SettingsGitActionPanel {
+        id: shared(id),
+        title: shared(title),
+        detail: shared(if using_default {
+            "Currently using the default built-in template."
+        } else {
+            "Currently using a custom persisted template."
+        }),
+        placeholder: shared(placeholder),
+        script_preview: shared(script),
+        custom: !using_default,
+        action_enabled: !using_default,
+        status: shared(if using_default { "Default" } else { "Custom" }),
+    }
+}
+
+fn shortcut_rows_from_daemon(view: &frame::ShortcutSettingsView) -> Vec<SettingsShortcutRow> {
+    view.actions
+        .iter()
+        .map(|row| {
+            let binding = row.current_binding.trim();
+            let default_binding = row.default_binding.trim();
+            SettingsShortcutRow {
+                id: shared(row.id.clone()),
+                label: shared(row.label.clone()),
+                binding: shared(binding),
+                default_binding: shared(default_binding),
+                capturing: false,
+                status_detail: shortcut_status_detail(default_binding, false),
+                reset_enabled: binding != default_binding,
+                clear_enabled: !binding.is_empty(),
+            }
+        })
+        .collect()
+}
+
+fn mcp_rows_from_daemon(view: &frame::McpSettingsView) -> Vec<SettingsMcpRow> {
+    let catalog_ids = view
+        .catalog_entries
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<HashSet<_>>();
+    let mut rows = Vec::new();
+
+    for entry in &view.catalog_entries {
+        if let Some(server) = view
+            .registry_entries
+            .iter()
+            .find(|server| server.id == entry.id)
+        {
+            rows.push(mcp_registry_row_from_daemon(
+                server,
+                &view.sync_error_provider_ids,
+            ));
+        } else {
+            rows.push(SettingsMcpRow {
+                id: shared(entry.id.clone()),
+                label: shared(entry.label.clone()),
+                detail: shared(entry.description.clone()),
+                source: shared("catalog"),
+                provider_summary: shared("Add before syncing"),
+                installed: false,
+                action_label: shared("Add"),
+                action_enabled: true,
+                status: shared("Catalog prompt"),
+            });
+        }
+    }
+
+    rows.extend(
+        view.registry_entries
+            .iter()
+            .filter(|entry| !catalog_ids.contains(entry.id.as_str()))
+            .map(|entry| mcp_registry_row_from_daemon(entry, &view.sync_error_provider_ids)),
+    );
+
+    rows
+}
+
+fn mcp_registry_row_from_daemon(
+    row: &frame::McpServerDto,
+    sync_error_provider_ids: &[String],
+) -> SettingsMcpRow {
+    let can_remove = !matches!(row.source, frame::McpSourceDto::BuiltInDaemon);
+    let mut provider_summary = if row.enabled_for.is_empty() {
+        "Not enabled".to_string()
+    } else {
+        row.enabled_for.join(" ")
+    };
+    if !sync_error_provider_ids.is_empty() {
+        provider_summary.push_str(" · sync errors: ");
+        provider_summary.push_str(&sync_error_provider_ids.join(" "));
+    }
+
+    SettingsMcpRow {
+        id: shared(row.id.clone()),
+        label: shared(row.label.clone()),
+        detail: shared(format!("{}  ·  {}", mcp_source_label(row.source), row.id)),
+        source: shared(mcp_source_label(row.source)),
+        provider_summary: shared(provider_summary),
+        installed: true,
+        action_label: shared(if can_remove { "Remove" } else { "Built-in" }),
+        action_enabled: can_remove,
+        status: shared(
+            if matches!(row.source, frame::McpSourceDto::BuiltInDaemon) {
+                "Built-in daemon"
+            } else {
+                "Registry"
+            },
+        ),
+    }
+}
+
+fn mcp_source_label(source: frame::McpSourceDto) -> &'static str {
+    match source {
+        frame::McpSourceDto::Catalog => "catalog",
+        frame::McpSourceDto::Custom => "custom",
+        frame::McpSourceDto::BuiltInDaemon => "daemon",
+    }
 }
 
 fn settings_general_rows() -> Vec<SettingsGeneralRow> {
@@ -567,15 +929,11 @@ fn settings_git_action_panels() -> Vec<SettingsGitActionPanel> {
 
 fn settings_shortcut_rows() -> Vec<SettingsShortcutRow> {
     vec![
-        shortcut_row("cycle-projects", "Cycle Projects", "Cmd-O"),
+        shortcut_row(SETTINGS_SHORTCUT_IDS[0], "Cycle Projects", "Cmd-O"),
+        shortcut_row(SETTINGS_SHORTCUT_IDS[1], "New Tab in Current Task", "Cmd-N"),
+        shortcut_row(SETTINGS_SHORTCUT_IDS[2], "New Task", "Cmd-T"),
         shortcut_row(
-            "new-tab-in-current-task",
-            "New Tab in Current Task",
-            "Cmd-N",
-        ),
-        shortcut_row("new-task", "New Task", "Cmd-T"),
-        shortcut_row(
-            "close-current-tab",
+            SETTINGS_SHORTCUT_IDS[3],
             "Close Current Tab",
             if cfg!(target_os = "macos") {
                 "Cmd-W"
@@ -583,10 +941,10 @@ fn settings_shortcut_rows() -> Vec<SettingsShortcutRow> {
                 "Ctrl-W"
             },
         ),
-        shortcut_row("next-tab", "Next Tab", "Cmd-Shift-]"),
-        shortcut_row("previous-tab", "Previous Tab", "Cmd-Shift-["),
-        shortcut_row("next-task", "Next Task", "Cmd-Alt-Down"),
-        shortcut_row("previous-task", "Previous Task", "Cmd-Alt-Up"),
+        shortcut_row(SETTINGS_SHORTCUT_IDS[4], "Next Tab", "Cmd-Shift-]"),
+        shortcut_row(SETTINGS_SHORTCUT_IDS[5], "Previous Tab", "Cmd-Shift-["),
+        shortcut_row(SETTINGS_SHORTCUT_IDS[6], "Next Task", "Cmd-Alt-Down"),
+        shortcut_row(SETTINGS_SHORTCUT_IDS[7], "Previous Task", "Cmd-Alt-Up"),
     ]
 }
 
@@ -708,6 +1066,23 @@ fn show_settings_toast(app: &AppWindow, kind: &str, message: impl Into<SharedStr
     app.set_toast_kind(kind.into());
     app.set_toast_message(message.into());
     app.set_toast_detail("".into());
+}
+
+fn send_settings_request(
+    settings_event_tx: &mpsc::UnboundedSender<SlintClientEvent>,
+    request: Option<SettingsRequest>,
+    app: &AppWindow,
+) {
+    let Some(request) = request else {
+        return;
+    };
+
+    if settings_event_tx
+        .send(SlintClientEvent::Settings(request))
+        .is_err()
+    {
+        show_settings_toast(app, "warning", "Settings daemon channel is not available.");
+    }
 }
 
 fn shared(value: impl Into<SharedString>) -> SharedString {
@@ -870,5 +1245,68 @@ mod tests {
             .expect("filesystem MCP row");
 
         assert!(!row.action_enabled);
+    }
+
+    #[test]
+    fn daemon_agent_projection_marks_enabled_default_action_state() {
+        let view = frame::AgentSettingsViewWire {
+            agents: vec![
+                frame::AgentSettingsRowWire {
+                    id: "codex".to_string(),
+                    label: "Codex".to_string(),
+                    icon_path: "icons/codex.svg".to_string(),
+                    provider: Some(frame::AgentProvider::Codex),
+                    enabled: true,
+                    is_default: false,
+                    launch_args: vec!["--model".to_string(), "gpt".to_string()],
+                },
+                frame::AgentSettingsRowWire {
+                    id: "pi".to_string(),
+                    label: "Pi".to_string(),
+                    icon_path: "icons/pi.svg".to_string(),
+                    provider: Some(frame::AgentProvider::Pi),
+                    enabled: true,
+                    is_default: true,
+                    launch_args: Vec::new(),
+                },
+            ],
+            default_agent_id: Some("pi".to_string()),
+        };
+
+        let rows = agent_rows_from_daemon(&view);
+
+        let codex = rows.iter().find(|row| row.id == "codex").unwrap();
+        assert!(codex.action_enabled);
+        assert_eq!(codex.args_label, "--model gpt");
+        let pi = rows.iter().find(|row| row.id == "pi").unwrap();
+        assert!(!pi.action_enabled);
+        assert!(pi.default_agent);
+    }
+
+    #[test]
+    fn daemon_mcp_projection_renders_catalog_before_custom_registry() {
+        let view = frame::McpSettingsView {
+            catalog_entries: vec![frame::McpCatalogEntryDto {
+                id: "context7".to_string(),
+                label: "Context7".to_string(),
+                description: "Catalog docs server.".to_string(),
+                docs_url: "https://example.test".to_string(),
+            }],
+            registry_entries: vec![frame::McpServerDto {
+                id: "filesystem".to_string(),
+                label: "Filesystem".to_string(),
+                source: frame::McpSourceDto::BuiltInDaemon,
+                transport_kind: frame::McpTransportKindDto::Stdio,
+                enabled_for: vec!["codex".to_string()],
+            }],
+            sync_error_provider_ids: Vec::new(),
+        };
+
+        let rows = mcp_rows_from_daemon(&view);
+
+        assert_eq!(rows[0].id, "context7");
+        assert_eq!(rows[0].action_label, "Add");
+        assert_eq!(rows[1].id, "filesystem");
+        assert!(!rows[1].action_enabled);
     }
 }
