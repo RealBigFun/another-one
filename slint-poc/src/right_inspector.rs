@@ -7,11 +7,13 @@
 //! and the `InspectorCommitFileChangesState` variant tracking per-commit
 //! file-change requests.
 //!
-//! Phase A scope: pure data shapers only — no `AppWindow` mutation helpers,
-//! no daemon dispatching. The `set_right_inspector_*` functions still live
-//! in lib.rs because they couple to workspace shell wiring; they extract
-//! together with the rest of the right-inspector callbacks in a later
-//! slice.
+//! Phase A scope: pure data shapers + `AppWindow` mutators that wrap them
+//! (`set_right_inspector_loading`, `set_right_inspector_deferred`,
+//! `set_right_inspector_changes_with_collapsed`,
+//! `set_right_inspector_commits`, `set_right_inspector_error`,
+//! `set_right_inspector_state`, `set_right_inspector_compare_target`).
+//! Daemon dispatch and right-inspector callbacks remain in lib.rs because
+//! they couple to workspace shell wiring; they extract in a later slice.
 //!
 //! Port-review reference:
 //! `docs/architecture/reviews/slint-right-inspector-port-review.md`.
@@ -19,7 +21,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::{frame, RightInspectorRow};
+use crate::{frame, AppWindow, RightInspectorRow};
 
 pub(crate) const RIGHT_INSPECTOR_SECTION_ROW_HEIGHT: i32 = 44;
 pub(crate) const RIGHT_INSPECTOR_FILE_ROW_HEIGHT: i32 = 34;
@@ -553,6 +555,220 @@ fn file_name_and_parent(path: &str) -> (String, String) {
         .unwrap_or_default()
         .to_string();
     (file_name, parent)
+}
+
+pub(crate) fn set_right_inspector_loading(
+    app_weak: &slint::Weak<AppWindow>,
+    mode: &str,
+    project_id: &str,
+) {
+    let title = match mode {
+        "commits" => "Loading commits",
+        "checks" => "Loading checks",
+        _ => "Loading changes",
+    };
+    let summary = match mode {
+        "commits" => "Recent commit data is requested from the daemon.",
+        "checks" => "Pull request check data is requested from the daemon.",
+        _ => "Working-tree changes are requested from the daemon.",
+    };
+    set_right_inspector_state(
+        app_weak,
+        mode,
+        "loading",
+        title,
+        summary,
+        format!("Project: {project_id}"),
+        Vec::new(),
+    );
+}
+
+pub(crate) fn set_right_inspector_deferred(
+    app_weak: &slint::Weak<AppWindow>,
+    mode: &str,
+    project_id: &str,
+) {
+    let (title, summary) = match mode {
+        "commits" => (
+            "Commits pending",
+            "The Slint toolbar mode is in place; commit rows are the next right-inspector slice.",
+        ),
+        "checks" => (
+            "Checks pending",
+            "The Slint toolbar mode is in place; check rows are the next right-inspector slice.",
+        ),
+        _ => (
+            "Compare pending",
+            "Compare mode is tracked separately from the current Changes slice.",
+        ),
+    };
+    set_right_inspector_state(
+        app_weak,
+        mode,
+        "deferred",
+        title,
+        summary,
+        format!("Project: {project_id}"),
+        Vec::new(),
+    );
+}
+
+pub(crate) fn set_right_inspector_changes_with_collapsed(
+    app_weak: &slint::Weak<AppWindow>,
+    mode: &str,
+    project_id: &str,
+    files: Option<Vec<frame::ChangedFileWire>>,
+    collapsed_sections: &HashSet<String>,
+    pending_actions: &HashSet<String>,
+) {
+    match files {
+        None => set_right_inspector_state(
+            app_weak,
+            mode,
+            "unavailable",
+            "Changes unavailable",
+            "The daemon did not recognize the active project for changed-file lookup.",
+            format!("Project: {project_id}"),
+            Vec::new(),
+        ),
+        Some(files) if files.is_empty() => set_right_inspector_state(
+            app_weak,
+            mode,
+            "clean",
+            "Working tree clean",
+            "No staged or unstaged changes were reported by the daemon.",
+            format!("Project: {project_id}"),
+            Vec::new(),
+        ),
+        Some(files) => {
+            let (rows, summary) = right_inspector_rows_for_changed_files_with_collapsed(
+                project_id,
+                &files,
+                collapsed_sections,
+                pending_actions,
+            );
+            set_right_inspector_state(
+                app_weak,
+                mode,
+                "dirty",
+                "Working tree changes",
+                summary,
+                format!("Project: {project_id}"),
+                rows,
+            );
+        }
+    }
+}
+
+pub(crate) fn set_right_inspector_commits(
+    app_weak: &slint::Weak<AppWindow>,
+    project_id: &str,
+    view: &frame::RecentCommitsWire,
+    expanded_commits: &HashSet<String>,
+    file_change_states: &HashMap<String, InspectorCommitFileChangesState>,
+) {
+    if view.commits.is_empty() {
+        set_right_inspector_state(
+            app_weak,
+            "commits",
+            "clean",
+            "No commits yet",
+            "No commits were found on this branch.",
+            view.current_branch
+                .clone()
+                .map(|branch| format!("Branch: {branch}"))
+                .unwrap_or_else(|| format!("Project: {project_id}")),
+            Vec::new(),
+        );
+        return;
+    }
+
+    let summary = if view.has_more {
+        format!("{} commits shown; more are available.", view.commits.len())
+    } else {
+        format!("{} recent commits.", view.commits.len())
+    };
+    let detail = view
+        .current_branch
+        .clone()
+        .map(|branch| format!("Branch: {branch}"))
+        .unwrap_or_else(|| format!("Project: {project_id}"));
+    let rows = right_inspector_rows_for_commits_with_expansions(
+        project_id,
+        view,
+        expanded_commits,
+        file_change_states,
+    );
+    set_right_inspector_state(
+        app_weak,
+        "commits",
+        "dirty",
+        "Recent commits",
+        summary,
+        detail,
+        rows,
+    );
+}
+
+pub(crate) fn set_right_inspector_error(
+    app_weak: &slint::Weak<AppWindow>,
+    mode: &str,
+    project_id: &str,
+    message: impl Into<String>,
+) {
+    set_right_inspector_state(
+        app_weak,
+        mode,
+        "error",
+        "Inspector request failed",
+        message.into(),
+        format!("Project: {project_id}"),
+        Vec::new(),
+    );
+}
+
+pub(crate) fn set_right_inspector_state(
+    app_weak: &slint::Weak<AppWindow>,
+    mode: impl Into<String>,
+    state: impl Into<String>,
+    title: impl Into<String>,
+    summary: impl Into<String>,
+    detail: impl Into<String>,
+    rows: Vec<RightInspectorRow>,
+) {
+    let app_weak = app_weak.clone();
+    let mode = mode.into();
+    let state = state.into();
+    let title = title.into();
+    let summary = summary.into();
+    let detail = detail.into();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_right_inspector_mode(mode.into());
+            app.set_right_inspector_state(state.into());
+            app.set_right_inspector_title(title.into());
+            app.set_right_inspector_summary(summary.into());
+            app.set_right_inspector_detail(detail.into());
+            app.set_right_inspector_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+        }
+    });
+}
+
+pub(crate) fn set_right_inspector_compare_target(
+    app_weak: &slint::Weak<AppWindow>,
+    target_branch: Option<String>,
+) {
+    let app_weak = app_weak.clone();
+    let available = target_branch
+        .as_deref()
+        .is_some_and(|target| !target.trim().is_empty());
+    let target_branch = target_branch.unwrap_or_default();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_right_inspector_compare_available(available);
+            app.set_right_inspector_compare_target(target_branch.into());
+        }
+    });
 }
 
 #[cfg(test)]
