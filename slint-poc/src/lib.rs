@@ -26,6 +26,7 @@ mod platform;
 mod right_inspector;
 mod settings;
 mod style;
+mod terminal_target;
 mod titlebar;
 mod toast;
 mod util;
@@ -43,6 +44,11 @@ use right_inspector::{
 use right_inspector::{
     right_inspector_rows_for_changed_files_with_collapsed,
     right_inspector_rows_for_commits_with_expansions,
+};
+use terminal_target::{
+    active_project_id_for_open_in, first_attachable_target, normalized_source_branch,
+    project_id_for_target, target_for_tab_id, target_for_task_id, target_still_exists,
+    TerminalTarget,
 };
 use titlebar::{build_chip_label, debug_banner_text, set_open_in_state, set_open_in_unavailable};
 use toast::{clear_toast, set_toast, toast_clipboard_text};
@@ -872,12 +878,6 @@ struct WorkspaceShellModel {
     project_summary: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TerminalTarget {
-    section_id: String,
-    tab_id: String,
-}
-
 type ProjectGithubUrls = HashMap<String, Option<String>>;
 
 fn set_workspace_tree(
@@ -1405,126 +1405,6 @@ fn sidebar_tree_rows(
     }
 
     rows
-}
-
-fn first_attachable_target(projects: &[frame::ProjectSummary]) -> Option<TerminalTarget> {
-    projects
-        .iter()
-        .find_map(|project| project.tasks.iter().find_map(target_for_task))
-}
-
-fn target_for_task_id(projects: &[frame::ProjectSummary], task_id: &str) -> Option<TerminalTarget> {
-    projects
-        .iter()
-        .flat_map(|project| &project.tasks)
-        .find(|task| task.id == task_id)
-        .and_then(target_for_task)
-}
-
-fn target_for_tab_id(
-    projects: &[frame::ProjectSummary],
-    active_section_id: &str,
-    tab_id: &str,
-) -> Option<TerminalTarget> {
-    projects
-        .iter()
-        .flat_map(|project| &project.tasks)
-        .find(|task| {
-            task.section_id == active_section_id && task.tabs.iter().any(|tab| tab.id == tab_id)
-        })
-        .or_else(|| {
-            projects
-                .iter()
-                .flat_map(|project| &project.tasks)
-                .find(|task| task.tabs.iter().any(|tab| tab.id == tab_id))
-        })
-        .map(|task| TerminalTarget {
-            section_id: task.section_id.clone(),
-            tab_id: tab_id.to_string(),
-        })
-}
-
-fn target_still_exists(projects: &[frame::ProjectSummary], target: &TerminalTarget) -> bool {
-    projects.iter().any(|project| {
-        project.tasks.iter().any(|task| {
-            task.section_id == target.section_id
-                && task.tabs.iter().any(|tab| tab.id == target.tab_id)
-        })
-    })
-}
-
-fn project_id_for_target(
-    projects: &[frame::ProjectSummary],
-    target: &TerminalTarget,
-) -> Option<String> {
-    task_project_for_target(projects, target).map(|(project, task)| {
-        if task.target_project_id.is_empty() {
-            project.id.clone()
-        } else {
-            task.target_project_id.clone()
-        }
-    })
-}
-
-fn active_project_id_for_open_in(
-    projects: &[frame::ProjectSummary],
-    target: &TerminalTarget,
-    selected_project_id: &str,
-) -> Option<String> {
-    let selected_project_id = selected_project_id.trim();
-    if !selected_project_id.is_empty()
-        && projects
-            .iter()
-            .any(|project| project.id == selected_project_id)
-    {
-        return Some(selected_project_id.to_string());
-    }
-
-    project_id_for_target(projects, target)
-}
-
-fn normalized_source_branch(
-    projects: &[frame::ProjectSummary],
-    target: &TerminalTarget,
-    requested_branch: &str,
-) -> Option<String> {
-    let requested_branch = requested_branch.trim();
-    if !requested_branch.is_empty() {
-        return Some(requested_branch.to_string());
-    }
-
-    task_project_for_target(projects, target).and_then(|(project, task)| {
-        if !task.branch_name.is_empty() {
-            Some(task.branch_name.clone())
-        } else {
-            project.current_branch.clone()
-        }
-    })
-}
-
-fn task_project_for_target<'a>(
-    projects: &'a [frame::ProjectSummary],
-    target: &TerminalTarget,
-) -> Option<(&'a frame::ProjectSummary, &'a frame::TaskSummary)> {
-    projects.iter().find_map(|project| {
-        project
-            .tasks
-            .iter()
-            .find(|task| task.section_id == target.section_id)
-            .map(|task| (project, task))
-    })
-}
-
-fn target_for_task(task: &frame::TaskSummary) -> Option<TerminalTarget> {
-    let tab = task
-        .tabs
-        .iter()
-        .find(|tab| tab.id == task.active_tab_id)
-        .or_else(|| task.tabs.first())?;
-    Some(TerminalTarget {
-        section_id: task.section_id.clone(),
-        tab_id: tab.id.clone(),
-    })
 }
 
 fn spawn_terminal_worker(
