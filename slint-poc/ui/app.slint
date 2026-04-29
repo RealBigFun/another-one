@@ -50,6 +50,13 @@ import {
     SettingsView,
 } from "settings.slint";
 
+import {
+    AoActionModal,
+    AoMenuPopover,
+    AoNewTaskModal,
+    AoResourcePopover,
+} from "overlays.slint";
+
 export struct TerminalTextRun {
     line: int,
     column: int,
@@ -111,6 +118,14 @@ export component AppWindow inherits Window {
     in-out property <bool> left_sidebar_open: true;
     in-out property <bool> right_inspector_open: true;
     in-out property <bool> resource_popover_open: false;
+    in-out property <bool> titlebar_actions_menu_open: false;
+    in-out property <bool> titlebar_open_in_menu_open: false;
+    in-out property <bool> sidebar_project_menu_open: false;
+    in-out property <bool> sidebar_task_menu_open: false;
+    in-out property <length> sidebar_menu_y: 0px;
+    in-out property <string> sidebar_menu_target_id: "";
+    in-out property <bool> action_modal_open: false;
+    in-out property <string> action_modal_title: "Add Action";
     in-out property <string> terminal_status: "terminal: waiting for daemon-sandbox ticket";
     in-out property <string> active_project_name: "another-one";
     in-out property <string> active_task_name: "Slint migration";
@@ -144,6 +159,8 @@ export component AppWindow inherits Window {
     in-out property <string> new_task_name: "";
     in-out property <string> new_task_branch: "";
     in-out property <string> new_task_project_id: "";
+    in-out property <string> action_name: "";
+    in-out property <string> action_command: "";
     in-out property <string> toast_kind: "info";
     in-out property <string> toast_message: "";
     in-out property <string> toast_detail: "";
@@ -287,6 +304,17 @@ export component AppWindow inherits Window {
                 hover-bg: overlay_hover;
                 border: border_color;
                 text-color: text_primary;
+                clicked => {
+                    root.titlebar_actions_menu_open = false;
+                    root.titlebar_open_in_menu_open = false;
+                    root.action_modal_title = "Add Action";
+                    root.action_modal_open = true;
+                }
+                menu-clicked => {
+                    root.resource_popover_open = false;
+                    root.titlebar_open_in_menu_open = false;
+                    root.titlebar_actions_menu_open = !root.titlebar_actions_menu_open;
+                }
             }
 
             if !root.mobile-layout: AoButton {
@@ -299,6 +327,11 @@ export component AppWindow inherits Window {
                 hover-bg: overlay_hover;
                 border: border_color;
                 text-color: text_secondary;
+                clicked => {
+                    root.resource_popover_open = false;
+                    root.titlebar_actions_menu_open = false;
+                    root.titlebar_open_in_menu_open = !root.titlebar_open_in_menu_open;
+                }
             }
 
             if !root.mobile-layout: AoResourceIndicator {
@@ -320,6 +353,8 @@ export component AppWindow inherits Window {
                 width: 184px;
                 height: 24px;
                 clicked => {
+                    root.titlebar_actions_menu_open = false;
+                    root.titlebar_open_in_menu_open = false;
                     root.resource_popover_open = !root.resource_popover_open;
                 }
             }
@@ -400,6 +435,15 @@ export component AppWindow inherits Window {
                     clicked(project-id) => {
                         root.project_selected(project-id);
                     }
+                    menu-clicked(project-id) => {
+                        root.titlebar_actions_menu_open = false;
+                        root.titlebar_open_in_menu_open = false;
+                        root.resource_popover_open = false;
+                        root.sidebar_task_menu_open = false;
+                        root.sidebar_project_menu_open = !root.sidebar_project_menu_open || root.sidebar_menu_target_id != project-id;
+                        root.sidebar_menu_target_id = project-id;
+                        root.sidebar_menu_y = row.row-y * 1px + root.body-top;
+                    }
                     add-clicked(project-id) => {
                         root.new_task_project_id = project-id;
                         root.modal_open = true;
@@ -425,6 +469,27 @@ export component AppWindow inherits Window {
                     warning-color: root.warning_color;
                     clicked(task-id) => {
                         root.task_selected(task-id);
+                    }
+                    menu-clicked(task-id) => {
+                        root.titlebar_actions_menu_open = false;
+                        root.titlebar_open_in_menu_open = false;
+                        root.resource_popover_open = false;
+                        root.sidebar_project_menu_open = false;
+                        root.sidebar_task_menu_open = !root.sidebar_task_menu_open || root.sidebar_menu_target_id != task-id;
+                        root.sidebar_menu_target_id = task-id;
+                        root.sidebar_menu_y = row.row-y * 1px + root.body-top;
+                    }
+                    rename-clicked(task-id) => {
+                        root.sidebar_task_menu_open = false;
+                        root.toast_kind = "info";
+                        root.toast_message = "Rename is handled inline in GPUI";
+                        root.toast_detail = task-id;
+                    }
+                    delete-clicked(task-id) => {
+                        root.sidebar_task_menu_open = false;
+                        root.toast_kind = "warning";
+                        root.toast_message = "Delete confirmation is routed through a modal";
+                        root.toast_detail = task-id;
                     }
                 }
             }
@@ -1277,55 +1342,152 @@ export component AppWindow inherits Window {
         }
 
         if resource_popover_open && !component_fixture_mode: Rectangle {
-            x: max(12px, parent.width - 372px);
-            y: titlebar-height + 12px;
-            width: 360px;
-            height: 230px;
-            border-radius: 16px;
-            border-width: 1px;
-            border-color: border_color;
-            background: card_bg;
+            width: parent.width;
+            height: parent.height;
+            background: transparent;
 
-            Text {
-                x: 18px;
-                y: 16px;
-                text: "RESOURCE USAGE";
-                color: text_muted;
-                font-family: "Lilex Nerd Font Mono";
-                font-size: 11px;
-                font-weight: 600;
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => {
+                    root.resource_popover_open = false;
+                }
             }
 
-            AoStateCard {
-                x: 16px;
-                y: 44px;
-                width: parent.width - 32px;
-                title: "App shell";
-                body: resource_summary;
-                state: "populated";
-                card-bg: terminal_bg;
-                card-border-color: border_color;
-                text-primary: text_primary;
-                text-muted: text_muted;
-                success-color: success_color;
-                warning-color: warning_color;
-                danger-color: danger_color;
+            AoResourcePopover {
+                x: max(12px, parent.width - 372px);
+                y: titlebar-height + 12px;
+                summary: root.resource_summary;
+                card-bg: root.card_bg;
+                terminal-bg: root.terminal_bg;
+                overlay-border-color: root.border_color;
+                text-primary: root.text_primary;
+                text-muted: root.text_muted;
+                success-color: root.success_color;
+                warning-color: root.warning_color;
+                danger-color: root.danger_color;
+                refresh-requested => {
+                    root.toast_kind = "info";
+                    root.toast_message = "Resource usage refresh requested";
+                    root.toast_detail = "";
+                }
             }
+        }
 
-            AoStateCard {
-                x: 16px;
-                y: 154px;
-                width: parent.width - 32px;
-                title: "Terminal sessions";
-                body: "Subprocess CPU/RSS is tracked separately by daemon session.";
-                state: "loading";
-                card-bg: terminal_bg;
-                card-border-color: border_color;
-                text-primary: text_primary;
-                text-muted: text_muted;
-                success-color: success_color;
-                warning-color: warning_color;
-                danger-color: danger_color;
+        if titlebar_actions_menu_open && !component_fixture_mode: AoMenuPopover {
+            width: parent.width;
+            height: parent.height;
+            menu-x: max(12px, parent.width - 632px);
+            menu-y: titlebar-height + 8px;
+            menu-width: 260px;
+            menu-height: 136px;
+            entries: root.fixture_menu_entries;
+            card-bg: root.card_bg;
+            overlay-border-color: root.border_color;
+            overlay-hover: root.overlay_hover;
+            overlay-active: root.overlay_active;
+            text-primary: root.text_primary;
+            text-muted: root.text_muted;
+            danger-color: root.danger_color;
+            focus-ring: root.focus_ring;
+            dismissed => {
+                root.titlebar_actions_menu_open = false;
+            }
+            item-selected(id) => {
+                root.titlebar_actions_menu_open = false;
+                root.action_modal_title = id == "pin" ? "Edit Action" : "Add Action";
+                root.action_modal_open = true;
+            }
+        }
+
+        if titlebar_open_in_menu_open && !component_fixture_mode: AoMenuPopover {
+            width: parent.width;
+            height: parent.height;
+            menu-x: max(12px, parent.width - 374px);
+            menu-y: titlebar-height + 8px;
+            menu-width: 240px;
+            menu-height: 104px;
+            entries: root.fixture_menu_entries;
+            card-bg: root.card_bg;
+            overlay-border-color: root.border_color;
+            overlay-hover: root.overlay_hover;
+            overlay-active: root.overlay_active;
+            text-primary: root.text_primary;
+            text-muted: root.text_muted;
+            danger-color: root.danger_color;
+            focus-ring: root.focus_ring;
+            dismissed => {
+                root.titlebar_open_in_menu_open = false;
+            }
+            item-selected(id) => {
+                root.titlebar_open_in_menu_open = false;
+                root.toast_kind = "info";
+                root.toast_message = "Open In action selected";
+                root.toast_detail = id;
+            }
+        }
+
+        if sidebar_project_menu_open && !component_fixture_mode: AoMenuPopover {
+            width: parent.width;
+            height: parent.height;
+            menu-x: sidebar-width - 4px;
+            menu-y: max(titlebar-height + 8px, root.sidebar_menu_y);
+            menu-width: 248px;
+            menu-height: 136px;
+            entries: root.fixture_menu_entries;
+            card-bg: root.card_bg;
+            overlay-border-color: root.border_color;
+            overlay-hover: root.overlay_hover;
+            overlay-active: root.overlay_active;
+            text-primary: root.text_primary;
+            text-muted: root.text_muted;
+            danger-color: root.danger_color;
+            focus-ring: root.focus_ring;
+            dismissed => {
+                root.sidebar_project_menu_open = false;
+            }
+            item-selected(id) => {
+                root.sidebar_project_menu_open = false;
+                if id == "open" {
+                    root.project_selected(root.sidebar_menu_target_id);
+                }
+                if id == "delete" {
+                    root.toast_kind = "warning";
+                    root.toast_message = "Project removal requires confirmation";
+                    root.toast_detail = root.sidebar_menu_target_id;
+                }
+            }
+        }
+
+        if sidebar_task_menu_open && !component_fixture_mode: AoMenuPopover {
+            width: parent.width;
+            height: parent.height;
+            menu-x: sidebar-width - 4px;
+            menu-y: max(titlebar-height + 8px, root.sidebar_menu_y);
+            menu-width: 248px;
+            menu-height: 136px;
+            entries: root.fixture_menu_entries;
+            card-bg: root.card_bg;
+            overlay-border-color: root.border_color;
+            overlay-hover: root.overlay_hover;
+            overlay-active: root.overlay_active;
+            text-primary: root.text_primary;
+            text-muted: root.text_muted;
+            danger-color: root.danger_color;
+            focus-ring: root.focus_ring;
+            dismissed => {
+                root.sidebar_task_menu_open = false;
+            }
+            item-selected(id) => {
+                root.sidebar_task_menu_open = false;
+                if id == "open" {
+                    root.task_selected(root.sidebar_menu_target_id);
+                }
+                if id == "delete" {
+                    root.toast_kind = "warning";
+                    root.toast_message = "Delete confirmation is routed through a modal";
+                    root.toast_detail = root.sidebar_menu_target_id;
+                }
             }
         }
 
@@ -1644,120 +1806,59 @@ export component AppWindow inherits Window {
             }
         }
 
-        if modal_open && !component_fixture_mode: Rectangle {
+        if modal_open && !component_fixture_mode: AoNewTaskModal {
             width: parent.width;
             height: parent.height;
-            background: #00000080;
-            property <length> modal-width: min(440px, parent.width - 32px);
-            property <length> modal-height: 260px;
+            task-name <=> root.new_task_name;
+            branch-name <=> root.new_task_branch;
+            project-id: root.new_task_project_id;
+            card-bg: root.card_bg;
+            terminal-bg: root.terminal_bg;
+            overlay-active: root.overlay_active;
+            overlay-hover: root.overlay_hover;
+            overlay-border-color: root.border_color;
+            focus-ring: root.focus_ring;
+            text-primary: root.text_primary;
+            text-secondary: root.text_secondary;
+            text-muted: root.text_muted;
+            danger-color: root.danger_color;
+            dismissed => {
+                root.modal_open = false;
+                root.new_task_project_id = "";
+            }
+            submitted(task_name, branch_name, project_id) => {
+                root.submit_new_task(task_name, branch_name, project_id);
+                root.modal_open = false;
+                root.new_task_name = "";
+                root.new_task_branch = "";
+                root.new_task_project_id = "";
+            }
+        }
 
-            AoModalCard {
-                x: (parent.width - parent.modal-width) / 2;
-                y: (parent.height - parent.modal-height) / 2;
-                width: parent.modal-width;
-                height: parent.modal-height;
-                card-bg: card_bg;
-                card-border-color: focus_ring;
-
-                Text {
-                    x: 24px;
-                    y: 22px;
-                    text: "New task";
-                    color: text_primary;
-                    font-family: "Lilex Nerd Font Mono";
-                    font-size: 20px;
-                    font-weight: 700;
-                }
-
-                AoAssetIconButton {
-                    x: parent.width - 50px;
-                    y: 20px;
-                    width: 30px;
-                    icon-source: @image-url("../../desktop/assets/icons/icons__close.svg");
-                    control-label: "Close new task modal";
-                    bg: root.overlay_active;
-                    hover-bg: root.overlay_hover;
-                    border: root.border_color;
-                    icon-color: root.text_secondary;
-                    clicked => {
-                        root.modal_open = false;
-                        root.new_task_project_id = "";
-                    }
-                }
-
-                Text {
-                    x: 24px;
-                    y: 56px;
-                    text: "Slint shell modal matching the GPUI task creation surface.";
-                    color: text_muted;
-                    font-family: "Lilex Nerd Font Mono";
-                    font-size: 12px;
-                }
-
-                AoTextInput {
-                    x: 24px;
-                    y: 92px;
-                    width: parent.width - 48px;
-                    placeholder-text: "Task name";
-                    text <=> root.new_task_name;
-                    field-bg: terminal_bg;
-                    field-border: border_color;
-                    focus-border: focus_ring;
-                    error-color: danger_color;
-                    text-color: text_primary;
-                    placeholder-color: text_muted;
-                    error: root.new_task_name == "";
-                }
-
-                AoTextInput {
-                    x: 24px;
-                    y: 142px;
-                    width: parent.width - 48px;
-                    placeholder-text: "Branch name";
-                    text <=> root.new_task_branch;
-                    field-bg: terminal_bg;
-                    field-border: border_color;
-                    focus-border: focus_ring;
-                    error-color: danger_color;
-                    text-color: text_primary;
-                    placeholder-color: text_muted;
-                }
-
-                AoButton {
-                    x: parent.width - 238px;
-                    y: 198px;
-                    width: 102px;
-                    label: "Cancel";
-                    active: false;
-                    bg: overlay_active;
-                    hover-bg: overlay_hover;
-                    border: border_color;
-                    text-color: text_secondary;
-                    clicked => {
-                        root.modal_open = false;
-                        root.new_task_project_id = "";
-                    }
-                }
-
-                AoButton {
-                    x: parent.width - 126px;
-                    y: 198px;
-                    width: 102px;
-                    label: "Create";
-                    active: true;
-                    disabled: root.new_task_name == "";
-                    bg: overlay_active;
-                    hover-bg: overlay_hover;
-                    border: border_color;
-                    text-color: text_primary;
-                    clicked => {
-                        root.submit_new_task(root.new_task_name, root.new_task_branch, root.new_task_project_id);
-                        root.modal_open = false;
-                        root.new_task_name = "";
-                        root.new_task_branch = "";
-                        root.new_task_project_id = "";
-                    }
-                }
+        if action_modal_open && !component_fixture_mode: AoActionModal {
+            width: parent.width;
+            height: parent.height;
+            title: root.action_modal_title;
+            action-name <=> root.action_name;
+            action-command <=> root.action_command;
+            card-bg: root.card_bg;
+            terminal-bg: root.terminal_bg;
+            overlay-active: root.overlay_active;
+            overlay-hover: root.overlay_hover;
+            overlay-border-color: root.border_color;
+            focus-ring: root.focus_ring;
+            text-primary: root.text_primary;
+            text-secondary: root.text_secondary;
+            text-muted: root.text_muted;
+            danger-color: root.danger_color;
+            dismissed => {
+                root.action_modal_open = false;
+            }
+            saved(name, command) => {
+                root.action_modal_open = false;
+                root.toast_kind = "success";
+                root.toast_message = "Action saved";
+                root.toast_detail = name + (command == "" ? "" : " / " + command);
             }
         }
 

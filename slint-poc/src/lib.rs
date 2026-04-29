@@ -22,6 +22,7 @@ use tokio::time::Instant;
 
 slint::include_modules!();
 
+mod overlays;
 mod platform;
 mod settings;
 mod style;

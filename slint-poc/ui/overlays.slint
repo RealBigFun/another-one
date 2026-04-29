@@ -1,0 +1,409 @@
+import {
+    AoAssetIconButton,
+    AoButton,
+    AoMenu,
+    AoModalCard,
+    AoStateCard,
+    AoTextInput,
+    MenuEntry,
+} from "components.slint";
+
+export component AoMenuPopover inherits Rectangle {
+    in property <length> menu-x;
+    in property <length> menu-y;
+    in property <length> menu-width: 260px;
+    in property <length> menu-height: 136px;
+    in property <[MenuEntry]> entries;
+    in property <color> card-bg;
+    in property <color> overlay-border-color;
+    in property <color> overlay-hover;
+    in property <color> overlay-active;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> danger-color;
+    in property <color> focus-ring;
+    callback dismissed();
+    callback item-selected(string);
+
+    background: transparent;
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.dismissed();
+        }
+    }
+
+    AoMenu {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: root.menu-width;
+        height: root.menu-height;
+        entries: root.entries;
+        card-bg: root.card-bg;
+        menu-border-color: root.overlay-border-color;
+        overlay-hover: root.overlay-hover;
+        overlay-active: root.overlay-active;
+        text-primary: root.text-primary;
+        text-muted: root.text-muted;
+        danger-color: root.danger-color;
+        focus-ring: root.focus-ring;
+        item-clicked(id) => {
+            root.item-selected(id);
+        }
+    }
+}
+
+export component AoResourcePopover inherits Rectangle {
+    in property <string> summary;
+    in property <color> card-bg;
+    in property <color> terminal-bg;
+    in property <color> overlay-border-color;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> success-color;
+    in property <color> warning-color;
+    in property <color> danger-color;
+    callback refresh-requested();
+
+    width: 360px;
+    height: 230px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: root.overlay-border-color;
+    background: root.card-bg;
+
+    Text {
+        x: 18px;
+        y: 16px;
+        text: "RESOURCE USAGE";
+        color: root.text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    AoAssetIconButton {
+        x: parent.width - 44px;
+        y: 12px;
+        width: 28px;
+        icon-source: @image-url("../../desktop/assets/icons/icons__refresh.svg");
+        control-label: "Refresh resource usage";
+        bg: root.card-bg;
+        hover-bg: root.overlay-border-color;
+        border: root.overlay-border-color;
+        icon-color: root.text-muted;
+        clicked => {
+            root.refresh-requested();
+        }
+    }
+
+    AoStateCard {
+        x: 16px;
+        y: 44px;
+        width: parent.width - 32px;
+        title: "App shell";
+        body: root.summary;
+        state: "populated";
+        card-bg: root.terminal-bg;
+        card-border-color: root.overlay-border-color;
+        text-primary: root.text-primary;
+        text-muted: root.text-muted;
+        success-color: root.success-color;
+        warning-color: root.warning-color;
+        danger-color: root.danger-color;
+    }
+
+    AoStateCard {
+        x: 16px;
+        y: 154px;
+        width: parent.width - 32px;
+        title: "Terminal sessions";
+        body: "Subprocess CPU/RSS is tracked separately by daemon session.";
+        state: "loading";
+        card-bg: root.terminal-bg;
+        card-border-color: root.overlay-border-color;
+        text-primary: root.text-primary;
+        text-muted: root.text-muted;
+        success-color: root.success-color;
+        warning-color: root.warning-color;
+        danger-color: root.danger-color;
+    }
+}
+
+export component AoNewTaskModal inherits Rectangle {
+    in-out property <string> task-name;
+    in-out property <string> branch-name;
+    in property <string> project-id;
+    in property <color> card-bg;
+    in property <color> terminal-bg;
+    in property <color> overlay-active;
+    in property <color> overlay-hover;
+    in property <color> overlay-border-color;
+    in property <color> focus-ring;
+    in property <color> text-primary;
+    in property <color> text-secondary;
+    in property <color> text-muted;
+    in property <color> danger-color;
+    callback dismissed();
+    callback submitted(string, string, string);
+
+    background: #00000080;
+    property <length> modal-width: min(440px, root.width - 32px);
+    property <length> modal-height: 260px;
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.dismissed();
+        }
+    }
+
+    AoModalCard {
+        x: (parent.width - root.modal-width) / 2;
+        y: (parent.height - root.modal-height) / 2;
+        width: root.modal-width;
+        height: root.modal-height;
+        card-bg: root.card-bg;
+        card-border-color: root.focus-ring;
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+        }
+
+        Text {
+            x: 24px;
+            y: 22px;
+            text: "New task";
+            color: root.text-primary;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        AoAssetIconButton {
+            x: parent.width - 50px;
+            y: 20px;
+            width: 30px;
+            icon-source: @image-url("../../desktop/assets/icons/icons__close.svg");
+            control-label: "Close new task modal";
+            bg: root.overlay-active;
+            hover-bg: root.overlay-hover;
+            border: root.overlay-border-color;
+            icon-color: root.text-secondary;
+            clicked => {
+                root.dismissed();
+            }
+        }
+
+        Text {
+            x: 24px;
+            y: 56px;
+            text: "Create a task/worktree from the active project context.";
+            color: root.text-muted;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 12px;
+        }
+
+        AoTextInput {
+            x: 24px;
+            y: 92px;
+            width: parent.width - 48px;
+            placeholder-text: "Task name";
+            text <=> root.task-name;
+            field-bg: root.terminal-bg;
+            field-border: root.overlay-border-color;
+            focus-border: root.focus-ring;
+            error-color: root.danger-color;
+            text-color: root.text-primary;
+            placeholder-color: root.text-muted;
+            error: root.task-name == "";
+        }
+
+        AoTextInput {
+            x: 24px;
+            y: 142px;
+            width: parent.width - 48px;
+            placeholder-text: "Branch name";
+            text <=> root.branch-name;
+            field-bg: root.terminal-bg;
+            field-border: root.overlay-border-color;
+            focus-border: root.focus-ring;
+            error-color: root.danger-color;
+            text-color: root.text-primary;
+            placeholder-color: root.text-muted;
+        }
+
+        AoButton {
+            x: parent.width - 238px;
+            y: 198px;
+            width: 102px;
+            label: "Cancel";
+            active: false;
+            bg: root.overlay-active;
+            hover-bg: root.overlay-hover;
+            border: root.overlay-border-color;
+            text-color: root.text-secondary;
+            clicked => {
+                root.dismissed();
+            }
+        }
+
+        AoButton {
+            x: parent.width - 126px;
+            y: 198px;
+            width: 102px;
+            label: "Create";
+            active: true;
+            disabled: root.task-name == "";
+            bg: root.overlay-active;
+            hover-bg: root.overlay-hover;
+            border: root.overlay-border-color;
+            text-color: root.text-primary;
+            clicked => {
+                root.submitted(root.task-name, root.branch-name, root.project-id);
+            }
+        }
+    }
+}
+
+export component AoActionModal inherits Rectangle {
+    in property <string> title: "Add Action";
+    in-out property <string> action-name;
+    in-out property <string> action-command;
+    in property <color> card-bg;
+    in property <color> terminal-bg;
+    in property <color> overlay-active;
+    in property <color> overlay-hover;
+    in property <color> overlay-border-color;
+    in property <color> focus-ring;
+    in property <color> text-primary;
+    in property <color> text-secondary;
+    in property <color> text-muted;
+    in property <color> danger-color;
+    callback dismissed();
+    callback saved(string, string);
+
+    background: #00000080;
+    property <length> modal-width: min(520px, root.width - 32px);
+    property <length> modal-height: 310px;
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.dismissed();
+        }
+    }
+
+    AoModalCard {
+        x: (parent.width - root.modal-width) / 2;
+        y: (parent.height - root.modal-height) / 2;
+        width: root.modal-width;
+        height: root.modal-height;
+        card-bg: root.card-bg;
+        card-border-color: root.focus-ring;
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+        }
+
+        Text {
+            x: 24px;
+            y: 22px;
+            text: root.title;
+            color: root.text-primary;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        AoAssetIconButton {
+            x: parent.width - 50px;
+            y: 20px;
+            width: 30px;
+            icon-source: @image-url("../../desktop/assets/icons/icons__close.svg");
+            control-label: "Close action modal";
+            bg: root.overlay-active;
+            hover-bg: root.overlay-hover;
+            border: root.overlay-border-color;
+            icon-color: root.text-secondary;
+            clicked => {
+                root.dismissed();
+            }
+        }
+
+        Text {
+            x: 24px;
+            y: 58px;
+            text: "Configure the action label and shell command. Command+Enter saves in GPUI.";
+            color: root.text-muted;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 12px;
+        }
+
+        AoTextInput {
+            x: 24px;
+            y: 98px;
+            width: parent.width - 48px;
+            placeholder-text: "Action name";
+            text <=> root.action-name;
+            field-bg: root.terminal-bg;
+            field-border: root.overlay-border-color;
+            focus-border: root.focus-ring;
+            error-color: root.danger-color;
+            text-color: root.text-primary;
+            placeholder-color: root.text-muted;
+            error: root.action-name == "";
+        }
+
+        AoTextInput {
+            x: 24px;
+            y: 148px;
+            width: parent.width - 48px;
+            placeholder-text: "Command";
+            text <=> root.action-command;
+            field-bg: root.terminal-bg;
+            field-border: root.overlay-border-color;
+            focus-border: root.focus-ring;
+            error-color: root.danger-color;
+            text-color: root.text-primary;
+            placeholder-color: root.text-muted;
+        }
+
+        AoButton {
+            x: parent.width - 238px;
+            y: 248px;
+            width: 102px;
+            label: "Cancel";
+            active: false;
+            bg: root.overlay-active;
+            hover-bg: root.overlay-hover;
+            border: root.overlay-border-color;
+            text-color: root.text-secondary;
+            clicked => {
+                root.dismissed();
+            }
+        }
+
+        AoButton {
+            x: parent.width - 126px;
+            y: 248px;
+            width: 102px;
+            label: "Save";
+            active: true;
+            disabled: root.action-name == "";
+            bg: root.overlay-active;
+            hover-bg: root.overlay-hover;
+            border: root.overlay-border-color;
+            text-color: root.text-primary;
+            clicked => {
+                root.saved(root.action-name, root.action-command);
+            }
+        }
+    }
+}
