@@ -165,6 +165,7 @@ export component AppWindow inherits Window {
     in-out property <string> appearance_label: "dark";
     in-out property <string> appearance_preference_label: "system";
     in-out property <string> platform_label: "linux / keyboard";
+    in-out property <bool> platform_folder_picker_available: true;
     in-out property <string> new_task_name: "";
     in-out property <string> new_task_branch: "";
     in-out property <string> new_task_project_id: "";
@@ -1374,7 +1375,7 @@ export component AppWindow inherits Window {
                 }
             }
 
-            AoAssetIconButton {
+            if root.platform_folder_picker_available: AoAssetIconButton {
                 x: 44px;
                 y: 6px;
                 width: 26px;

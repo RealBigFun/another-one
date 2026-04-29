@@ -21,6 +21,12 @@ tokio = { version = "1", features = ["io-util", "rt-multi-thread", "sync", "time
 # GPUI enables yeslogic-fontconfig-sys/dlopen in the workspace. Mirror that
 # through fontique so Slint's normal dependency graph uses the dlopen path too.
 fontique = { version = "0.8.0", default-features = false, features = ["fontconfig-dlopen"] }
+futures-util = "0.3"
+percent-encoding = "2"
+zbus = { version = "5.15.0", default-features = false, features = ["tokio", "url"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rfd = "0.17.2"
 
 [package.metadata.android]
 package = "com.anotherone.slint"

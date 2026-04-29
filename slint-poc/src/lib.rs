@@ -228,6 +228,7 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     app.set_debug_banner_text(debug_banner_text().into());
     style::apply_theme(&app);
     app.set_platform_label(platform_profile.label().into());
+    app.set_platform_folder_picker_available(platform_profile.folder_picker);
     settings::seed_settings_model(&app);
     seed_shell_model(&app);
     seed_visual_state_fixture(&app);
@@ -6156,6 +6157,8 @@ mod tests {
         assert!(app_source.contains("icons__git-split.svg"));
         assert!(app_source.contains("callback add_project_requested();"));
         assert!(app_source.contains("root.add_project_requested();"));
+        assert!(app_source.contains("platform_folder_picker_available"));
+        assert!(app_source.contains("if root.platform_folder_picker_available"));
         assert!(!app_source.contains("label: layout_label;"));
         assert!(!app_source.contains("\"theme \" + appearance_preference_label"));
         assert!(!app_source.contains("label: platform_label;"));

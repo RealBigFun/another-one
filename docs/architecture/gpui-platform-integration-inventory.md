@@ -13,6 +13,7 @@ This inventory records the GPUI platform behavior Slint must preserve or replace
 | Keyboard modifier labels | `core/src/platform/mod.rs`, shortcuts/settings UI | Slint input profile |
 | Terminal input policy | GPUI event handling plus terminal runtime | Slint input profile and daemon `Control::TabInput` |
 | Toast/error surfaces | `desktop/src/app.rs` | Slint toast component and app-level toast route |
+| Project folder picker | GPUI platform services | Slint platform profile `folder_picker`; Linux uses XDG Desktop Portal FileChooser, macOS uses native panel |
 | Android/iOS packaging | not GPUI-owned | Slint build/profile metadata |
 | System appearance | GPUI `WindowAppearance` | Slint appearance profile |
 

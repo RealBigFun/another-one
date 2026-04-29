@@ -18,8 +18,13 @@ pub(crate) struct SlintPlatformProfile {
     pub(crate) mobile: bool,
     pub(crate) input_policy: SlintInputPolicy,
     pub(crate) window_label: &'static str,
+    pub(crate) folder_picker: bool,
 }
 ```
+
+`folder_picker` is an effective platform capability. The Slint UI consumes it
+directly and must hide project-folder picker actions when the capability is
+false.
 
 ## Appearance Seam
 
@@ -27,19 +32,19 @@ pub(crate) struct SlintPlatformProfile {
 
 ## Target Profiles
 
-| Target | App id | Mobile | Input policy | Window label |
-| --- | --- | --- | --- | --- |
-| Linux | `com.anotherone.Slint` | false | `DesktopKeyboard` | `desktop-window` |
-| macOS | `com.anotherone.Slint` | false | `DesktopKeyboard` | `desktop-window` |
-| Android | `com.anotherone.slint` | true | `TouchIme` | `android-activity` |
-| iOS | `com.anotherone.slint` | true | `TouchIme` | `ios-scene` |
-| Unsupported | `com.anotherone.Slint` | false | `DesktopKeyboard` | `unsupported-window` |
+| Target | App id | Mobile | Input policy | Window label | Folder picker |
+| --- | --- | --- | --- | --- | --- |
+| Linux | `com.anotherone.Slint` | false | `DesktopKeyboard` | `desktop-window` | XDG Desktop Portal FileChooser when available |
+| macOS | `com.anotherone.Slint` | false | `DesktopKeyboard` | `desktop-window` | native panel |
+| Android | `com.anotherone.slint` | true | `TouchIme` | `android-activity` | hidden until implemented |
+| iOS | `com.anotherone.slint` | true | `TouchIme` | `ios-scene` | hidden until implemented |
+| Unsupported | `com.anotherone.Slint` | false | `DesktopKeyboard` | `unsupported-window` | hidden |
 
 ## Required Follow-Up
 
 - Move shared profile definitions to the final production Slint crate once `slint-poc` is renamed.
 - Add real system appearance APIs per target.
-- Add platform file/open-in hooks for Slint UI actions.
+- Add remaining platform file/open-in hooks for Slint UI actions.
 - Add Android orientation/runtime proof once an `adb` device is available.
 - Replace the iOS simulator library proof with an app bundle/install proof once
   the iOS shell exists.
