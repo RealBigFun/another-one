@@ -5,7 +5,7 @@ use gpui::{
     SharedString, Window,
 };
 
-use crate::app::{AnotherOneApp, GitDiffPaneState, WorkspacePane};
+use crate::app::{AnotherOneApp, GitDiffPaneState, WorkspaceKeyboardFocus, WorkspacePane};
 use crate::project_store::{
     DiffFile, DiffRow, DiffRowKind, GitDiff, GitDiffSelection, GitDiffSource,
 };
@@ -13,6 +13,7 @@ use crate::project_store::{
 impl WorkspacePane {
     pub(crate) fn close_git_diff_pane(&mut self, cx: &mut Context<Self>) {
         self.active_git_diff = None;
+        self.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
         let app = self.app.clone();
         cx.defer(move |cx| {
             let _ = app.update(cx, |app, app_cx| {
@@ -47,6 +48,13 @@ impl WorkspacePane {
             .flex_col()
             .bg(bg)
             .overflow_hidden()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
+                    cx.notify();
+                }),
+            )
             .child(self.git_diff_header(&selection, title_col, muted_col, border, cx));
 
         panel = match state {

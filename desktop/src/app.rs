@@ -464,6 +464,12 @@ pub(crate) enum RightSidebarMode {
     Compare,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkspaceKeyboardFocus {
+    MainPane,
+    GitPanel,
+}
+
 struct TerminalRuntimeRequest {
     key: TerminalRuntimeKey,
     cwd: std::path::PathBuf,
@@ -751,6 +757,8 @@ pub(crate) struct WorkspacePane {
     pub(crate) terminal_tab_menu: Option<TerminalTabMenuState>,
     /// Confirmation state for closing a pinned terminal tab.
     pub(crate) pinned_tab_close_confirm: Option<PinnedTabCloseConfirmState>,
+    /// Last workspace region that intentionally claimed bare navigation keys.
+    pub(crate) keyboard_focus: WorkspaceKeyboardFocus,
 }
 
 impl WorkspacePane {
@@ -779,6 +787,7 @@ impl WorkspacePane {
             section_states,
             terminal_tab_menu: None,
             pinned_tab_close_confirm: None,
+            keyboard_focus: WorkspaceKeyboardFocus::MainPane,
         }
     }
 
@@ -847,6 +856,7 @@ impl WorkspacePane {
         self.active_project_page = Some(project_id);
         self.active_section = None;
         self.active_git_diff = None;
+        self.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
         if changed {
             cx.notify();
         }
@@ -868,6 +878,7 @@ impl WorkspacePane {
         let closed_git_diff = self.active_git_diff.is_some();
         if changed || closed_git_diff {
             self.active_git_diff = None;
+            self.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
         }
         self.persist_active_section(cx);
         if changed || closed_git_diff {
@@ -5968,6 +5979,7 @@ impl AnotherOneApp {
             self.git_diff_state = None;
             self.workspace_pane.update(cx, |workspace, cx| {
                 workspace.active_git_diff = None;
+                workspace.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
                 cx.notify();
             });
             cx.notify();
@@ -7171,6 +7183,7 @@ impl AnotherOneApp {
 
         self.workspace_pane.update(cx, |workspace, cx| {
             workspace.active_git_diff = Some(selection.clone());
+            workspace.keyboard_focus = WorkspaceKeyboardFocus::GitPanel;
             cx.notify();
         });
         self.git_diff_state = Some(GitDiffPaneState::Loading);

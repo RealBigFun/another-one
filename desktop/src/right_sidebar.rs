@@ -10,7 +10,10 @@ use gpui::{
     SharedString, Transformation, Window,
 };
 
-use crate::app::{AnotherOneApp, CommitFileChangesState, ProjectCheckRunsState, RightSidebarMode};
+use crate::app::{
+    AnotherOneApp, CommitFileChangesState, ProjectCheckRunsState, RightSidebarMode,
+    WorkspaceKeyboardFocus,
+};
 use crate::platform::PlatformServices;
 use crate::theme;
 
@@ -196,6 +199,10 @@ impl AnotherOneApp {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, ev, window, cx| {
+                        this.workspace_pane.update(cx, |workspace, cx| {
+                            workspace.keyboard_focus = WorkspaceKeyboardFocus::GitPanel;
+                            cx.notify();
+                        });
                         cx.stop_propagation();
                         on_click(this, ev, window, cx);
                     }),
@@ -287,7 +294,16 @@ impl AnotherOneApp {
             button
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover_bg))
-                .on_mouse_down(MouseButton::Left, cx.listener(on_click))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, ev, window, cx| {
+                        this.workspace_pane.update(cx, |workspace, cx| {
+                            workspace.keyboard_focus = WorkspaceKeyboardFocus::GitPanel;
+                            cx.notify();
+                        });
+                        on_click(this, ev, window, cx);
+                    }),
+                )
         })
     }
 

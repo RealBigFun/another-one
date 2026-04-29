@@ -10,7 +10,7 @@ use gpui::{
 
 use crate::app::{
     AnotherOneApp, SectionId, SidebarTaskDeleteConfirmState, SidebarTaskDeleteRequest,
-    SidebarTaskMenuState, SidebarTaskRenameState,
+    SidebarTaskMenuState, SidebarTaskRenameState, WorkspaceKeyboardFocus,
 };
 use crate::project_store::{Branch, Project, TaskKind};
 use crate::shortcuts::{shortcut_matches_event, ShortcutAction};
@@ -840,21 +840,26 @@ impl AnotherOneApp {
             return;
         }
 
-        if !ev.keystroke.modifiers.modified() {
+        let should_navigate_git_diff = {
+            let workspace = self.workspace_pane.read(cx);
+            workspace.keyboard_focus == WorkspaceKeyboardFocus::GitPanel
+                && workspace.active_git_diff.is_some()
+        };
+        if should_navigate_git_diff && !ev.keystroke.modifiers.modified() {
             match ev.keystroke.key.as_str() {
                 "up" | "arrowup" | "arrow_up" | "ArrowUp" => {
                     if self
                         .navigate_changed_file_diff(crate::app::NavigationDirection::Previous, cx)
                     {
                         cx.stop_propagation();
+                        return;
                     }
-                    return;
                 }
                 "down" | "arrowdown" | "arrow_down" | "ArrowDown" => {
                     if self.navigate_changed_file_diff(crate::app::NavigationDirection::Next, cx) {
                         cx.stop_propagation();
+                        return;
                     }
-                    return;
                 }
                 _ => {}
             }

@@ -9,7 +9,8 @@ use gpui::{
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
 use crate::app::{
-    terminal_link_ranges, AnotherOneApp, TerminalLinkRange, TerminalSelectionRange, WorkspacePane,
+    terminal_link_ranges, AnotherOneApp, TerminalLinkRange, TerminalSelectionRange,
+    WorkspaceKeyboardFocus, WorkspacePane,
 };
 use crate::layout::{TERMINAL_TAB_BAR_H, TERMINAL_VIEW_PADDING};
 use crate::terminal_runtime::{
@@ -430,6 +431,7 @@ impl WorkspacePane {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                this.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
                                 this.focus_handle.focus(window);
                                 this.activate_tab(&sid_click, tab_index, cx);
                             }),
@@ -679,6 +681,7 @@ impl WorkspacePane {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                        this.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
                         this.focus_handle.focus(window);
                         let _ = this.app.update(cx, |app, app_cx| {
                             if app.open_terminal_link_at_click(&selection_key, ev, window, app_cx) {
