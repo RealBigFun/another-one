@@ -34,7 +34,7 @@ const TERMINAL_RESIZE_DEBOUNCE: Duration = Duration::from_millis(80);
 const SIDEBAR_TREE_TOP: i32 = 40;
 const SIDEBAR_PROJECT_ROW_HEIGHT: i32 = 36;
 const SIDEBAR_TASK_ROW_HEIGHT: i32 = 46;
-const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x17191d;
+const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x1e1f22;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
 const PROJECT_ACCENTS: [u32; 8] = [
     0x5b4a9e, 0x2e7d6f, 0xb85c38, 0x3a6ea5, 0x8b5e3c, 0x7b2d5f, 0x4a7c4b, 0x9c5151,
@@ -238,6 +238,50 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     let tab_event_tx = client_event_tx.clone();
     app.on_tab_selected(move |tab_id| {
         let _ = tab_event_tx.send(SlintClientEvent::SelectTab(tab_id.to_string()));
+    });
+    let tab_close_event_tx = client_event_tx.clone();
+    app.on_tab_close_requested(move |tab_id| {
+        let _ = tab_close_event_tx.send(SlintClientEvent::CloseTerminalTab(tab_id.to_string()));
+    });
+    let tab_pin_event_tx = client_event_tx.clone();
+    app.on_tab_pin_toggled(move |tab_id| {
+        let _ = tab_pin_event_tx.send(SlintClientEvent::ToggleTerminalTabPinned(
+            tab_id.to_string(),
+        ));
+    });
+    let add_tab_event_tx = client_event_tx.clone();
+    app.on_terminal_add_tab_requested(move || {
+        let _ = add_tab_event_tx.send(SlintClientEvent::AddTerminalTab);
+    });
+    let terminal_error_copy_app = app.as_weak();
+    app.on_terminal_error_copy_requested(move || {
+        let Some(app) = terminal_error_copy_app.upgrade() else {
+            return;
+        };
+        let details = app.get_terminal_error_details().to_string();
+        if details.trim().is_empty() {
+            set_toast(
+                &terminal_error_copy_app,
+                "warning",
+                "No terminal error details",
+                "The failed tab did not include daemon failure details.",
+            );
+            return;
+        }
+        match platform::copy_text(&details) {
+            Ok(()) => set_toast(
+                &terminal_error_copy_app,
+                "success",
+                "Terminal error details copied",
+                "Failure details are on the clipboard.",
+            ),
+            Err(error) => set_toast(
+                &terminal_error_copy_app,
+                "error",
+                "Could not copy terminal error details",
+                error,
+            ),
+        }
     });
     let submit_event_tx = client_event_tx.clone();
     app.on_submit_new_task(move |task_name, source_branch, project_id| {
@@ -531,6 +575,9 @@ fn seed_shell_model(app: &AppWindow) {
             id: "main".into(),
             title: "Codex".into(),
             provider: "codex".into(),
+            restore_status: "ready".into(),
+            failure_message: "".into(),
+            failure_details: "".into(),
             active: true,
             running: true,
             pinned: false,
@@ -539,6 +586,9 @@ fn seed_shell_model(app: &AppWindow) {
             id: "shell".into(),
             title: "Shell".into(),
             provider: "shell".into(),
+            restore_status: "not-started".into(),
+            failure_message: "".into(),
+            failure_details: "".into(),
             active: false,
             running: false,
             pinned: false,
@@ -601,6 +651,9 @@ fn seed_terminal_fidelity_fixture(app: &AppWindow) {
             id: "terminal-fidelity".into(),
             title: "Fidelity".into(),
             provider: "fixture".into(),
+            restore_status: "ready".into(),
+            failure_message: "".into(),
+            failure_details: "".into(),
             active: true,
             running: false,
             pinned: true,
@@ -609,6 +662,9 @@ fn seed_terminal_fidelity_fixture(app: &AppWindow) {
             id: "cursor-selection-link".into(),
             title: "Cursor/Link".into(),
             provider: "fixture".into(),
+            restore_status: "ready".into(),
+            failure_message: "".into(),
+            failure_details: "".into(),
             active: false,
             running: false,
             pinned: false,
@@ -827,6 +883,15 @@ struct WorkspaceShellModel {
     active_branch_name: String,
     active_worktree_name: String,
     active_project_path: String,
+    terminal_panel_state: String,
+    terminal_panel_title: String,
+    terminal_panel_body: String,
+    terminal_panel_project: String,
+    terminal_panel_branch: String,
+    terminal_panel_task: String,
+    terminal_panel_tab: String,
+    terminal_panel_cwd: String,
+    terminal_error_details: String,
     project_summary: String,
 }
 
@@ -859,6 +924,15 @@ fn set_workspace_tree(
             app.set_active_branch_name(model.active_branch_name.into());
             app.set_active_worktree_name(model.active_worktree_name.into());
             app.set_active_project_path(model.active_project_path.into());
+            app.set_terminal_panel_state(model.terminal_panel_state.into());
+            app.set_terminal_panel_title(model.terminal_panel_title.into());
+            app.set_terminal_panel_body(model.terminal_panel_body.into());
+            app.set_terminal_panel_project(model.terminal_panel_project.into());
+            app.set_terminal_panel_branch(model.terminal_panel_branch.into());
+            app.set_terminal_panel_task(model.terminal_panel_task.into());
+            app.set_terminal_panel_tab(model.terminal_panel_tab.into());
+            app.set_terminal_panel_cwd(model.terminal_panel_cwd.into());
+            app.set_terminal_error_details(model.terminal_error_details.into());
             app.set_project_summary(model.project_summary.into());
         }
     });
@@ -991,6 +1065,9 @@ fn workspace_shell_model(
                         .to_string()
                         .into(),
                     provider: tab.provider.map(provider_label).unwrap_or("shell").into(),
+                    restore_status: restore_status_label(&tab.restore_status).into(),
+                    failure_message: tab.failure_message.clone().unwrap_or_default().into(),
+                    failure_details: tab.failure_details.clone().unwrap_or_default().into(),
                     active: tab.id == active_tab_id,
                     running: tab.running,
                     pinned: tab.pinned,
@@ -998,6 +1075,9 @@ fn workspace_shell_model(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+
+    let active_tab = active_task.and_then(|task| active_tab_for_task(task, active_tab_id));
+    let terminal_panel = terminal_panel_model(active_project, active_task, active_tab);
 
     WorkspaceShellModel {
         sidebar_rows,
@@ -1020,7 +1100,121 @@ fn workspace_shell_model(
         active_project_path: active_project
             .map(|project| project.path.clone())
             .unwrap_or_default(),
+        terminal_panel_state: terminal_panel.state,
+        terminal_panel_title: terminal_panel.title,
+        terminal_panel_body: terminal_panel.body,
+        terminal_panel_project: terminal_panel.project,
+        terminal_panel_branch: terminal_panel.branch,
+        terminal_panel_task: terminal_panel.task,
+        terminal_panel_tab: terminal_panel.tab,
+        terminal_panel_cwd: terminal_panel.cwd,
+        terminal_error_details: terminal_panel.error_details,
         project_summary: format!("{} projects", projects.len()),
+    }
+}
+
+struct TerminalPanelModel {
+    state: String,
+    title: String,
+    body: String,
+    project: String,
+    branch: String,
+    task: String,
+    tab: String,
+    cwd: String,
+    error_details: String,
+}
+
+fn terminal_panel_model(
+    project: Option<&frame::ProjectSummary>,
+    task: Option<&frame::TaskSummary>,
+    tab: Option<&frame::TabSummary>,
+) -> TerminalPanelModel {
+    let project_label = project
+        .map(|project| project.id.clone())
+        .unwrap_or_else(|| "Not available".to_string());
+    let branch_label = task
+        .map(|task| task.branch_name.clone())
+        .or_else(|| project.and_then(|project| project.current_branch.clone()))
+        .unwrap_or_else(|| "Not available".to_string());
+    let task_label = task
+        .map(|task| task.id.clone())
+        .unwrap_or_else(|| "Not available".to_string());
+    let tab_label = tab
+        .map(|tab| tab.id.clone())
+        .unwrap_or_else(|| "Not available".to_string());
+    let cwd_label = project
+        .map(|project| project.path.clone())
+        .unwrap_or_else(|| "Not available".to_string());
+
+    let (state, title, body, error_details) = match (task, tab) {
+        (None, _) => (
+            "empty",
+            "Select a branch to get started",
+            "Open a task from the project tree to attach a terminal.",
+            "",
+        ),
+        (Some(_), None) => (
+            "empty",
+            "No active tabs",
+            "This task has no open tabs. Add an agent tab to start working.",
+            "",
+        ),
+        (Some(_), Some(tab)) => match restore_status_label(&tab.restore_status) {
+            "launching" => (
+                "launching",
+                "Launching terminal",
+                "The tab was created immediately and its PTY is launching in the background.",
+                "",
+            ),
+            "failed" => (
+                "failed",
+                "Terminal launch failed",
+                tab.failure_message
+                    .as_deref()
+                    .unwrap_or("The daemon reported a terminal launch failure."),
+                tab.failure_details.as_deref().unwrap_or_default(),
+            ),
+            "not-started" => (
+                "lazy",
+                "Lazy restore",
+                "This restored tab has metadata only. Opening it triggers launch or resume on demand.",
+                "",
+            ),
+            _ => ("ready", "", "", ""),
+        },
+    };
+
+    TerminalPanelModel {
+        state: state.to_string(),
+        title: title.to_string(),
+        body: body.to_string(),
+        project: project_label,
+        branch: branch_label,
+        task: task_label,
+        tab: tab_label,
+        cwd: cwd_label,
+        error_details: error_details.to_string(),
+    }
+}
+
+fn active_tab_for_task<'a>(
+    task: &'a frame::TaskSummary,
+    active_tab_id: &str,
+) -> Option<&'a frame::TabSummary> {
+    task.tabs
+        .iter()
+        .find(|tab| tab.id == active_tab_id)
+        .or_else(|| task.tabs.iter().find(|tab| tab.id == task.active_tab_id))
+        .or_else(|| task.tabs.first())
+}
+
+fn restore_status_label(status: &impl std::fmt::Debug) -> &'static str {
+    match format!("{status:?}").as_str() {
+        "NotStarted" => "not-started",
+        "Launching" => "launching",
+        "Failed" => "failed",
+        _ => "ready",
     }
 }
 
@@ -1563,6 +1757,42 @@ async fn run_terminal_session(
                             set_terminal_status(app_weak, format!("terminal: unknown tab: {tab_id}"));
                         }
                     }
+                    SlintClientEvent::AddTerminalTab => {
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::AddAgentToSection {
+                                section_id: attached_target.section_id.clone(),
+                                agent_id: String::new(),
+                            },
+                        )
+                        .await
+                        .context("add terminal tab")?;
+                    }
+                    SlintClientEvent::CloseTerminalTab(tab_id) => {
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::CloseSectionTab {
+                                section_id: attached_target.section_id.clone(),
+                                tab_id,
+                            },
+                        )
+                        .await
+                        .context("close terminal tab")?;
+                    }
+                    SlintClientEvent::ToggleTerminalTabPinned(tab_id) => {
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::ToggleSectionTabPinned {
+                                section_id: attached_target.section_id.clone(),
+                                tab_id,
+                            },
+                        )
+                        .await
+                        .context("toggle terminal tab pin")?;
+                    }
                     SlintClientEvent::SubmitNewTask {
                         task_name,
                         source_branch,
@@ -1704,6 +1934,93 @@ async fn run_terminal_session(
                                     send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
                                     set_toast(app_weak, "success", "Task created", "Attached to the new task terminal.");
                                 }
+                                WorkerReply::AddAgentToSectionAck { tab_id } => {
+                                    let target = TerminalTarget {
+                                        section_id: attached_target.section_id.clone(),
+                                        tab_id,
+                                    };
+                                    attach_terminal_target(
+                                        &mut send,
+                                        &mut next_request_id,
+                                        &target,
+                                        terminal.size,
+                                        true,
+                                    )
+                                    .await?;
+                                    attached_target = target;
+                                    terminal = AlacrittySnapshot::new(
+                                        terminal.size.cols,
+                                        terminal.size.rows,
+                                    );
+                                    set_terminal_surface(app_weak, terminal.snapshot_surface());
+                                    selection_drag_anchor = None;
+                                    selection_range = None;
+                                    set_terminal_selection(app_weak, Vec::new());
+                                    dirty = false;
+                                    pending_flush_at = None;
+                                    send_control(
+                                        &mut send,
+                                        &mut next_request_id,
+                                        Control::ListProjects,
+                                    )
+                                    .await?;
+                                }
+                                WorkerReply::CloseSectionTabAck { active_tab_id } => {
+                                    if active_tab_id.is_empty() {
+                                        terminal = AlacrittySnapshot::new(
+                                            terminal.size.cols,
+                                            terminal.size.rows,
+                                        );
+                                        set_terminal_surface(app_weak, terminal.snapshot_surface());
+                                        selection_drag_anchor = None;
+                                        selection_range = None;
+                                        set_terminal_selection(app_weak, Vec::new());
+                                        dirty = false;
+                                        pending_flush_at = None;
+                                        set_terminal_status(
+                                            app_weak,
+                                            "terminal: section has no active tabs",
+                                        );
+                                    } else {
+                                        let target = TerminalTarget {
+                                            section_id: attached_target.section_id.clone(),
+                                            tab_id: active_tab_id,
+                                        };
+                                        attach_terminal_target(
+                                            &mut send,
+                                            &mut next_request_id,
+                                            &target,
+                                            terminal.size,
+                                            true,
+                                        )
+                                        .await?;
+                                        attached_target = target;
+                                        terminal = AlacrittySnapshot::new(
+                                            terminal.size.cols,
+                                            terminal.size.rows,
+                                        );
+                                        set_terminal_surface(app_weak, terminal.snapshot_surface());
+                                        selection_drag_anchor = None;
+                                        selection_range = None;
+                                        set_terminal_selection(app_weak, Vec::new());
+                                        dirty = false;
+                                        pending_flush_at = None;
+                                    }
+                                    send_control(
+                                        &mut send,
+                                        &mut next_request_id,
+                                        Control::ListProjects,
+                                    )
+                                    .await?;
+                                }
+                                WorkerReply::ToggleSectionTabPinnedAck { .. } => {
+                                    send_control(
+                                        &mut send,
+                                        &mut next_request_id,
+                                        Control::ListProjects,
+                                    )
+                                    .await?;
+                                }
                                 _ => {}
                             }
                         }
@@ -1810,6 +2127,9 @@ enum SlintClientEvent {
     SelectProject(String),
     SelectTask(String),
     SelectTab(String),
+    AddTerminalTab,
+    CloseTerminalTab(String),
+    ToggleTerminalTabPinned(String),
     SubmitNewTask {
         task_name: String,
         source_branch: String,
@@ -3014,6 +3334,37 @@ mod tests {
     }
 
     #[test]
+    fn slint_terminal_workspace_uses_gpui_asset_and_color_contract() {
+        let app_source = include_str!("../ui/app.slint");
+        let components_source = include_str!("../ui/components.slint");
+
+        for asset in [
+            "icons__terminal.svg",
+            "icons__pin-off.svg",
+            "icons__close.svg",
+            "icons__plus.svg",
+            "icons__copy.svg",
+            "icons__alert-triangle.svg",
+            "agent-icons/claude.png",
+            "agent-icons/openai.svg",
+            "agent-icons/cursor.svg",
+            "agent-icons/gemini.png",
+        ] {
+            assert!(
+                app_source.contains(asset) || components_source.contains(asset),
+                "missing GPUI asset reference: {asset}"
+            );
+        }
+        assert_eq!(DEFAULT_TERMINAL_BACKGROUND_RGB, 0x1e1f22);
+        assert!(app_source.contains("background: #1e1f22"));
+        assert!(components_source.contains("#1e1f22"));
+        assert!(components_source.contains("#2b2d31"));
+        assert!(components_source.contains("#2f3136"));
+        assert!(!app_source.contains("icon: \"C\""));
+        assert!(!components_source.contains("icon: \"C\""));
+    }
+
+    #[test]
     fn workspace_shell_model_nests_tasks_under_each_project() {
         let projects = vec![
             sidebar_project(
@@ -3104,6 +3455,38 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn workspace_shell_model_exposes_failed_terminal_panel() {
+        let mut task = sidebar_task(
+            "task-fail",
+            "Failed task",
+            "feature/fail",
+            false,
+            "section-fail",
+        );
+        task.tabs[0] = serde_json::from_value(serde_json::json!({
+            "id": "0",
+            "title": "Shell",
+            "provider": "shell",
+            "running": false,
+            "pinned": false,
+            "fixed_title": null,
+            "restore_status": "failed",
+            "failure_message": "PTY spawn failed",
+            "failure_details": "permission denied"
+        }))
+        .expect("failed tab summary fixture should deserialize");
+        let projects = vec![sidebar_project("project-a", "Project A", vec![task])];
+
+        let model = workspace_shell_model(&projects, "section-fail", "0");
+
+        assert_eq!(model.terminal_panel_state, "failed");
+        assert_eq!(model.terminal_panel_title, "Terminal launch failed");
+        assert_eq!(model.terminal_panel_body, "PTY spawn failed");
+        assert_eq!(model.terminal_error_details, "permission denied");
+        assert_eq!(model.tab_chips[0].restore_status.as_str(), "failed");
     }
 
     #[test]

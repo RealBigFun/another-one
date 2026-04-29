@@ -7,6 +7,7 @@ import "../../desktop/assets/fonts/LilexNerdFontMono-BoldItalic.ttf";
 
 import {
     AoButton,
+    AoAssetIconButton,
     AoCheckbox,
     AoIconButton,
     AoMenu,
@@ -99,6 +100,15 @@ export component AppWindow inherits Window {
     in-out property <string> active_branch_name: "slint-daemon-poc-clean";
     in-out property <string> active_worktree_name: "mellow-river-guides-wt";
     in-out property <string> active_project_path: "~/.another-one/worktrees/another-one/mellow-river-guides-wt";
+    in-out property <string> terminal_panel_state: "ready";
+    in-out property <string> terminal_panel_title: "";
+    in-out property <string> terminal_panel_body: "";
+    in-out property <string> terminal_panel_project: "";
+    in-out property <string> terminal_panel_branch: "";
+    in-out property <string> terminal_panel_task: "";
+    in-out property <string> terminal_panel_tab: "";
+    in-out property <string> terminal_panel_cwd: "";
+    in-out property <string> terminal_error_details: "";
     in-out property <string> project_summary: "loading projects from daemon";
     in-out property <string> resource_summary: "app 1.0% / 175 MB";
     in-out property <string> appearance_label: "dark";
@@ -128,6 +138,10 @@ export component AppWindow inherits Window {
     callback project_selected(string);
     callback task_selected(string);
     callback tab_selected(string);
+    callback tab_close_requested(string);
+    callback tab_pin_toggled(string);
+    callback terminal_add_tab_requested();
+    callback terminal_error_copy_requested();
     callback terminal_key(string, bool, bool, bool);
     callback terminal_focus_changed(bool);
     callback terminal_pointer_event(string, string, int, int, bool, bool, bool);
@@ -166,11 +180,11 @@ export component AppWindow inherits Window {
             height: root.titlebar-height;
             background: chrome_bg;
 
-            AoIconButton {
+            AoAssetIconButton {
                 x: 10px;
                 y: 6px;
                 width: 30px;
-                icon: "|";
+                icon-source: @image-url("../../desktop/assets/icons/icons__panel-left.svg");
                 control-label: "Toggle project drawer";
                 active: root.left_sidebar_open;
                 bg: overlay_active;
@@ -260,11 +274,11 @@ export component AppWindow inherits Window {
                 }
             }
 
-            AoIconButton {
+            AoAssetIconButton {
                 x: parent.width - 50px;
                 y: 6px;
                 width: 32px;
-                icon: "x";
+                icon-source: @image-url("../../desktop/assets/icons/icons__close.svg");
                 control-label: "Close window";
                 active: false;
                 bg: overlay_active;
@@ -403,7 +417,7 @@ export component AppWindow inherits Window {
             y: body-top;
             width: root.mobile-layout ? parent.width : max(200px, parent.width - sidebar-width - right-width - gutter-width * 2);
             height: body-height;
-            background: terminal_bg;
+            background: #1e1f22;
             clip: true;
             property <length> terminal-left: root.mobile-layout ? 12px : 24px;
             property <length> terminal-top: root.mobile-layout ? 132px : 76px;
@@ -422,13 +436,13 @@ export component AppWindow inherits Window {
                 x: 0px;
                 y: 0px;
                 width: parent.width;
-                height: 38px;
-                background: card_bg;
+                height: 36px;
+                background: #27292e;
                 border-width: 0px;
 
                 for tab[index] in root.tab_chips: AoTabChip {
                     x: 12px + index * 154px;
-                    y: 4px;
+                    y: 3px;
                     width: 146px;
                     tab: tab;
                     overlay-hover: root.overlay_hover;
@@ -439,25 +453,35 @@ export component AppWindow inherits Window {
                     clicked(tab-id) => {
                         root.tab_selected(tab-id);
                     }
+                    close-clicked(tab-id) => {
+                        root.tab_close_requested(tab-id);
+                    }
+                    pin-clicked(tab-id) => {
+                        root.tab_pin_toggled(tab-id);
+                    }
                 }
 
-                AoIconButton {
+                AoAssetIconButton {
                     x: parent.width - 42px;
-                    y: 6px;
-                    width: 30px;
-                    icon: "+";
+                    y: 4px;
+                    width: 28px;
+                    height: 28px;
+                    icon-source: @image-url("../../desktop/assets/icons/icons__plus.svg");
                     control-label: "Open new terminal tab";
                     active: false;
                     bg: overlay_active;
                     hover-bg: overlay_hover;
                     border: border_color;
                     icon-color: text_secondary;
+                    clicked => {
+                        root.terminal_add_tab_requested();
+                    }
                 }
             }
 
             Rectangle {
                 x: 0px;
-                y: 38px;
+                y: 36px;
                 width: parent.width;
                 height: 1px;
                 background: divider_color;
@@ -542,6 +566,123 @@ export component AppWindow inherits Window {
                 color: text_secondary;
                 font-family: "Lilex Nerd Font Mono";
                 font-size: 12px;
+            }
+
+            if root.terminal_panel_state != "ready": Rectangle {
+                x: max(24px, (parent.width - 520px) / 2);
+                y: max(96px, (parent.height - 280px) / 2);
+                width: min(520px, parent.width - 48px);
+                height: root.terminal_panel_state == "failed" ? 286px : 238px;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: root.terminal_panel_state == "failed" ? danger_color : border_color;
+                background: #25282d;
+
+                Image {
+                    x: 24px;
+                    y: 24px;
+                    width: 20px;
+                    height: 20px;
+                    source: root.terminal_panel_state == "failed" ? @image-url("../../desktop/assets/icons/icons__alert-triangle.svg") : @image-url("../../desktop/assets/icons/icons__terminal.svg");
+                    colorize: root.terminal_panel_state == "failed" ? danger_color : focus_ring;
+                }
+
+                Text {
+                    x: 56px;
+                    y: 22px;
+                    width: parent.width - 92px;
+                    text: root.terminal_panel_title;
+                    color: text_primary;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 13px;
+                    font-weight: 700;
+                }
+
+                if root.terminal_panel_state == "failed": AoAssetIconButton {
+                    x: parent.width - 52px;
+                    y: 18px;
+                    width: 30px;
+                    height: 28px;
+                    icon-source: @image-url("../../desktop/assets/icons/icons__copy.svg");
+                    control-label: "Copy terminal error details";
+                    bg: overlay_active;
+                    hover-bg: overlay_hover;
+                    border: border_color;
+                    icon-color: text_secondary;
+                    clicked => {
+                        root.terminal_error_copy_requested();
+                    }
+                }
+
+                Text {
+                    x: 24px;
+                    y: 58px;
+                    width: parent.width - 48px;
+                    text: root.terminal_panel_body;
+                    color: root.terminal_panel_state == "failed" ? danger_color : text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 12px;
+                }
+
+                Text {
+                    x: 24px;
+                    y: 96px;
+                    width: parent.width - 48px;
+                    text: "Project: " + root.terminal_panel_project;
+                    color: text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 11px;
+                }
+
+                Text {
+                    x: 24px;
+                    y: 118px;
+                    width: parent.width - 48px;
+                    text: "Branch: " + root.terminal_panel_branch;
+                    color: text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 11px;
+                }
+
+                Text {
+                    x: 24px;
+                    y: 140px;
+                    width: parent.width - 48px;
+                    text: "Task: " + root.terminal_panel_task;
+                    color: text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 11px;
+                }
+
+                Text {
+                    x: 24px;
+                    y: 162px;
+                    width: parent.width - 48px;
+                    text: "Agent/Tab: " + root.terminal_panel_tab;
+                    color: text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 11px;
+                }
+
+                Text {
+                    x: 24px;
+                    y: 184px;
+                    width: parent.width - 48px;
+                    text: "CWD: " + root.terminal_panel_cwd;
+                    color: text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 11px;
+                }
+
+                if root.terminal_panel_state == "failed": Text {
+                    x: 24px;
+                    y: 220px;
+                    width: parent.width - 48px;
+                    text: root.terminal_error_details;
+                    color: text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 10px;
+                }
             }
 
             for span in root.terminal_background_spans: Rectangle {
@@ -645,11 +786,11 @@ export component AppWindow inherits Window {
                 label-color: text_muted;
             }
 
-            AoIconButton {
+            AoAssetIconButton {
                 x: parent.width - 44px;
                 y: 10px;
                 width: 28px;
-                icon: ">";
+                icon-source: @image-url("../../desktop/assets/icons/icons__panel-right.svg");
                 control-label: "Collapse inspector";
                 active: false;
                 bg: overlay_active;
@@ -753,11 +894,11 @@ export component AppWindow inherits Window {
             height: footer-height;
             background: chrome_bg;
 
-            AoIconButton {
+            AoAssetIconButton {
                 x: 10px;
                 y: 6px;
                 width: 32px;
-                icon: "S";
+                icon-source: @image-url("../../desktop/assets/icons/icons__settings.svg");
                 control-label: "Open settings";
                 active: false;
                 bg: overlay_active;
@@ -766,11 +907,11 @@ export component AppWindow inherits Window {
                 icon-color: text_secondary;
             }
 
-            AoIconButton {
+            AoAssetIconButton {
                 x: 50px;
                 y: 6px;
                 width: 32px;
-                icon: "+";
+                icon-source: @image-url("../../desktop/assets/icons/icons__plus.svg");
                 control-label: "Create task";
                 active: false;
                 bg: overlay_active;
@@ -1227,11 +1368,11 @@ export component AppWindow inherits Window {
                     font-weight: 700;
                 }
 
-                AoIconButton {
+                AoAssetIconButton {
                     x: parent.width - 50px;
                     y: 20px;
                     width: 30px;
-                    icon: "x";
+                    icon-source: @image-url("../../desktop/assets/icons/icons__close.svg");
                     control-label: "Close new task modal";
                     bg: root.overlay_active;
                     hover-bg: root.overlay_hover;

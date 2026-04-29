@@ -59,6 +59,9 @@ export struct TerminalTabChip {
     id: string,
     title: string,
     provider: string,
+    restore-status: string,
+    failure-message: string,
+    failure-details: string,
     active: bool,
     running: bool,
     pinned: bool,
@@ -194,6 +197,61 @@ export component AoIconButton inherits Rectangle {
         font-family: "Lilex Nerd Font Mono";
         font-size: 13px;
         font-weight: 700;
+    }
+}
+
+export component AoAssetIconButton inherits Rectangle {
+    in property <image> icon-source;
+    in property <string> control-label;
+    in property <bool> active: false;
+    in property <bool> disabled: false;
+    in property <color> bg;
+    in property <color> hover-bg;
+    in property <color> border;
+    in property <color> focus-ring: border;
+    in property <color> icon-color;
+    callback clicked();
+
+    width: 30px;
+    height: 26px;
+    accessible-role: button;
+    accessible-label: control-label;
+    border-radius: 8px;
+    border-width: active || icon-focus.has-focus ? 1px : 0px;
+    border-color: icon-focus.has-focus ? focus-ring : border;
+    background: active || icon-touch.pressed ? bg : icon-touch.has-hover && !disabled ? hover-bg : transparent;
+    opacity: disabled ? 0.42 : 1.0;
+
+    icon-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if !root.disabled && (event.text == "\n" || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    icon-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            icon-focus.focus();
+            if !root.disabled {
+                root.clicked();
+            }
+        }
+    }
+
+    Image {
+        x: (parent.width - 14px) / 2;
+        y: (parent.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        source: root.icon-source;
+        colorize: root.icon-color;
     }
 }
 
@@ -1465,10 +1523,12 @@ export component AoTabChip inherits Rectangle {
     in property <color> text-muted;
     in property <color> success-color;
     callback clicked(string);
+    callback close-clicked(string);
+    callback pin-clicked(string);
 
     height: 30px;
-    border-radius: 9px;
-    background: tab.active ? overlay-active : chip-touch.has-hover ? overlay-hover : transparent;
+    border-radius: 0px;
+    background: tab.active ? #1e1f22 : chip-touch.has-hover ? #2f3136 : #2b2d31;
 
     chip-touch := TouchArea {
         width: parent.width;
@@ -1478,35 +1538,156 @@ export component AoTabChip inherits Rectangle {
         }
     }
 
-    Rectangle {
+    if tab.pinned: Image {
         x: 10px;
-        y: 11px;
-        width: 7px;
-        height: 7px;
-        border-radius: 4px;
-        background: tab.running ? success-color : text-muted;
-        opacity: tab.running ? 1.0 : 0.38;
+        y: 9px;
+        width: 12px;
+        height: 12px;
+        source: @image-url("../../desktop/assets/icons/icons__pin-off.svg");
+        colorize: tab.active ? text-primary : text-muted;
+    }
+
+    if tab.provider == "shell": Image {
+        x: tab.pinned ? 28px : 10px;
+        y: 8px;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../../desktop/assets/icons/icons__terminal.svg");
+        colorize: tab.active ? text-primary : text-muted;
+        opacity: tab.restore-status == "failed" ? 0.62 : 1.0;
+    }
+
+    if tab.provider == "claude-code": Image {
+        x: tab.pinned ? 28px : 10px;
+        y: 8px;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../../desktop/assets/agent-icons/claude.png");
+        opacity: tab.restore-status == "failed" ? 0.62 : 1.0;
+    }
+
+    if tab.provider == "codex": Image {
+        x: tab.pinned ? 28px : 10px;
+        y: 8px;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../../desktop/assets/agent-icons/openai.svg");
+        opacity: tab.restore-status == "failed" ? 0.62 : 1.0;
+    }
+
+    if tab.provider == "cursor-agent": Image {
+        x: tab.pinned ? 28px : 10px;
+        y: 8px;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../../desktop/assets/agent-icons/cursor.svg");
+        opacity: tab.restore-status == "failed" ? 0.62 : 1.0;
+    }
+
+    if tab.provider == "gemini": Image {
+        x: tab.pinned ? 28px : 10px;
+        y: 8px;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../../desktop/assets/agent-icons/gemini.png");
+        opacity: tab.restore-status == "failed" ? 0.62 : 1.0;
     }
 
     Text {
-        x: 24px;
+        x: tab.pinned ? 48px : 30px;
         y: 7px;
-        width: parent.width - 46px;
+        width: parent.width - (tab.pinned ? 82px : 64px);
         text: tab.title;
-        color: tab.active ? text-primary : text-muted;
+        color: tab.restore-status == "failed" ? #e06c75 : tab.active ? text-primary : text-muted;
         font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
         font-weight: tab.active ? 600 : 500;
     }
 
-    if tab.pinned: Text {
-        x: parent.width - 22px;
-        y: 8px;
-        text: "*";
-        color: text-primary;
-        font-family: "Lilex Nerd Font Mono";
-        font-size: 12px;
-        font-weight: 700;
+    if tab.restore-status == "launching": Image {
+        x: parent.width - 42px;
+        y: 9px;
+        width: 12px;
+        height: 12px;
+        source: @image-url("../../desktop/assets/icons/icons__spinner.svg");
+        colorize: text-muted;
+    }
+
+    if tab.restore-status == "failed": Image {
+        x: parent.width - 42px;
+        y: 9px;
+        width: 12px;
+        height: 12px;
+        source: @image-url("../../desktop/assets/icons/icons__alert-triangle.svg");
+        colorize: #e06c75;
+    }
+
+    if !tab.pinned && tab.restore-status == "ready" && (chip-touch.has-hover || tab.active): Rectangle {
+        x: parent.width - 46px;
+        y: 6px;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: hover-pin-touch.has-hover ? #ffffff14 : transparent;
+
+        Image {
+            x: 3px;
+            y: 3px;
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../desktop/assets/icons/icons__pin-off.svg");
+            colorize: hover-pin-touch.has-hover ? text-primary : text-muted;
+        }
+
+        hover-pin-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "Pin tab " + root.tab.title;
+            clicked => {
+                root.pin-clicked(root.tab.id);
+            }
+        }
+    }
+
+    if chip-touch.has-hover || tab.active: Rectangle {
+        x: parent.width - 24px;
+        y: 6px;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: close-touch.has-hover ? #ffffff14 : transparent;
+
+        Image {
+            x: 3px;
+            y: 3px;
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../desktop/assets/icons/icons__close.svg");
+            colorize: close-touch.has-hover ? text-primary : text-muted;
+        }
+
+        close-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "Close tab " + root.tab.title;
+            clicked => {
+                root.close-clicked(root.tab.id);
+            }
+        }
+    }
+
+    pin-touch := TouchArea {
+        x: 0px;
+        y: 0px;
+        width: tab.pinned ? 28px : 0px;
+        height: parent.height;
+        accessible-role: button;
+        accessible-label: tab.pinned ? "Unpin tab " + root.tab.title : "Pin tab " + root.tab.title;
+        clicked => {
+            root.pin-clicked(root.tab.id);
+        }
     }
 }
 
@@ -1845,10 +2026,10 @@ export component AoToast inherits Rectangle {
         font-size: 11px;
     }
 
-    AoIconButton {
+    AoAssetIconButton {
         x: parent.width - 62px;
         y: 14px;
-        icon: "C";
+        icon-source: @image-url("../../desktop/assets/icons/icons__copy.svg");
         control-label: "Copy notification details";
         bg: root.card-bg;
         hover-bg: root.toast-border-color;
@@ -1859,10 +2040,10 @@ export component AoToast inherits Rectangle {
         }
     }
 
-    AoIconButton {
+    AoAssetIconButton {
         x: parent.width - 30px;
         y: 14px;
-        icon: "x";
+        icon-source: @image-url("../../desktop/assets/icons/icons__close.svg");
         control-label: "Dismiss notification";
         bg: root.card-bg;
         hover-bg: root.toast-border-color;
