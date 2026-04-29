@@ -26,9 +26,14 @@ mod overlays;
 mod platform;
 mod settings;
 mod style;
+mod titlebar;
 mod toast;
 
 use daemon_ticket::{load_ticket, pre_authorize_local_client, DaemonTicket};
+use titlebar::{
+    build_chip_label, debug_banner_text, open_in_menu_entries, set_open_in_state,
+    set_open_in_unavailable,
+};
 use toast::{clear_toast, set_toast, toast_clipboard_text};
 
 const TERMINAL_COLS: u16 = 100;
@@ -198,29 +203,6 @@ fn current_rss_kib() -> Option<u64> {
 fn empty_string_to_none(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
-}
-
-fn build_chip_label() -> String {
-    let profile = if cfg!(debug_assertions) {
-        "dev"
-    } else {
-        "release"
-    };
-    let sha = option_env!("ANOTHER_ONE_BUILD_SHA").unwrap_or("unknown");
-    let dirty = option_env!("ANOTHER_ONE_BUILD_DIRTY") == Some("true");
-    if dirty {
-        format!("{profile} · {sha} · dirty")
-    } else {
-        format!("{profile} · {sha}")
-    }
-}
-
-fn debug_banner_text() -> &'static str {
-    if cfg!(debug_assertions) {
-        "DEBUG BUILD - not for daily use"
-    } else {
-        ""
-    }
 }
 
 pub fn run_app() -> Result<(), slint::PlatformError> {
@@ -1395,37 +1377,6 @@ fn set_workspace_tree(
     });
 }
 
-fn open_in_menu_entries(state: &frame::OpenInStateWire) -> (String, Vec<MenuEntry>) {
-    let preferred_app_id = state.preferred_app_id.clone().unwrap_or_default();
-    if state.enabled_apps.is_empty() {
-        return (
-            String::new(),
-            vec![MenuEntry {
-                id: "__no-open-in-apps".into(),
-                label: "No apps enabled".into(),
-                shortcut: "".into(),
-                selected: false,
-                disabled: true,
-                destructive: false,
-            }],
-        );
-    }
-
-    let entries = state
-        .enabled_apps
-        .iter()
-        .map(|app| MenuEntry {
-            id: app.id.clone().into(),
-            label: app.label.clone().into(),
-            shortcut: "".into(),
-            selected: app.id == preferred_app_id,
-            disabled: false,
-            destructive: false,
-        })
-        .collect();
-    (preferred_app_id, entries)
-}
-
 fn sidebar_task_menu_entries(pinned: bool) -> Vec<MenuEntry> {
     vec![
         MenuEntry {
@@ -1461,37 +1412,6 @@ fn sidebar_task_menu_entries(pinned: bool) -> Vec<MenuEntry> {
             destructive: true,
         },
     ]
-}
-
-fn set_open_in_state(app_weak: &slint::Weak<AppWindow>, state: frame::OpenInStateWire) {
-    let (preferred_app_id, entries) = open_in_menu_entries(&state);
-    let app_weak = app_weak.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app_weak.upgrade() {
-            app.set_titlebar_preferred_open_in_app_id(preferred_app_id.into());
-            app.set_titlebar_open_in_entries(slint::ModelRc::new(slint::VecModel::from(entries)));
-        }
-    });
-}
-
-fn set_open_in_unavailable(app_weak: &slint::Weak<AppWindow>, detail: impl Into<String>) {
-    let detail = detail.into();
-    let app_weak = app_weak.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app_weak.upgrade() {
-            app.set_titlebar_preferred_open_in_app_id("".into());
-            app.set_titlebar_open_in_entries(slint::ModelRc::new(slint::VecModel::from(vec![
-                MenuEntry {
-                    id: "__open-in-unavailable".into(),
-                    label: detail.into(),
-                    shortcut: "".into(),
-                    selected: false,
-                    disabled: true,
-                    destructive: false,
-                },
-            ])));
-        }
-    });
 }
 
 fn set_resource_usage(
@@ -6058,58 +5978,6 @@ mod tests {
     }
 
     #[test]
-    fn open_in_menu_entries_mark_preferred_app_and_empty_state() {
-        let state = frame::OpenInStateWire {
-            enabled_apps: vec![
-                frame::OpenInAppWire {
-                    id: "cursor".to_string(),
-                    label: "Cursor".to_string(),
-                    description: "Open in Cursor".to_string(),
-                    icon_path: "icons/cursor.svg".to_string(),
-                },
-                frame::OpenInAppWire {
-                    id: "zed".to_string(),
-                    label: "Zed".to_string(),
-                    description: "Open in Zed".to_string(),
-                    icon_path: "icons/zed.svg".to_string(),
-                },
-            ],
-            preferred_app_id: Some("zed".to_string()),
-        };
-
-        let (preferred, entries) = open_in_menu_entries(&state);
-
-        assert_eq!(preferred, "zed");
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id.as_str() == "zed" && entry.selected));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id.as_str() == "cursor" && !entry.selected));
-
-        let empty = frame::OpenInStateWire {
-            enabled_apps: Vec::new(),
-            preferred_app_id: None,
-        };
-        let (preferred, entries) = open_in_menu_entries(&empty);
-
-        assert_eq!(preferred, "");
-        assert_eq!(entries.len(), 1);
-        assert!(entries[0].disabled);
-    }
-
-    #[test]
-    fn toast_clipboard_text_joins_message_and_detail() {
-        assert_eq!(
-            toast_clipboard_text("Could not open", "xdg-open failed"),
-            "Could not open\nxdg-open failed"
-        );
-        assert_eq!(toast_clipboard_text("Saved", ""), "Saved");
-        assert_eq!(toast_clipboard_text("", "detail"), "detail");
-        assert_eq!(toast_clipboard_text("", ""), "");
-    }
-
-    #[test]
     fn slint_sidebar_menus_follow_gpui_project_and_task_menu_roles() {
         let app_source = include_str!("../ui/app.slint");
 
@@ -6207,14 +6075,6 @@ mod tests {
         ] {
             assert!(!settings_source.contains(phrase));
         }
-    }
-
-    #[test]
-    fn build_chip_label_includes_profile_and_sha() {
-        let label = build_chip_label();
-
-        assert!(label.starts_with("dev · ") || label.starts_with("release · "));
-        assert!(label.split(" · ").nth(1).is_some_and(|sha| !sha.is_empty()));
     }
 
     #[test]
