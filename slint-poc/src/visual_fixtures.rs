@@ -21,10 +21,9 @@ use crate::right_inspector::{
     right_inspector_rows_for_commits_with_expansions, right_inspector_rows_for_compare,
     InspectorCommitFileChangesState,
 };
-use crate::{
-    frame, project_accent_color, sidebar_task_menu_entries, AppWindow, MenuEntry,
-    ProjectSidebarEntry, SegmentEntry, TaskSidebarEntry,
-};
+use crate::util::project_accent_color;
+use crate::workspace_shell::sidebar_task_menu_entries;
+use crate::{frame, AppWindow, MenuEntry, ProjectSidebarEntry, SegmentEntry, TaskSidebarEntry};
 
 pub(crate) fn seed_visual_state_fixture(app: &AppWindow) {
     let Ok(state) = std::env::var("ANOTHERONE_SLINT_VISUAL_STATE") else {
