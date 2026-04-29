@@ -1,3 +1,10 @@
+import "../../desktop/assets/fonts/LilexNerdFontMono-Regular.ttf";
+import "../../desktop/assets/fonts/LilexNerdFontMono-Medium.ttf";
+import "../../desktop/assets/fonts/LilexNerdFontMono-Bold.ttf";
+import "../../desktop/assets/fonts/LilexNerdFontMono-Italic.ttf";
+import "../../desktop/assets/fonts/LilexNerdFontMono-MediumItalic.ttf";
+import "../../desktop/assets/fonts/LilexNerdFontMono-BoldItalic.ttf";
+
 import {
     AoButton,
     AoCheckbox,
@@ -164,9 +171,9 @@ export component AppWindow inherits Window {
                 y: 10px;
                 text: active_project_name;
                 color: text_primary;
-                font-family: "monospace";
+                font-family: "Lilex Nerd Font Mono";
                 font-size: 13px;
-                font-weight: 900;
+                font-weight: 700;
             }
 
             Text {
@@ -174,7 +181,7 @@ export component AppWindow inherits Window {
                 y: 25px;
                 text: active_task_name;
                 color: text_muted;
-                font-family: "monospace";
+                font-family: "Lilex Nerd Font Mono";
                 font-size: 10px;
             }
 
@@ -265,7 +272,7 @@ export component AppWindow inherits Window {
                 horizontal-alignment: right;
                 text: project_summary;
                 color: text_muted;
-                font-family: "monospace";
+                font-family: "Lilex Nerd Font Mono";
                 font-size: 10px;
             }
 
@@ -427,9 +434,9 @@ export component AppWindow inherits Window {
                     width: parent.width - 24px;
                     text: active_task_name;
                     color: text_primary;
-                    font-family: "monospace";
+                    font-family: "Lilex Nerd Font Mono";
                     font-size: 13px;
-                    font-weight: 800;
+                    font-weight: 600;
                 }
 
                 Text {
@@ -438,7 +445,7 @@ export component AppWindow inherits Window {
                     width: parent.width - 24px;
                     text: active_branch_name + " / " + active_worktree_name;
                     color: text_muted;
-                    font-family: "monospace";
+                    font-family: "Lilex Nerd Font Mono";
                     font-size: 11px;
                 }
             }
@@ -488,7 +495,7 @@ export component AppWindow inherits Window {
                 width: parent.width - 48px;
                 text: root.terminal_status;
                 color: text_secondary;
-                font-family: "monospace";
+                font-family: "Lilex Nerd Font Mono";
                 font-size: 12px;
             }
 
@@ -521,7 +528,7 @@ export component AppWindow inherits Window {
                 y: terminal_surface.terminal-top + run.line * terminal_surface.terminal-cell-height;
                 text: run.text;
                 color: run.color;
-                font-family: "monospace";
+                font-family: "Lilex Nerd Font Mono";
                 font-size: 13px;
                 font-weight: run.bold ? 700 : 400;
             }
@@ -746,9 +753,9 @@ export component AppWindow inherits Window {
                 y: 24px;
                 text: "Slint component state fixture";
                 color: text_primary;
-                font-family: "monospace";
+                font-family: "Lilex Nerd Font Mono";
                 font-size: 20px;
-                font-weight: 900;
+                font-weight: 700;
             }
 
             Text {
@@ -757,7 +764,7 @@ export component AppWindow inherits Window {
                 width: parent.width - 56px;
                 text: "Deterministic review board for GPUI-equivalent controls, rows, menus, inputs, status cards, and toast surfaces.";
                 color: text_muted;
-                font-family: "monospace";
+                font-family: "Lilex Nerd Font Mono";
                 font-size: 12px;
             }
 
@@ -964,6 +971,8 @@ export component AppWindow inherits Window {
                 field-border: border_color;
                 focus-border: focus_ring;
                 error-color: danger_color;
+                text-color: text_primary;
+                placeholder-color: text_muted;
             }
 
             AoTextInput {
@@ -976,6 +985,8 @@ export component AppWindow inherits Window {
                 field-border: border_color;
                 focus-border: focus_ring;
                 error-color: danger_color;
+                text-color: text_primary;
+                placeholder-color: text_muted;
                 error: true;
             }
 
@@ -1060,9 +1071,9 @@ export component AppWindow inherits Window {
                     y: 22px;
                     text: "New task";
                     color: text_primary;
-                    font-family: "monospace";
-                    font-size: 19px;
-                    font-weight: 900;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 20px;
+                    font-weight: 700;
                 }
 
                 AoIconButton {
@@ -1085,7 +1096,7 @@ export component AppWindow inherits Window {
                     y: 56px;
                     text: "Slint shell modal matching the GPUI task creation surface.";
                     color: text_muted;
-                    font-family: "monospace";
+                    font-family: "Lilex Nerd Font Mono";
                     font-size: 12px;
                 }
 
@@ -1099,6 +1110,8 @@ export component AppWindow inherits Window {
                     field-border: border_color;
                     focus-border: focus_ring;
                     error-color: danger_color;
+                    text-color: text_primary;
+                    placeholder-color: text_muted;
                     error: root.new_task_name == "";
                 }
 
@@ -1112,6 +1125,8 @@ export component AppWindow inherits Window {
                     field-border: border_color;
                     focus-border: focus_ring;
                     error-color: danger_color;
+                    text-color: text_primary;
+                    placeholder-color: text_muted;
                 }
 
                 AoButton {

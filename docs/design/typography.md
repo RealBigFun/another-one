@@ -69,9 +69,11 @@ actions) and defaults to a separate `16px` baseline (see
 treat it as its own thing. Line-height is multiplied by
 `TERMINAL_LINE_HEIGHT_RATIO` for readability.
 
-## What mobile should do
+## What Slint clients should do
 
-Mobile's xterm.dart already uses the Flutter `monospace` alias. Once we
-ship Lilex to mobile, switch the `TerminalStyle` to explicitly request
-it — that'll also fix the powerline separator glyphs we saw rendering as
-boxes in the starship prompt.
+Bundle Lilex NerdFont Mono and request it explicitly for chrome and
+terminal rendering. The Slint implementation imports all six bundled TTF
+faces from `desktop/assets/fonts/` and embeds them through `slint-build`;
+platform fallback monospace fonts are acceptable only as a temporary
+diagnostic state because glyph coverage and metrics drift from the GPUI
+baseline.

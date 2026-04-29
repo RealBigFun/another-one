@@ -1,5 +1,3 @@
-import { LineEdit } from "std-widgets.slint";
-
 export struct ProjectSidebarEntry {
     id: string,
     name: string,
@@ -108,7 +106,7 @@ export component AoButton inherits Rectangle {
         width: parent.width - 20px;
         text: loading ? "..." : label;
         color: destructive ? danger-color : text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
         font-weight: 700;
     }
@@ -166,9 +164,9 @@ export component AoIconButton inherits Rectangle {
         horizontal-alignment: center;
         text: icon;
         color: icon-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 13px;
-        font-weight: 900;
+        font-weight: 700;
     }
 }
 
@@ -262,9 +260,9 @@ export component AoSplitButton inherits Rectangle {
         width: parent.width - 44px;
         text: label;
         color: text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: 800;
+        font-weight: 600;
     }
 
     Text {
@@ -274,9 +272,9 @@ export component AoSplitButton inherits Rectangle {
         horizontal-alignment: center;
         text: "v";
         color: text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
-        font-weight: 900;
+        font-weight: 700;
     }
 }
 
@@ -342,9 +340,9 @@ export component AoCheckbox inherits Rectangle {
         width: 10px;
         text: "x";
         color: text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
-        font-weight: 900;
+        font-weight: 700;
     }
 
     Text {
@@ -353,7 +351,7 @@ export component AoCheckbox inherits Rectangle {
         width: parent.width - 28px;
         text: label;
         color: error ? danger-color : text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
         font-weight: 700;
     }
@@ -417,9 +415,9 @@ export component AoSegmentedControl inherits Rectangle {
             horizontal-alignment: center;
             text: entry.label;
             color: entry.selected ? root.text-color : root.muted-color;
-            font-family: "monospace";
+            font-family: "Lilex Nerd Font Mono";
             font-size: 11px;
-            font-weight: entry.selected ? 800 : 600;
+            font-weight: entry.selected ? 600 : 500;
         }
     }
 }
@@ -446,7 +444,7 @@ export component AoStatusPill inherits Rectangle {
         width: parent.width - 24px;
         text: label;
         color: kind == "success" ? success-color : kind == "warning" ? warning-color : kind == "danger" ? danger-color : text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
         font-weight: 700;
     }
@@ -474,9 +472,9 @@ export component AoResourceIndicator inherits Rectangle {
         width: parent.width - 24px;
         text: label;
         color: danger ? danger-color : warning ? warning-color : text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: 800;
+        font-weight: 600;
     }
 }
 
@@ -484,9 +482,9 @@ export component AoSectionLabel inherits Text {
     in property <color> label-color;
 
     color: label-color;
-    font-family: "monospace";
+    font-family: "Lilex Nerd Font Mono";
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 600;
 }
 
 export component AoAvatar inherits Rectangle {
@@ -506,9 +504,9 @@ export component AoAvatar inherits Rectangle {
         horizontal-alignment: center;
         text: label;
         color: text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: 900;
+        font-weight: 700;
     }
 }
 
@@ -568,9 +566,9 @@ export component AoProjectRow inherits Rectangle {
         width: parent.width - 104px;
         text: entry.name;
         color: text-primary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 14px;
-        font-weight: 800;
+        font-weight: 600;
     }
 
     Text {
@@ -580,9 +578,9 @@ export component AoProjectRow inherits Rectangle {
         horizontal-alignment: center;
         text: entry.expanded ? "v" : ">";
         color: text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 10px;
-        font-weight: 900;
+        font-weight: 700;
     }
 
     Text {
@@ -591,7 +589,7 @@ export component AoProjectRow inherits Rectangle {
         width: parent.width - 74px;
         text: entry.loading ? "loading project..." : entry.error ? "project unavailable" : entry.branch;
         color: entry.error ? danger-color : entry.loading ? warning-color : text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
     }
 
@@ -602,7 +600,7 @@ export component AoProjectRow inherits Rectangle {
         horizontal-alignment: right;
         text: entry.task-count-label;
         color: text-secondary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
         font-weight: 700;
     }
@@ -613,7 +611,7 @@ export component AoProjectRow inherits Rectangle {
         width: parent.width - 66px;
         text: entry.path;
         color: text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 10px;
     }
 
@@ -630,9 +628,9 @@ export component AoProjectRow inherits Rectangle {
             y: 5px;
             text: "+";
             color: text-secondary;
-            font-family: "monospace";
+            font-family: "Lilex Nerd Font Mono";
             font-size: 10px;
-            font-weight: 900;
+            font-weight: 700;
         }
 
         add-touch := TouchArea {
@@ -653,9 +651,9 @@ export component AoProjectRow inherits Rectangle {
             y: 5px;
             text: "gh";
             color: text-secondary;
-            font-family: "monospace";
+            font-family: "Lilex Nerd Font Mono";
             font-size: 10px;
-            font-weight: 800;
+            font-weight: 600;
         }
 
         github-touch := TouchArea {
@@ -676,9 +674,9 @@ export component AoProjectRow inherits Rectangle {
             y: 5px;
             text: "...";
             color: text-secondary;
-            font-family: "monospace";
+            font-family: "Lilex Nerd Font Mono";
             font-size: 10px;
-            font-weight: 800;
+            font-weight: 600;
         }
 
         menu-touch := TouchArea {
@@ -754,9 +752,9 @@ export component AoTaskRow inherits Rectangle {
         width: parent.width - 94px;
         text: entry.editing ? entry.title + " |" : entry.title;
         color: entry.error || entry.delete-confirm ? danger-color : text-primary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 13px;
-        font-weight: 800;
+        font-weight: 600;
     }
 
     Text {
@@ -765,7 +763,7 @@ export component AoTaskRow inherits Rectangle {
         width: parent.width - 70px;
         text: entry.loading ? "loading task..." : entry.error ? "task unavailable" : entry.delete-confirm ? "confirm delete" : entry.metadata;
         color: entry.error || entry.delete-confirm ? danger-color : entry.loading ? warning-color : text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
     }
 
@@ -774,9 +772,9 @@ export component AoTaskRow inherits Rectangle {
         y: 11px;
         text: "pin";
         color: text-secondary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 10px;
-        font-weight: 800;
+        font-weight: 600;
     }
 
     Rectangle {
@@ -802,9 +800,9 @@ export component AoTaskRow inherits Rectangle {
             y: 5px;
             text: "ren";
             color: text-secondary;
-            font-family: "monospace";
+            font-family: "Lilex Nerd Font Mono";
             font-size: 10px;
-            font-weight: 800;
+            font-weight: 600;
         }
 
         rename-touch := TouchArea {
@@ -825,9 +823,9 @@ export component AoTaskRow inherits Rectangle {
             y: 5px;
             text: "del";
             color: entry.delete-confirm ? danger-color : text-secondary;
-            font-family: "monospace";
+            font-family: "Lilex Nerd Font Mono";
             font-size: 10px;
-            font-weight: 800;
+            font-weight: 600;
         }
 
         delete-touch := TouchArea {
@@ -848,9 +846,9 @@ export component AoTaskRow inherits Rectangle {
             y: 5px;
             text: "...";
             color: text-secondary;
-            font-family: "monospace";
+            font-family: "Lilex Nerd Font Mono";
             font-size: 10px;
-            font-weight: 800;
+            font-weight: 600;
         }
 
         menu-touch := TouchArea {
@@ -905,9 +903,9 @@ export component AoTabChip inherits Rectangle {
         width: parent.width - 46px;
         text: tab.title;
         color: tab.active ? text-primary : text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: tab.active ? 800 : 600;
+        font-weight: tab.active ? 600 : 500;
     }
 
     if tab.pinned: Text {
@@ -915,9 +913,9 @@ export component AoTabChip inherits Rectangle {
         y: 8px;
         text: "*";
         color: text-primary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: 900;
+        font-weight: 700;
     }
 }
 
@@ -941,9 +939,9 @@ export component AoCard inherits Rectangle {
         width: parent.width - 28px;
         text: title;
         color: text-primary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: 800;
+        font-weight: 600;
     }
 
     Text {
@@ -952,7 +950,7 @@ export component AoCard inherits Rectangle {
         width: parent.width - 28px;
         text: body;
         color: text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
     }
 }
@@ -993,9 +991,9 @@ export component AoStateCard inherits Rectangle {
         width: parent.width - 44px;
         text: title;
         color: text-primary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: 800;
+        font-weight: 600;
     }
 
     Text {
@@ -1004,7 +1002,7 @@ export component AoStateCard inherits Rectangle {
         width: parent.width - 28px;
         text: state == "loading" ? "Loading..." : body;
         color: state == "error" ? danger-color : text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
     }
 
@@ -1033,6 +1031,8 @@ export component AoTextInput inherits Rectangle {
     in property <color> error-color: field-border;
     in property <bool> error: false;
     in property <bool> disabled: false;
+    in property <color> text-color: #ebebeb;
+    in property <color> placeholder-color: #949494;
 
     height: 36px;
     border-radius: 9px;
@@ -1040,14 +1040,32 @@ export component AoTextInput inherits Rectangle {
     border-color: error ? error-color : input.has-focus ? focus-border : field-border;
     background: field-bg;
     opacity: disabled ? 0.52 : 1.0;
+    clip: true;
 
-    input := LineEdit {
+    if root.text == "" && !input.has-focus: Text {
         x: 8px;
-        y: 3px;
+        y: 10px;
         width: parent.width - 16px;
-        height: parent.height - 6px;
+        text: root.placeholder-text;
+        color: root.placeholder-color;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 12px;
+        font-weight: 400;
+    }
+
+    input := TextInput {
+        x: 8px;
+        y: 0px;
+        width: parent.width - 16px;
+        height: parent.height;
         enabled: !root.disabled;
-        placeholder-text: root.placeholder-text;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 12px;
+        font-weight: 400;
+        color: root.text-color;
+        selection-background-color: root.focus-border.with-alpha(0.42);
+        selection-foreground-color: root.text-color;
+        vertical-alignment: center;
     }
 }
 
@@ -1111,9 +1129,9 @@ export component AoMenuItem inherits Rectangle {
         width: parent.width - 92px;
         text: entry.label;
         color: entry.destructive ? danger-color : text-primary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: entry.selected ? 800 : 600;
+        font-weight: entry.selected ? 600 : 500;
     }
 
     Text {
@@ -1123,7 +1141,7 @@ export component AoMenuItem inherits Rectangle {
         horizontal-alignment: right;
         text: entry.shortcut;
         color: text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 10px;
     }
 }
@@ -1180,7 +1198,7 @@ export component AoTooltip inherits Rectangle {
         width: parent.width - 20px;
         text: message;
         color: text-color;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
         font-weight: 700;
     }
@@ -1221,9 +1239,9 @@ export component AoToast inherits Rectangle {
         width: parent.width - 96px;
         text: message;
         color: text-primary;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 12px;
-        font-weight: 800;
+        font-weight: 600;
     }
 
     if detail != "": Text {
@@ -1232,7 +1250,7 @@ export component AoToast inherits Rectangle {
         width: parent.width - 96px;
         text: detail;
         color: kind == "error" ? danger-color : text-muted;
-        font-family: "monospace";
+        font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
     }
 

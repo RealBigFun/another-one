@@ -2663,6 +2663,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn slint_ui_uses_gpui_typography_contract() {
+        for source in [
+            include_str!("../ui/app.slint"),
+            include_str!("../ui/components.slint"),
+        ] {
+            assert!(source.contains("Lilex Nerd Font Mono"));
+            assert!(!source.contains("font-family: \"monospace\""));
+            assert!(!source.contains("font-weight: 800"));
+            assert!(!source.contains("font-weight: 900"));
+            assert!(!source.contains("font-size: 19px"));
+        }
+    }
+
+    #[test]
     fn snapshot_surface_preserves_ansi_foreground_colors() {
         let mut terminal = AlacrittySnapshot::new(40, 4);
         let _ = terminal.apply_output(b"\x1b[31mRED \x1b[32mGREEN \x1b[34mBLUE\x1b[0m DEFAULT");

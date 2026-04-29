@@ -34,7 +34,7 @@ The GPUI app is the dark-mode source of truth for Slint styling. Slint must pres
 
 ## Typography
 
-GPUI uses `Lilex NerdFont Mono` as the primary family and generally renders body text between 10px and 14px. Slint currently uses `"monospace"` as a fallback until the font packaging path is wired. Pixel-perfect typography remains blocked on font asset registration and capture evidence.
+GPUI uses `Lilex NerdFont Mono` as the primary family and generally renders body text between 10px and 14px. Slint imports and embeds the six bundled Lilex Nerd Font Mono faces from `desktop/assets/fonts/`, requests `"Lilex Nerd Font Mono"` explicitly in UI chrome, and keeps weights within the GPUI token scale of 400/500/600/700. Pixel-perfect typography still depends on visual-diff evidence, but font packaging is no longer a known blocker.
 
 ## Style Rules
 
