@@ -725,8 +725,39 @@ fn seed_visual_state_fixture(app: &AppWindow) {
         "right-inspector-compare" => {
             seed_right_inspector_compare_fixture(app);
         }
+        "settings-general" => {
+            seed_settings_visual_fixture(app, "general", "Settings General visual gate")
+        }
+        "settings-agents" => {
+            seed_settings_visual_fixture(app, "agents", "Settings Agents visual gate")
+        }
+        "settings-open-in" => {
+            seed_settings_visual_fixture(app, "open-in", "Settings Open In visual gate")
+        }
+        "settings-git-actions" => {
+            seed_settings_visual_fixture(app, "git-actions", "Settings Git Actions visual gate");
+        }
+        "settings-keybindings" => {
+            seed_settings_visual_fixture(app, "keybindings", "Settings Keybindings visual gate");
+        }
+        "settings-mcp" => seed_settings_visual_fixture(app, "mcp", "Settings MCP visual gate"),
         _ => {}
     }
+}
+
+fn seed_settings_visual_fixture(app: &AppWindow, section: &str, task_name: &str) {
+    app.set_settings_open(true);
+    app.set_settings_active_section(section.into());
+    app.set_active_project_name("settings-fixture".into());
+    app.set_active_task_name(task_name.into());
+    app.set_active_branch_name("slint-daemon-poc-clean".into());
+    app.set_active_worktree_name("fixture-mode".into());
+    app.set_project_summary("fixture".into());
+    app.set_left_sidebar_open(true);
+    app.set_right_inspector_open(false);
+    app.set_toast_kind("info".into());
+    app.set_toast_message("".into());
+    app.set_toast_detail("".into());
 }
 
 fn seed_right_inspector_commits_fixture(app: &AppWindow) {
@@ -5416,6 +5447,25 @@ mod tests {
         assert!(components_source.contains("#ffffff14"));
         assert!(components_source.contains("#8bd99c"));
         assert!(components_source.contains("#e58b95"));
+    }
+
+    #[test]
+    fn slint_visual_state_fixtures_cover_settings_capture_sections() {
+        let source = include_str!("lib.rs");
+
+        for fixture in [
+            "settings-general",
+            "settings-agents",
+            "settings-open-in",
+            "settings-git-actions",
+            "settings-keybindings",
+            "settings-mcp",
+        ] {
+            assert!(
+                source.contains(fixture),
+                "missing settings visual fixture: {fixture}"
+            );
+        }
     }
 
     #[test]
