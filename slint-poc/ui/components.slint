@@ -2094,6 +2094,126 @@ export component AoInspectorFileRow inherits Rectangle {
     }
 }
 
+export component AoInspectorCommitRow inherits Rectangle {
+    in property <RightInspectorRow> entry;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> hover-bg;
+
+    height: 42px;
+    border-radius: 7px;
+    background: touch.has-hover ? hover-bg : transparent;
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+    }
+
+    Image {
+        x: 14px;
+        y: 17px;
+        width: 8px;
+        height: 8px;
+        source: @image-url("../../desktop/assets/icons/icons__chevron-right.svg");
+        colorize: root.text-muted;
+    }
+
+    Text {
+        x: 32px;
+        y: 8px;
+        width: parent.width - 118px;
+        text: entry.title;
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 12px;
+        font-weight: 600;
+        overflow: elide;
+    }
+
+    Text {
+        x: 32px;
+        y: 25px;
+        width: parent.width - 118px;
+        text: entry.parent-dir;
+        color: root.text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        overflow: elide;
+    }
+
+    Text {
+        x: parent.width - 78px;
+        y: 15px;
+        width: 64px;
+        horizontal-alignment: right;
+        text: entry.status;
+        color: root.text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        font-weight: 600;
+    }
+}
+
+export component AoInspectorCheckRow inherits Rectangle {
+    in property <RightInspectorRow> entry;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> hover-bg;
+
+    height: 46px;
+    border-radius: 7px;
+    background: touch.has-hover ? hover-bg : transparent;
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+    }
+
+    Image {
+        x: 14px;
+        y: 15px;
+        width: 16px;
+        height: 16px;
+        source: entry.group == "pass" ? @image-url("../../desktop/assets/icons/icons__badge-check.svg") : entry.group == "fail" ? @image-url("../../desktop/assets/icons/icons__badge-x.svg") : entry.group == "pending" ? @image-url("../../desktop/assets/icons/icons__badge-clock.svg") : @image-url("../../desktop/assets/icons/icons__minus.svg");
+        colorize: entry.status-color;
+    }
+
+    Text {
+        x: 40px;
+        y: 8px;
+        width: parent.width - 132px;
+        text: entry.title;
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 12px;
+        font-weight: 600;
+        overflow: elide;
+    }
+
+    Text {
+        x: 40px;
+        y: 26px;
+        width: parent.width - 132px;
+        text: entry.parent-dir;
+        color: root.text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        overflow: elide;
+    }
+
+    Text {
+        x: parent.width - 82px;
+        y: 16px;
+        width: 68px;
+        horizontal-alignment: right;
+        text: entry.additions-label;
+        color: root.text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        font-weight: 600;
+    }
+}
+
 export component AoTextInput inherits Rectangle {
     in property <string> placeholder-text;
     in-out property <string> text <=> input.text;

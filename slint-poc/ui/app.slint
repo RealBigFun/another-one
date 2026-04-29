@@ -9,6 +9,8 @@ import {
     AoButton,
     AoAssetIconButton,
     AoCheckbox,
+    AoInspectorCheckRow,
+    AoInspectorCommitRow,
     AoIconButton,
     AoInspectorFileRow,
     AoInspectorModeButton,
@@ -978,6 +980,22 @@ export component AppWindow inherits Window {
                         discard-file-clicked(path, original_path, untracked) => {
                             root.inspector_discard_file_requested(path, original_path, untracked);
                         }
+                    }
+
+                    if row.kind == "commit": AoInspectorCommitRow {
+                        width: parent.width;
+                        entry: row;
+                        text-primary: root.text_primary;
+                        text-muted: root.text_muted;
+                        hover-bg: #ffffff0a;
+                    }
+
+                    if row.kind == "check": AoInspectorCheckRow {
+                        width: parent.width;
+                        entry: row;
+                        text-primary: root.text_primary;
+                        text-muted: root.text_muted;
+                        hover-bg: #ffffff0a;
                     }
                 }
             }

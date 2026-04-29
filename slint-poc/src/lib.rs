@@ -36,6 +36,8 @@ const SIDEBAR_PROJECT_ROW_HEIGHT: i32 = 36;
 const SIDEBAR_TASK_ROW_HEIGHT: i32 = 46;
 const RIGHT_INSPECTOR_SECTION_ROW_HEIGHT: i32 = 44;
 const RIGHT_INSPECTOR_FILE_ROW_HEIGHT: i32 = 34;
+const RIGHT_INSPECTOR_COMMIT_ROW_HEIGHT: i32 = 42;
+const RIGHT_INSPECTOR_CHECK_ROW_HEIGHT: i32 = 46;
 const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x1e1f22;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
 const PROJECT_ACCENTS: [u32; 8] = [
@@ -1621,6 +1623,125 @@ fn right_inspector_file_row(
     }
 }
 
+fn right_inspector_rows_for_commits(
+    project_id: &str,
+    view: &frame::RecentCommitsWire,
+) -> Vec<RightInspectorRow> {
+    let mut rows = Vec::new();
+    let mut row_y = 0;
+    let branch = view.current_branch.as_deref().unwrap_or("current branch");
+    rows.push(right_inspector_section_row(
+        project_id,
+        "commits",
+        &format!("Recent commits on {branch}"),
+        view.commits.len(),
+        0,
+        0,
+        row_y,
+    ));
+    row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
+
+    for commit in &view.commits {
+        rows.push(RightInspectorRow {
+            kind: "commit".into(),
+            group: "commits".into(),
+            id: format!("commit:{}", commit.id).into(),
+            project_id: project_id.into(),
+            path: commit.id.clone().into(),
+            original_path: "".into(),
+            row_y,
+            row_height: RIGHT_INSPECTOR_COMMIT_ROW_HEIGHT,
+            title: commit.subject.clone().into(),
+            parent_dir: format!("{} - {}", commit.author_name, commit.authored_relative).into(),
+            status: commit.short_id.clone().into(),
+            status_color: slint::Color::from_argb_encoded(0xff949494),
+            additions_label: "".into(),
+            deletions_label: "".into(),
+            file_count_label: "".into(),
+            can_stage: false,
+            can_unstage: false,
+            untracked: false,
+        });
+        row_y += RIGHT_INSPECTOR_COMMIT_ROW_HEIGHT;
+    }
+
+    rows
+}
+
+fn right_inspector_rows_for_checks(
+    project_id: &str,
+    checks: &[frame::Check],
+) -> Vec<RightInspectorRow> {
+    let mut checks = checks.iter().collect::<Vec<_>>();
+    checks.sort_by(|left, right| {
+        check_bucket_priority(&left.bucket)
+            .cmp(&check_bucket_priority(&right.bucket))
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+
+    let mut rows = Vec::new();
+    let mut row_y = 0;
+    rows.push(right_inspector_section_row(
+        project_id,
+        "checks",
+        "Pull request checks",
+        checks.len(),
+        0,
+        0,
+        row_y,
+    ));
+    row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
+
+    for check in checks {
+        let (bucket, color) = check_bucket_visual(&check.bucket);
+        rows.push(RightInspectorRow {
+            kind: "check".into(),
+            group: bucket.into(),
+            id: format!("check:{}", check.name).into(),
+            project_id: project_id.into(),
+            path: check.link.clone().unwrap_or_default().into(),
+            original_path: "".into(),
+            row_y,
+            row_height: RIGHT_INSPECTOR_CHECK_ROW_HEIGHT,
+            title: check.name.clone().into(),
+            parent_dir: check
+                .description
+                .clone()
+                .unwrap_or_else(|| check.state.clone())
+                .into(),
+            status: check.state.clone().into(),
+            status_color: color,
+            additions_label: check.duration_text.clone().unwrap_or_default().into(),
+            deletions_label: "".into(),
+            file_count_label: "".into(),
+            can_stage: false,
+            can_unstage: false,
+            untracked: false,
+        });
+        row_y += RIGHT_INSPECTOR_CHECK_ROW_HEIGHT;
+    }
+
+    rows
+}
+
+fn check_bucket_priority(bucket: &impl std::fmt::Debug) -> u8 {
+    match format!("{bucket:?}").as_str() {
+        "Fail" => 0,
+        "Pending" => 1,
+        "Pass" => 2,
+        _ => 3,
+    }
+}
+
+fn check_bucket_visual(bucket: &impl std::fmt::Debug) -> (&'static str, slint::Color) {
+    match format!("{bucket:?}").as_str() {
+        "Pass" => ("pass", slint::Color::from_argb_encoded(0xff8bd99c)),
+        "Fail" => ("fail", slint::Color::from_argb_encoded(0xffe58b95)),
+        "Pending" => ("pending", slint::Color::from_argb_encoded(0xffe6c36d)),
+        _ => ("skipped", slint::Color::from_argb_encoded(0xff8f8f8f)),
+    }
+}
+
 fn changed_file_has_staged_changes(file: &frame::ChangedFileWire) -> bool {
     let status = status_char(&file.index_status);
     status != ' ' && status != '?'
@@ -2544,51 +2665,94 @@ async fn run_terminal_session(
                                     }
                                 }
                                 WorkerReply::RecentCommitsAck { view } => {
-                                    let detail = view
-                                        .as_ref()
-                                        .and_then(|view| view.current_branch.clone())
-                                        .map(|branch| format!("Branch: {branch}"))
-                                        .unwrap_or_else(|| format!("Project: {right_inspector_project_id}"));
-                                    let summary = view
-                                        .map(|view| {
-                                            if view.commits.is_empty() {
-                                                "No commits yet on this branch.".to_string()
-                                            } else if view.has_more {
+                                    match view {
+                                        None => set_right_inspector_state(
+                                            app_weak,
+                                            "commits",
+                                            "unavailable",
+                                            "Commits unavailable",
+                                            "The daemon did not recognize the active project.",
+                                            format!("Project: {right_inspector_project_id}"),
+                                            Vec::new(),
+                                        ),
+                                        Some(view) if view.commits.is_empty() => {
+                                            set_right_inspector_state(
+                                                app_weak,
+                                                "commits",
+                                                "clean",
+                                                "No commits yet",
+                                                "No commits were found on this branch.",
+                                                view.current_branch
+                                                    .map(|branch| format!("Branch: {branch}"))
+                                                    .unwrap_or_else(|| format!("Project: {right_inspector_project_id}")),
+                                                Vec::new(),
+                                            );
+                                        }
+                                        Some(view) => {
+                                            let summary = if view.has_more {
                                                 format!("{} commits shown; more are available.", view.commits.len())
                                             } else {
                                                 format!("{} recent commits.", view.commits.len())
-                                            }
-                                        })
-                                        .unwrap_or_else(|| "The daemon did not recognize the active project.".to_string());
-                                    set_right_inspector_state(
-                                        app_weak,
-                                        "commits",
-                                        "deferred",
-                                        "Commits mode wired",
-                                        summary,
-                                        detail,
-                                        Vec::new(),
-                                    );
+                                            };
+                                            let detail = view
+                                                .current_branch
+                                                .clone()
+                                                .map(|branch| format!("Branch: {branch}"))
+                                                .unwrap_or_else(|| format!("Project: {right_inspector_project_id}"));
+                                            let rows = right_inspector_rows_for_commits(
+                                                &right_inspector_project_id,
+                                                &view,
+                                            );
+                                            set_right_inspector_state(
+                                                app_weak,
+                                                "commits",
+                                                "dirty",
+                                                "Recent commits",
+                                                summary,
+                                                detail,
+                                                rows,
+                                            );
+                                        }
+                                    }
                                 }
                                 WorkerReply::PullRequestChecksAck { checks } => {
-                                    let summary = checks
-                                        .map(|checks| {
-                                            if checks.is_empty() {
-                                                "No CI checks found for this pull request.".to_string()
-                                            } else {
-                                                format!("{} pull request checks returned by daemon.", checks.len())
-                                            }
-                                        })
-                                        .unwrap_or_else(|| "No pull request exists for this branch.".to_string());
-                                    set_right_inspector_state(
-                                        app_weak,
-                                        "checks",
-                                        "deferred",
-                                        "Checks mode wired",
-                                        summary,
-                                        format!("Project: {right_inspector_project_id}"),
-                                        Vec::new(),
-                                    );
+                                    match checks {
+                                        None => set_right_inspector_state(
+                                            app_weak,
+                                            "checks",
+                                            "clean",
+                                            "No pull request",
+                                            "No pull request exists for this branch.",
+                                            format!("Project: {right_inspector_project_id}"),
+                                            Vec::new(),
+                                        ),
+                                        Some(checks) if checks.is_empty() => {
+                                            set_right_inspector_state(
+                                                app_weak,
+                                                "checks",
+                                                "clean",
+                                                "No checks",
+                                                "No CI checks found for this pull request.",
+                                                format!("Project: {right_inspector_project_id}"),
+                                                Vec::new(),
+                                            );
+                                        }
+                                        Some(checks) => {
+                                            let rows = right_inspector_rows_for_checks(
+                                                &right_inspector_project_id,
+                                                &checks,
+                                            );
+                                            set_right_inspector_state(
+                                                app_weak,
+                                                "checks",
+                                                "dirty",
+                                                "Pull request checks",
+                                                format!("{} checks returned by daemon.", checks.len()),
+                                                format!("Project: {right_inspector_project_id}"),
+                                                rows,
+                                            );
+                                        }
+                                    }
                                 }
                                 WorkerReply::SubmitNewTaskAck { section_id } => {
                                     let target = TerminalTarget {
@@ -4074,6 +4238,10 @@ mod tests {
             "icons__minus.svg",
             "icons__discard.svg",
             "icons__chevron-down.svg",
+            "icons__chevron-right.svg",
+            "icons__badge-check.svg",
+            "icons__badge-x.svg",
+            "icons__badge-clock.svg",
         ] {
             assert!(
                 app_source.contains(asset) || components_source.contains(asset),
@@ -4234,6 +4402,52 @@ mod tests {
         assert_eq!(rows[4].title.as_str(), "new.md");
         assert_eq!(rows[4].parent_dir.as_str(), "docs");
         assert_eq!(rows[4].status.as_str(), "A");
+    }
+
+    #[test]
+    fn right_inspector_rows_render_recent_commits() {
+        let view = frame::RecentCommitsWire {
+            current_branch: Some("feature/right-inspector".to_string()),
+            has_more: false,
+            commits: vec![frame::CommitWire {
+                id: "abcdef012345".to_string(),
+                short_id: "abcdef0".to_string(),
+                subject: "feat: wire inspector".to_string(),
+                author_name: "Mason".to_string(),
+                authored_relative: "2 minutes ago".to_string(),
+            }],
+        };
+
+        let rows = right_inspector_rows_for_commits("project-a", &view);
+
+        assert_eq!(rows[0].kind.as_str(), "section");
+        assert_eq!(
+            rows[0].title.as_str(),
+            "Recent commits on feature/right-inspector"
+        );
+        assert_eq!(rows[1].kind.as_str(), "commit");
+        assert_eq!(rows[1].title.as_str(), "feat: wire inspector");
+        assert_eq!(rows[1].parent_dir.as_str(), "Mason - 2 minutes ago");
+        assert_eq!(rows[1].status.as_str(), "abcdef0");
+    }
+
+    #[test]
+    fn right_inspector_rows_sort_checks_by_gpui_priority() {
+        let checks = vec![
+            check_wire("Unit", frame::CheckBucket::Pass),
+            check_wire("Build", frame::CheckBucket::Fail),
+            check_wire("Lint", frame::CheckBucket::Pending),
+        ];
+
+        let rows = right_inspector_rows_for_checks("project-a", &checks);
+
+        assert_eq!(rows[0].title.as_str(), "Pull request checks");
+        assert_eq!(rows[1].title.as_str(), "Build");
+        assert_eq!(rows[1].group.as_str(), "fail");
+        assert_eq!(rows[2].title.as_str(), "Lint");
+        assert_eq!(rows[2].group.as_str(), "pending");
+        assert_eq!(rows[3].title.as_str(), "Unit");
+        assert_eq!(rows[3].group.as_str(), "pass");
     }
 
     #[test]
@@ -4825,6 +5039,17 @@ mod tests {
             index_status: index_status.to_string(),
             worktree_status: worktree_status.to_string(),
             untracked,
+        }
+    }
+
+    fn check_wire(name: &str, bucket: frame::CheckBucket) -> frame::Check {
+        frame::Check {
+            name: name.to_string(),
+            state: format!("{bucket:?}").to_lowercase(),
+            bucket,
+            description: Some(format!("{name} description")),
+            link: None,
+            duration_text: Some("1m".to_string()),
         }
     }
 
