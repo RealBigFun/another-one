@@ -2564,18 +2564,18 @@ async fn run_terminal_session(
     app_weak: &slint::Weak<AppWindow>,
     client_event_rx: &mut mpsc::UnboundedReceiver<SlintClientEvent>,
 ) -> anyhow::Result<()> {
-    set_terminal_status(app_weak, "terminal: loading /tmp/daemon-sandbox.ticket");
-    let (endpoint_id, direct_addrs) = wait_for_ticket(app_weak).await?;
+    set_terminal_status(app_weak, "terminal: loading embedded daemon ticket");
+    let ticket = wait_for_ticket(app_weak).await?;
 
     set_terminal_status(app_weak, "terminal: binding local iroh endpoint");
     let endpoint = Endpoint::bind(presets::N0)
         .await
         .context("bind client endpoint")?;
 
-    pre_authorize_local_client(endpoint.id())?;
+    pre_authorize_local_client(endpoint.id(), ticket.source)?;
 
-    let mut addr = EndpointAddr::new(endpoint_id);
-    for direct_addr in direct_addrs {
+    let mut addr = EndpointAddr::new(ticket.endpoint_id);
+    for direct_addr in ticket.direct_addrs {
         addr = addr.with_ip_addr(direct_addr);
     }
 
@@ -4066,14 +4066,24 @@ where
     Ok(())
 }
 
-async fn wait_for_ticket(
-    app_weak: &slint::Weak<AppWindow>,
-) -> anyhow::Result<(EndpointId, Vec<SocketAddr>)> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DaemonTicketSource {
+    Embedded,
+    Sandbox,
+}
+
+struct DaemonTicket {
+    endpoint_id: EndpointId,
+    direct_addrs: Vec<SocketAddr>,
+    source: DaemonTicketSource,
+}
+
+async fn wait_for_ticket(app_weak: &slint::Weak<AppWindow>) -> anyhow::Result<DaemonTicket> {
     loop {
         match load_ticket() {
             Ok(Some(ticket)) => return Ok(ticket),
             Ok(None) => {
-                set_terminal_status(app_weak, "terminal: waiting for /tmp/daemon-sandbox.ticket");
+                set_terminal_status(app_weak, "terminal: waiting for embedded daemon ticket");
                 tokio::time::sleep(RETRY_DELAY).await;
             }
             Err(error) => return Err(error),
@@ -4081,12 +4091,29 @@ async fn wait_for_ticket(
     }
 }
 
-fn load_ticket() -> anyhow::Result<Option<(EndpointId, Vec<SocketAddr>)>> {
-    let path = std::env::temp_dir().join("daemon-sandbox.ticket");
+fn load_ticket() -> anyhow::Result<Option<DaemonTicket>> {
+    for (source, path) in daemon_ticket_candidates() {
+        let Some((endpoint_id, direct_addrs)) = load_ticket_from_path(&path)? else {
+            continue;
+        };
+        return Ok(Some(DaemonTicket {
+            endpoint_id,
+            direct_addrs,
+            source,
+        }));
+    }
+    Ok(None)
+}
+
+fn load_ticket_from_path(path: &Path) -> anyhow::Result<Option<(EndpointId, Vec<SocketAddr>)>> {
     let Ok(content) = std::fs::read_to_string(&path) else {
         return Ok(None);
     };
 
+    parse_ticket(&content)
+}
+
+fn parse_ticket(content: &str) -> anyhow::Result<Option<(EndpointId, Vec<SocketAddr>)>> {
     let mut id = None;
     let mut addrs = Vec::new();
     for line in content.lines() {
@@ -4100,8 +4127,47 @@ fn load_ticket() -> anyhow::Result<Option<(EndpointId, Vec<SocketAddr>)>> {
     Ok(id.map(|id| (id, addrs)))
 }
 
-fn pre_authorize_local_client(endpoint_id: EndpointId) -> anyhow::Result<()> {
-    daemon_sandbox::persist_pairing(&endpoint_id.to_string(), &sandbox_paired_peers_path())
+fn daemon_ticket_candidates() -> Vec<(DaemonTicketSource, PathBuf)> {
+    vec![
+        (DaemonTicketSource::Embedded, embedded_daemon_ticket_path()),
+        (
+            DaemonTicketSource::Sandbox,
+            std::env::temp_dir().join("daemon-sandbox.ticket"),
+        ),
+    ]
+}
+
+fn pre_authorize_local_client(
+    endpoint_id: EndpointId,
+    source: DaemonTicketSource,
+) -> anyhow::Result<()> {
+    daemon_sandbox::persist_pairing(
+        &endpoint_id.to_string(),
+        &paired_peers_path_for_ticket_source(source),
+    )
+}
+
+fn paired_peers_path_for_ticket_source(source: DaemonTicketSource) -> PathBuf {
+    match source {
+        DaemonTicketSource::Embedded => embedded_daemon_paired_peers_path(),
+        DaemonTicketSource::Sandbox => sandbox_paired_peers_path(),
+    }
+}
+
+fn embedded_daemon_ticket_path() -> PathBuf {
+    embedded_daemon_config_dir().join("endpoint.ticket")
+}
+
+fn embedded_daemon_paired_peers_path() -> PathBuf {
+    embedded_daemon_config_dir().join("paired_peers")
+}
+
+fn embedded_daemon_config_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("another-one").join("daemon")
 }
 
 fn sandbox_paired_peers_path() -> PathBuf {
@@ -5114,6 +5180,31 @@ mod tests {
         assert!(components_source.contains("#2f3136"));
         assert!(!app_source.contains("icon: \"C\""));
         assert!(!components_source.contains("icon: \"C\""));
+    }
+
+    #[test]
+    fn slint_daemon_ticket_prefers_embedded_daemon_before_sandbox() {
+        let candidates = daemon_ticket_candidates();
+
+        assert_eq!(candidates[0].0, DaemonTicketSource::Embedded);
+        assert!(candidates[0]
+            .1
+            .ends_with("another-one/daemon/endpoint.ticket"));
+        assert_eq!(candidates[1].0, DaemonTicketSource::Sandbox);
+        assert!(candidates[1].1.ends_with("daemon-sandbox.ticket"));
+    }
+
+    #[test]
+    fn slint_daemon_ticket_parses_endpoint_and_direct_addrs() {
+        let endpoint_id = iroh::SecretKey::generate().public().to_string();
+        let ticket = format!("id={endpoint_id}\naddr=127.0.0.1:55123\nrelay=https://relay.test\n");
+
+        let (parsed_id, addrs) = parse_ticket(&ticket)
+            .expect("valid ticket parses")
+            .expect("ticket includes endpoint id");
+
+        assert_eq!(parsed_id.to_string(), endpoint_id);
+        assert_eq!(addrs, vec!["127.0.0.1:55123".parse().unwrap()]);
     }
 
     #[test]

@@ -24,7 +24,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread;
 
@@ -984,6 +984,7 @@ fn run(
 
     match endpoint_result {
         Ok(handle) => {
+            publish_embedded_daemon_ticket(&handle, &paths.ticket);
             if tx.send(Ok(handle)).is_err() {
                 // App dropped before we returned; abort immediately by
                 // dropping the runtime and returning.
@@ -1008,6 +1009,7 @@ fn run(
 struct DaemonPaths {
     secret_key: PathBuf,
     paired_peers: PathBuf,
+    ticket: PathBuf,
 }
 
 /// Public accessor for the allowlist path so the "Pair mobile" modal's
@@ -1037,7 +1039,75 @@ fn daemon_paths() -> anyhow::Result<DaemonPaths> {
     Ok(DaemonPaths {
         secret_key: dir.join("secret_key"),
         paired_peers: dir.join("paired_peers"),
+        ticket: dir.join("endpoint.ticket"),
     })
+}
+
+fn publish_embedded_daemon_ticket(handle: &EndpointHandle, ticket_path: &Path) {
+    let body = daemon_ticket_body(handle);
+    if let Err(e) = write_private_file(ticket_path, body.as_bytes()) {
+        log::warn!(
+            "daemon: failed to publish embedded endpoint ticket at {}: {e:#}",
+            ticket_path.display()
+        );
+    } else {
+        log::info!(
+            "daemon: embedded endpoint ticket written to {}",
+            ticket_path.display()
+        );
+    }
+
+    // Keep the legacy smoke-client path fresh too. Slint prefers the
+    // embedded ticket above, but this prevents stale standalone
+    // sandbox tickets from confusing local iroh diagnostics.
+    let legacy_path = std::env::temp_dir().join("daemon-sandbox.ticket");
+    if let Err(e) = write_private_file(&legacy_path, body.as_bytes()) {
+        log::warn!(
+            "daemon: failed to refresh legacy endpoint ticket at {}: {e:#}",
+            legacy_path.display()
+        );
+    }
+}
+
+fn daemon_ticket_body(handle: &EndpointHandle) -> String {
+    let mut body = format!("id={}\n", handle.endpoint_id);
+    for addr in handle.direct_addrs() {
+        body.push_str("addr=");
+        body.push_str(&addr);
+        body.push('\n');
+    }
+    for relay in handle.relay_urls() {
+        body.push_str("relay=");
+        body.push_str(&relay);
+        body.push('\n');
+    }
+    body
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("create dir {}: {e}", parent.display()))?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|e| anyhow::anyhow!("open {}: {e}", path.display()))?;
+    file.write_all(bytes)
+        .map_err(|e| anyhow::anyhow!("write {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| anyhow::anyhow!("set permissions {}: {e}", path.display()))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
