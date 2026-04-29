@@ -84,6 +84,15 @@ export struct SegmentEntry {
     disabled: bool,
 }
 
+export struct ResourceUsageEntry {
+    kind: string,
+    label: string,
+    detail: string,
+    cpu-label: string,
+    memory-label: string,
+    indent: int,
+}
+
 export struct RightInspectorRow {
     kind: string,
     group: string,

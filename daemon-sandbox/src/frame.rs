@@ -159,6 +159,13 @@ pub enum Control {
     /// Reply:
     /// [`WorkerReply::OpenInStateAck`].
     OpenInState,
+    /// Snapshot process usage for the host UI process and any
+    /// daemon-tracked terminal subprocesses. `app_pid` is supplied
+    /// by the client because the standalone daemon is not the UI
+    /// process; embedded daemons pass through the same value so the
+    /// aggregation rule stays identical. Reply:
+    /// [`WorkerReply::ResourceUsageAck`].
+    ReadResourceUsage { app_pid: u32 },
     /// List the merged project + global custom actions for `project_id`,
     /// in the same order the desktop's titlebar split-button dropdown
     /// renders. Empty list when the project is unknown — matches
@@ -695,6 +702,10 @@ pub enum WorkerReply {
     /// canonical `OpenInAppKind::all()` order; `preferred_app_id`
     /// is `None` when no Open-In app is detected on the host.
     OpenInStateAck { state: OpenInStateWire },
+    /// Reply to [`Control::ReadResourceUsage`]. The app row is only
+    /// the UI process identified by the request's `app_pid`; terminal
+    /// subprocesses are emitted as separate project/task/session rows.
+    ResourceUsageAck { snapshot: ResourceUsageSnapshotWire },
     /// Reply to [`Control::ListProjectActions`]. Empty `actions` is a
     /// valid result (unknown project, or project with no custom
     /// actions configured) — clients render the empty state rather
@@ -1293,6 +1304,126 @@ pub struct OpenInStateWire {
     /// Id of the app the titlebar's primary action launches, or
     /// `None` when no app is enabled at all.
     pub preferred_app_id: Option<String>,
+}
+
+/// Wire projection of `core::resource_usage::ResourceUsageSnapshot`.
+/// Values stay numeric on the wire so each client can apply its own
+/// compact labels while preserving the same process aggregation.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResourceUsageSnapshotWire {
+    pub total_cpu_percent: f32,
+    pub total_memory_bytes: u64,
+    pub ram_share_percent: f32,
+    pub session_count: usize,
+    pub app: ResourceUsageRowWire,
+    pub projects: Vec<ResourceUsageProjectWire>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResourceUsageRowWire {
+    pub label: String,
+    pub detail: Option<String>,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResourceUsageProjectWire {
+    pub key: String,
+    pub label: String,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub tasks: Vec<ResourceUsageTaskWire>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResourceUsageTaskWire {
+    pub key: String,
+    pub label: String,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub sessions: Vec<ResourceUsageSessionWire>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResourceUsageSessionWire {
+    pub key: String,
+    pub label: String,
+    pub icon_path: String,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+}
+
+impl From<another_one_core::resource_usage::ResourceUsageSnapshot> for ResourceUsageSnapshotWire {
+    fn from(snapshot: another_one_core::resource_usage::ResourceUsageSnapshot) -> Self {
+        Self {
+            total_cpu_percent: snapshot.total_cpu_percent,
+            total_memory_bytes: snapshot.total_memory_bytes,
+            ram_share_percent: snapshot.ram_share_percent,
+            session_count: snapshot.session_count,
+            app: snapshot.app.into(),
+            projects: snapshot
+                .projects
+                .into_iter()
+                .map(ResourceUsageProjectWire::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<another_one_core::resource_usage::ResourceUsageRow> for ResourceUsageRowWire {
+    fn from(row: another_one_core::resource_usage::ResourceUsageRow) -> Self {
+        Self {
+            label: row.label,
+            detail: row.detail,
+            cpu_percent: row.cpu_percent,
+            memory_bytes: row.memory_bytes,
+        }
+    }
+}
+
+impl From<another_one_core::resource_usage::ResourceUsageProject> for ResourceUsageProjectWire {
+    fn from(project: another_one_core::resource_usage::ResourceUsageProject) -> Self {
+        Self {
+            key: project.key,
+            label: project.label,
+            cpu_percent: project.cpu_percent,
+            memory_bytes: project.memory_bytes,
+            tasks: project
+                .tasks
+                .into_iter()
+                .map(ResourceUsageTaskWire::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<another_one_core::resource_usage::ResourceUsageTask> for ResourceUsageTaskWire {
+    fn from(task: another_one_core::resource_usage::ResourceUsageTask) -> Self {
+        Self {
+            key: task.key,
+            label: task.label,
+            cpu_percent: task.cpu_percent,
+            memory_bytes: task.memory_bytes,
+            sessions: task
+                .sessions
+                .into_iter()
+                .map(ResourceUsageSessionWire::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<another_one_core::resource_usage::ResourceUsageSession> for ResourceUsageSessionWire {
+    fn from(session: another_one_core::resource_usage::ResourceUsageSession) -> Self {
+        Self {
+            key: session.key,
+            label: session.label,
+            icon_path: session.icon_path.to_string(),
+            cpu_percent: session.cpu_percent,
+            memory_bytes: session.memory_bytes,
+        }
+    }
 }
 
 /// Wire projection of one row from Settings → Open In.

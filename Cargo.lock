@@ -8865,6 +8865,7 @@ name = "slint-poc"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "another-one-core",
  "anyhow",
  "daemon-sandbox",
  "fontique",

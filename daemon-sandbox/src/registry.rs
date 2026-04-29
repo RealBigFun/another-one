@@ -17,7 +17,8 @@ use crate::frame::{
     BranchCompareWire, ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView,
     McpSettingsView, OpenInSettingsViewWire, OpenInStateWire, ProjectActionWire,
     ProjectPagePullRequest, ProjectSummary, PullRequestStatus, RecentCommitsWire,
-    ResolvedBranchSettingsWire, ShortcutSettingsView, TaskSummary, ToolbarActionOutcome,
+    ResolvedBranchSettingsWire, ResourceUsageSnapshotWire, ShortcutSettingsView, TaskSummary,
+    ToolbarActionOutcome,
 };
 
 /// Boxed-future return type for `DaemonRegistry` methods that are
@@ -659,6 +660,14 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// (the sandbox binary has no host editor detection).
     fn open_in_state(&self) -> Option<OpenInStateWire> {
         None
+    }
+
+    /// Latest resource-usage snapshot for the UI process identified
+    /// by `app_pid`, plus daemon-tracked terminal subprocesses as
+    /// separate rows. Default returns an empty snapshot so unsupported
+    /// registries never fake app-process totals.
+    fn read_resource_usage(&self, _app_pid: u32) -> ResourceUsageSnapshotWire {
+        ResourceUsageSnapshotWire::default()
     }
 
     /// Project + global custom actions for `project_id`, in the same

@@ -3903,9 +3903,7 @@ impl AnotherOneApp {
             resource_usage: ResourceUsageSnapshot::default(),
             resource_usage_sampler: ResourceUsageSampler::default(),
             last_resource_usage_refresh: Instant::now() - RESOURCE_REFRESH_INTERVAL_CLOSED,
-            updater: crate::updater::UpdaterHandle::spawn(
-                crate::updater::BuildIdentity::current(),
-            ),
+            updater: crate::updater::UpdaterHandle::spawn(crate::updater::BuildIdentity::current()),
             updater_state: crate::updater::UpdateState::Idle,
         };
 
@@ -4400,6 +4398,7 @@ impl AnotherOneApp {
             runtime.kill();
         }
         self.canceled_prewarmed_launch_ids.insert(launch_id);
+        self.sync_registry_tracked_processes();
     }
 
     fn cancel_prewarmed_launch_for_tab(&mut self, key: &TerminalRuntimeKey) {
@@ -4471,6 +4470,7 @@ impl AnotherOneApp {
             });
         }
 
+        self.sync_registry_tracked_processes();
         true
     }
 
@@ -4727,6 +4727,7 @@ impl AnotherOneApp {
         );
 
         if updated {
+            self.sync_registry_tracked_processes();
             self.last_terminal_activity = Instant::now();
         }
 
@@ -4938,6 +4939,7 @@ impl AnotherOneApp {
         }
 
         if updated {
+            self.sync_registry_tracked_processes();
             self.last_terminal_activity = Instant::now();
         }
 
@@ -4998,6 +5000,13 @@ impl AnotherOneApp {
     pub(crate) fn sync_registry_project_store(&self) {
         if let Ok(mut state) = self.registry_state.lock() {
             state.project_store = self.project_store.clone();
+        }
+    }
+
+    pub(crate) fn sync_registry_tracked_processes(&self) {
+        if let Ok(mut state) = self.registry_state.lock() {
+            state.tracked_processes = self.terminal_manager.processes.clone();
+            state.prewarmed_tracked_processes = self.prewarmed_terminal_processes.clone();
         }
     }
 
@@ -5688,6 +5697,7 @@ impl AnotherOneApp {
         self.terminal_manager.processes.remove(&key);
         self.cancel_prewarmed_launch_for_tab(&key);
         self.unregister_tab_from_registry(&key);
+        self.sync_registry_tracked_processes();
         if let Some(mut runtime) = remove_terminal_runtime_state(
             &mut self.live_terminal_runtimes,
             &mut self.terminal_surface_snapshots,

@@ -34,8 +34,8 @@ use daemon_sandbox::frame::{
     AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire, AgentSummaryWire,
     EnabledAgentsViewWire, GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView,
     McpSourceDto, McpTransportKindDto, OpenInAppSettingsRowWire, OpenInAppWire,
-    OpenInSettingsViewWire, OpenInStateWire, ProjectKind, ProjectSummary, ShortcutSettingsRow,
-    ShortcutSettingsView, TabSummary, TaskSummary,
+    OpenInSettingsViewWire, OpenInStateWire, ProjectKind, ProjectSummary,
+    ResourceUsageSnapshotWire, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
     ToolbarActionOutcome as ToolbarActionOutcomeWire,
 };
 use daemon_sandbox::registry::RegistryFuture;
@@ -51,10 +51,12 @@ use another_one_core::git_actions::{
 use another_one_core::mcp::catalog;
 use another_one_core::mcp::registry::McpRegistry;
 use another_one_core::mcp::{McpServer, McpSource, McpTransport};
+use another_one_core::process::TrackedProcess;
 use another_one_core::project_store::{
     prepare_project, PersistedSectionState, PersistedTerminalTab, ProjectKind as CoreProjectKind,
     ProjectStore, RepoDefaultCommitAction,
 };
+use another_one_core::resource_usage::ResourceUsageSampler;
 use another_one_core::section::SectionId;
 use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
 
@@ -122,6 +124,14 @@ pub(crate) struct RegistryState {
     /// between "spawn kicked off" and "Launched reply observed"
     /// where a second LaunchTab would spawn a duplicate PTY.
     pub(crate) in_flight_launches: HashSet<TerminalRuntimeKey>,
+    /// Process metadata for live terminal sessions. Resource usage
+    /// uses this to keep the app shell row separate from terminal
+    /// subprocess trees.
+    pub(crate) tracked_processes: HashMap<TerminalRuntimeKey, TrackedProcess>,
+    /// Warm launches that are not attached to a visible tab yet.
+    pub(crate) prewarmed_tracked_processes: HashMap<u64, TrackedProcess>,
+    /// Rolling sampler state for daemon resource requests.
+    pub(crate) resource_usage_sampler: ResourceUsageSampler,
 }
 
 impl RegistryState {
@@ -137,6 +147,9 @@ impl RegistryState {
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
             effective_sizes: HashMap::new(),
+            tracked_processes: HashMap::new(),
+            prewarmed_tracked_processes: HashMap::new(),
+            resource_usage_sampler: ResourceUsageSampler::default(),
         }
     }
 
@@ -560,6 +573,22 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         })
     }
 
+    fn read_resource_usage(&self, app_pid: u32) -> ResourceUsageSnapshotWire {
+        self.with_state(|state| {
+            let tracked_processes = state
+                .tracked_processes
+                .values()
+                .cloned()
+                .chain(state.prewarmed_tracked_processes.values().cloned())
+                .collect::<Vec<_>>();
+            state
+                .resource_usage_sampler
+                .sample(app_pid, &tracked_processes)
+                .into()
+        })
+        .unwrap_or_default()
+    }
+
     fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
         self.with_fresh_project_store(|store| {
             let enabled_ids = store
@@ -847,6 +876,7 @@ fn remove_registry_tab_state(state: &mut RegistryState, key: &TerminalRuntimeKey
     state.active_viewers.remove(key);
     state.effective_sizes.remove(key);
     state.in_flight_launches.remove(key);
+    state.tracked_processes.remove(key);
     state
         .pending_tab_launches
         .retain(|request| request.key != *key);

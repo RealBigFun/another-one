@@ -6,6 +6,7 @@ import {
     AoStateCard,
     AoTextInput,
     MenuEntry,
+    ResourceUsageEntry,
 } from "components.slint";
 
 component AoResourceMetricCard inherits Rectangle {
@@ -102,6 +103,7 @@ export component AoResourcePopover inherits Rectangle {
     in property <string> session-count-label: "--";
     in property <string> terminal-sessions-state: "empty";
     in property <string> terminal-sessions-summary: "No active terminal sessions";
+    in property <[ResourceUsageEntry]> session-rows;
     in property <color> card-bg;
     in property <color> terminal-bg;
     in property <color> overlay-border-color;
@@ -113,7 +115,7 @@ export component AoResourcePopover inherits Rectangle {
     callback refresh-requested();
 
     width: 360px;
-    height: 296px;
+    height: 340px;
     border-radius: 16px;
     border-width: 1px;
     border-color: root.overlay-border-color;
@@ -202,7 +204,7 @@ export component AoResourcePopover inherits Rectangle {
         font-weight: 700;
     }
 
-    AoStateCard {
+    if root.session-rows.length == 0: AoStateCard {
         x: 16px;
         y: 186px;
         width: parent.width - 32px;
@@ -219,6 +221,60 @@ export component AoResourcePopover inherits Rectangle {
         danger-color: root.danger-color;
         action-clicked => {
             root.refresh-requested();
+        }
+    }
+
+    for row[i] in root.session-rows: Rectangle {
+        x: 16px + row.indent * 14px;
+        y: 186px + i * 30px;
+        width: parent.width - 32px - row.indent * 14px;
+        height: 28px;
+        border-radius: 8px;
+        background: row.kind == "session" ? root.terminal-bg : transparent;
+
+        Image {
+            x: 8px;
+            y: 6px;
+            width: 14px;
+            height: 14px;
+            source: row.kind == "project" ? @image-url("../../desktop/assets/icons/icons__file_icons__project.svg") : row.kind == "task" ? @image-url("../../desktop/assets/icons/icons__folder-open.svg") : @image-url("../../desktop/assets/icons/icons__terminal.svg");
+            colorize: root.text-muted;
+        }
+
+        Text {
+            x: 28px;
+            y: 6px;
+            width: parent.width - 126px;
+            text: row.label;
+            color: row.kind == "project" ? root.text-primary : root.text-muted;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 11px;
+            font-weight: row.kind == "project" ? 700 : 600;
+            overflow: elide;
+        }
+
+        Text {
+            x: parent.width - 94px;
+            y: 6px;
+            width: 42px;
+            horizontal-alignment: right;
+            text: row.cpu-label;
+            color: root.text-muted;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        Text {
+            x: parent.width - 48px;
+            y: 6px;
+            width: 44px;
+            horizontal-alignment: right;
+            text: row.memory-label;
+            color: root.text-muted;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 10px;
+            font-weight: 600;
         }
     }
 }

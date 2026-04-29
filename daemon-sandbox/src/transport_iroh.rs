@@ -455,6 +455,11 @@ async fn handle_control(
             };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
+        Control::ReadResourceUsage { app_pid } => {
+            let snapshot = registry.read_resource_usage(app_pid);
+            let reply = WorkerReply::ResourceUsageAck { snapshot };
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+        }
         Control::ListProjectActions { project_id } => {
             let actions = registry.list_project_actions(&project_id);
             let reply = WorkerReply::ProjectActionsAck { actions };

@@ -32,6 +32,7 @@ import {
     AoToast,
     MenuEntry,
     ProjectSidebarEntry,
+    ResourceUsageEntry,
     RightInspectorRow,
     SegmentEntry,
     SidebarTreeEntry,
@@ -150,7 +151,13 @@ export component AppWindow inherits Window {
     in-out property <string> terminal_panel_cwd: "";
     in-out property <string> terminal_error_details: "";
     in-out property <string> project_summary: "";
-    in-out property <string> resource_summary: "app 1.0% / 175 MB";
+    in-out property <string> resource_summary: "app -- / --";
+    in-out property <string> resource_app_cpu_label: "--";
+    in-out property <string> resource_app_memory_label: "--";
+    in-out property <string> resource_session_count_label: "0";
+    in-out property <string> resource_sessions_state: "empty";
+    in-out property <string> resource_sessions_summary: "No active terminal sessions";
+    in property <[ResourceUsageEntry]> resource_session_rows;
     in-out property <string> right_inspector_mode: "changes";
     in-out property <string> right_inspector_state: "loading";
     in-out property <string> right_inspector_title: "Loading changes";
@@ -233,6 +240,7 @@ export component AppWindow inherits Window {
     callback toast_dismissed();
     callback toast_copy_requested();
     callback appearance_cycle_requested();
+    callback resource_usage_refresh_requested();
     callback settings_nav_selected(string);
     callback settings_toggle_requested(string, string, bool);
     callback settings_action_requested(string, string);
@@ -451,6 +459,9 @@ export component AppWindow inherits Window {
                 clicked => {
                     root.titlebar_actions_menu_open = false;
                     root.titlebar_open_in_menu_open = false;
+                    if !root.resource_popover_open {
+                        root.resource_usage_refresh_requested();
+                    }
                     root.resource_popover_open = !root.resource_popover_open;
                 }
             }
@@ -1447,6 +1458,12 @@ export component AppWindow inherits Window {
                 x: max(12px, parent.width - 372px);
                 y: titlebar-height + 12px;
                 summary: root.resource_summary;
+                app-cpu-label: root.resource_app_cpu_label;
+                app-memory-label: root.resource_app_memory_label;
+                session-count-label: root.resource_session_count_label;
+                terminal-sessions-state: root.resource_sessions_state;
+                terminal-sessions-summary: root.resource_sessions_summary;
+                session-rows: root.resource_session_rows;
                 card-bg: root.card_bg;
                 terminal-bg: root.terminal_bg;
                 overlay-border-color: root.border_color;
@@ -1456,9 +1473,7 @@ export component AppWindow inherits Window {
                 warning-color: root.warning_color;
                 danger-color: root.danger_color;
                 refresh-requested => {
-                    root.toast_kind = "info";
-                    root.toast_message = "Resource usage refresh requested";
-                    root.toast_detail = "";
+                    root.resource_usage_refresh_requested();
                 }
             }
         }

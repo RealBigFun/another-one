@@ -28,6 +28,9 @@ pub struct PtySession {
     pub master: Box<dyn portable_pty::MasterPty + Send>,
     /// Shell child process. Killed on [`PtySession::close`].
     pub child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// OS process id for resource tracking, when the PTY backend
+    /// exposes one.
+    pub process_id: Option<u32>,
 }
 
 impl PtySession {
@@ -58,6 +61,7 @@ impl PtySession {
         }
 
         let child = pair.slave.spawn_command(cmd).context("spawn shell")?;
+        let process_id = child.process_id();
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().context("clone reader")?;
@@ -91,6 +95,7 @@ impl PtySession {
             master_writer: writer,
             master: pair.master,
             child,
+            process_id,
         })
     }
 

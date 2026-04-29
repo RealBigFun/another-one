@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 alacritty_terminal = "0.26.0"
 anyhow = "1"
+another-one-core = { path = "../core" }
 daemon-sandbox = { path = "../daemon-sandbox" }
 iroh = "0.98.1"
 serde_json = "1"

@@ -16,12 +16,15 @@ use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
 use another_one_core::agents::AgentProviderKind;
+use another_one_core::process::TrackedProcess;
 use another_one_core::project_store::{
     prepare_project, ProjectKind as CoreProjectKind, ProjectStore,
 };
+use another_one_core::resource_usage::ResourceUsageSampler;
 
 use crate::frame::{
-    AgentProvider, ChangedFileWire, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+    AgentProvider, ChangedFileWire, ProjectKind, ProjectSummary, ResourceUsageSnapshotWire,
+    TabSummary, TaskSummary,
 };
 use crate::pty::PtySession;
 use crate::registry::{DaemonRegistry, RegistryFuture};
@@ -35,16 +38,19 @@ struct Shell {
     tx: broadcast::Sender<Vec<u8>>,
     writer: Arc<Mutex<Box<dyn std::io::Write + Send>>>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    process_id: Option<u32>,
 }
 
 pub struct SandboxRegistry {
     shell: Mutex<Option<Shell>>,
+    resource_sampler: Mutex<ResourceUsageSampler>,
 }
 
 impl SandboxRegistry {
     pub fn new() -> Self {
         Self {
             shell: Mutex::new(None),
+            resource_sampler: Mutex::new(ResourceUsageSampler::default()),
         }
     }
 
@@ -71,8 +77,29 @@ impl SandboxRegistry {
             tx: tx.clone(),
             writer: Arc::new(Mutex::new(session.master_writer)),
             master: Arc::new(Mutex::new(session.master)),
+            process_id: session.process_id,
         });
         Ok(tx)
+    }
+
+    fn tracked_processes(&self) -> Vec<TrackedProcess> {
+        let guard = self.shell.lock().unwrap();
+        let Some(shell) = guard.as_ref() else {
+            return Vec::new();
+        };
+        let Some(pid) = shell.process_id else {
+            return Vec::new();
+        };
+        vec![TrackedProcess {
+            pid,
+            key: format!("resource-session:sandbox:{pid}"),
+            label: "bash".to_string(),
+            project_key: format!("resource-project:{SANDBOX_PROJECT_ID}"),
+            project_label: "Sandbox".to_string(),
+            task_key: format!("resource-task:{SANDBOX_TASK_ID}"),
+            task_label: "shell".to_string(),
+            icon_path: "assets/icons/icons__terminal.svg",
+        }]
     }
 }
 
@@ -175,6 +202,12 @@ impl DaemonRegistry for SandboxRegistry {
         let mut store = ProjectStore::load();
         store.remove_project(project_id);
         Ok(())
+    }
+
+    fn read_resource_usage(&self, app_pid: u32) -> ResourceUsageSnapshotWire {
+        let tracked_processes = self.tracked_processes();
+        let mut sampler = self.resource_sampler.lock().unwrap();
+        sampler.sample(app_pid, &tracked_processes).into()
     }
 }
 

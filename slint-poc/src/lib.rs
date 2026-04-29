@@ -484,6 +484,10 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
             ),
         }
     });
+    let resource_event_tx = client_event_tx.clone();
+    app.on_resource_usage_refresh_requested(move || {
+        let _ = resource_event_tx.send(SlintClientEvent::ResourceUsageRefresh);
+    });
 
     spawn_terminal_worker(app.as_weak(), client_event_rx);
     app.on_close_requested(|| std::process::exit(0));
@@ -1516,6 +1520,97 @@ fn set_open_in_unavailable(app_weak: &slint::Weak<AppWindow>, detail: impl Into<
             ])));
         }
     });
+}
+
+fn set_resource_usage(
+    app_weak: &slint::Weak<AppWindow>,
+    snapshot: frame::ResourceUsageSnapshotWire,
+) {
+    let app_cpu = format!("{:.1}%", snapshot.app.cpu_percent);
+    let app_memory = another_one_core::resource_usage::format_memory(snapshot.app.memory_bytes);
+    let summary = format!("app {app_cpu} / {app_memory}");
+    let session_count = snapshot.session_count.to_string();
+    let (sessions_state, sessions_summary) = resource_sessions_summary(&snapshot);
+    let rows = resource_usage_rows(&snapshot);
+    let app_weak = app_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_resource_summary(summary.into());
+            app.set_resource_app_cpu_label(app_cpu.into());
+            app.set_resource_app_memory_label(app_memory.into());
+            app.set_resource_session_count_label(session_count.into());
+            app.set_resource_sessions_state(sessions_state.into());
+            app.set_resource_sessions_summary(sessions_summary.into());
+            app.set_resource_session_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+        }
+    });
+}
+
+fn resource_sessions_summary(snapshot: &frame::ResourceUsageSnapshotWire) -> (String, String) {
+    if snapshot.session_count == 0 || snapshot.projects.is_empty() {
+        return (
+            "empty".to_string(),
+            "No active terminal sessions".to_string(),
+        );
+    }
+
+    let cpu = format!(
+        "{:.1}%",
+        snapshot.total_cpu_percent - snapshot.app.cpu_percent
+    );
+    let memory = another_one_core::resource_usage::format_memory(
+        snapshot
+            .total_memory_bytes
+            .saturating_sub(snapshot.app.memory_bytes),
+    );
+    (
+        "dirty".to_string(),
+        format!(
+            "{} active terminal sessions across {} projects · {cpu} / {memory}",
+            snapshot.session_count,
+            snapshot.projects.len()
+        ),
+    )
+}
+
+fn resource_usage_rows(snapshot: &frame::ResourceUsageSnapshotWire) -> Vec<ResourceUsageEntry> {
+    let mut rows = Vec::new();
+    for project in &snapshot.projects {
+        rows.push(ResourceUsageEntry {
+            kind: "project".into(),
+            label: project.label.clone().into(),
+            detail: "".into(),
+            cpu_label: format!("{:.1}%", project.cpu_percent).into(),
+            memory_label: another_one_core::resource_usage::format_memory(project.memory_bytes)
+                .into(),
+            indent: 0,
+        });
+        for task in &project.tasks {
+            rows.push(ResourceUsageEntry {
+                kind: "task".into(),
+                label: task.label.clone().into(),
+                detail: "".into(),
+                cpu_label: format!("{:.1}%", task.cpu_percent).into(),
+                memory_label: another_one_core::resource_usage::format_memory(task.memory_bytes)
+                    .into(),
+                indent: 1,
+            });
+            for session in &task.sessions {
+                rows.push(ResourceUsageEntry {
+                    kind: "session".into(),
+                    label: session.label.clone().into(),
+                    detail: "".into(),
+                    cpu_label: format!("{:.1}%", session.cpu_percent).into(),
+                    memory_label: another_one_core::resource_usage::format_memory(
+                        session.memory_bytes,
+                    )
+                    .into(),
+                    indent: 2,
+                });
+            }
+        }
+    }
+    rows
 }
 
 fn set_right_inspector_loading(app_weak: &slint::Weak<AppWindow>, mode: &str, project_id: &str) {
@@ -2995,6 +3090,20 @@ async fn request_open_in_state(
     Ok(request_id)
 }
 
+async fn request_resource_usage(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+) -> anyhow::Result<()> {
+    send_control(
+        send,
+        next_request_id,
+        Control::ReadResourceUsage {
+            app_pid: std::process::id(),
+        },
+    )
+    .await
+}
+
 async fn request_git_action_scripts(
     send: &mut (impl frame::WriteAllAsync + Unpin),
     next_request_id: &mut u64,
@@ -3192,6 +3301,9 @@ async fn run_terminal_session(
             .await
             .context("request open-in state")?,
     );
+    request_resource_usage(&mut send, &mut next_request_id)
+        .await
+        .context("request initial resource usage")?;
 
     let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
     attach_terminal_target(
@@ -3796,6 +3908,11 @@ async fn run_terminal_session(
                         .await
                         .context("unstage all changes")?;
                     }
+                    SlintClientEvent::ResourceUsageRefresh => {
+                        request_resource_usage(&mut send, &mut next_request_id)
+                            .await
+                            .context("refresh resource usage")?;
+                    }
                     SlintClientEvent::SubmitNewTask {
                         task_name,
                         source_branch,
@@ -3980,6 +4097,9 @@ async fn run_terminal_session(
                                 WorkerReply::OpenInStateAck { state } => {
                                     pending_open_in_state_requests.remove(&request_id);
                                     set_open_in_state(app_weak, state);
+                                }
+                                WorkerReply::ResourceUsageAck { snapshot } => {
+                                    set_resource_usage(app_weak, snapshot);
                                 }
                                 WorkerReply::SetOpenInAppEnabledAck => {
                                     request_open_in_settings(&mut send, &mut next_request_id)
@@ -4712,6 +4832,7 @@ pub(crate) enum SlintClientEvent {
     ToggleInspectorSection(String),
     StageAllChanges,
     UnstageAllChanges,
+    ResourceUsageRefresh,
     SubmitNewTask {
         task_name: String,
         source_branch: String,

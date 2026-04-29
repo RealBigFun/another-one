@@ -1,12 +1,9 @@
 //! Process-tracking data types shared by the terminal manager and the
-//! desktop's resource-usage sampler.
+//! resource-usage sampler.
 //!
 //! Pure data only. The sampler itself (reading `/proc` or sysctl into
-//! live CPU/memory numbers) lives in `desktop/src/resource_usage.rs`
-//! because it dispatches through the desktop's GPUI-coupled
-//! `PlatformServices` trait. The types here are the vocabulary both
-//! sides use to talk about tracked processes without one reaching into
-//! the other.
+//! live CPU/memory numbers) lives in `core::resource_usage`, so every
+//! shell can use the same app-process/subprocess aggregation rules.
 
 /// A child process spawned by an agent session, tagged with enough
 /// project/task labeling to aggregate its CPU/memory usage back into the
