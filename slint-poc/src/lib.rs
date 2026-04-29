@@ -26,8 +26,10 @@ mod overlays;
 mod platform;
 mod settings;
 mod style;
+mod toast;
 
 use daemon_ticket::{load_ticket, pre_authorize_local_client, DaemonTicket};
+use toast::{clear_toast, set_toast, toast_clipboard_text};
 
 const TERMINAL_COLS: u16 = 100;
 const TERMINAL_ROWS: u16 = 34;
@@ -1391,45 +1393,6 @@ fn set_workspace_tree(
             app.set_project_summary(model.project_summary.into());
         }
     });
-}
-
-fn set_toast(
-    app_weak: &slint::Weak<AppWindow>,
-    kind: impl Into<String>,
-    message: impl Into<String>,
-    detail: impl Into<String>,
-) {
-    let app_weak = app_weak.clone();
-    let kind = kind.into();
-    let message = message.into();
-    let detail = detail.into();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app_weak.upgrade() {
-            app.set_toast_kind(kind.into());
-            app.set_toast_message(message.into());
-            app.set_toast_detail(detail.into());
-        }
-    });
-}
-
-fn clear_toast(app_weak: &slint::Weak<AppWindow>) {
-    let app_weak = app_weak.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app_weak.upgrade() {
-            app.set_toast_kind("info".into());
-            app.set_toast_message("".into());
-            app.set_toast_detail("".into());
-        }
-    });
-}
-
-fn toast_clipboard_text(message: &str, detail: &str) -> String {
-    match (message.trim(), detail.trim()) {
-        ("", "") => String::new(),
-        (message, "") => message.to_string(),
-        ("", detail) => detail.to_string(),
-        (message, detail) => format!("{message}\n{detail}"),
-    }
 }
 
 fn open_in_menu_entries(state: &frame::OpenInStateWire) -> (String, Vec<MenuEntry>) {
