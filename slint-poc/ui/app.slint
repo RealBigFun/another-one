@@ -39,6 +39,17 @@ import {
     TerminalTabChip,
 } from "components.slint";
 
+import {
+    SettingsAgentRow,
+    SettingsGeneralRow,
+    SettingsGitActionPanel,
+    SettingsMcpRow,
+    SettingsNavEntry,
+    SettingsOpenInRow,
+    SettingsShortcutRow,
+    SettingsView,
+} from "settings.slint";
+
 export struct TerminalTextRun {
     line: int,
     column: int,
@@ -136,6 +147,8 @@ export component AppWindow inherits Window {
     in-out property <string> toast_kind: "info";
     in-out property <string> toast_message: "";
     in-out property <string> toast_detail: "";
+    in-out property <bool> settings_open: false;
+    in-out property <string> settings_active_section: "general";
     in-out property <bool> component_fixture_mode: false;
     in-out property <bool> fixture_checkbox_checked: true;
 
@@ -151,6 +164,13 @@ export component AppWindow inherits Window {
     in property <[TerminalCursorSpan]> terminal_cursor_spans;
     in property <[TerminalLinkSpan]> terminal_link_spans;
     in property <[TerminalSelectionSpan]> terminal_selection_spans;
+    in property <[SettingsNavEntry]> settings_nav_entries;
+    in property <[SettingsGeneralRow]> settings_general_rows;
+    in property <[SettingsAgentRow]> settings_agent_rows;
+    in property <[SettingsOpenInRow]> settings_open_in_rows;
+    in property <[SettingsGitActionPanel]> settings_git_action_panels;
+    in property <[SettingsShortcutRow]> settings_shortcut_rows;
+    in property <[SettingsMcpRow]> settings_mcp_rows;
 
     callback close_requested();
     callback project_selected(string);
@@ -176,6 +196,9 @@ export component AppWindow inherits Window {
     callback submit_new_task(string, string, string);
     callback toast_dismissed();
     callback toast_copy_requested();
+    callback settings_nav_selected(string);
+    callback settings_toggle_requested(string, string, bool);
+    callback settings_action_requested(string, string);
 
     title: "AnotherOne";
     preferred-width: 1380px;
@@ -1180,6 +1203,9 @@ export component AppWindow inherits Window {
                 hover-bg: overlay_hover;
                 border: border_color;
                 icon-color: text_secondary;
+                clicked => {
+                    root.settings_open = true;
+                }
             }
 
             AoAssetIconButton {
@@ -1732,6 +1758,42 @@ export component AppWindow inherits Window {
                         root.new_task_project_id = "";
                     }
                 }
+            }
+        }
+
+        if settings_open && !component_fixture_mode: SettingsView {
+            width: parent.width;
+            height: parent.height;
+            active-section <=> root.settings_active_section;
+            nav-entries: root.settings_nav_entries;
+            general-rows: root.settings_general_rows;
+            agent-rows: root.settings_agent_rows;
+            open-in-rows: root.settings_open_in_rows;
+            git-action-panels: root.settings_git_action_panels;
+            shortcut-rows: root.settings_shortcut_rows;
+            mcp-rows: root.settings_mcp_rows;
+            chrome-bg: root.chrome_bg;
+            card-bg: root.card_bg;
+            sunken-bg: root.sunken_bg;
+            overlay-hover: root.overlay_hover;
+            overlay-active: root.overlay_active;
+            settings-border-color: root.border_color;
+            focus-ring: root.focus_ring;
+            text-primary: root.text_primary;
+            text-secondary: root.text_secondary;
+            text-muted: root.text_muted;
+            danger-color: root.danger_color;
+            back-requested => {
+                root.settings_open = false;
+            }
+            nav-selected(section) => {
+                root.settings_nav_selected(section);
+            }
+            toggle-requested(scope, id, enabled) => {
+                root.settings_toggle_requested(scope, id, enabled);
+            }
+            action-requested(scope, id) => {
+                root.settings_action_requested(scope, id);
             }
         }
 

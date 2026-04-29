@@ -23,6 +23,7 @@ use tokio::time::Instant;
 slint::include_modules!();
 
 mod platform;
+mod settings;
 mod style;
 
 const TERMINAL_COLS: u16 = 100;
@@ -201,6 +202,8 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     slint::set_xdg_app_id(platform_profile.app_id)?;
     style::apply_theme(&app);
     app.set_platform_label(platform_profile.label().into());
+    settings::seed_settings_model(&app);
+    settings::wire_settings_callbacks(&app);
     seed_shell_model(&app);
     seed_visual_state_fixture(&app);
     if std::env::var("ANOTHERONE_SLINT_FIXTURE").as_deref() == Ok("terminal-fidelity") {

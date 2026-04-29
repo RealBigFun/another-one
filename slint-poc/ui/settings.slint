@@ -1,0 +1,839 @@
+import {
+    AoButton,
+    AoCheckbox,
+    AoSectionLabel,
+    AoStatusPill,
+} from "components.slint";
+
+export struct SettingsNavEntry {
+    id: string,
+    label: string,
+}
+
+export struct SettingsGeneralRow {
+    id: string,
+    title: string,
+    detail: string,
+    status: string,
+    enabled: bool,
+    action-label: string,
+}
+
+export struct SettingsAgentRow {
+    id: string,
+    label: string,
+    detail: string,
+    args-label: string,
+    enabled: bool,
+    default-agent: bool,
+}
+
+export struct SettingsOpenInRow {
+    id: string,
+    label: string,
+    detail: string,
+    enabled: bool,
+}
+
+export struct SettingsGitActionPanel {
+    id: string,
+    title: string,
+    detail: string,
+    placeholder: string,
+    script-preview: string,
+    custom: bool,
+}
+
+export struct SettingsShortcutRow {
+    id: string,
+    label: string,
+    binding: string,
+    capturing: bool,
+}
+
+export struct SettingsMcpRow {
+    id: string,
+    label: string,
+    detail: string,
+    source: string,
+    provider-summary: string,
+    installed: bool,
+}
+
+component SettingsRowChrome inherits Rectangle {
+    in property <int> row-index;
+    in property <color> row-bg;
+    in property <color> divider;
+
+    background: row-bg;
+    border-width: row-index > 0 ? 1px : 0px;
+    border-color: divider;
+}
+
+component SettingsSummaryCard inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <string> value;
+    in property <color> card-bg;
+    in property <color> border;
+    in property <color> text-primary;
+    in property <color> text-secondary;
+
+    height: 70px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: border;
+    background: card-bg;
+
+    Text {
+        x: 16px;
+        y: 14px;
+        width: parent.width - 148px;
+        text: root.title;
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    Text {
+        x: 16px;
+        y: 34px;
+        width: parent.width - 148px;
+        text: root.detail;
+        color: root.text-secondary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+    }
+
+    Text {
+        x: parent.width - 122px;
+        y: 25px;
+        width: 104px;
+        horizontal-alignment: right;
+        text: root.value;
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        font-weight: 600;
+    }
+}
+
+component SectionHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <color> text-primary;
+    in property <color> text-secondary;
+
+    height: 72px;
+
+    Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        text: root.title;
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 18px;
+        font-weight: 700;
+    }
+
+    Text {
+        x: 0px;
+        y: 30px;
+        width: min(parent.width, 760px);
+        text: root.detail;
+        color: root.text-secondary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 12px;
+    }
+}
+
+export component SettingsView inherits Rectangle {
+    in-out property <string> active-section: "general";
+    in property <[SettingsNavEntry]> nav-entries;
+    in property <[SettingsGeneralRow]> general-rows;
+    in property <[SettingsAgentRow]> agent-rows;
+    in property <[SettingsOpenInRow]> open-in-rows;
+    in property <[SettingsGitActionPanel]> git-action-panels;
+    in property <[SettingsShortcutRow]> shortcut-rows;
+    in property <[SettingsMcpRow]> mcp-rows;
+
+    in property <color> chrome-bg;
+    in property <color> card-bg;
+    in property <color> sunken-bg;
+    in property <color> overlay-hover;
+    in property <color> overlay-active;
+    in property <color> settings-border-color;
+    in property <color> focus-ring;
+    in property <color> text-primary;
+    in property <color> text-secondary;
+    in property <color> text-muted;
+    in property <color> danger-color;
+
+    callback back-requested();
+    callback nav-selected(string);
+    callback toggle-requested(string, string, bool);
+    callback action-requested(string, string);
+
+    background: #1e1f22;
+    clip: true;
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 180px;
+        height: parent.height;
+        background: root.chrome-bg;
+
+        AoButton {
+            x: 12px;
+            y: 48px;
+            width: 132px;
+            label: "< Back to app";
+            control-label: "Back to app";
+            active: false;
+            bg: root.overlay-active;
+            hover-bg: root.overlay-hover;
+            border: root.settings-border-color;
+            focus-ring: root.focus-ring;
+            text-color: root.text-secondary;
+            clicked => {
+                root.back-requested();
+            }
+        }
+
+        for entry[index] in root.nav-entries: Rectangle {
+            x: 8px;
+            y: 94px + index * 34px;
+            width: 164px;
+            height: 30px;
+            border-radius: 5px;
+            background: entry.id == root.active-section ? root.overlay-active : nav-touch.has-hover ? root.overlay-hover : transparent;
+            accessible-role: button;
+            accessible-label: "Open " + entry.label + " settings";
+
+            nav-focus := FocusScope {
+                width: 0px;
+                height: 0px;
+                key-pressed(event) => {
+                    if event.text == "\n" || event.text == " " {
+                        root.active-section = entry.id;
+                        root.nav-selected(entry.id);
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+
+            nav-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => {
+                    nav-focus.focus();
+                    root.active-section = entry.id;
+                    root.nav-selected(entry.id);
+                }
+            }
+
+            Text {
+                x: 10px;
+                y: 8px;
+                width: parent.width - 20px;
+                text: entry.label;
+                color: entry.id == root.active-section ? root.text-primary : root.text-secondary;
+                font-family: "Lilex Nerd Font Mono";
+                font-size: 13px;
+                font-weight: entry.id == root.active-section ? 700 : 500;
+            }
+        }
+    }
+
+    Rectangle {
+        x: 180px;
+        y: 0px;
+        width: parent.width - 180px;
+        height: parent.height;
+        background: #1e1f22;
+        clip: true;
+
+        if root.active-section == "general": Rectangle {
+            x: 32px;
+            y: 32px;
+            width: min(parent.width - 64px, 860px);
+            height: parent.height - 64px;
+
+            SectionHeader {
+                width: parent.width;
+                title: "General";
+                detail: "Identity for this installed build, plus controls for in-app updates.";
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 96px;
+                width: parent.width;
+                height: root.general-rows.length * 68px;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.settings-border-color;
+                background: root.card-bg;
+                clip: true;
+
+                for row[index] in root.general-rows: SettingsRowChrome {
+                    x: 0px;
+                    y: index * 68px;
+                    width: parent.width;
+                    height: 68px;
+                    row-index: index;
+                    row-bg: root.sunken-bg;
+                    divider: root.settings-border-color;
+
+                    Text {
+                        x: 18px;
+                        y: 14px;
+                        width: parent.width - 260px;
+                        text: row.title;
+                        color: root.text-primary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        x: 18px;
+                        y: 36px;
+                        width: parent.width - 260px;
+                        text: row.detail;
+                        color: root.text-secondary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 11px;
+                    }
+
+                    AoButton {
+                        x: parent.width - 152px;
+                        y: 19px;
+                        width: 132px;
+                        label: row.action-label == "" ? row.status : row.action-label;
+                        control-label: row.title;
+                        active: row.enabled;
+                        disabled: row.action-label == "";
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("general", row.id);
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.active-section == "agents": Rectangle {
+            x: 32px;
+            y: 32px;
+            width: min(parent.width - 64px, 860px);
+            height: parent.height - 64px;
+
+            SectionHeader {
+                width: parent.width;
+                title: "Agents";
+                detail: "Manage per-agent argv tokens and availability. Disabled agents stay here so they can be re-enabled, but they are hidden from New Task and Add Agent pickers. Changes save immediately.";
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            SettingsSummaryCard {
+                x: 0px;
+                y: 92px;
+                width: parent.width;
+                title: "Availability";
+                detail: "Choose which enabled agent is used first for new tasks and new agent tabs.";
+                value: root.agent-rows.length + " agents";
+                card-bg: root.card-bg;
+                border: root.settings-border-color;
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            SettingsSummaryCard {
+                x: 0px;
+                y: 176px;
+                width: parent.width;
+                title: "Token rules";
+                detail: "Whitespace is rejected because spaces would create multiple argv tokens. Reorder by removing and re-adding.";
+                value: "argv";
+                card-bg: root.card-bg;
+                border: root.settings-border-color;
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 260px;
+                width: parent.width;
+                height: root.agent-rows.length * 58px;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.settings-border-color;
+                background: root.card-bg;
+                clip: true;
+
+                for row[index] in root.agent-rows: SettingsRowChrome {
+                    x: 0px;
+                    y: index * 58px;
+                    width: parent.width;
+                    height: 58px;
+                    row-index: index;
+                    row-bg: root.sunken-bg;
+                    divider: root.settings-border-color;
+
+                    Text {
+                        x: 18px;
+                        y: 11px;
+                        width: parent.width - 360px;
+                        text: row.label;
+                        color: root.text-primary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        x: 18px;
+                        y: 31px;
+                        width: parent.width - 360px;
+                        text: row.args-label == "" ? row.detail : row.args-label;
+                        color: root.text-secondary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 11px;
+                    }
+
+                    AoButton {
+                        x: parent.width - 292px;
+                        y: 16px;
+                        width: 112px;
+                        label: row.default-agent ? "Default" : "Make default";
+                        active: row.default-agent;
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("agents.default", row.id);
+                        }
+                    }
+
+                    AoCheckbox {
+                        x: parent.width - 158px;
+                        y: 15px;
+                        width: 138px;
+                        checked: row.enabled;
+                        label: row.enabled ? "Enabled" : "Disabled";
+                        control-label: "Toggle " + row.label;
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        danger-color: root.danger-color;
+                        toggled(value) => {
+                            root.toggle-requested("agents", row.id, value);
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.active-section == "open-in": Rectangle {
+            x: 32px;
+            y: 32px;
+            width: min(parent.width - 64px, 860px);
+            height: parent.height - 64px;
+
+            SectionHeader {
+                width: parent.width;
+                title: "Open In";
+                detail: "Choose which detected apps appear in the project header's Open In menu.";
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            SettingsSummaryCard {
+                x: 0px;
+                y: 92px;
+                width: parent.width;
+                title: "Detected apps";
+                detail: "Only apps detected on this machine appear here. Changes save immediately.";
+                value: root.open-in-rows.length + " detected";
+                card-bg: root.card-bg;
+                border: root.settings-border-color;
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 184px;
+                width: parent.width;
+                height: root.open-in-rows.length * 58px;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.settings-border-color;
+                background: root.card-bg;
+                clip: true;
+
+                for row[index] in root.open-in-rows: SettingsRowChrome {
+                    x: 0px;
+                    y: index * 58px;
+                    width: parent.width;
+                    height: 58px;
+                    row-index: index;
+                    row-bg: root.sunken-bg;
+                    divider: root.settings-border-color;
+
+                    Text {
+                        x: 18px;
+                        y: 11px;
+                        width: parent.width - 210px;
+                        text: row.label;
+                        color: root.text-primary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        x: 18px;
+                        y: 31px;
+                        width: parent.width - 210px;
+                        text: row.detail;
+                        color: root.text-secondary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 11px;
+                    }
+
+                    AoCheckbox {
+                        x: parent.width - 158px;
+                        y: 15px;
+                        width: 138px;
+                        checked: row.enabled;
+                        label: row.enabled ? "Enabled" : "Disabled";
+                        control-label: "Toggle " + row.label;
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        danger-color: root.danger-color;
+                        toggled(value) => {
+                            root.toggle-requested("open-in", row.id, value);
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.active-section == "git-actions": Rectangle {
+            x: 32px;
+            y: 32px;
+            width: min(parent.width - 64px, 960px);
+            height: parent.height - 64px;
+
+            SectionHeader {
+                width: parent.width;
+                title: "Git Actions";
+                detail: "Customize the instructions sent to the LLM when the app generates commit messages and pull request title/body content. The app appends the relevant git context automatically.";
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            for panel[index] in root.git-action-panels: Rectangle {
+                x: 0px;
+                y: 96px + index * 250px;
+                width: parent.width;
+                height: 224px;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.settings-border-color;
+                background: root.card-bg;
+                clip: true;
+
+                Text {
+                    x: 18px;
+                    y: 14px;
+                    width: parent.width - 220px;
+                    text: panel.title;
+                    color: root.text-primary;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+
+                Text {
+                    x: 18px;
+                    y: 34px;
+                    width: parent.width - 220px;
+                    text: panel.detail;
+                    color: root.text-secondary;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 11px;
+                }
+
+                AoButton {
+                    x: parent.width - 164px;
+                    y: 17px;
+                    width: 144px;
+                    label: "Reset to Default";
+                    active: panel.custom;
+                    bg: root.overlay-active;
+                    hover-bg: root.overlay-hover;
+                    border: root.settings-border-color;
+                    focus-ring: root.focus-ring;
+                    text-color: root.text-primary;
+                    clicked => {
+                        root.action-requested("git-actions.reset", panel.id);
+                    }
+                }
+
+                Rectangle {
+                    x: 18px;
+                    y: 64px;
+                    width: parent.width - 36px;
+                    height: 142px;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: root.settings-border-color;
+                    background: #191b1f;
+
+                    Text {
+                        x: 14px;
+                        y: 12px;
+                        width: parent.width - 28px;
+                        height: parent.height - 24px;
+                        text: panel.script-preview == "" ? panel.placeholder : panel.script-preview;
+                        color: panel.script-preview == "" ? root.text-muted : root.text-secondary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 12px;
+                    }
+                }
+            }
+        }
+
+        if root.active-section == "keybindings": Rectangle {
+            x: 32px;
+            y: 32px;
+            width: min(parent.width - 64px, 860px);
+            height: parent.height - 64px;
+
+            SectionHeader {
+                width: parent.width;
+                title: "Keybindings";
+                detail: "Choose Edit on a command, then press the new key combination. Changes save immediately and apply to tab and navigation shortcuts across the app.";
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            SettingsSummaryCard {
+                x: 0px;
+                y: 92px;
+                width: parent.width;
+                title: "Capture rules";
+                detail: "Use at least one modifier key. Duplicate shortcuts are blocked.";
+                value: "Edit / Reset";
+                card-bg: root.card-bg;
+                border: root.settings-border-color;
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 184px;
+                width: parent.width;
+                height: root.shortcut-rows.length * 54px;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.settings-border-color;
+                background: root.card-bg;
+                clip: true;
+
+                for row[index] in root.shortcut-rows: SettingsRowChrome {
+                    x: 0px;
+                    y: index * 54px;
+                    width: parent.width;
+                    height: 54px;
+                    row-index: index;
+                    row-bg: root.sunken-bg;
+                    divider: root.settings-border-color;
+
+                    Text {
+                        x: 18px;
+                        y: 17px;
+                        width: parent.width - 420px;
+                        text: row.label;
+                        color: root.text-primary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+
+                    AoStatusPill {
+                        x: parent.width - 392px;
+                        y: 13px;
+                        width: 164px;
+                        label: row.capturing ? "Press shortcut now" : row.binding;
+                        bg: root.card-bg;
+                        border: root.settings-border-color;
+                        text-color: row.capturing ? root.text-primary : root.text-secondary;
+                    }
+
+                    AoButton {
+                        x: parent.width - 212px;
+                        y: 13px;
+                        width: 58px;
+                        label: row.capturing ? "Listen" : "Edit";
+                        active: row.capturing;
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("keybindings.capture", row.id);
+                        }
+                    }
+
+                    AoButton {
+                        x: parent.width - 146px;
+                        y: 13px;
+                        width: 58px;
+                        label: "Reset";
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("keybindings.reset", row.id);
+                        }
+                    }
+
+                    AoButton {
+                        x: parent.width - 80px;
+                        y: 13px;
+                        width: 60px;
+                        label: "Clear";
+                        destructive: true;
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        danger-color: root.danger-color;
+                        clicked => {
+                            root.action-requested("keybindings.clear", row.id);
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.active-section == "mcp": Rectangle {
+            x: 32px;
+            y: 32px;
+            width: min(parent.width - 64px, 920px);
+            height: parent.height - 64px;
+
+            SectionHeader {
+                width: parent.width;
+                title: "MCP";
+                detail: "Toggle MCP servers per harness. Toggling syncs the registry into each agent's native config while preserving entries AnotherOne doesn't own.";
+                text-primary: root.text-primary;
+                text-secondary: root.text-secondary;
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 96px;
+                width: parent.width;
+                height: root.mcp-rows.length * 64px + 48px;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.settings-border-color;
+                background: root.card-bg;
+                clip: true;
+
+                AoSectionLabel {
+                    x: 18px;
+                    y: 16px;
+                    text: "REGISTRY";
+                    label-color: root.text-muted;
+                }
+
+                for row[index] in root.mcp-rows: SettingsRowChrome {
+                    x: 0px;
+                    y: 48px + index * 64px;
+                    width: parent.width;
+                    height: 64px;
+                    row-index: index;
+                    row-bg: root.sunken-bg;
+                    divider: root.settings-border-color;
+
+                    Text {
+                        x: 18px;
+                        y: 12px;
+                        width: parent.width - 340px;
+                        text: row.label;
+                        color: root.text-primary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        x: 18px;
+                        y: 34px;
+                        width: parent.width - 340px;
+                        text: row.detail;
+                        color: root.text-secondary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 11px;
+                    }
+
+                    AoStatusPill {
+                        x: parent.width - 310px;
+                        y: 18px;
+                        width: 184px;
+                        label: row.provider-summary;
+                        bg: row.installed ? root.overlay-active : root.card-bg;
+                        border: root.settings-border-color;
+                        text-color: root.text-primary;
+                    }
+
+                    AoButton {
+                        x: parent.width - 112px;
+                        y: 19px;
+                        width: 92px;
+                        label: row.installed ? "Remove" : "Add";
+                        active: row.installed;
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("mcp", row.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
