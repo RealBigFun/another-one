@@ -1327,20 +1327,10 @@ export component AoSidebarTaskTreeRow inherits Rectangle {
         }
     }
 
-    Rectangle {
-        x: 12px;
-        y: 16px;
-        width: 8px;
-        height: 8px;
-        border-radius: 4px;
-        background: entry.running ? success-color : text-muted;
-        opacity: entry.running ? 1.0 : 0.38;
-    }
-
     Text {
-        x: 28px;
+        x: 36px;
         y: 6px;
-        width: parent.width - 116px;
+        width: parent.width - 124px;
         text: entry.editing ? entry.name + " |" : entry.name;
         color: entry.error || entry.delete-confirm ? danger-color : text-primary;
         font-family: "Lilex Nerd Font Mono";
@@ -1367,10 +1357,10 @@ export component AoSidebarTaskTreeRow inherits Rectangle {
     }
 
     Text {
-        x: 28px;
+        x: 36px;
         y: 24px;
-        width: parent.width - 64px;
-        text: entry.loading ? "loading task..." : entry.error ? "task unavailable" : entry.delete-confirm ? "confirm delete" : entry.branch + (entry.metadata != "" ? " • " + entry.metadata : "");
+        width: parent.width - 72px;
+        text: entry.loading ? "loading task..." : entry.error ? "task unavailable" : entry.delete-confirm ? "confirm delete" : entry.metadata;
         color: entry.error || entry.delete-confirm ? danger-color : entry.loading ? warning-color : text-muted;
         font-family: "Lilex Nerd Font Mono";
         font-size: 11px;

@@ -196,11 +196,36 @@ fn empty_string_to_none(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+fn build_chip_label() -> String {
+    let profile = if cfg!(debug_assertions) {
+        "dev"
+    } else {
+        "release"
+    };
+    let sha = option_env!("ANOTHER_ONE_BUILD_SHA").unwrap_or("unknown");
+    let dirty = option_env!("ANOTHER_ONE_BUILD_DIRTY") == Some("true");
+    if dirty {
+        format!("{profile} · {sha} · dirty")
+    } else {
+        format!("{profile} · {sha}")
+    }
+}
+
+fn debug_banner_text() -> &'static str {
+    if cfg!(debug_assertions) {
+        "DEBUG BUILD - not for daily use"
+    } else {
+        ""
+    }
+}
+
 pub fn run_app() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
     let platform_profile = platform::current_platform_profile();
     #[cfg(not(target_os = "android"))]
     slint::set_xdg_app_id(platform_profile.app_id)?;
+    app.set_build_chip_label(build_chip_label().into());
+    app.set_debug_banner_text(debug_banner_text().into());
     style::apply_theme(&app);
     app.set_platform_label(platform_profile.label().into());
     settings::seed_settings_model(&app);
@@ -1194,6 +1219,7 @@ struct WorkspaceShellModel {
     active_branch_name: String,
     active_worktree_name: String,
     active_project_path: String,
+    active_project_github_url: String,
     terminal_panel_state: String,
     terminal_panel_title: String,
     terminal_panel_body: String,
@@ -1243,6 +1269,7 @@ fn set_workspace_tree(
             app.set_active_branch_name(model.active_branch_name.into());
             app.set_active_worktree_name(model.active_worktree_name.into());
             app.set_active_project_path(model.active_project_path.into());
+            app.set_active_project_github_url(model.active_project_github_url.into());
             app.set_terminal_panel_state(model.terminal_panel_state.into());
             app.set_terminal_panel_title(model.terminal_panel_title.into());
             app.set_terminal_panel_body(model.terminal_panel_body.into());
@@ -1554,7 +1581,7 @@ fn workspace_shell_model(
                     id: task.id.clone().into(),
                     title: task.name.clone().into(),
                     branch: task.branch_name.clone().into(),
-                    metadata: task_metadata(task, running).into(),
+                    metadata: task_metadata(task).into(),
                     initials: initials(&task.name).into(),
                     accent: project_accent_color(&project.id),
                     active: task.section_id == active_section_id,
@@ -1625,6 +1652,10 @@ fn workspace_shell_model(
             .unwrap_or_else(|| "workspace".to_string()),
         active_project_path: active_project
             .map(|project| project.path.clone())
+            .unwrap_or_default(),
+        active_project_github_url: active_project
+            .and_then(|project| project_github_urls.get(&project.id))
+            .and_then(|url| url.clone())
             .unwrap_or_default(),
         terminal_panel_state: terminal_panel.state,
         terminal_panel_title: terminal_panel.title,
@@ -1818,7 +1849,7 @@ fn sidebar_tree_rows(
                     row_height: SIDEBAR_TASK_ROW_HEIGHT,
                     name: task.name.clone().into(),
                     branch: task.branch_name.clone().into(),
-                    metadata: task_metadata(task, running).into(),
+                    metadata: task_metadata(task).into(),
                     path: "".into(),
                     github_url: "".into(),
                     initials: initials(&task.name).into(),
@@ -2475,16 +2506,22 @@ fn project_kind_label(kind: frame::ProjectKind) -> &'static str {
     }
 }
 
-fn task_metadata(task: &frame::TaskSummary, running: bool) -> String {
+fn task_metadata(task: &frame::TaskSummary) -> String {
     let mut parts = Vec::new();
+    if task.name != task.branch_name {
+        parts.push(task.branch_name.clone());
+    }
     if !task.last_commit_relative.is_empty() {
         parts.push(task.last_commit_relative.clone());
     }
+    let mut metadata = parts.join(" • ");
     if task.lines_added != 0 || task.lines_removed != 0 {
-        parts.push(format!("+{} -{}", task.lines_added, task.lines_removed));
+        if !metadata.is_empty() {
+            metadata.push_str(" • ");
+        }
+        metadata.push_str(&format!("+{} -{}", task.lines_added, task.lines_removed));
     }
-    parts.push(if running { "running" } else { "idle" }.to_string());
-    parts.join(" | ")
+    metadata
 }
 
 fn provider_label(provider: frame::AgentProvider) -> &'static str {
@@ -3047,7 +3084,14 @@ async fn run_terminal_session(
                     }
                     SlintClientEvent::SelectProject(project_id) => {
                         if let Some(project) = projects.iter().find(|project| project.id == project_id) {
-                            set_project_overview_placeholder(app_weak, project);
+                            set_project_overview_placeholder(
+                                app_weak,
+                                project,
+                                project_github_urls
+                                    .get(&project_id)
+                                    .and_then(|url| url.as_deref())
+                                    .unwrap_or_default(),
+                            );
                             right_inspector_project_id = project_id;
                             set_right_inspector_compare_target(app_weak, None);
                             right_inspector_changed_files = None;
@@ -4520,6 +4564,7 @@ fn set_terminal_status(app_weak: &slint::Weak<AppWindow>, status: impl Into<Stri
 fn set_project_overview_placeholder(
     app_weak: &slint::Weak<AppWindow>,
     project: &frame::ProjectSummary,
+    github_url: &str,
 ) {
     let app_weak = app_weak.clone();
     let project_name = project.name.clone();
@@ -4530,6 +4575,7 @@ fn set_project_overview_placeholder(
         .to_string();
     let worktree_name = worktree_name(&project.path);
     let project_path = project.path.clone();
+    let github_url = github_url.to_string();
     let status = format!("project overview: {project_name} (Slint project page parity pending)");
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(app) = app_weak.upgrade() {
@@ -4538,6 +4584,7 @@ fn set_project_overview_placeholder(
             app.set_active_branch_name(branch_name.into());
             app.set_active_worktree_name(worktree_name.into());
             app.set_active_project_path(project_path.into());
+            app.set_active_project_github_url(github_url.into());
             app.set_terminal_status(status.into());
         }
     });
@@ -5495,6 +5542,44 @@ mod tests {
     }
 
     #[test]
+    fn slint_titlebar_uses_gpui_shell_control_contract() {
+        let app_source = include_str!("../ui/app.slint");
+
+        assert!(app_source.contains("DEBUG BUILD - not for daily use"));
+        assert!(app_source.contains("build_chip_label"));
+        assert!(app_source.contains("icons__github.svg"));
+        assert!(
+            app_source.contains("icons__cloud-upload.svg")
+                || app_source.contains("label: \"Push\"")
+        );
+        assert!(app_source.contains("icons__qr-code.svg"));
+        assert!(app_source.contains("sidebar_toggle.svg"));
+        assert!(app_source.contains("right_sidebar_toggle.svg"));
+        assert!(!app_source.contains("text: active_project_name;"));
+        assert!(!app_source.contains("y: 25px;\n                text: active_task_name;"));
+    }
+
+    #[test]
+    fn slint_footer_uses_gpui_shell_contract() {
+        let app_source = include_str!("../ui/app.slint");
+
+        assert!(app_source.contains("icons__folder-plus.svg"));
+        assert!(app_source.contains("icons__git-branch.svg"));
+        assert!(app_source.contains("icons__git-split.svg"));
+        assert!(!app_source.contains("label: layout_label;"));
+        assert!(!app_source.contains("\"theme \" + appearance_preference_label"));
+        assert!(!app_source.contains("label: platform_label;"));
+    }
+
+    #[test]
+    fn build_chip_label_includes_profile_and_sha() {
+        let label = build_chip_label();
+
+        assert!(label.starts_with("dev · ") || label.starts_with("release · "));
+        assert!(label.split(" · ").nth(1).is_some_and(|sha| !sha.is_empty()));
+    }
+
+    #[test]
     fn slint_terminal_workspace_uses_gpui_asset_and_color_contract() {
         let app_source = include_str!("../ui/app.slint");
         let components_source = include_str!("../ui/components.slint");
@@ -5711,6 +5796,57 @@ mod tests {
             "https://github.com/example/project-a"
         );
         assert_eq!(model.sidebar_rows[3].github_url.as_str(), "");
+    }
+
+    #[test]
+    fn workspace_shell_model_uses_gpui_sidebar_task_metadata_rules() {
+        let mut same_name_task = sidebar_task(
+            "task-same",
+            "feature/same",
+            "feature/same",
+            false,
+            "section-same",
+        );
+        same_name_task.last_commit_relative = "3 days ago".to_string();
+        same_name_task.lines_added = 8;
+        same_name_task.lines_removed = 2;
+        let mut named_task = sidebar_task(
+            "task-named",
+            "Readable task",
+            "feature/readable",
+            false,
+            "section-readable",
+        );
+        named_task.last_commit_relative = "4 hours ago".to_string();
+
+        let projects = vec![sidebar_project(
+            "project-a",
+            "Project A",
+            vec![same_name_task, named_task],
+        )];
+        let model = workspace_shell_model(
+            &projects,
+            "section-readable",
+            "0",
+            &ProjectGithubUrls::new(),
+        );
+        let rows = model
+            .sidebar_rows
+            .iter()
+            .filter(|row| row.kind.as_str() == "task")
+            .map(|row| {
+                (
+                    row.name.as_str().to_string(),
+                    row.metadata.as_str().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert!(rows.contains(&("feature/same".to_string(), "3 days ago • +8 -2".to_string())));
+        assert!(rows.contains(&(
+            "Readable task".to_string(),
+            "feature/readable • 4 hours ago".to_string()
+        )));
     }
 
     #[test]
