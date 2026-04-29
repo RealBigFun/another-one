@@ -96,6 +96,21 @@ Required evidence:
 - hot-reload/dev workflow proof for active Slint development;
 - no unsupported platform is implied by shared scripts or docs.
 
+Current gate entry points:
+
+- script syntax/help verification: `scripts/slint/verify-platform-scripts.sh`;
+- Linux dev/release: `scripts/slint/linux-dev.sh` and
+  `scripts/slint/linux-release.sh`;
+- macOS release: `scripts/slint/macos-build.sh --release`;
+- Android APK/JNI: `scripts/slint/android-apk.sh --ndk-lib-proof`;
+- Android install: `scripts/slint/android-apk.sh --install` when `adb` has a
+  connected device;
+- iOS simulator library: `scripts/slint/ios-simulator-build.sh`.
+
+`.github/workflows/slint-platform-gates.yml` runs the non-device-gated portions
+in CI. Android runtime/orientation proof remains device-gated; iOS app
+bundle/install proof remains blocked on a future iOS shell.
+
 ## Closure Rule
 
 An epic can close only when its child gates are closed or explicitly waived by a

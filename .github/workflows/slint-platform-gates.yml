@@ -1,0 +1,97 @@
+name: Slint platform gates
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/slint-platform-gates.yml"
+      - "scripts/slint/**"
+      - "slint-poc/**"
+      - "daemon-sandbox/**"
+      - "core/**"
+      - "vendor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "docs/apps/slint-poc.md"
+      - "docs/apps/daemon-sandbox.md"
+      - "docs/architecture/*platform*"
+      - "docs/architecture/slint-production-readiness-gates.md"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  script-gates:
+    name: Script syntax and help
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Slint platform scripts
+        run: ./scripts/slint/verify-platform-scripts.sh
+
+  linux:
+    name: Linux Slint dev/release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo crates and build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: slint-linux
+          cache-on-failure: true
+      - name: Install Linux Slint prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig1-dev libxkbcommon-dev
+      - name: Run Linux dev gate
+        run: ./scripts/slint/linux-dev.sh
+      - name: Run Linux release gate
+        run: ./scripts/slint/linux-release.sh
+
+  android:
+    name: Android Slint APK
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Cache cargo crates and build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: slint-android
+          cache-on-failure: true
+      - name: Install Android cargo tools
+        run: |
+          cargo install cargo-apk cargo-ndk --locked
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+      - name: Build Android APK and JNI proof
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: ./scripts/slint/android-apk.sh --ndk-lib-proof
+
+  apple:
+    name: macOS and iOS simulator Slint builds
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - name: Cache cargo crates and build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: slint-apple
+          cache-on-failure: true
+      - name: Run macOS release gate
+        run: ./scripts/slint/macos-build.sh --release
+      - name: Run iOS simulator gate
+        run: ./scripts/slint/ios-simulator-build.sh

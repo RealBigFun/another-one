@@ -9,9 +9,51 @@
 | System appearance | env-backed seam | env-backed seam | env-backed seam | env-backed seam | unsupported |
 | Open-In actions | shared core available | shared core available | platform hook required | platform hook required | unsupported |
 | Resource sampling | shared core available | shared core available | procfs shared path | Darwin shared path | unsupported for Slint |
-| Packaging proof | `cargo check -p slint-poc`, `cargo test -p slint-poc`, `scripts/dev-watch.sh slint` | target profile present; macOS host proof still required | target check, native library, and debug APK build pass locally; device install/runtime proof blocked by no `adb` target | profile present; macOS/Xcode proof required | no |
+| Packaging proof | `scripts/slint/linux-dev.sh`, `scripts/slint/linux-release.sh` | `scripts/slint/macos-build.sh --release` on Darwin | `scripts/slint/android-apk.sh --ndk-lib-proof`; install via `--install` when `adb` sees a device | `scripts/slint/ios-simulator-build.sh` on Darwin/Xcode | no |
 
-The matrix is backed by `slint-poc/src/platform.rs` and `slint-poc/src/style.rs`.
+The matrix is backed by `slint-poc/src/platform.rs`,
+`slint-poc/src/style.rs`, and the script profiles under `scripts/slint/`.
+
+## Script/Profile Boundaries
+
+Platform nuance belongs in:
+
+- `slint-poc/src/platform.rs` for app identity, input policy, and desktop/mobile
+  profile labels;
+- `slint-poc/src/style.rs` for appearance resolution;
+- Cargo targets and metadata, especially `slint-poc/Cargo.toml` Android package
+  metadata;
+- `scripts/slint/` for host prerequisites, target selection, packaging, and
+  install commands.
+
+Platform nuance does not belong in Slint view/layout branches. If a target needs
+different packaging, simulator, or install behavior, add it to a script/profile
+boundary first.
+
+## Reproducible Commands
+
+```sh
+./scripts/slint/verify-platform-scripts.sh
+./scripts/slint/linux-dev.sh
+./scripts/slint/linux-release.sh
+./scripts/slint/macos-build.sh --release
+./scripts/slint/android-apk.sh --ndk-lib-proof
+./scripts/slint/android-apk.sh --install
+./scripts/slint/ios-simulator-build.sh
+```
+
+Android outputs:
+
+- APK: `target/debug/apk/anotherone-slint.apk` or
+  `target/release/apk/anotherone-slint.apk`.
+- cargo-ndk proof: `target/slint-android-jni/arm64-v8a/libslint_poc.so`.
+
+iOS simulator output is a Rust library artifact under
+`target/aarch64-apple-ios-sim/{debug,release}/`; app bundle/install support is a
+separate future gate.
+
+CI runs the same entry points through
+`.github/workflows/slint-platform-gates.yml`.
 
 ## 2026-04-28 Build Probe
 

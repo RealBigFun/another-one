@@ -40,4 +40,19 @@ pub(crate) struct SlintPlatformProfile {
 - Move shared profile definitions to the final production Slint crate once `slint-poc` is renamed.
 - Add real system appearance APIs per target.
 - Add platform file/open-in hooks for Slint UI actions.
-- Add Android install/orientation proof and iOS simulator proof.
+- Add Android orientation/runtime proof once an `adb` device is available.
+- Replace the iOS simulator library proof with an app bundle/install proof once
+  the iOS shell exists.
+
+## Build Profile Evidence
+
+The active profile scripts are:
+
+- Linux dev: `scripts/slint/linux-dev.sh`
+- Linux release: `scripts/slint/linux-release.sh`
+- macOS: `scripts/slint/macos-build.sh`
+- Android APK/install: `scripts/slint/android-apk.sh`
+- iOS simulator: `scripts/slint/ios-simulator-build.sh`
+
+These scripts select Cargo targets and packaging/install tools without adding
+platform branches to `slint-poc/ui/app.slint` or component/layout code.

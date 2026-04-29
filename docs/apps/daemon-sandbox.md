@@ -1,8 +1,8 @@
 # `daemon-sandbox/` — throwaway PTY daemon
 
-Proves the mobile-companion transport shape end-to-end without touching
-[[desktop]]. Spawns one PTY per connection, bridges bytes over either
-WebSocket or Iroh QUIC.
+Proves the daemon transport shape end-to-end without touching
+[[desktop]]. Spawns PTY sessions and bridges framed control/output over
+Iroh QUIC; the loopback WebSocket path remains diagnostic only.
 
 ## Entry points
 
@@ -13,10 +13,11 @@ WebSocket or Iroh QUIC.
   Wire format: binary frames = PTY bytes; text frames = JSON control
   (`{"type":"resize","cols":C,"rows":R}`).
 - `daemon-sandbox/src/transport_iroh.rs` — Iroh endpoint, ALPN
-  `anotherone/pty/0`. Currently raw bytes both directions (no framing —
-  resize control is not yet implemented on this path).
+  `anotherone/pty/1`, length-prefixed frames, pairing, and terminal
+  control messages.
 - `daemon-sandbox/src/bin/iroh-client.rs` — CLI smoke test that dials the
-  Iroh endpoint and echoes bytes. Handy for isolating Iroh from mobile.
+  Iroh endpoint and echoes bytes. Handy for isolating Iroh from UI
+  clients.
 
 ## Running
 
@@ -30,12 +31,14 @@ AGENT_CMD=claude cargo run -p daemon-sandbox
 
 On startup:
 - WebSocket: `ws://127.0.0.1:5617/pty`
-- Iroh: EndpointId printed to logs + written to
-  `/tmp/daemon-sandbox.nodeid` for `iroh-client` to pick up.
-- Full EndpointAddr (including direct socket addrs) logged — use the
-  `Ip(192.168.x.y:PORT)` address to construct
-  `iroh://<EndpointId>?direct=10.0.2.2:<PORT>` URLs for the Android
-  emulator. See [[mobile]].
+- Iroh: pairing ticket written to `/tmp/daemon-sandbox.ticket` for
+  `iroh-client` and `slint-poc` to pick up.
+
+For Slint platform build proofs, keep the daemon as a separate dev-time process
+and use the target-specific scripts under `scripts/slint/`. Packaging gates must
+not embed daemon-sandbox into platform-specific view/layout branches; Slint
+platform selection stays in `slint-poc/src/platform.rs`, Cargo targets, and the
+script profiles.
 
 ## Why it's called sandbox
 
@@ -45,10 +48,8 @@ transport logic becomes part of the embedded daemon in [[desktop]] (see
 
 ## Known limitations
 
-- No auth / no pairing — anyone who reaches the port can connect.
-- Iroh path has no control framing yet; resize messages from mobile are
-  silently dropped. Fix planned: length-prefixed frames with a type byte.
-- `/tmp/daemon-sandbox.nodeid` hint file is a dev-time shortcut.
+- The WebSocket path is unauthenticated and disabled by default.
+- `/tmp/daemon-sandbox.ticket` is a dev-time shortcut.
 - Default relay mesh is Number Zero's "canary" — dev-only per Iroh's
   docs. See [[../postmortems/2026-04-23-iroh-android-hang]] for the
   self-hosted-relay requirement in production.
