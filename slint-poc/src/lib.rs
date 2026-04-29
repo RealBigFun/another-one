@@ -27,6 +27,7 @@ mod resource;
 mod right_inspector;
 mod settings;
 mod style;
+mod terminal_input;
 mod terminal_target;
 mod titlebar;
 mod toast;
@@ -48,6 +49,12 @@ use right_inspector::{
     right_inspector_rows_for_changed_files_with_collapsed,
     right_inspector_rows_for_commits_with_expansions,
 };
+use terminal_input::{
+    clamp_terminal_dimension, encode_terminal_key, encode_terminal_pointer_event, is_copy_shortcut,
+    link_uri_at, next_terminal_flush_deadline, normalized_selection_points,
+    selection_spans_for_points, startup_probe, SlintKeyEvent, SlintPointerEvent, TerminalCellPoint,
+    TerminalInputModeState,
+};
 use terminal_target::{
     active_project_id_for_open_in, first_attachable_target, normalized_source_branch,
     project_id_for_target, target_for_tab_id, target_for_task_id, target_still_exists,
@@ -57,7 +64,7 @@ use titlebar::{build_chip_label, debug_banner_text, set_open_in_state, set_open_
 use toast::{clear_toast, set_toast, toast_clipboard_text};
 #[cfg(test)]
 use util::{compact_path, initials, provider_label, restore_status_label, task_metadata};
-use util::{project_accent_color, project_kind_label, worktree_name};
+use util::{project_kind_label, worktree_name};
 use visual_fixtures::{seed_component_state_fixture, seed_shell_model, seed_visual_state_fixture};
 #[cfg(test)]
 use workspace_shell::{
@@ -70,13 +77,10 @@ const TERMINAL_COLS: u16 = 100;
 const TERMINAL_ROWS: u16 = 34;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
-const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(33);
+pub(crate) const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(33);
 const TERMINAL_RESIZE_DEBOUNCE: Duration = Duration::from_millis(80);
 const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x1e1f22;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
-const SHELL_COLOR_SMOKE_PROBE: &[u8] =
-    b"printf '\\033[31mRED \\033[32mGREEN \\033[34mBLUE\\033[0m DEFAULT\\n'\nprintf 'ANOTHERONE_SLINT_READY\\n'\r";
-const SHELL_READINESS_PROBE: &[u8] = b"printf 'ANOTHERONE_SLINT_READY\\n'\r";
 const TERMINAL_FIDELITY_FIXTURE: &[u8] = concat!(
     "\x1b[31mRED \x1b[32mGREEN \x1b[34mBLUE\x1b[0m DEFAULT\r\n",
     "\x1b[38;5;208mINDEXED_208\x1b[0m \x1b[38;2;125;90;255mTRUECOLOR_RGB\x1b[0m\r\n",
@@ -2447,52 +2451,6 @@ async fn run_terminal_session(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct SlintKeyEvent {
-    text: String,
-    control: bool,
-    alt: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SlintPointerEvent {
-    kind: String,
-    button: String,
-    column: i32,
-    line: i32,
-    control: bool,
-    alt: bool,
-    shift: bool,
-}
-
-impl SlintPointerEvent {
-    fn is_primary_down(&self) -> bool {
-        self.kind == "down" && self.button == "left"
-    }
-
-    fn is_primary_move(&self) -> bool {
-        self.kind == "move"
-    }
-
-    fn is_primary_up(&self) -> bool {
-        self.kind == "up" && self.button == "left"
-    }
-
-    fn terminal_point(&self) -> Option<TerminalCellPoint> {
-        Some(TerminalCellPoint {
-            line: self.line,
-            column: self.column,
-        })
-        .filter(|point| point.line >= 0 && point.column >= 0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct TerminalCellPoint {
-    line: i32,
-    column: i32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SlintClientEvent {
     TerminalKey(SlintKeyEvent),
     TerminalFocus(bool),
@@ -2549,17 +2507,6 @@ pub(crate) enum SlintClientEvent {
     Settings(settings::SettingsRequest),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct TerminalInputModeState {
-    app_cursor: bool,
-    bracketed_paste: bool,
-    focus_in_out: bool,
-    mouse_report_click: bool,
-    mouse_drag: bool,
-    mouse_motion: bool,
-    sgr_mouse: bool,
-}
-
 async fn wait_for_terminal_flush(deadline: Option<Instant>) {
     let Some(deadline) = deadline else {
         std::future::pending::<()>().await;
@@ -2576,19 +2523,6 @@ async fn wait_for_terminal_resize(deadline: Option<Instant>) {
     };
 
     tokio::time::sleep_until(deadline).await;
-}
-
-fn next_terminal_flush_deadline(now: Instant, last_flush: Instant) -> Instant {
-    let earliest = last_flush + TERMINAL_FRAME_INTERVAL;
-    if earliest > now {
-        earliest
-    } else {
-        now
-    }
-}
-
-fn clamp_terminal_dimension(value: i32, min: u16, max: u16) -> u16 {
-    value.clamp(i32::from(min), i32::from(max)) as u16
 }
 
 async fn switch_terminal_target<W>(
@@ -2811,245 +2745,6 @@ fn set_terminal_selection(app_weak: &slint::Weak<AppWindow>, spans: Vec<Terminal
             app.set_terminal_selection_spans(slint::ModelRc::new(slint::VecModel::from(spans)));
         }
     });
-}
-
-fn is_copy_shortcut(input: &SlintKeyEvent) -> bool {
-    input.control && !input.alt && input.text.eq_ignore_ascii_case("c")
-}
-
-fn encode_terminal_key(
-    input: &SlintKeyEvent,
-    modes: TerminalInputModeState,
-) -> Option<TerminalInputEvent> {
-    let text = input.text.as_str();
-    let mut bytes = match text {
-        "\u{0008}" => vec![0x7f],
-        "\u{0009}" => b"\t".to_vec(),
-        "\u{000a}" => b"\r".to_vec(),
-        "\u{001b}" => b"\x1b".to_vec(),
-        "\u{007f}" => b"\x1b[3~".to_vec(),
-        "\u{f700}" => cursor_key_sequence(b'A', modes.app_cursor),
-        "\u{f701}" => cursor_key_sequence(b'B', modes.app_cursor),
-        "\u{f702}" => cursor_key_sequence(b'D', modes.app_cursor),
-        "\u{f703}" => cursor_key_sequence(b'C', modes.app_cursor),
-        "\u{f729}" => cursor_key_sequence(b'H', modes.app_cursor),
-        "\u{f72b}" => cursor_key_sequence(b'F', modes.app_cursor),
-        "\u{f72c}" => b"\x1b[5~".to_vec(),
-        "\u{f72d}" => b"\x1b[6~".to_vec(),
-        value if value.chars().count() == 1 => {
-            let ch = value.chars().next()?;
-            if input.control {
-                control_key_byte(ch)?
-            } else if input.alt {
-                value.as_bytes().to_vec()
-            } else {
-                return Some(TerminalInputEvent::Text {
-                    text: value.to_string(),
-                });
-            }
-        }
-        value if !input.control && input.alt => value.as_bytes().to_vec(),
-        value if !input.control => {
-            return Some(TerminalInputEvent::Paste {
-                text: value.to_string(),
-                bracketed: modes.bracketed_paste,
-            });
-        }
-        _ => return None,
-    };
-
-    if input.alt {
-        bytes.insert(0, 0x1b);
-    }
-
-    Some(TerminalInputEvent::Key { bytes })
-}
-
-fn encode_terminal_pointer_event(
-    input: &SlintPointerEvent,
-    modes: TerminalInputModeState,
-) -> Option<TerminalInputEvent> {
-    if !mouse_reporting_enabled(modes) {
-        return None;
-    }
-
-    let column = u16::try_from(input.column).ok()?;
-    let line = u16::try_from(input.line).ok()?;
-    let modifiers = mouse_modifier_bits(input);
-    let release = input.kind == "up";
-    let code = match input.kind.as_str() {
-        "down" | "up" => mouse_button_code(&input.button)?.checked_add(modifiers)?,
-        "move" => {
-            if !modes.mouse_motion && !modes.mouse_drag {
-                return None;
-            }
-            let button = if input.button == "other" {
-                if modes.mouse_motion {
-                    3
-                } else {
-                    return None;
-                }
-            } else {
-                mouse_button_code(&input.button)?
-            };
-            32u8.checked_add(button)?.checked_add(modifiers)?
-        }
-        _ => return None,
-    };
-
-    let bytes = if modes.sgr_mouse {
-        encode_sgr_mouse_button(code, column, line, release)
-    } else {
-        let legacy_code = if release {
-            3u8.checked_add(modifiers)?
-        } else {
-            code
-        };
-        encode_legacy_mouse_button(legacy_code, column, line)?
-    };
-
-    Some(TerminalInputEvent::Mouse { bytes })
-}
-
-fn mouse_reporting_enabled(modes: TerminalInputModeState) -> bool {
-    modes.mouse_report_click || modes.mouse_drag || modes.mouse_motion
-}
-
-fn mouse_button_code(button: &str) -> Option<u8> {
-    match button {
-        "left" => Some(0),
-        "middle" => Some(1),
-        "right" => Some(2),
-        _ => None,
-    }
-}
-
-fn mouse_modifier_bits(input: &SlintPointerEvent) -> u8 {
-    let mut bits = 0;
-    if input.shift {
-        bits |= 4;
-    }
-    if input.alt {
-        bits |= 8;
-    }
-    if input.control {
-        bits |= 16;
-    }
-    bits
-}
-
-fn encode_sgr_mouse_button(code: u8, column: u16, line: u16, release: bool) -> Vec<u8> {
-    let suffix = if release { 'm' } else { 'M' };
-    format!(
-        "\x1b[<{code};{};{}{suffix}",
-        u32::from(column) + 1,
-        u32::from(line) + 1
-    )
-    .into_bytes()
-}
-
-fn encode_legacy_mouse_button(code: u8, column: u16, line: u16) -> Option<Vec<u8>> {
-    Some(vec![
-        0x1b,
-        b'[',
-        b'M',
-        code.checked_add(32)?,
-        legacy_mouse_coord(column)?,
-        legacy_mouse_coord(line)?,
-    ])
-}
-
-fn legacy_mouse_coord(coord: u16) -> Option<u8> {
-    u8::try_from(u32::from(coord) + 33).ok()
-}
-
-fn link_uri_at(spans: &[TerminalLinkSpan], line: i32, column: i32) -> Option<String> {
-    spans
-        .iter()
-        .find(|span| {
-            span.line == line && column >= span.column && column < span.column + span.cell_count
-        })
-        .map(|span| span.uri.to_string())
-}
-
-fn selection_spans_for_points(
-    anchor: TerminalCellPoint,
-    focus: TerminalCellPoint,
-    columns: u16,
-    rows: u16,
-) -> Vec<TerminalSelectionSpan> {
-    let Some((start, end)) = normalized_selection_points(anchor, focus) else {
-        return Vec::new();
-    };
-    let columns = i32::from(columns);
-    let rows = i32::from(rows);
-    if columns <= 0 || rows <= 0 {
-        return Vec::new();
-    }
-
-    let first_line = start.line.clamp(0, rows.saturating_sub(1));
-    let last_line = end.line.clamp(0, rows.saturating_sub(1));
-    let mut spans = Vec::new();
-
-    for line in first_line..=last_line {
-        let column_start = if line == start.line { start.column } else { 0 }.clamp(0, columns);
-        let column_end = if line == end.line {
-            end.column.saturating_add(1)
-        } else {
-            columns
-        }
-        .clamp(0, columns);
-
-        if column_end > column_start {
-            spans.push(TerminalSelectionSpan {
-                line,
-                column: column_start,
-                cell_count: column_end - column_start,
-            });
-        }
-    }
-
-    spans
-}
-
-fn normalized_selection_points(
-    anchor: TerminalCellPoint,
-    focus: TerminalCellPoint,
-) -> Option<(TerminalCellPoint, TerminalCellPoint)> {
-    (anchor != focus).then(|| {
-        if anchor <= focus {
-            (anchor, focus)
-        } else {
-            (focus, anchor)
-        }
-    })
-}
-
-fn cursor_key_sequence(final_byte: u8, app_cursor: bool) -> Vec<u8> {
-    if app_cursor {
-        vec![0x1b, b'O', final_byte]
-    } else {
-        vec![0x1b, b'[', final_byte]
-    }
-}
-
-fn control_key_byte(ch: char) -> Option<Vec<u8>> {
-    let lower = ch.to_ascii_lowercase();
-    if lower.is_ascii_lowercase() {
-        Some(vec![(lower as u8) - b'a' + 1])
-    } else if ch == ' ' {
-        Some(vec![0])
-    } else {
-        None
-    }
-}
-
-fn startup_probe() -> Option<&'static [u8]> {
-    match std::env::var("ANOTHERONE_SLINT_STARTUP_PROBE").as_deref() {
-        Ok("shell-color") => Some(SHELL_COLOR_SMOKE_PROBE),
-        Ok("shell-ready") => Some(SHELL_READINESS_PROBE),
-        _ => None,
-    }
 }
 
 #[derive(Clone)]
