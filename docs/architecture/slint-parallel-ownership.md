@@ -20,9 +20,45 @@ and the parallel fan-out reads it as the source of truth.
 
 ## Status
 
-- **Phase A in progress.** Target paths are listed below; the actual
-  extraction commits land in the order described in the plan. Until A.6
-  ships, the "current location" column reflects pre-split reality.
+- **Phase A in progress.** Target paths are listed below; extractions land
+  one commit at a time. Until A.6 ships, the "current location" column
+  reflects pre-split reality for un-extracted surfaces.
+
+### Extractions landed so far
+
+| Module | Lines | New tests | Notes |
+|---|---|---|---|
+| `slint-poc/src/daemon_ticket.rs` | ~170 | 1 source-contract pin (GPUI writer paths) + 2 existing | Self-contained; no AppWindow coupling. `wait_for_ticket` stays in lib.rs because it sets terminal status. |
+| `slint-poc/src/toast.rs` | ~95 | 1 source-contract pin (`show_*_toast` symbols) + 1 clipboard behavior | Mirrors the GPUI toast helper surface. Removes the duplicate `toast_clipboard_text_joins_message_and_detail` test left in lib.rs. |
+| `slint-poc/src/titlebar.rs` | ~180 | 1 source-contract pin (titlebar overlay symbols) + 2 existing | Bounded utilities only: build chip, debug banner, Open In menu projection. Custom-actions and git-toolbar dispatchers still in lib.rs. |
+| `slint-poc/src/right_inspector.rs` | ~600 | 1 source-contract pin (`changed_files_panel` + daemon wire types) + 2 helper tests | Pure data shapers for Changes/Commits/Checks/Compare modes plus the four row-height constants and `InspectorCommitFileChangesState` enum. AppWindow mutators (`set_right_inspector_*`) stay in lib.rs. |
+
+`slint-poc/src/lib.rs` shrunk from 7,554 → 6,723 lines (~11% reduction).
+Test count rose from 111 → 117 (six new source-contract / behavior tests
+added across the extractions).
+
+### Extractions still pending
+
+In rough order of priority and isolability:
+
+1. `visual_fixtures.rs` — `seed_visual_state_fixture` and friends (~500
+   lines). Bounded; needs a few helpers in lib.rs marked `pub(crate)`.
+2. `right_inspector` AppWindow mutators (~200 lines): the
+   `set_right_inspector_*` family that currently lives near
+   `right_inspector_rows_for_changed_files_with_collapsed`'s former home.
+3. `terminal_workspace.rs` skeleton — tab strip data shaping, terminal
+   panel model, restore status helpers.
+4. `left_sidebar.rs` skeleton — sidebar tree row builders, project/task
+   menus, footer affordances.
+5. `terminal_renderer.rs` — `spawn_terminal_worker`, `AlacrittySnapshot`,
+   and the cell/color resolution helpers (~2,500 lines, the largest
+   remaining chunk).
+6. `daemon.rs` — outbound `Control` senders + inbound `WorkerReply`
+   dispatcher (~600 lines).
+7. `app.rs` — bootstrap residual after everything above moves.
+
+UI / Slint and `desktop/src/daemon_host.rs` splits (A.3, A.4) remain
+unstarted. They land after the lib.rs split is fully done.
 
 ## Surface ownership
 
