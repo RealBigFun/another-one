@@ -3,6 +3,14 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+  case "$CARGO_TARGET_DIR" in
+    /*) TARGET_DIR=$CARGO_TARGET_DIR ;;
+    *) TARGET_DIR="$ROOT_DIR/$CARGO_TARGET_DIR" ;;
+  esac
+else
+  TARGET_DIR="$ROOT_DIR/target"
+fi
 APP_TARGET=${1:-slint}
 HYPR_WORKSPACE=${HYPR_WORKSPACE:-1}
 APP_PID=""
@@ -12,7 +20,7 @@ case "$APP_TARGET" in
   slint | slint-poc)
     PACKAGE_NAME="slint-poc"
     WATCH_PATHS="$ROOT_DIR/slint-poc/src $ROOT_DIR/slint-poc/ui $ROOT_DIR/slint-poc/build.rs"
-    BINARY_PATH="$ROOT_DIR/target/debug/slint-poc"
+    BINARY_PATH="$TARGET_DIR/debug/slint-poc"
     HYPR_TITLE_REGEX="AnotherOne"
     HYPR_CLASS_REGEX="com[.]anotherone[.]Slint"
     ;;
@@ -21,7 +29,7 @@ case "$APP_TARGET" in
       sed -n 's/^name = "\(.*\)"/\1/p' "$ROOT_DIR/desktop/Cargo.toml" | head -n 1
     )
     WATCH_PATHS="$ROOT_DIR/desktop/src"
-    BINARY_PATH="$ROOT_DIR/target/debug/$PACKAGE_NAME"
+    BINARY_PATH="$TARGET_DIR/debug/$PACKAGE_NAME"
     HYPR_TITLE_REGEX=""
     HYPR_CLASS_REGEX=""
     ;;
@@ -144,7 +152,11 @@ build_and_reload() {
   echo "Building $PACKAGE_NAME"
   if (
     cd "$ROOT_DIR"
-    cargo build -p "$PACKAGE_NAME"
+    if [ "$APP_TARGET" = "slint" ] || [ "$APP_TARGET" = "slint-poc" ]; then
+      cargo build -p "$PACKAGE_NAME" --bin "$PACKAGE_NAME"
+    else
+      cargo build -p "$PACKAGE_NAME"
+    fi
   ); then
     stop_app
     start_app
