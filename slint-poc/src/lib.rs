@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,16 +15,19 @@ use daemon_sandbox::frame::{
     self, Control, ControlEnvelope, TerminalInputEvent, WorkerReply, WorkerReplyEnvelope,
 };
 use iroh::endpoint::presets;
-use iroh::{Endpoint, EndpointAddr, EndpointId};
+use iroh::{Endpoint, EndpointAddr};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 slint::include_modules!();
 
+mod daemon_ticket;
 mod overlays;
 mod platform;
 mod settings;
 mod style;
+
+use daemon_ticket::{load_ticket, pre_authorize_local_client, DaemonTicket};
 
 const TERMINAL_COLS: u16 = 100;
 const TERMINAL_ROWS: u16 = 34;
@@ -5058,18 +5060,6 @@ where
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DaemonTicketSource {
-    Primary,
-    Sandbox,
-}
-
-struct DaemonTicket {
-    endpoint_id: EndpointId,
-    direct_addrs: Vec<SocketAddr>,
-    source: DaemonTicketSource,
-}
-
 async fn wait_for_ticket(app_weak: &slint::Weak<AppWindow>) -> anyhow::Result<DaemonTicket> {
     loop {
         match load_ticket() {
@@ -5081,95 +5071,6 @@ async fn wait_for_ticket(app_weak: &slint::Weak<AppWindow>) -> anyhow::Result<Da
             Err(error) => return Err(error),
         }
     }
-}
-
-fn load_ticket() -> anyhow::Result<Option<DaemonTicket>> {
-    for (source, path) in daemon_ticket_candidates() {
-        let Some((endpoint_id, direct_addrs)) = load_ticket_from_path(&path)? else {
-            continue;
-        };
-        return Ok(Some(DaemonTicket {
-            endpoint_id,
-            direct_addrs,
-            source,
-        }));
-    }
-    Ok(None)
-}
-
-fn load_ticket_from_path(path: &Path) -> anyhow::Result<Option<(EndpointId, Vec<SocketAddr>)>> {
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return Ok(None);
-    };
-
-    parse_ticket(&content)
-}
-
-fn parse_ticket(content: &str) -> anyhow::Result<Option<(EndpointId, Vec<SocketAddr>)>> {
-    let mut id = None;
-    let mut addrs = Vec::new();
-    for line in content.lines() {
-        if let Some(rest) = line.strip_prefix("id=") {
-            id = Some(rest.trim().parse().context("parse EndpointId in ticket")?);
-        } else if let Some(rest) = line.strip_prefix("addr=") {
-            addrs.push(rest.trim().parse().context("parse addr in ticket")?);
-        }
-    }
-
-    Ok(id.map(|id| (id, addrs)))
-}
-
-fn daemon_ticket_candidates() -> Vec<(DaemonTicketSource, PathBuf)> {
-    vec![
-        (DaemonTicketSource::Primary, primary_daemon_ticket_path()),
-        (
-            DaemonTicketSource::Sandbox,
-            std::env::temp_dir().join("daemon-sandbox.ticket"),
-        ),
-    ]
-}
-
-fn pre_authorize_local_client(
-    endpoint_id: EndpointId,
-    source: DaemonTicketSource,
-) -> anyhow::Result<()> {
-    daemon_sandbox::persist_pairing(
-        &endpoint_id.to_string(),
-        &paired_peers_path_for_ticket_source(source),
-    )
-}
-
-fn paired_peers_path_for_ticket_source(source: DaemonTicketSource) -> PathBuf {
-    match source {
-        DaemonTicketSource::Primary => primary_daemon_paired_peers_path(),
-        DaemonTicketSource::Sandbox => sandbox_paired_peers_path(),
-    }
-}
-
-fn primary_daemon_ticket_path() -> PathBuf {
-    primary_daemon_config_dir().join("endpoint.ticket")
-}
-
-fn primary_daemon_paired_peers_path() -> PathBuf {
-    primary_daemon_config_dir().join("paired_peers")
-}
-
-fn primary_daemon_config_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("another-one").join("daemon")
-}
-
-fn sandbox_paired_peers_path() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
-        })
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("another-one-sandbox").join("paired_peers")
 }
 
 fn set_terminal_status(app_weak: &slint::Weak<AppWindow>, status: impl Into<String>) {
@@ -6382,31 +6283,6 @@ mod tests {
         assert!(components_source.contains("#2f3136"));
         assert!(!app_source.contains("icon: \"C\""));
         assert!(!components_source.contains("icon: \"C\""));
-    }
-
-    #[test]
-    fn slint_daemon_ticket_prefers_primary_daemon_before_sandbox() {
-        let candidates = daemon_ticket_candidates();
-
-        assert_eq!(candidates[0].0, DaemonTicketSource::Primary);
-        assert!(candidates[0]
-            .1
-            .ends_with("another-one/daemon/endpoint.ticket"));
-        assert_eq!(candidates[1].0, DaemonTicketSource::Sandbox);
-        assert!(candidates[1].1.ends_with("daemon-sandbox.ticket"));
-    }
-
-    #[test]
-    fn slint_daemon_ticket_parses_endpoint_and_direct_addrs() {
-        let endpoint_id = iroh::SecretKey::generate().public().to_string();
-        let ticket = format!("id={endpoint_id}\naddr=127.0.0.1:55123\nrelay=https://relay.test\n");
-
-        let (parsed_id, addrs) = parse_ticket(&ticket)
-            .expect("valid ticket parses")
-            .expect("ticket includes endpoint id");
-
-        assert_eq!(parsed_id.to_string(), endpoint_id);
-        assert_eq!(addrs, vec!["127.0.0.1:55123".parse().unwrap()]);
     }
 
     #[test]
