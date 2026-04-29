@@ -15,7 +15,9 @@ use portable_pty::MasterPty;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use crate::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
+use crate::frame::{
+    AgentProvider, ChangedFileWire, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
+};
 use crate::pty::PtySession;
 use crate::registry::{DaemonRegistry, RegistryFuture};
 
@@ -149,6 +151,29 @@ impl DaemonRegistry for SandboxRegistry {
             pixel_width: 0,
             pixel_height: 0,
         });
+    }
+
+    fn read_changed_files(&self, project_id: &str) -> Option<Vec<ChangedFileWire>> {
+        if project_id != SANDBOX_PROJECT_ID {
+            return None;
+        }
+        let cwd = std::env::current_dir().ok()?;
+        Some(
+            another_one_core::project_store::list_changed_files(&cwd)
+                .into_iter()
+                .map(|file| ChangedFileWire {
+                    path: file.path,
+                    original_path: file.original_path,
+                    staged_additions: file.staged_additions,
+                    staged_deletions: file.staged_deletions,
+                    unstaged_additions: file.unstaged_additions,
+                    unstaged_deletions: file.unstaged_deletions,
+                    index_status: file.index_status.to_string(),
+                    worktree_status: file.worktree_status.to_string(),
+                    untracked: file.untracked,
+                })
+                .collect(),
+        )
     }
 
     // Project mutation isn't meaningful on the sandbox — there's a

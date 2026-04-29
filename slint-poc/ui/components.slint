@@ -83,6 +83,27 @@ export struct SegmentEntry {
     disabled: bool,
 }
 
+export struct RightInspectorRow {
+    kind: string,
+    group: string,
+    id: string,
+    project-id: string,
+    path: string,
+    original-path: string,
+    row-y: int,
+    row-height: int,
+    title: string,
+    parent-dir: string,
+    status: string,
+    status-color: color,
+    additions-label: string,
+    deletions-label: string,
+    file-count-label: string,
+    can-stage: bool,
+    can-unstage: bool,
+    untracked: bool,
+}
+
 export component AoButton inherits Rectangle {
     in property <string> label;
     in property <string> control-label: label;
@@ -1790,6 +1811,285 @@ export component AoStateCard inherits Rectangle {
         active: false;
         clicked => {
             root.action-clicked();
+        }
+    }
+}
+
+export component AoInspectorModeButton inherits Rectangle {
+    in property <string> label;
+    in property <image> icon-source;
+    in property <bool> active: false;
+    in property <bool> disabled: false;
+    in property <color> hover-bg;
+    in property <color> active-bg;
+    in property <color> border;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    callback clicked();
+
+    height: 30px;
+    accessible-role: button;
+    accessible-label: label;
+    border-radius: 7px;
+    border-width: active ? 1px : 0px;
+    border-color: active ? border : transparent;
+    background: active ? active-bg : touch.has-hover && !disabled ? hover-bg : transparent;
+    opacity: disabled ? 0.55 : 1.0;
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            if !root.disabled {
+                root.clicked();
+            }
+        }
+    }
+
+    Image {
+        x: 8px;
+        y: 9px;
+        width: 12px;
+        height: 12px;
+        source: root.icon-source;
+        colorize: root.active ? root.text-primary : root.text-muted;
+    }
+
+    Text {
+        x: 26px;
+        y: 8px;
+        width: parent.width - 32px;
+        text: root.label;
+        color: root.active ? root.text-primary : root.text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        font-weight: 600;
+    }
+}
+
+export component AoDiffBadge inherits Text {
+    in property <bool> positive: true;
+
+    color: positive ? #8bd99c : #e58b95;
+    font-family: "Lilex Nerd Font Mono";
+    font-size: 11px;
+    font-weight: 700;
+}
+
+export component AoInspectorSectionRow inherits Rectangle {
+    in property <RightInspectorRow> entry;
+    in property <color> row-border-color;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> hover-bg;
+    in property <color> icon-color;
+    callback stage-all-clicked(string);
+    callback unstage-all-clicked(string);
+
+    height: 44px;
+    background: touch.has-hover ? hover-bg : transparent;
+    border-width: 0px;
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+    }
+
+    Rectangle {
+        x: 0px;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: root.row-border-color;
+    }
+
+    Image {
+        x: 14px;
+        y: 17px;
+        width: 10px;
+        height: 10px;
+        source: @image-url("../../desktop/assets/icons/icons__chevron-down.svg");
+        colorize: root.text-muted;
+    }
+
+    Text {
+        x: 30px;
+        y: 15px;
+        width: parent.width - 174px;
+        text: entry.title + " (" + entry.file-count-label + ")";
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    if entry.additions-label != "": AoDiffBadge {
+        x: parent.width - 128px;
+        y: 15px;
+        width: 36px;
+        text: entry.additions-label;
+        positive: true;
+    }
+
+    if entry.deletions-label != "": AoDiffBadge {
+        x: parent.width - 86px;
+        y: 15px;
+        width: 36px;
+        text: entry.deletions-label;
+        positive: false;
+    }
+
+    if entry.group == "staged": AoAssetIconButton {
+        x: parent.width - 38px;
+        y: 8px;
+        width: 28px;
+        height: 28px;
+        icon-source: @image-url("../../desktop/assets/icons/icons__minus.svg");
+        control-label: "Unstage all files in " + entry.title;
+        bg: transparent;
+        hover-bg: #ffffff14;
+        border: root.row-border-color;
+        icon-color: root.icon-color;
+        clicked => {
+            root.unstage-all-clicked(root.entry.project-id);
+        }
+    }
+
+    if entry.group == "unstaged": AoAssetIconButton {
+        x: parent.width - 38px;
+        y: 8px;
+        width: 28px;
+        height: 28px;
+        icon-source: @image-url("../../desktop/assets/icons/icons__plus.svg");
+        control-label: "Stage all files in " + entry.title;
+        bg: transparent;
+        hover-bg: #ffffff14;
+        border: root.row-border-color;
+        icon-color: root.icon-color;
+        clicked => {
+            root.stage-all-clicked(root.entry.project-id);
+        }
+    }
+}
+
+export component AoInspectorFileRow inherits Rectangle {
+    in property <RightInspectorRow> entry;
+    in property <color> text-primary;
+    in property <color> text-muted;
+    in property <color> hover-bg;
+    in property <color> action-hover-bg;
+    in property <color> icon-color;
+    in property <color> row-border-color;
+    callback stage-file-clicked(string, string, bool);
+    callback unstage-file-clicked(string, string, bool);
+    callback discard-file-clicked(string, string, bool);
+
+    height: 34px;
+    border-radius: 7px;
+    background: touch.has-hover ? hover-bg : transparent;
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+    }
+
+    Text {
+        x: 18px;
+        y: 9px;
+        width: 18px;
+        text: entry.status;
+        color: entry.status-color;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    Text {
+        x: 42px;
+        y: 9px;
+        width: entry.parent-dir == "" ? parent.width - 178px : min(150px, parent.width - 238px);
+        text: entry.title;
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 12px;
+        font-weight: 600;
+        overflow: elide;
+    }
+
+    if entry.parent-dir != "": Text {
+        x: 42px + min(156px, parent.width - 232px);
+        y: 10px;
+        width: max(48px, parent.width - 270px);
+        text: entry.parent-dir;
+        color: root.text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 11px;
+        overflow: elide;
+    }
+
+    if entry.additions-label != "": AoDiffBadge {
+        x: parent.width - 142px;
+        y: 9px;
+        width: 34px;
+        text: entry.additions-label;
+        positive: true;
+    }
+
+    if entry.deletions-label != "": AoDiffBadge {
+        x: parent.width - 104px;
+        y: 9px;
+        width: 34px;
+        text: entry.deletions-label;
+        positive: false;
+    }
+
+    if entry.group == "staged": AoAssetIconButton {
+        x: parent.width - 38px;
+        y: 3px;
+        width: 28px;
+        height: 28px;
+        icon-source: @image-url("../../desktop/assets/icons/icons__minus.svg");
+        control-label: "Unstage " + entry.title;
+        disabled: !entry.can-unstage;
+        bg: transparent;
+        hover-bg: root.action-hover-bg;
+        border: root.row-border-color;
+        icon-color: root.icon-color;
+        clicked => {
+            root.unstage-file-clicked(root.entry.path, root.entry.original-path, root.entry.untracked);
+        }
+    }
+
+    if entry.group == "unstaged": AoAssetIconButton {
+        x: parent.width - 70px;
+        y: 3px;
+        width: 28px;
+        height: 28px;
+        icon-source: @image-url("../../desktop/assets/icons/icons__plus.svg");
+        control-label: "Stage " + entry.title;
+        disabled: !entry.can-stage;
+        bg: transparent;
+        hover-bg: root.action-hover-bg;
+        border: root.row-border-color;
+        icon-color: root.icon-color;
+        clicked => {
+            root.stage-file-clicked(root.entry.path, root.entry.original-path, root.entry.untracked);
+        }
+    }
+
+    if entry.group == "unstaged": AoAssetIconButton {
+        x: parent.width - 38px;
+        y: 3px;
+        width: 28px;
+        height: 28px;
+        icon-source: @image-url("../../desktop/assets/icons/icons__discard.svg");
+        control-label: "Discard " + entry.title;
+        bg: transparent;
+        hover-bg: root.action-hover-bg;
+        border: root.row-border-color;
+        icon-color: root.icon-color;
+        clicked => {
+            root.discard-file-clicked(root.entry.path, root.entry.original-path, root.entry.untracked);
         }
     }
 }

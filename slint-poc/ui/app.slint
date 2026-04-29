@@ -10,6 +10,9 @@ import {
     AoAssetIconButton,
     AoCheckbox,
     AoIconButton,
+    AoInspectorFileRow,
+    AoInspectorModeButton,
+    AoInspectorSectionRow,
     AoMenu,
     AoModalCard,
     AoProjectRow,
@@ -27,6 +30,7 @@ import {
     AoToast,
     MenuEntry,
     ProjectSidebarEntry,
+    RightInspectorRow,
     SegmentEntry,
     SidebarTreeEntry,
     TaskSidebarEntry,
@@ -111,6 +115,11 @@ export component AppWindow inherits Window {
     in-out property <string> terminal_error_details: "";
     in-out property <string> project_summary: "loading projects from daemon";
     in-out property <string> resource_summary: "app 1.0% / 175 MB";
+    in-out property <string> right_inspector_mode: "changes";
+    in-out property <string> right_inspector_state: "loading";
+    in-out property <string> right_inspector_title: "Loading changes";
+    in-out property <string> right_inspector_summary: "Requesting working-tree state from daemon.";
+    in-out property <string> right_inspector_detail: "";
     in-out property <string> appearance_label: "dark";
     in-out property <string> platform_label: "linux / keyboard";
     in-out property <string> new_task_name: "";
@@ -128,6 +137,7 @@ export component AppWindow inherits Window {
     in property <[SegmentEntry]> fixture_segments;
     in property <[TaskSidebarEntry]> task_rows;
     in property <[TerminalTabChip]> tab_chips;
+    in property <[RightInspectorRow]> right_inspector_rows;
     in property <[TerminalTextRun]> terminal_runs;
     in property <[TerminalBackgroundSpan]> terminal_background_spans;
     in property <[TerminalCursorSpan]> terminal_cursor_spans;
@@ -142,6 +152,12 @@ export component AppWindow inherits Window {
     callback tab_pin_toggled(string);
     callback terminal_add_tab_requested();
     callback terminal_error_copy_requested();
+    callback right_inspector_mode_selected(string);
+    callback inspector_stage_file_requested(string, string, bool);
+    callback inspector_unstage_file_requested(string, string, bool);
+    callback inspector_discard_file_requested(string, string, bool);
+    callback inspector_stage_all_requested();
+    callback inspector_unstage_all_requested();
     callback terminal_key(string, bool, bool, bool);
     callback terminal_focus_changed(bool);
     callback terminal_pointer_event(string, string, int, int, bool, bool, bool);
@@ -779,13 +795,6 @@ export component AppWindow inherits Window {
                 background: #0000001f;
             }
 
-            AoSectionLabel {
-                x: 18px;
-                y: 16px;
-                text: "INSPECTOR";
-                label-color: text_muted;
-            }
-
             AoAssetIconButton {
                 x: parent.width - 44px;
                 y: 10px;
@@ -802,88 +811,175 @@ export component AppWindow inherits Window {
                 }
             }
 
-            AoButton {
+            Rectangle {
+                x: 8px;
+                y: 6px;
+                width: parent.width - 58px;
+                height: 38px;
+
+                AoInspectorModeButton {
+                    x: 0px;
+                    y: 0px;
+                    width: 92px;
+                    label: "Changes";
+                    icon-source: @image-url("../../desktop/assets/icons/icons__file_icons__changes.svg");
+                    active: root.right_inspector_mode == "changes";
+                    hover-bg: overlay_hover;
+                    active-bg: #262a30;
+                    border: border_color;
+                    text-primary: text_primary;
+                    text-muted: text_muted;
+                    clicked => {
+                        root.right_inspector_mode = "changes";
+                        root.right_inspector_mode_selected("changes");
+                    }
+                }
+
+                AoInspectorModeButton {
+                    x: 98px;
+                    y: 0px;
+                    width: 92px;
+                    label: "Commits";
+                    icon-source: @image-url("../../desktop/assets/icons/icons__git-commit.svg");
+                    active: root.right_inspector_mode == "commits";
+                    hover-bg: overlay_hover;
+                    active-bg: #262a30;
+                    border: border_color;
+                    text-primary: text_primary;
+                    text-muted: text_muted;
+                    clicked => {
+                        root.right_inspector_mode = "commits";
+                        root.right_inspector_mode_selected("commits");
+                    }
+                }
+
+                AoInspectorModeButton {
+                    x: 196px;
+                    y: 0px;
+                    width: 84px;
+                    label: "Checks";
+                    icon-source: @image-url("../../desktop/assets/icons/icons__tool-check.svg");
+                    active: root.right_inspector_mode == "checks";
+                    hover-bg: overlay_hover;
+                    active-bg: #262a30;
+                    border: border_color;
+                    text-primary: text_primary;
+                    text-muted: text_muted;
+                    clicked => {
+                        root.right_inspector_mode = "checks";
+                        root.right_inspector_mode_selected("checks");
+                    }
+                }
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 42px;
+                width: parent.width;
+                height: 1px;
+                background: divider_color;
+            }
+
+            if root.right_inspector_state != "dirty": Rectangle {
                 x: 18px;
-                y: 42px;
-                width: 76px;
-                label: "Files";
-                active: true;
-                bg: overlay_active;
-                hover-bg: overlay_hover;
-                border: border_color;
-                text-color: text_primary;
+                y: 84px;
+                width: parent.width - 36px;
+                height: 170px;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: border_color;
+                background: card_bg;
+
+                Image {
+                    x: 18px;
+                    y: 18px;
+                    width: 18px;
+                    height: 18px;
+                    source: root.right_inspector_mode == "changes" ? @image-url("../../desktop/assets/icons/icons__file_icons__changes.svg") : root.right_inspector_mode == "commits" ? @image-url("../../desktop/assets/icons/icons__git-commit.svg") : @image-url("../../desktop/assets/icons/icons__tool-check.svg");
+                    colorize: root.right_inspector_state == "error" ? danger_color : text_muted;
+                }
+
+                Text {
+                    x: 46px;
+                    y: 18px;
+                    width: parent.width - 64px;
+                    text: root.right_inspector_title;
+                    color: text_primary;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 13px;
+                    font-weight: 700;
+                }
+
+                Text {
+                    x: 18px;
+                    y: 54px;
+                    width: parent.width - 36px;
+                    text: root.right_inspector_summary;
+                    color: root.right_inspector_state == "error" ? danger_color : text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 12px;
+                }
+
+                Text {
+                    x: 18px;
+                    y: 96px;
+                    width: parent.width - 36px;
+                    text: root.right_inspector_detail;
+                    color: text_muted;
+                    font-family: "Lilex Nerd Font Mono";
+                    font-size: 11px;
+                }
             }
 
-            AoButton {
-                x: 102px;
-                y: 42px;
-                width: 92px;
-                label: "Commits";
-                active: false;
-                bg: overlay_active;
-                hover-bg: overlay_hover;
-                border: border_color;
-                text-color: text_secondary;
-            }
+            if root.right_inspector_state == "dirty": Rectangle {
+                x: 0px;
+                y: 50px;
+                width: parent.width;
+                height: parent.height - 50px;
+                clip: true;
 
-            AoButton {
-                x: 202px;
-                y: 42px;
-                width: 74px;
-                label: "Checks";
-                active: false;
-                bg: overlay_active;
-                hover-bg: overlay_hover;
-                border: border_color;
-                text-color: text_secondary;
-            }
+                for row[index] in root.right_inspector_rows: Rectangle {
+                    x: row.kind == "section" ? 0px : 4px;
+                    y: row.row-y * 1px;
+                    width: row.kind == "section" ? parent.width : parent.width - 8px;
+                    height: row.row-height * 1px;
 
-            AoStateCard {
-                x: 16px;
-                y: 86px;
-                width: parent.width - 32px;
-                title: "Working Tree";
-                body: "Changed files and git actions will render here from daemon ProjectList and git metadata frames.";
-                state: "empty";
-                card-bg: card_bg;
-                card-border-color: border_color;
-                text-primary: text_primary;
-                text-muted: text_muted;
-                success-color: success_color;
-                warning-color: warning_color;
-                danger-color: danger_color;
-            }
+                    if row.kind == "section": AoInspectorSectionRow {
+                        width: parent.width;
+                        entry: row;
+                        row-border-color: root.divider_color;
+                        text-primary: root.text_primary;
+                        text-muted: root.text_muted;
+                        hover-bg: #ffffff08;
+                        icon-color: root.text_secondary;
+                        stage-all-clicked(project-id) => {
+                            root.inspector_stage_all_requested();
+                        }
+                        unstage-all-clicked(project-id) => {
+                            root.inspector_unstage_all_requested();
+                        }
+                    }
 
-            AoStateCard {
-                x: 16px;
-                y: 202px;
-                width: parent.width - 32px;
-                title: "Checks";
-                body: "CI status, branch comparison, and PR state mirror the GPUI right sidebar contracts.";
-                state: "loading";
-                card-bg: card_bg;
-                card-border-color: border_color;
-                text-primary: text_primary;
-                text-muted: text_muted;
-                success-color: success_color;
-                warning-color: warning_color;
-                danger-color: danger_color;
-            }
-
-            AoStateCard {
-                x: 16px;
-                y: 318px;
-                width: parent.width - 32px;
-                title: "Project Path";
-                body: active_project_path;
-                state: active_project_path == "" ? "empty" : "populated";
-                card-bg: card_bg;
-                card-border-color: border_color;
-                text-primary: text_primary;
-                text-muted: text_muted;
-                success-color: success_color;
-                warning-color: warning_color;
-                danger-color: danger_color;
+                    if row.kind == "file": AoInspectorFileRow {
+                        width: parent.width;
+                        entry: row;
+                        text-primary: root.text_primary;
+                        text-muted: root.text_muted;
+                        hover-bg: #ffffff0a;
+                        action-hover-bg: #ffffff14;
+                        icon-color: root.text_secondary;
+                        row-border-color: root.border_color;
+                        stage-file-clicked(path, original_path, untracked) => {
+                            root.inspector_stage_file_requested(path, original_path, untracked);
+                        }
+                        unstage-file-clicked(path, original_path, untracked) => {
+                            root.inspector_unstage_file_requested(path, original_path, untracked);
+                        }
+                        discard-file-clicked(path, original_path, untracked) => {
+                            root.inspector_discard_file_requested(path, original_path, untracked);
+                        }
+                    }
+                }
             }
         }
 

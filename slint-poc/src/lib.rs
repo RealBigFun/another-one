@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -34,6 +34,8 @@ const TERMINAL_RESIZE_DEBOUNCE: Duration = Duration::from_millis(80);
 const SIDEBAR_TREE_TOP: i32 = 40;
 const SIDEBAR_PROJECT_ROW_HEIGHT: i32 = 36;
 const SIDEBAR_TASK_ROW_HEIGHT: i32 = 46;
+const RIGHT_INSPECTOR_SECTION_ROW_HEIGHT: i32 = 44;
+const RIGHT_INSPECTOR_FILE_ROW_HEIGHT: i32 = 34;
 const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x1e1f22;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
 const PROJECT_ACCENTS: [u32; 8] = [
@@ -178,6 +180,11 @@ fn current_rss_kib() -> Option<u64> {
     })
 }
 
+fn empty_string_to_none(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 pub fn run_app() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
     let platform_profile = platform::current_platform_profile();
@@ -282,6 +289,41 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
                 error,
             ),
         }
+    });
+    let inspector_mode_event_tx = client_event_tx.clone();
+    app.on_right_inspector_mode_selected(move |mode| {
+        let _ =
+            inspector_mode_event_tx.send(SlintClientEvent::RightInspectorMode(mode.to_string()));
+    });
+    let inspector_stage_event_tx = client_event_tx.clone();
+    app.on_inspector_stage_file_requested(move |path, original_path, _untracked| {
+        let _ = inspector_stage_event_tx.send(SlintClientEvent::StageChangedFile {
+            path: path.to_string(),
+            original_path: empty_string_to_none(original_path.as_str()),
+        });
+    });
+    let inspector_unstage_event_tx = client_event_tx.clone();
+    app.on_inspector_unstage_file_requested(move |path, original_path, _untracked| {
+        let _ = inspector_unstage_event_tx.send(SlintClientEvent::UnstageChangedFile {
+            path: path.to_string(),
+            original_path: empty_string_to_none(original_path.as_str()),
+        });
+    });
+    let inspector_discard_event_tx = client_event_tx.clone();
+    app.on_inspector_discard_file_requested(move |path, original_path, untracked| {
+        let _ = inspector_discard_event_tx.send(SlintClientEvent::DiscardChangedFile {
+            path: path.to_string(),
+            original_path: empty_string_to_none(original_path.as_str()),
+            untracked,
+        });
+    });
+    let inspector_stage_all_event_tx = client_event_tx.clone();
+    app.on_inspector_stage_all_requested(move || {
+        let _ = inspector_stage_all_event_tx.send(SlintClientEvent::StageAllChanges);
+    });
+    let inspector_unstage_all_event_tx = client_event_tx.clone();
+    app.on_inspector_unstage_all_requested(move || {
+        let _ = inspector_unstage_all_event_tx.send(SlintClientEvent::UnstageAllChanges);
     });
     let submit_event_tx = client_event_tx.clone();
     app.on_submit_new_task(move |task_name, source_branch, project_id| {
@@ -968,6 +1010,138 @@ fn clear_toast(app_weak: &slint::Weak<AppWindow>) {
     });
 }
 
+fn set_right_inspector_loading(app_weak: &slint::Weak<AppWindow>, mode: &str, project_id: &str) {
+    let title = match mode {
+        "commits" => "Loading commits",
+        "checks" => "Loading checks",
+        _ => "Loading changes",
+    };
+    let summary = match mode {
+        "commits" => "Recent commit data is requested from the daemon.",
+        "checks" => "Pull request check data is requested from the daemon.",
+        _ => "Working-tree changes are requested from the daemon.",
+    };
+    set_right_inspector_state(
+        app_weak,
+        mode,
+        "loading",
+        title,
+        summary,
+        format!("Project: {project_id}"),
+        Vec::new(),
+    );
+}
+
+fn set_right_inspector_deferred(app_weak: &slint::Weak<AppWindow>, mode: &str, project_id: &str) {
+    let (title, summary) = match mode {
+        "commits" => (
+            "Commits pending",
+            "The Slint toolbar mode is in place; commit rows are the next right-inspector slice.",
+        ),
+        "checks" => (
+            "Checks pending",
+            "The Slint toolbar mode is in place; check rows are the next right-inspector slice.",
+        ),
+        _ => (
+            "Compare pending",
+            "Compare mode is tracked separately from the current Changes slice.",
+        ),
+    };
+    set_right_inspector_state(
+        app_weak,
+        mode,
+        "deferred",
+        title,
+        summary,
+        format!("Project: {project_id}"),
+        Vec::new(),
+    );
+}
+
+fn set_right_inspector_changes(
+    app_weak: &slint::Weak<AppWindow>,
+    mode: &str,
+    project_id: &str,
+    files: Option<Vec<frame::ChangedFileWire>>,
+) {
+    match files {
+        None => set_right_inspector_state(
+            app_weak,
+            mode,
+            "unavailable",
+            "Changes unavailable",
+            "The daemon did not recognize the active project for changed-file lookup.",
+            format!("Project: {project_id}"),
+            Vec::new(),
+        ),
+        Some(files) if files.is_empty() => set_right_inspector_state(
+            app_weak,
+            mode,
+            "clean",
+            "Working tree clean",
+            "No staged or unstaged changes were reported by the daemon.",
+            format!("Project: {project_id}"),
+            Vec::new(),
+        ),
+        Some(files) => {
+            let (rows, summary) = right_inspector_rows_for_changed_files(project_id, &files);
+            set_right_inspector_state(
+                app_weak,
+                mode,
+                "dirty",
+                "Working tree changes",
+                summary,
+                format!("Project: {project_id}"),
+                rows,
+            );
+        }
+    }
+}
+
+fn set_right_inspector_error(
+    app_weak: &slint::Weak<AppWindow>,
+    mode: &str,
+    project_id: &str,
+    message: impl Into<String>,
+) {
+    set_right_inspector_state(
+        app_weak,
+        mode,
+        "error",
+        "Inspector request failed",
+        message.into(),
+        format!("Project: {project_id}"),
+        Vec::new(),
+    );
+}
+
+fn set_right_inspector_state(
+    app_weak: &slint::Weak<AppWindow>,
+    mode: impl Into<String>,
+    state: impl Into<String>,
+    title: impl Into<String>,
+    summary: impl Into<String>,
+    detail: impl Into<String>,
+    rows: Vec<RightInspectorRow>,
+) {
+    let app_weak = app_weak.clone();
+    let mode = mode.into();
+    let state = state.into();
+    let title = title.into();
+    let summary = summary.into();
+    let detail = detail.into();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_right_inspector_mode(mode.into());
+            app.set_right_inspector_state(state.into());
+            app.set_right_inspector_title(title.into());
+            app.set_right_inspector_summary(summary.into());
+            app.set_right_inspector_detail(detail.into());
+            app.set_right_inspector_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+        }
+    });
+}
+
 fn workspace_shell_model(
     projects: &[frame::ProjectSummary],
     active_section_id: &str,
@@ -1310,6 +1484,208 @@ fn sidebar_tree_rows(
     rows
 }
 
+fn right_inspector_rows_for_changed_files(
+    project_id: &str,
+    files: &[frame::ChangedFileWire],
+) -> (Vec<RightInspectorRow>, String) {
+    let mut staged = Vec::new();
+    let mut unstaged = Vec::new();
+    let mut staged_additions = 0;
+    let mut staged_deletions = 0;
+    let mut unstaged_additions = 0;
+    let mut unstaged_deletions = 0;
+
+    for file in files {
+        if changed_file_has_staged_changes(file) {
+            staged_additions += file.staged_additions.max(0);
+            staged_deletions += file.staged_deletions.max(0);
+            staged.push(file);
+        }
+        if changed_file_has_unstaged_changes(file) {
+            unstaged_additions += file.unstaged_additions.max(0);
+            unstaged_deletions += file.unstaged_deletions.max(0);
+            unstaged.push(file);
+        }
+    }
+
+    let mut rows = Vec::new();
+    let mut row_y = 0;
+    if !staged.is_empty() {
+        rows.push(right_inspector_section_row(
+            project_id,
+            "staged",
+            "Staged Changes",
+            staged.len(),
+            staged_additions,
+            staged_deletions,
+            row_y,
+        ));
+        row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
+        for file in &staged {
+            rows.push(right_inspector_file_row(project_id, "staged", file, row_y));
+            row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
+        }
+    }
+    if !unstaged.is_empty() {
+        rows.push(right_inspector_section_row(
+            project_id,
+            "unstaged",
+            "Changes",
+            unstaged.len(),
+            unstaged_additions,
+            unstaged_deletions,
+            row_y,
+        ));
+        row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
+        for file in &unstaged {
+            rows.push(right_inspector_file_row(
+                project_id, "unstaged", file, row_y,
+            ));
+            row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
+        }
+    }
+
+    let summary = format!("{} staged, {} unstaged", staged.len(), unstaged.len());
+    (rows, summary)
+}
+
+fn right_inspector_section_row(
+    project_id: &str,
+    group: &str,
+    title: &str,
+    file_count: usize,
+    additions: i32,
+    deletions: i32,
+    row_y: i32,
+) -> RightInspectorRow {
+    RightInspectorRow {
+        kind: "section".into(),
+        group: group.into(),
+        id: format!("section:{group}").into(),
+        project_id: project_id.into(),
+        path: "".into(),
+        original_path: "".into(),
+        row_y,
+        row_height: RIGHT_INSPECTOR_SECTION_ROW_HEIGHT,
+        title: title.into(),
+        parent_dir: "".into(),
+        status: "".into(),
+        status_color: slint::Color::from_argb_encoded(0xff949494),
+        additions_label: diff_label(additions, true).into(),
+        deletions_label: diff_label(deletions, false).into(),
+        file_count_label: file_count.to_string().into(),
+        can_stage: group == "unstaged",
+        can_unstage: group == "staged",
+        untracked: false,
+    }
+}
+
+fn right_inspector_file_row(
+    project_id: &str,
+    group: &str,
+    file: &frame::ChangedFileWire,
+    row_y: i32,
+) -> RightInspectorRow {
+    let status = changed_file_status_char(file, group);
+    let (file_name, parent_dir) = file_name_and_parent(&file.path);
+    let (additions, deletions) = if group == "staged" {
+        (file.staged_additions, file.staged_deletions)
+    } else {
+        (file.unstaged_additions, file.unstaged_deletions)
+    };
+
+    RightInspectorRow {
+        kind: "file".into(),
+        group: group.into(),
+        id: format!(
+            "{group}:{}:{}",
+            file.original_path.as_deref().unwrap_or(""),
+            file.path
+        )
+        .into(),
+        project_id: project_id.into(),
+        path: file.path.clone().into(),
+        original_path: file.original_path.clone().unwrap_or_default().into(),
+        row_y,
+        row_height: RIGHT_INSPECTOR_FILE_ROW_HEIGHT,
+        title: file_name.into(),
+        parent_dir: parent_dir.into(),
+        status: status.to_string().into(),
+        status_color: changed_file_status_color(status),
+        additions_label: diff_label(additions, true).into(),
+        deletions_label: diff_label(deletions, false).into(),
+        file_count_label: "".into(),
+        can_stage: changed_file_has_unstaged_changes(file),
+        can_unstage: changed_file_has_staged_changes(file),
+        untracked: file.untracked,
+    }
+}
+
+fn changed_file_has_staged_changes(file: &frame::ChangedFileWire) -> bool {
+    let status = status_char(&file.index_status);
+    status != ' ' && status != '?'
+}
+
+fn changed_file_has_unstaged_changes(file: &frame::ChangedFileWire) -> bool {
+    let status = status_char(&file.worktree_status);
+    file.untracked || (status != ' ' && status != '?')
+}
+
+fn changed_file_status_char(file: &frame::ChangedFileWire, group: &str) -> char {
+    let raw = if group == "staged" {
+        status_char(&file.index_status)
+    } else if file.untracked {
+        'A'
+    } else {
+        status_char(&file.worktree_status)
+    };
+
+    match raw {
+        '?' | ' ' => 'A',
+        other => other,
+    }
+}
+
+fn changed_file_status_color(status: char) -> slint::Color {
+    let rgb = match status {
+        'A' => 0x85dda0,
+        'D' => 0xe47777,
+        'R' | 'C' => 0x86c6e9,
+        _ => 0xe6cc4d,
+    };
+    slint::Color::from_argb_encoded(0xff000000 | rgb)
+}
+
+fn status_char(status: &str) -> char {
+    status.chars().next().unwrap_or(' ')
+}
+
+fn diff_label(value: i32, positive: bool) -> String {
+    if value <= 0 {
+        String::new()
+    } else if positive {
+        format!("+{value}")
+    } else {
+        format!("-{value}")
+    }
+}
+
+fn file_name_and_parent(path: &str) -> (String, String) {
+    let path_ref = Path::new(path);
+    let file_name = path_ref
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path)
+        .to_string();
+    let parent = path_ref
+        .parent()
+        .and_then(|parent| parent.to_str())
+        .filter(|parent| !parent.is_empty() && *parent != ".")
+        .unwrap_or_default()
+        .to_string();
+    (file_name, parent)
+}
+
 fn first_attachable_target(projects: &[frame::ProjectSummary]) -> Option<TerminalTarget> {
     projects
         .iter()
@@ -1516,6 +1892,70 @@ fn spawn_terminal_worker(
     });
 }
 
+async fn request_right_inspector_data(
+    app_weak: &slint::Weak<AppWindow>,
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+    mode: &str,
+    project_id: &str,
+) -> anyhow::Result<()> {
+    if project_id.trim().is_empty() {
+        set_right_inspector_state(
+            app_weak,
+            mode,
+            "unavailable",
+            "No active project",
+            "Select a daemon-backed project or task to inspect git state.",
+            "",
+            Vec::new(),
+        );
+        return Ok(());
+    }
+
+    match mode {
+        "changes" => {
+            set_right_inspector_loading(app_weak, mode, project_id);
+            send_control(
+                send,
+                next_request_id,
+                Control::ReadChangedFiles {
+                    project_id: project_id.to_string(),
+                },
+            )
+            .await
+            .context("read changed files")?;
+        }
+        "commits" => {
+            set_right_inspector_loading(app_weak, mode, project_id);
+            send_control(
+                send,
+                next_request_id,
+                Control::ReadRecentCommits {
+                    project_id: project_id.to_string(),
+                    limit: 20,
+                },
+            )
+            .await
+            .context("read recent commits")?;
+        }
+        "checks" => {
+            set_right_inspector_loading(app_weak, mode, project_id);
+            send_control(
+                send,
+                next_request_id,
+                Control::ReadPullRequestChecks {
+                    project_id: project_id.to_string(),
+                },
+            )
+            .await
+            .context("read pull request checks")?;
+        }
+        other => set_right_inspector_deferred(app_weak, other, project_id),
+    }
+
+    Ok(())
+}
+
 async fn run_terminal_session(
     app_weak: &slint::Weak<AppWindow>,
     client_event_rx: &mut mpsc::UnboundedReceiver<SlintClientEvent>,
@@ -1571,6 +2011,18 @@ async fn run_terminal_session(
             _ => {}
         }
     };
+
+    let mut right_inspector_mode = "changes".to_string();
+    let mut right_inspector_project_id =
+        project_id_for_target(&projects, &attached_target).unwrap_or_default();
+    request_right_inspector_data(
+        app_weak,
+        &mut send,
+        &mut next_request_id,
+        &right_inspector_mode,
+        &right_inspector_project_id,
+    )
+    .await?;
 
     let mut terminal = AlacrittySnapshot::new(TERMINAL_COLS, TERMINAL_ROWS);
     attach_terminal_target(
@@ -1705,6 +2157,15 @@ async fn run_terminal_session(
                     SlintClientEvent::SelectProject(project_id) => {
                         if let Some(project) = projects.iter().find(|project| project.id == project_id) {
                             set_project_overview_placeholder(app_weak, project);
+                            right_inspector_project_id = project_id;
+                            request_right_inspector_data(
+                                app_weak,
+                                &mut send,
+                                &mut next_request_id,
+                                &right_inspector_mode,
+                                &right_inspector_project_id,
+                            )
+                            .await?;
                             selection_drag_anchor = None;
                             selection_range = None;
                             set_terminal_selection(app_weak, Vec::new());
@@ -1729,6 +2190,17 @@ async fn run_terminal_session(
                                 &mut pending_flush_at,
                             )
                             .await?;
+                            right_inspector_project_id =
+                                project_id_for_target(&projects, &attached_target)
+                                    .unwrap_or_default();
+                            request_right_inspector_data(
+                                app_weak,
+                                &mut send,
+                                &mut next_request_id,
+                                &right_inspector_mode,
+                                &right_inspector_project_id,
+                            )
+                            .await?;
                             selection_drag_anchor = None;
                             selection_range = None;
                             set_terminal_selection(app_weak, Vec::new());
@@ -1748,6 +2220,17 @@ async fn run_terminal_session(
                                 &mut terminal,
                                 &mut dirty,
                                 &mut pending_flush_at,
+                            )
+                            .await?;
+                            right_inspector_project_id =
+                                project_id_for_target(&projects, &attached_target)
+                                    .unwrap_or_default();
+                            request_right_inspector_data(
+                                app_weak,
+                                &mut send,
+                                &mut next_request_id,
+                                &right_inspector_mode,
+                                &right_inspector_project_id,
                             )
                             .await?;
                             selection_drag_anchor = None;
@@ -1792,6 +2275,78 @@ async fn run_terminal_session(
                         )
                         .await
                         .context("toggle terminal tab pin")?;
+                    }
+                    SlintClientEvent::RightInspectorMode(mode) => {
+                        right_inspector_mode = mode;
+                        request_right_inspector_data(
+                            app_weak,
+                            &mut send,
+                            &mut next_request_id,
+                            &right_inspector_mode,
+                            &right_inspector_project_id,
+                        )
+                        .await?;
+                    }
+                    SlintClientEvent::StageChangedFile { path, original_path } => {
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::StageChangedFile {
+                                project_id: right_inspector_project_id.clone(),
+                                path,
+                                original_path,
+                            },
+                        )
+                        .await
+                        .context("stage changed file")?;
+                    }
+                    SlintClientEvent::UnstageChangedFile { path, original_path } => {
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::UnstageChangedFile {
+                                project_id: right_inspector_project_id.clone(),
+                                path,
+                                original_path,
+                            },
+                        )
+                        .await
+                        .context("unstage changed file")?;
+                    }
+                    SlintClientEvent::DiscardChangedFile {
+                        path,
+                        original_path,
+                        untracked,
+                    } => {
+                        set_toast(
+                            app_weak,
+                            "warning",
+                            "Discard confirmation pending",
+                            "The GPUI inspector requires a destructive confirmation modal before discard is enabled in Slint.",
+                        );
+                        let _ = (path, original_path, untracked);
+                    }
+                    SlintClientEvent::StageAllChanges => {
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::StageAllChanges {
+                                project_id: right_inspector_project_id.clone(),
+                            },
+                        )
+                        .await
+                        .context("stage all changes")?;
+                    }
+                    SlintClientEvent::UnstageAllChanges => {
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::UnstageAllChanges {
+                                project_id: right_inspector_project_id.clone(),
+                            },
+                        )
+                        .await
+                        .context("unstage all changes")?;
                     }
                     SlintClientEvent::SubmitNewTask {
                         task_name,
@@ -1888,6 +2443,11 @@ async fn run_terminal_session(
                                             &attached_target.section_id,
                                             &attached_target.tab_id,
                                         );
+                                        if right_inspector_project_id.is_empty() {
+                                            right_inspector_project_id =
+                                                project_id_for_target(&projects, &attached_target)
+                                                    .unwrap_or_default();
+                                        }
                                     } else if let Some(target) = first_attachable_target(&projects) {
                                         switch_terminal_target(
                                             app_weak,
@@ -1901,13 +2461,134 @@ async fn run_terminal_session(
                                             &mut pending_flush_at,
                                         )
                                         .await?;
+                                        right_inspector_project_id =
+                                            project_id_for_target(&projects, &attached_target)
+                                                .unwrap_or_default();
                                     } else {
                                         set_terminal_status(app_weak, "terminal: project tree has no attachable tabs");
                                     }
                                 }
                                 WorkerReply::Err { message, .. } => {
                                     set_terminal_status(app_weak, format!("terminal worker error: {message}"));
+                                    set_right_inspector_error(
+                                        app_weak,
+                                        &right_inspector_mode,
+                                        &right_inspector_project_id,
+                                        message.clone(),
+                                    );
                                     set_toast(app_weak, "error", "Daemon request failed", message);
+                                }
+                                WorkerReply::ChangedFilesAck { files } => {
+                                    set_right_inspector_changes(
+                                        app_weak,
+                                        &right_inspector_mode,
+                                        &right_inspector_project_id,
+                                        files,
+                                    );
+                                }
+                                WorkerReply::StageChangedFileAck { changed_files }
+                                | WorkerReply::UnstageChangedFileAck { changed_files }
+                                | WorkerReply::StageAllChangesAck { changed_files }
+                                | WorkerReply::UnstageAllChangesAck { changed_files } => {
+                                    set_right_inspector_changes(
+                                        app_weak,
+                                        "changes",
+                                        &right_inspector_project_id,
+                                        Some(changed_files),
+                                    );
+                                    set_toast(
+                                        app_weak,
+                                        "success",
+                                        "Changed files updated",
+                                        "The daemon returned the refreshed working-tree snapshot.",
+                                    );
+                                }
+                                WorkerReply::DiscardChangedFileAck { changed_files } => {
+                                    set_right_inspector_changes(
+                                        app_weak,
+                                        "changes",
+                                        &right_inspector_project_id,
+                                        Some(changed_files),
+                                    );
+                                    set_toast(
+                                        app_weak,
+                                        "success",
+                                        "File changes discarded",
+                                        "The daemon returned the refreshed working-tree snapshot.",
+                                    );
+                                }
+                                WorkerReply::DiscardAllChangesAck {
+                                    changed_files,
+                                    failures,
+                                } => {
+                                    set_right_inspector_changes(
+                                        app_weak,
+                                        "changes",
+                                        &right_inspector_project_id,
+                                        Some(changed_files),
+                                    );
+                                    if failures.is_empty() {
+                                        set_toast(
+                                            app_weak,
+                                            "success",
+                                            "Changes discarded",
+                                            "The daemon returned the refreshed working-tree snapshot.",
+                                        );
+                                    } else {
+                                        set_toast(
+                                            app_weak,
+                                            "warning",
+                                            "Some changes could not be discarded",
+                                            failures.join("; "),
+                                        );
+                                    }
+                                }
+                                WorkerReply::RecentCommitsAck { view } => {
+                                    let detail = view
+                                        .as_ref()
+                                        .and_then(|view| view.current_branch.clone())
+                                        .map(|branch| format!("Branch: {branch}"))
+                                        .unwrap_or_else(|| format!("Project: {right_inspector_project_id}"));
+                                    let summary = view
+                                        .map(|view| {
+                                            if view.commits.is_empty() {
+                                                "No commits yet on this branch.".to_string()
+                                            } else if view.has_more {
+                                                format!("{} commits shown; more are available.", view.commits.len())
+                                            } else {
+                                                format!("{} recent commits.", view.commits.len())
+                                            }
+                                        })
+                                        .unwrap_or_else(|| "The daemon did not recognize the active project.".to_string());
+                                    set_right_inspector_state(
+                                        app_weak,
+                                        "commits",
+                                        "deferred",
+                                        "Commits mode wired",
+                                        summary,
+                                        detail,
+                                        Vec::new(),
+                                    );
+                                }
+                                WorkerReply::PullRequestChecksAck { checks } => {
+                                    let summary = checks
+                                        .map(|checks| {
+                                            if checks.is_empty() {
+                                                "No CI checks found for this pull request.".to_string()
+                                            } else {
+                                                format!("{} pull request checks returned by daemon.", checks.len())
+                                            }
+                                        })
+                                        .unwrap_or_else(|| "No pull request exists for this branch.".to_string());
+                                    set_right_inspector_state(
+                                        app_weak,
+                                        "checks",
+                                        "deferred",
+                                        "Checks mode wired",
+                                        summary,
+                                        format!("Project: {right_inspector_project_id}"),
+                                        Vec::new(),
+                                    );
                                 }
                                 WorkerReply::SubmitNewTaskAck { section_id } => {
                                     let target = TerminalTarget {
@@ -2130,6 +2811,22 @@ enum SlintClientEvent {
     AddTerminalTab,
     CloseTerminalTab(String),
     ToggleTerminalTabPinned(String),
+    RightInspectorMode(String),
+    StageChangedFile {
+        path: String,
+        original_path: Option<String>,
+    },
+    UnstageChangedFile {
+        path: String,
+        original_path: Option<String>,
+    },
+    DiscardChangedFile {
+        path: String,
+        original_path: Option<String>,
+        untracked: bool,
+    },
+    StageAllChanges,
+    UnstageAllChanges,
     SubmitNewTask {
         task_name: String,
         source_branch: String,
@@ -3365,6 +4062,31 @@ mod tests {
     }
 
     #[test]
+    fn slint_right_inspector_uses_gpui_asset_and_color_contract() {
+        let app_source = include_str!("../ui/app.slint");
+        let components_source = include_str!("../ui/components.slint");
+
+        for asset in [
+            "icons__file_icons__changes.svg",
+            "icons__git-commit.svg",
+            "icons__tool-check.svg",
+            "icons__plus.svg",
+            "icons__minus.svg",
+            "icons__discard.svg",
+            "icons__chevron-down.svg",
+        ] {
+            assert!(
+                app_source.contains(asset) || components_source.contains(asset),
+                "missing right-inspector GPUI asset reference: {asset}"
+            );
+        }
+        assert!(app_source.contains("#262a30"));
+        assert!(components_source.contains("#ffffff14"));
+        assert!(components_source.contains("#8bd99c"));
+        assert!(components_source.contains("#e58b95"));
+    }
+
+    #[test]
     fn workspace_shell_model_nests_tasks_under_each_project() {
         let projects = vec![
             sidebar_project(
@@ -3487,6 +4209,31 @@ mod tests {
         assert_eq!(model.terminal_panel_body, "PTY spawn failed");
         assert_eq!(model.terminal_error_details, "permission denied");
         assert_eq!(model.tab_chips[0].restore_status.as_str(), "failed");
+    }
+
+    #[test]
+    fn right_inspector_rows_partition_staged_and_unstaged_changes() {
+        let files = vec![
+            changed_file_wire("src/lib.rs", "M", "M", 2, 1, 3, 0, false),
+            changed_file_wire("docs/new.md", "?", "?", 0, 0, 5, 0, true),
+        ];
+
+        let (rows, summary) = right_inspector_rows_for_changed_files("project-a", &files);
+
+        assert_eq!(summary, "1 staged, 2 unstaged");
+        assert_eq!(rows[0].kind.as_str(), "section");
+        assert_eq!(rows[0].title.as_str(), "Staged Changes");
+        assert_eq!(rows[0].file_count_label.as_str(), "1");
+        assert_eq!(rows[1].kind.as_str(), "file");
+        assert_eq!(rows[1].group.as_str(), "staged");
+        assert_eq!(rows[1].status.as_str(), "M");
+        assert_eq!(rows[2].title.as_str(), "Changes");
+        assert_eq!(rows[2].file_count_label.as_str(), "2");
+        assert_eq!(rows[3].group.as_str(), "unstaged");
+        assert_eq!(rows[3].additions_label.as_str(), "+3");
+        assert_eq!(rows[4].title.as_str(), "new.md");
+        assert_eq!(rows[4].parent_dir.as_str(), "docs");
+        assert_eq!(rows[4].status.as_str(), "A");
     }
 
     #[test]
@@ -4055,6 +4802,29 @@ mod tests {
             lines_added: 0,
             lines_removed: 0,
             target_project_id: String::new(),
+        }
+    }
+
+    fn changed_file_wire(
+        path: &str,
+        index_status: &str,
+        worktree_status: &str,
+        staged_additions: i32,
+        staged_deletions: i32,
+        unstaged_additions: i32,
+        unstaged_deletions: i32,
+        untracked: bool,
+    ) -> frame::ChangedFileWire {
+        frame::ChangedFileWire {
+            path: path.to_string(),
+            original_path: None,
+            staged_additions,
+            staged_deletions,
+            unstaged_additions,
+            unstaged_deletions,
+            index_status: index_status.to_string(),
+            worktree_status: worktree_status.to_string(),
+            untracked,
         }
     }
 
