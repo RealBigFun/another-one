@@ -8,6 +8,7 @@ Captured on: 2026-04-28, Hyprland workspace 1, monitor `DP-4`.
 
 - `captures/workspace-shell-dark.png`: Slint client shell in dark mode, captured from the live `AnotherOne` / `com.anotherone.Slint` window.
 - `captures/window/desktop-main-dark.png`: matched-geometry full Slint shell at 1902x1023.
+- `captures/window/desktop-layout-collapsed.png`: deterministic layout fixture with the left drawer and right inspector collapsed to GPUI-style rails and the resource popover anchored from the titlebar indicator.
 - `captures/window/desktop-main-light.png`: forced light appearance shell using `ANOTHERONE_SLINT_APPEARANCE=light`.
 - `captures/window/compact-main-dark.png`: compact-width dark shell at 740x1023 after resizing the Hyprland window.
 - `captures/window/tablet-main-dark.png`: tablet-width dark shell at 1024x768.

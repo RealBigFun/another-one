@@ -30,6 +30,7 @@ const TERMINAL_ROWS: u16 = 34;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(33);
+const TERMINAL_RESIZE_DEBOUNCE: Duration = Duration::from_millis(80);
 const DEFAULT_TERMINAL_BACKGROUND_RGB: u32 = 0x17191d;
 const DEFAULT_TERMINAL_FOREGROUND_RGB: u32 = 0xd7dae0;
 const PROJECT_ACCENTS: [u32; 8] = [
@@ -397,7 +398,14 @@ fn seed_visual_state_fixture(app: &AppWindow) {
         "toast-error" => {
             app.set_toast_kind("error".into());
             app.set_toast_message("Could not open terminal link".into());
-            app.set_toast_detail("https://example.test returned an unsupported platform action".into());
+            app.set_toast_detail(
+                "https://example.test returned an unsupported platform action".into(),
+            );
+        }
+        "layout-collapsed" => {
+            app.set_left_sidebar_open(false);
+            app.set_right_inspector_open(false);
+            app.set_resource_popover_open(true);
         }
         _ => {}
     }
@@ -1157,6 +1165,8 @@ async fn run_terminal_session(
         .checked_sub(TERMINAL_FRAME_INTERVAL)
         .unwrap_or_else(Instant::now);
     let mut pending_flush_at = Some(Instant::now());
+    let mut pending_resize = None;
+    let mut pending_resize_at = None;
     let mut selection_drag_anchor = None;
     let mut selection_range = None;
 
@@ -1241,26 +1251,11 @@ async fn run_terminal_session(
                             rows: clamp_terminal_dimension(rows, 8, 120),
                         };
                         if terminal.size != next_size {
-                            terminal.resize(next_size);
-                            send_terminal_resize(&mut send, &mut next_request_id, next_size)
-                                .await
-                                .context("send terminal resize")?;
-                            set_terminal_surface(app_weak, terminal.snapshot_surface());
-                            selection_drag_anchor = None;
-                            selection_range = None;
-                            set_terminal_selection(app_weak, Vec::new());
-                            dirty = false;
-                            pending_flush_at = None;
-                            set_terminal_status(
-                                app_weak,
-                                format!(
-                                    "terminal: attached {}/{} at {}x{}",
-                                    attached_target.section_id,
-                                    attached_target.tab_id,
-                                    next_size.cols,
-                                    next_size.rows
-                                ),
-                            );
+                            pending_resize = Some(next_size);
+                            pending_resize_at = Some(Instant::now() + TERMINAL_RESIZE_DEBOUNCE);
+                        } else {
+                            pending_resize = None;
+                            pending_resize_at = None;
                         }
                     }
                     SlintClientEvent::SelectProject(project_id) => {
@@ -1457,6 +1452,35 @@ async fn run_terminal_session(
                 last_flush = Instant::now();
                 pending_flush_at = None;
             }
+            _ = wait_for_terminal_resize(pending_resize_at), if pending_resize_at.is_some() => {
+                let Some(next_size) = pending_resize.take() else {
+                    pending_resize_at = None;
+                    continue;
+                };
+                pending_resize_at = None;
+                if terminal.size != next_size {
+                    terminal.resize(next_size);
+                    send_terminal_resize(&mut send, &mut next_request_id, next_size)
+                        .await
+                        .context("send terminal resize")?;
+                    set_terminal_surface(app_weak, terminal.snapshot_surface());
+                    selection_drag_anchor = None;
+                    selection_range = None;
+                    set_terminal_selection(app_weak, Vec::new());
+                    dirty = false;
+                    pending_flush_at = None;
+                    set_terminal_status(
+                        app_weak,
+                        format!(
+                            "terminal: attached {}/{} at {}x{}",
+                            attached_target.section_id,
+                            attached_target.tab_id,
+                            next_size.cols,
+                            next_size.rows
+                        ),
+                    );
+                }
+            }
         }
     }
 }
@@ -1537,6 +1561,15 @@ struct TerminalInputModeState {
 }
 
 async fn wait_for_terminal_flush(deadline: Option<Instant>) {
+    let Some(deadline) = deadline else {
+        std::future::pending::<()>().await;
+        return;
+    };
+
+    tokio::time::sleep_until(deadline).await;
+}
+
+async fn wait_for_terminal_resize(deadline: Option<Instant>) {
     let Some(deadline) = deadline else {
         std::future::pending::<()>().await;
         return;
@@ -2691,8 +2724,8 @@ mod tests {
     #[test]
     fn snapshot_surface_preserves_indexed_and_truecolor_foreground_colors() {
         let mut terminal = AlacrittySnapshot::new(60, 4);
-        let _ = terminal
-            .apply_output(b"\x1b[38;5;208mINDEXED\x1b[0m \x1b[38;2;125;90;255mRGB\x1b[0m");
+        let _ =
+            terminal.apply_output(b"\x1b[38;5;208mINDEXED\x1b[0m \x1b[38;2;125;90;255mRGB\x1b[0m");
 
         let surface = terminal.snapshot_surface();
 

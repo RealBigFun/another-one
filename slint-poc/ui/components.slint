@@ -457,13 +457,14 @@ export component AoResourceIndicator inherits Rectangle {
     in property <color> text-color;
     in property <color> warning-color;
     in property <color> danger-color;
+    in property <bool> active: false;
     in property <bool> warning: false;
     in property <bool> danger: false;
 
     height: 24px;
     border-radius: 12px;
     border-width: 1px;
-    border-color: danger ? danger-color : warning ? warning-color : border;
+    border-color: danger ? danger-color : warning ? warning-color : active ? text-color.with-alpha(0.72) : border;
     background: bg;
 
     Text {

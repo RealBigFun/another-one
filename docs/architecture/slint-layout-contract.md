@@ -7,15 +7,15 @@ The Slint shell consumes the GPUI layout baseline from `desktop/src/layout.rs` w
 | Mode | Width | Shell behavior |
 | --- | --- | --- |
 | `mobile` | `< 760px` | Single terminal-first column. Persistent sidebars and footer are hidden. Active task context appears in a compact terminal header. |
-| `tablet` | `760px..1179px` | Left project/task sidebar remains visible at reduced width. Right inspector collapses. Footer remains visible. |
-| `desktop` | `>= 1180px` | Left sidebar, terminal center, and footer are visible. Right inspector appears when width is at least `1280px`. |
+| `tablet` | `760px..1179px` | Left project/task sidebar remains visible at reduced width unless explicitly collapsed. Right inspector collapses. Footer remains visible. |
+| `desktop` | `>= 1180px` | Left sidebar, terminal center, gutters, collapsed right rail, and footer are visible. Right inspector expands when width is at least `1280px` and the inspector toggle is open. |
 
 ## GPUI Geometry Mapping
 
 | GPUI token | Value | Slint mapping |
 | --- | --- | --- |
-| `GUTTER` | `0px visible split in captured shell; 4px collapsed rail token remains GPUI source context` | desktop `gutter-width` is `0px` so the center pane starts at the GPUI-captured sidebar edge |
-| `SIDEBAR_COLLAPSED` | `4px` | mobile sidebar hidden, tablet/desktop persistent |
+| `GUTTER` | `4px` | desktop/tablet left and right split gutters use the GPUI gutter token and can toggle the adjacent rail |
+| `SIDEBAR_COLLAPSED` | `4px` | tablet/desktop collapse to a 4px rail; mobile sidebar remains hidden until drawer/sheet navigation lands |
 | `TITLEBAR_CHROME_H` | `42px captured desktop strip` | desktop/tablet `titlebar-height`; mobile uses `52px` for touch context |
 | `FOOTER_H` | `38px` | desktop/tablet `footer-height`; mobile hides footer |
 | `TERMINAL_TAB_BAR_H` | `36px` | Slint tab bar area is `38px` including divider |
@@ -34,9 +34,13 @@ The Slint shell consumes the GPUI layout baseline from `desktop/src/layout.rs` w
 - responsive `footer-height`
 - responsive `sidebar-width`
 - responsive `right-width`
+- GPUI-style 4px split gutters and collapsed rails
+- explicit left-sidebar and right-inspector toggle state
 - mobile terminal context header
+- titlebar resource popover anchored to the resource indicator
+- coalesced terminal resize forwarding so drawer/window resize churn does not repeatedly resize the PTY
 
-The shell no longer scales the desktop view into phone widths. Mobile layout is terminal-first and hides persistent sidebars until drawer/sheet navigation is implemented.
+The shell no longer scales the desktop view into phone widths. Mobile layout is terminal-first and hides persistent sidebars until drawer/sheet navigation is implemented. Desktop and tablet keep GPUI-style collapsed rails instead of removing split regions entirely.
 
 The first matched GPUI/Slint desktop captures use a `1902x1023` client region. At that geometry the Slint shell now matches the GPUI macro regions: `282px` left rail, `1156px` center workspace, and `464px` right inspector.
 

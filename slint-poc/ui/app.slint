@@ -84,6 +84,9 @@ export component AppWindow inherits Window {
     in property <color> danger_color;
 
     in-out property <bool> modal_open: false;
+    in-out property <bool> left_sidebar_open: true;
+    in-out property <bool> right_inspector_open: true;
+    in-out property <bool> resource_popover_open: false;
     in-out property <string> terminal_status: "terminal: waiting for daemon-sandbox ticket";
     in-out property <string> active_project_name: "another-one";
     in-out property <string> active_task_name: "Slint migration";
@@ -135,9 +138,11 @@ export component AppWindow inherits Window {
     property <string> layout_label: mobile-layout ? "mobile" : tablet-layout ? "tablet" : "desktop";
     property <length> titlebar-height: mobile-layout ? 52px : 42px;
     property <length> footer-height: mobile-layout ? 0px : 38px;
-    property <length> gutter-width: 0px;
-    property <length> sidebar-width: mobile-layout ? 0px : tablet-layout ? 252px : 282px;
-    property <length> right-width: root.width >= 1280px ? 464px : 0px;
+    property <length> gutter-width: mobile-layout ? 0px : 4px;
+    property <length> sidebar-open-width: tablet-layout ? 252px : 282px;
+    property <length> sidebar-width: mobile-layout ? 0px : left_sidebar_open ? sidebar-open-width : 4px;
+    property <bool> right-rail-available: !mobile-layout && root.width >= 1180px;
+    property <length> right-width: right-rail-available ? right_inspector_open && root.width >= 1280px ? 464px : 4px : 0px;
     property <length> body-top: titlebar-height;
     property <length> body-height: root.height - titlebar-height - footer-height;
 
@@ -159,11 +164,14 @@ export component AppWindow inherits Window {
                 width: 30px;
                 icon: "|";
                 control-label: "Toggle project drawer";
-                active: false;
+                active: root.left_sidebar_open;
                 bg: overlay_active;
                 hover-bg: overlay_hover;
                 border: border_color;
                 icon-color: text_secondary;
+                clicked => {
+                    root.left_sidebar_open = !root.left_sidebar_open;
+                }
             }
 
             Text {
@@ -231,6 +239,17 @@ export component AppWindow inherits Window {
                 text-color: text_secondary;
                 warning-color: warning_color;
                 danger-color: danger_color;
+                active: root.resource_popover_open;
+            }
+
+            if !root.mobile-layout: TouchArea {
+                x: parent.width - 244px;
+                y: 7px;
+                width: 184px;
+                height: 24px;
+                clicked => {
+                    root.resource_popover_open = !root.resource_popover_open;
+                }
             }
 
             AoIconButton {
@@ -250,7 +269,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        if !root.mobile-layout: Rectangle {
+        if !root.mobile-layout && root.left_sidebar_open: Rectangle {
             x: 0px;
             y: body-top;
             width: sidebar-width;
@@ -345,18 +364,42 @@ export component AppWindow inherits Window {
             }
         }
 
+        if !root.mobile-layout && !root.left_sidebar_open: Rectangle {
+            x: 0px;
+            y: body-top;
+            width: sidebar-width;
+            height: body-height;
+            background: chrome_bg;
+
+            Rectangle {
+                x: parent.width - 1px;
+                y: 0px;
+                width: 1px;
+                height: parent.height;
+                background: divider_color;
+            }
+        }
+
         if !root.mobile-layout: Rectangle {
             x: sidebar-width;
             y: body-top;
             width: gutter-width;
             height: body-height;
             background: #0000001f;
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => {
+                    root.left_sidebar_open = !root.left_sidebar_open;
+                }
+            }
         }
 
         terminal_surface := Rectangle {
             x: root.mobile-layout ? 0px : sidebar-width + gutter-width;
             y: body-top;
-            width: root.mobile-layout ? parent.width : parent.width - sidebar-width - right-width - gutter-width * 2;
+            width: root.mobile-layout ? parent.width : max(200px, parent.width - sidebar-width - right-width - gutter-width * 2);
             height: body-height;
             background: terminal_bg;
             clip: true;
@@ -546,6 +589,38 @@ export component AppWindow inherits Window {
         }
 
         if !root.mobile-layout && root.right-width > 0px: Rectangle {
+            x: parent.width - right-width - gutter-width;
+            y: body-top;
+            width: gutter-width;
+            height: body-height;
+            background: #0000001f;
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => {
+                    root.right_inspector_open = !root.right_inspector_open;
+                }
+            }
+        }
+
+        if !root.mobile-layout && root.right-width > 0px && !root.right_inspector_open: Rectangle {
+            x: parent.width - right-width;
+            y: body-top;
+            width: right-width;
+            height: body-height;
+            background: chrome_bg;
+
+            Rectangle {
+                x: 0px;
+                y: 0px;
+                width: 1px;
+                height: parent.height;
+                background: divider_color;
+            }
+        }
+
+        if !root.mobile-layout && root.right-width > 8px: Rectangle {
             x: parent.width - right-width;
             y: body-top;
             width: right-width;
@@ -566,6 +641,22 @@ export component AppWindow inherits Window {
                 y: 16px;
                 text: "INSPECTOR";
                 label-color: text_muted;
+            }
+
+            AoIconButton {
+                x: parent.width - 44px;
+                y: 10px;
+                width: 28px;
+                icon: ">";
+                control-label: "Collapse inspector";
+                active: false;
+                bg: overlay_active;
+                hover-bg: overlay_hover;
+                border: border_color;
+                icon-color: text_secondary;
+                clicked => {
+                    root.right_inspector_open = false;
+                }
             }
 
             AoButton {
@@ -737,6 +828,59 @@ export component AppWindow inherits Window {
                 bg: transparent;
                 border: transparent;
                 text-color: text_muted;
+            }
+        }
+
+        if resource_popover_open && !component_fixture_mode: Rectangle {
+            x: max(12px, parent.width - 372px);
+            y: titlebar-height + 12px;
+            width: 360px;
+            height: 230px;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: border_color;
+            background: card_bg;
+
+            Text {
+                x: 18px;
+                y: 16px;
+                text: "RESOURCE USAGE";
+                color: text_muted;
+                font-family: "Lilex Nerd Font Mono";
+                font-size: 11px;
+                font-weight: 600;
+            }
+
+            AoStateCard {
+                x: 16px;
+                y: 44px;
+                width: parent.width - 32px;
+                title: "App shell";
+                body: resource_summary;
+                state: "populated";
+                card-bg: terminal_bg;
+                card-border-color: border_color;
+                text-primary: text_primary;
+                text-muted: text_muted;
+                success-color: success_color;
+                warning-color: warning_color;
+                danger-color: danger_color;
+            }
+
+            AoStateCard {
+                x: 16px;
+                y: 154px;
+                width: parent.width - 32px;
+                title: "Terminal sessions";
+                body: "Subprocess CPU/RSS is tracked separately by daemon session.";
+                state: "loading";
+                card-bg: terminal_bg;
+                card-border-color: border_color;
+                text-primary: text_primary;
+                text-muted: text_muted;
+                success-color: success_color;
+                warning-color: warning_color;
+                danger-color: danger_color;
             }
         }
 
@@ -1059,10 +1203,14 @@ export component AppWindow inherits Window {
             width: parent.width;
             height: parent.height;
             background: #00000080;
+            property <length> modal-width: min(440px, parent.width - 32px);
+            property <length> modal-height: 260px;
 
             AoModalCard {
-                x: (parent.width - 440px) / 2;
-                y: (parent.height - 260px) / 2;
+                x: (parent.width - parent.modal-width) / 2;
+                y: (parent.height - parent.modal-height) / 2;
+                width: parent.modal-width;
+                height: parent.modal-height;
                 card-bg: card_bg;
                 card-border-color: focus_ring;
 
@@ -1103,7 +1251,7 @@ export component AppWindow inherits Window {
                 AoTextInput {
                     x: 24px;
                     y: 92px;
-                    width: 392px;
+                    width: parent.width - 48px;
                     placeholder-text: "Task name";
                     text <=> root.new_task_name;
                     field-bg: terminal_bg;
@@ -1118,7 +1266,7 @@ export component AppWindow inherits Window {
                 AoTextInput {
                     x: 24px;
                     y: 142px;
-                    width: 392px;
+                    width: parent.width - 48px;
                     placeholder-text: "Branch name";
                     text <=> root.new_task_branch;
                     field-bg: terminal_bg;
@@ -1130,7 +1278,7 @@ export component AppWindow inherits Window {
                 }
 
                 AoButton {
-                    x: 202px;
+                    x: parent.width - 238px;
                     y: 198px;
                     width: 102px;
                     label: "Cancel";
@@ -1145,7 +1293,7 @@ export component AppWindow inherits Window {
                 }
 
                 AoButton {
-                    x: 314px;
+                    x: parent.width - 126px;
                     y: 198px;
                     width: 102px;
                     label: "Create";
