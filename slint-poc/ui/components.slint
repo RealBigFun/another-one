@@ -102,6 +102,7 @@ export struct RightInspectorRow {
     can-stage: bool,
     can-unstage: bool,
     untracked: bool,
+    expanded: bool,
 }
 
 export component AoButton inherits Rectangle {
@@ -1883,6 +1884,7 @@ export component AoInspectorSectionRow inherits Rectangle {
     in property <color> text-muted;
     in property <color> hover-bg;
     in property <color> icon-color;
+    callback toggled(string);
     callback stage-all-clicked(string);
     callback unstage-all-clicked(string);
 
@@ -1893,6 +1895,9 @@ export component AoInspectorSectionRow inherits Rectangle {
     touch := TouchArea {
         width: parent.width;
         height: parent.height;
+        clicked => {
+            root.toggled(root.entry.group);
+        }
     }
 
     Rectangle {
@@ -1908,7 +1913,7 @@ export component AoInspectorSectionRow inherits Rectangle {
         y: 17px;
         width: 10px;
         height: 10px;
-        source: @image-url("../../desktop/assets/icons/icons__chevron-down.svg");
+        source: root.entry.expanded ? @image-url("../../desktop/assets/icons/icons__chevron-down.svg") : @image-url("../../desktop/assets/icons/icons__chevron-right.svg");
         colorize: root.text-muted;
     }
 
@@ -2118,7 +2123,7 @@ export component AoInspectorCommitRow inherits Rectangle {
         y: 17px;
         width: 8px;
         height: 8px;
-        source: root.entry.file-count-label == "expanded" ? @image-url("../../desktop/assets/icons/icons__chevron-down.svg") : @image-url("../../desktop/assets/icons/icons__chevron-right.svg");
+        source: root.entry.expanded ? @image-url("../../desktop/assets/icons/icons__chevron-down.svg") : @image-url("../../desktop/assets/icons/icons__chevron-right.svg");
         colorize: root.text-muted;
     }
 

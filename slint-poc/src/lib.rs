@@ -338,6 +338,11 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
         let _ = inspector_check_open_event_tx
             .send(SlintClientEvent::OpenInspectorCheckLink(uri.to_string()));
     });
+    let inspector_section_event_tx = client_event_tx.clone();
+    app.on_inspector_section_toggled(move |group| {
+        let _ = inspector_section_event_tx
+            .send(SlintClientEvent::ToggleInspectorSection(group.to_string()));
+    });
     let inspector_stage_all_event_tx = client_event_tx.clone();
     app.on_inspector_stage_all_requested(move || {
         let _ = inspector_stage_all_event_tx.send(SlintClientEvent::StageAllChanges);
@@ -1079,11 +1084,12 @@ fn set_right_inspector_deferred(app_weak: &slint::Weak<AppWindow>, mode: &str, p
     );
 }
 
-fn set_right_inspector_changes(
+fn set_right_inspector_changes_with_collapsed(
     app_weak: &slint::Weak<AppWindow>,
     mode: &str,
     project_id: &str,
     files: Option<Vec<frame::ChangedFileWire>>,
+    collapsed_sections: &HashSet<String>,
 ) {
     match files {
         None => set_right_inspector_state(
@@ -1105,7 +1111,11 @@ fn set_right_inspector_changes(
             Vec::new(),
         ),
         Some(files) => {
-            let (rows, summary) = right_inspector_rows_for_changed_files(project_id, &files);
+            let (rows, summary) = right_inspector_rows_for_changed_files_with_collapsed(
+                project_id,
+                &files,
+                collapsed_sections,
+            );
             set_right_inspector_state(
                 app_weak,
                 mode,
@@ -1572,9 +1582,10 @@ fn sidebar_tree_rows(
     rows
 }
 
-fn right_inspector_rows_for_changed_files(
+fn right_inspector_rows_for_changed_files_with_collapsed(
     project_id: &str,
     files: &[frame::ChangedFileWire],
+    collapsed_sections: &HashSet<String>,
 ) -> (Vec<RightInspectorRow>, String) {
     let mut staged = Vec::new();
     let mut unstaged = Vec::new();
@@ -1599,7 +1610,8 @@ fn right_inspector_rows_for_changed_files(
     let mut rows = Vec::new();
     let mut row_y = 0;
     if !staged.is_empty() {
-        rows.push(right_inspector_section_row(
+        let expanded = !collapsed_sections.contains("staged");
+        rows.push(right_inspector_section_row_with_expanded(
             project_id,
             "staged",
             "Staged Changes",
@@ -1607,15 +1619,19 @@ fn right_inspector_rows_for_changed_files(
             staged_additions,
             staged_deletions,
             row_y,
+            expanded,
         ));
         row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
-        for file in &staged {
-            rows.push(right_inspector_file_row(project_id, "staged", file, row_y));
-            row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
+        if expanded {
+            for file in &staged {
+                rows.push(right_inspector_file_row(project_id, "staged", file, row_y));
+                row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
+            }
         }
     }
     if !unstaged.is_empty() {
-        rows.push(right_inspector_section_row(
+        let expanded = !collapsed_sections.contains("unstaged");
+        rows.push(right_inspector_section_row_with_expanded(
             project_id,
             "unstaged",
             "Changes",
@@ -1623,13 +1639,16 @@ fn right_inspector_rows_for_changed_files(
             unstaged_additions,
             unstaged_deletions,
             row_y,
+            expanded,
         ));
         row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
-        for file in &unstaged {
-            rows.push(right_inspector_file_row(
-                project_id, "unstaged", file, row_y,
-            ));
-            row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
+        if expanded {
+            for file in &unstaged {
+                rows.push(right_inspector_file_row(
+                    project_id, "unstaged", file, row_y,
+                ));
+                row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
+            }
         }
     }
 
@@ -1645,6 +1664,21 @@ fn right_inspector_section_row(
     additions: i32,
     deletions: i32,
     row_y: i32,
+) -> RightInspectorRow {
+    right_inspector_section_row_with_expanded(
+        project_id, group, title, file_count, additions, deletions, row_y, true,
+    )
+}
+
+fn right_inspector_section_row_with_expanded(
+    project_id: &str,
+    group: &str,
+    title: &str,
+    file_count: usize,
+    additions: i32,
+    deletions: i32,
+    row_y: i32,
+    expanded: bool,
 ) -> RightInspectorRow {
     RightInspectorRow {
         kind: "section".into(),
@@ -1665,6 +1699,7 @@ fn right_inspector_section_row(
         can_stage: group == "unstaged",
         can_unstage: group == "staged",
         untracked: false,
+        expanded,
     }
 }
 
@@ -1706,6 +1741,7 @@ fn right_inspector_file_row(
         can_stage: changed_file_has_unstaged_changes(file),
         can_unstage: changed_file_has_staged_changes(file),
         untracked: file.untracked,
+        expanded: false,
     }
 }
 
@@ -1747,10 +1783,11 @@ fn right_inspector_rows_for_commits_with_expansions(
             status_color: slint::Color::from_argb_encoded(0xff949494),
             additions_label: "".into(),
             deletions_label: "".into(),
-            file_count_label: if expanded { "expanded" } else { "" }.into(),
+            file_count_label: "".into(),
             can_stage: false,
             can_unstage: false,
             untracked: false,
+            expanded,
         });
         row_y += RIGHT_INSPECTOR_COMMIT_ROW_HEIGHT;
 
@@ -1880,6 +1917,7 @@ fn right_inspector_rows_for_checks(
             can_stage: false,
             can_unstage: false,
             untracked: false,
+            expanded: false,
         });
         row_y += RIGHT_INSPECTOR_CHECK_ROW_HEIGHT;
     }
@@ -1952,6 +1990,7 @@ fn right_inspector_compare_file_row(
         can_stage: false,
         can_unstage: false,
         untracked: false,
+        expanded: false,
     }
 }
 
@@ -2389,6 +2428,8 @@ async fn run_terminal_session(
     let mut right_inspector_mode = "changes".to_string();
     let mut right_inspector_project_id =
         project_id_for_target(&projects, &attached_target).unwrap_or_default();
+    let mut right_inspector_changed_files: Option<Vec<frame::ChangedFileWire>> = None;
+    let mut collapsed_inspector_sections = HashSet::new();
     let mut right_inspector_recent_commits: Option<frame::RecentCommitsWire> = None;
     let mut expanded_inspector_commits = HashSet::new();
     let mut inspector_commit_file_change_states = HashMap::new();
@@ -2773,6 +2814,20 @@ async fn run_terminal_session(
                             }
                         }
                     }
+                    SlintClientEvent::ToggleInspectorSection(group) => {
+                        if !collapsed_inspector_sections.insert(group.clone()) {
+                            collapsed_inspector_sections.remove(&group);
+                        }
+                        if right_inspector_mode == "changes" {
+                            set_right_inspector_changes_with_collapsed(
+                                app_weak,
+                                "changes",
+                                &right_inspector_project_id,
+                                right_inspector_changed_files.clone(),
+                                &collapsed_inspector_sections,
+                            );
+                        }
+                    }
                     SlintClientEvent::StageAllChanges => {
                         send_control(
                             &mut send,
@@ -2962,22 +3017,26 @@ async fn run_terminal_session(
                                     set_toast(app_weak, "error", "Daemon request failed", message);
                                 }
                                 WorkerReply::ChangedFilesAck { files } => {
-                                    set_right_inspector_changes(
+                                    right_inspector_changed_files = files.clone();
+                                    set_right_inspector_changes_with_collapsed(
                                         app_weak,
                                         &right_inspector_mode,
                                         &right_inspector_project_id,
                                         files,
+                                        &collapsed_inspector_sections,
                                     );
                                 }
                                 WorkerReply::StageChangedFileAck { changed_files }
                                 | WorkerReply::UnstageChangedFileAck { changed_files }
                                 | WorkerReply::StageAllChangesAck { changed_files }
                                 | WorkerReply::UnstageAllChangesAck { changed_files } => {
-                                    set_right_inspector_changes(
+                                    right_inspector_changed_files = Some(changed_files.clone());
+                                    set_right_inspector_changes_with_collapsed(
                                         app_weak,
                                         "changes",
                                         &right_inspector_project_id,
                                         Some(changed_files),
+                                        &collapsed_inspector_sections,
                                     );
                                     set_toast(
                                         app_weak,
@@ -2987,11 +3046,13 @@ async fn run_terminal_session(
                                     );
                                 }
                                 WorkerReply::DiscardChangedFileAck { changed_files } => {
-                                    set_right_inspector_changes(
+                                    right_inspector_changed_files = Some(changed_files.clone());
+                                    set_right_inspector_changes_with_collapsed(
                                         app_weak,
                                         "changes",
                                         &right_inspector_project_id,
                                         Some(changed_files),
+                                        &collapsed_inspector_sections,
                                     );
                                     set_toast(
                                         app_weak,
@@ -3004,11 +3065,13 @@ async fn run_terminal_session(
                                     changed_files,
                                     failures,
                                 } => {
-                                    set_right_inspector_changes(
+                                    right_inspector_changed_files = Some(changed_files.clone());
+                                    set_right_inspector_changes_with_collapsed(
                                         app_weak,
                                         "changes",
                                         &right_inspector_project_id,
                                         Some(changed_files),
+                                        &collapsed_inspector_sections,
                                     );
                                     if failures.is_empty() {
                                         set_toast(
@@ -3430,6 +3493,7 @@ enum SlintClientEvent {
         commit_id: String,
     },
     OpenInspectorCheckLink(String),
+    ToggleInspectorSection(String),
     StageAllChanges,
     UnstageAllChanges,
     SubmitNewTask {
@@ -4695,6 +4759,7 @@ mod tests {
         assert!(app_source.contains("right_inspector_compare_available"));
         assert!(app_source.contains("inspector_commit_toggled"));
         assert!(app_source.contains("inspector_check_open_requested"));
+        assert!(app_source.contains("inspector_section_toggled"));
         assert!(app_source.contains("inspector_discard_confirm_open"));
         assert!(app_source.contains("Confirm Discard"));
         assert!(app_source.contains("This action cannot be undone."));
@@ -4836,7 +4901,11 @@ mod tests {
             changed_file_wire("docs/new.md", "?", "?", 0, 0, 5, 0, true),
         ];
 
-        let (rows, summary) = right_inspector_rows_for_changed_files("project-a", &files);
+        let (rows, summary) = right_inspector_rows_for_changed_files_with_collapsed(
+            "project-a",
+            &files,
+            &HashSet::new(),
+        );
 
         assert_eq!(summary, "1 staged, 2 unstaged");
         assert_eq!(rows[0].kind.as_str(), "section");
@@ -4852,6 +4921,29 @@ mod tests {
         assert_eq!(rows[4].title.as_str(), "new.md");
         assert_eq!(rows[4].parent_dir.as_str(), "docs");
         assert_eq!(rows[4].status.as_str(), "A");
+    }
+
+    #[test]
+    fn right_inspector_rows_omit_collapsed_change_section_children() {
+        let files = vec![changed_file_wire("src/lib.rs", "M", "M", 2, 1, 3, 0, false)];
+        let collapsed = HashSet::from(["unstaged".to_string()]);
+
+        let (rows, summary) =
+            right_inspector_rows_for_changed_files_with_collapsed("project-a", &files, &collapsed);
+
+        assert_eq!(summary, "1 staged, 1 unstaged");
+        assert!(rows
+            .iter()
+            .any(|row| row.group.as_str() == "staged" && row.expanded));
+        assert!(rows
+            .iter()
+            .any(|row| row.group.as_str() == "unstaged" && !row.expanded));
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind.as_str() == "file" && row.group.as_str() == "unstaged")
+                .count(),
+            0
+        );
     }
 
     #[test]
@@ -4919,7 +5011,7 @@ mod tests {
             &states,
         );
 
-        assert_eq!(rows[1].file_count_label.as_str(), "expanded");
+        assert!(rows[1].expanded);
         assert_eq!(rows[2].title.as_str(), "1 file changed");
         assert_eq!(rows[3].group.as_str(), "commit-file");
         assert_eq!(rows[3].additions_label.as_str(), "+4");

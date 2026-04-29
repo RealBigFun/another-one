@@ -166,6 +166,7 @@ export component AppWindow inherits Window {
     callback inspector_discard_file_requested(string, string, bool);
     callback inspector_commit_toggled(string, string);
     callback inspector_check_open_requested(string);
+    callback inspector_section_toggled(string);
     callback inspector_stage_all_requested();
     callback inspector_unstage_all_requested();
     callback terminal_key(string, bool, bool, bool);
@@ -980,6 +981,9 @@ export component AppWindow inherits Window {
                         text-muted: root.text_muted;
                         hover-bg: #ffffff08;
                         icon-color: root.text_secondary;
+                        toggled(group) => {
+                            root.inspector_section_toggled(group);
+                        }
                         stage-all-clicked(project-id) => {
                             root.inspector_stage_all_requested();
                         }
