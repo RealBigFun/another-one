@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
 
 use crate::AppWindow;
 
@@ -46,6 +48,7 @@ struct HostAppearanceProfile;
 impl SlintAppearanceProfile for HostAppearanceProfile {
     fn system_appearance() -> Option<ResolvedAppearance> {
         appearance_from_env("ANOTHERONE_SLINT_SYSTEM_APPEARANCE")
+            .or_else(|| system_appearance_for_target(std::env::consts::OS))
     }
 }
 
@@ -95,6 +98,21 @@ pub(crate) fn select_and_persist_theme(
     Ok(apply_theme_preference(app, preference))
 }
 
+pub(crate) fn start_system_appearance_watcher(app: slint::Weak<AppWindow>) -> slint::Timer {
+    let timer = slint::Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(5),
+        move || {
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            let _ = refresh_system_appearance_if_needed(&app);
+        },
+    );
+    timer
+}
+
 fn apply_theme_preference(app: &AppWindow, preference: AppearancePreference) -> AppliedAppearance {
     let resolved = resolve_appearance::<HostAppearanceProfile>(preference);
     let theme = SlintTheme::for_appearance(resolved);
@@ -124,6 +142,25 @@ fn apply_theme_preference(app: &AppWindow, preference: AppearancePreference) -> 
         preference,
         resolved,
     }
+}
+
+fn refresh_system_appearance_if_needed(app: &AppWindow) -> Option<AppliedAppearance> {
+    let preference = AppearancePreference::parse(app.get_appearance_preference_label().as_str())?;
+    let next_resolved = resolve_appearance::<HostAppearanceProfile>(preference);
+    let current_resolved = ResolvedAppearance::parse(app.get_appearance_label().as_str());
+    if !system_appearance_refresh_needed(preference, current_resolved, next_resolved) {
+        return None;
+    }
+
+    Some(apply_theme_preference(app, preference))
+}
+
+fn system_appearance_refresh_needed(
+    preference: AppearancePreference,
+    current_resolved: Option<ResolvedAppearance>,
+    next_resolved: ResolvedAppearance,
+) -> bool {
+    preference == AppearancePreference::System && current_resolved != Some(next_resolved)
 }
 
 fn resolve_appearance<T: SlintAppearanceProfile>(
@@ -160,6 +197,70 @@ fn appearance_from_env(name: &str) -> Option<ResolvedAppearance> {
         AppearancePreference::Light => Some(ResolvedAppearance::Light),
         AppearancePreference::Dark => Some(ResolvedAppearance::Dark),
         AppearancePreference::System => None,
+    }
+}
+
+fn system_appearance_for_target(target_os: &str) -> Option<ResolvedAppearance> {
+    match target_os {
+        "linux" => linux_system_appearance(),
+        "macos" => macos_system_appearance(),
+        _ => None,
+    }
+}
+
+fn linux_system_appearance() -> Option<ResolvedAppearance> {
+    command_stdout(
+        "gsettings",
+        &["get", "org.gnome.desktop.interface", "color-scheme"],
+    )
+    .and_then(|output| system_appearance_from_text(&output))
+    .or_else(|| {
+        command_stdout(
+            "kreadconfig5",
+            &["--group", "General", "--key", "ColorScheme"],
+        )
+        .and_then(|output| system_appearance_from_text(&output))
+    })
+    .or_else(|| {
+        command_stdout(
+            "kreadconfig6",
+            &["--group", "General", "--key", "ColorScheme"],
+        )
+        .and_then(|output| system_appearance_from_text(&output))
+    })
+}
+
+fn macos_system_appearance() -> Option<ResolvedAppearance> {
+    let output = Command::new("defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        return system_appearance_from_text(&String::from_utf8_lossy(&output.stdout));
+    }
+
+    // `defaults read -g AppleInterfaceStyle` exits non-zero when the key is
+    // unset, which is the macOS light appearance.
+    Some(ResolvedAppearance::Light)
+}
+
+fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn system_appearance_from_text(value: &str) -> Option<ResolvedAppearance> {
+    let value = value.trim().trim_matches('\'').trim_matches('"');
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("dark") {
+        Some(ResolvedAppearance::Dark)
+    } else if lower.contains("light") || lower == "default" {
+        Some(ResolvedAppearance::Light)
+    } else {
+        None
     }
 }
 
@@ -234,6 +335,14 @@ impl AppearancePreference {
 }
 
 impl ResolvedAppearance {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             Self::Light => "light",
@@ -371,6 +480,62 @@ mod tests {
     fn appearance_preference_rejects_unknown_user_modes() {
         assert_eq!(AppearancePreference::parse("auto"), None);
         assert_eq!(AppearancePreference::parse(""), None);
+    }
+
+    #[test]
+    fn resolved_appearance_parses_known_system_outputs() {
+        assert_eq!(
+            ResolvedAppearance::parse("light"),
+            Some(ResolvedAppearance::Light)
+        );
+        assert_eq!(
+            ResolvedAppearance::parse("DARK"),
+            Some(ResolvedAppearance::Dark)
+        );
+        assert_eq!(ResolvedAppearance::parse("system"), None);
+    }
+
+    #[test]
+    fn system_appearance_text_parses_desktop_tool_outputs() {
+        assert_eq!(
+            system_appearance_from_text("'prefer-dark'"),
+            Some(ResolvedAppearance::Dark)
+        );
+        assert_eq!(
+            system_appearance_from_text("BreezeLight"),
+            Some(ResolvedAppearance::Light)
+        );
+        assert_eq!(
+            system_appearance_from_text("default"),
+            Some(ResolvedAppearance::Light)
+        );
+        assert_eq!(system_appearance_from_text("high-contrast"), None);
+    }
+
+    #[test]
+    fn unsupported_targets_have_no_system_appearance_probe() {
+        assert_eq!(system_appearance_for_target("android"), None);
+        assert_eq!(system_appearance_for_target("ios"), None);
+        assert_eq!(system_appearance_for_target("windows"), None);
+    }
+
+    #[test]
+    fn system_appearance_refresh_only_updates_system_mode_changes() {
+        assert!(system_appearance_refresh_needed(
+            AppearancePreference::System,
+            Some(ResolvedAppearance::Dark),
+            ResolvedAppearance::Light
+        ));
+        assert!(!system_appearance_refresh_needed(
+            AppearancePreference::System,
+            Some(ResolvedAppearance::Light),
+            ResolvedAppearance::Light
+        ));
+        assert!(!system_appearance_refresh_needed(
+            AppearancePreference::Dark,
+            Some(ResolvedAppearance::Dark),
+            ResolvedAppearance::Light
+        ));
     }
 
     #[test]

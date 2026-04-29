@@ -216,6 +216,7 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
         app.on_close_requested(|| std::process::exit(0));
         return app.run();
     }
+    let _appearance_watcher = style::start_system_appearance_watcher(app.as_weak());
 
     let (client_event_tx, client_event_rx) = mpsc::unbounded_channel::<SlintClientEvent>();
     let settings_event_tx = client_event_tx.clone();
