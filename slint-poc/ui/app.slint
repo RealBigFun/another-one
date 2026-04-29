@@ -141,7 +141,7 @@ export component AppWindow inherits Window {
     in-out property <string> terminal_panel_tab: "";
     in-out property <string> terminal_panel_cwd: "";
     in-out property <string> terminal_error_details: "";
-    in-out property <string> project_summary: "loading projects from daemon";
+    in-out property <string> project_summary: "";
     in-out property <string> resource_summary: "app 1.0% / 175 MB";
     in-out property <string> right_inspector_mode: "changes";
     in-out property <string> right_inspector_state: "loading";
@@ -192,6 +192,7 @@ export component AppWindow inherits Window {
 
     callback close_requested();
     callback project_selected(string);
+    callback project_github_open_requested(string);
     callback task_selected(string);
     callback tab_selected(string);
     callback tab_close_requested(string);
@@ -393,17 +394,6 @@ export component AppWindow inherits Window {
                 label-color: text_muted;
             }
 
-            Text {
-                x: parent.width - 114px;
-                y: 16px;
-                width: 94px;
-                horizontal-alignment: right;
-                text: project_summary;
-                color: text_muted;
-                font-family: "Lilex Nerd Font Mono";
-                font-size: 10px;
-            }
-
             if root.sidebar_rows.length == 0: Text {
                 x: 16px;
                 y: 54px;
@@ -449,6 +439,9 @@ export component AppWindow inherits Window {
                     add-clicked(project-id) => {
                         root.new_task_project_id = project-id;
                         root.modal_open = true;
+                    }
+                    github-clicked(url) => {
+                        root.project_github_open_requested(url);
                     }
                 }
 
@@ -1873,8 +1866,9 @@ export component AppWindow inherits Window {
         }
 
         if settings_open && !component_fixture_mode: SettingsView {
+            y: root.titlebar-height;
             width: parent.width;
-            height: parent.height;
+            height: parent.height - root.titlebar-height;
             active-section <=> root.settings_active_section;
             nav-entries: root.settings_nav_entries;
             general-rows: root.settings_general_rows;

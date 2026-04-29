@@ -253,6 +253,11 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     app.on_project_selected(move |project_id| {
         let _ = project_event_tx.send(SlintClientEvent::SelectProject(project_id.to_string()));
     });
+    let project_github_event_tx = client_event_tx.clone();
+    app.on_project_github_open_requested(move |uri| {
+        let _ =
+            project_github_event_tx.send(SlintClientEvent::OpenProjectGithubLink(uri.to_string()));
+    });
     let task_event_tx = client_event_tx.clone();
     app.on_task_selected(move |task_id| {
         let _ = task_event_tx.send(SlintClientEvent::SelectTask(task_id.to_string()));
@@ -435,6 +440,7 @@ fn seed_shell_model(app: &AppWindow) {
             branch: "slint-daemon-poc-clean".into(),
             metadata: "".into(),
             path: "~/.another-one/worktrees/another-one".into(),
+            github_url: "https://github.com/RealBigFun/another-one".into(),
             initials: "A".into(),
             accent: project_accent_color("another-one"),
             active: false,
@@ -461,6 +467,7 @@ fn seed_shell_model(app: &AppWindow) {
             branch: "slint-daemon-poc-clean".into(),
             metadata: "active | +0 -0".into(),
             path: "".into(),
+            github_url: "".into(),
             initials: "S".into(),
             accent: project_accent_color("slint-build"),
             active: true,
@@ -487,6 +494,7 @@ fn seed_shell_model(app: &AppWindow) {
             branch: "terminal-production".into(),
             metadata: "in progress | renderer".into(),
             path: "".into(),
+            github_url: "".into(),
             initials: "T".into(),
             accent: project_accent_color("terminal-ready"),
             active: false,
@@ -513,6 +521,7 @@ fn seed_shell_model(app: &AppWindow) {
             branch: "gpui baseline".into(),
             metadata: "blocked | visual corpus".into(),
             path: "".into(),
+            github_url: "".into(),
             initials: "G".into(),
             accent: project_accent_color("style-system"),
             active: false,
@@ -539,6 +548,7 @@ fn seed_shell_model(app: &AppWindow) {
             branch: "daemon transport".into(),
             metadata: "".into(),
             path: "daemon-sandbox".into(),
+            github_url: "https://github.com/RealBigFun/another-one".into(),
             initials: "D".into(),
             accent: project_accent_color("daemon-sandbox"),
             active: false,
@@ -565,6 +575,7 @@ fn seed_shell_model(app: &AppWindow) {
             branch: "platform traits".into(),
             metadata: "".into(),
             path: "slint-platform".into(),
+            github_url: "".into(),
             initials: "S".into(),
             accent: project_accent_color("slint-platform"),
             active: false,
@@ -1201,13 +1212,21 @@ struct TerminalTarget {
     tab_id: String,
 }
 
+type ProjectGithubUrls = HashMap<String, Option<String>>;
+
 fn set_workspace_tree(
     app_weak: &slint::Weak<AppWindow>,
     projects: &[frame::ProjectSummary],
     active_section_id: &str,
     active_tab_id: &str,
+    project_github_urls: &ProjectGithubUrls,
 ) {
-    let model = workspace_shell_model(projects, active_section_id, active_tab_id);
+    let model = workspace_shell_model(
+        projects,
+        active_section_id,
+        active_tab_id,
+        project_github_urls,
+    );
     let app_weak = app_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(app) = app_weak.upgrade() {
@@ -1478,6 +1497,7 @@ fn workspace_shell_model(
     projects: &[frame::ProjectSummary],
     active_section_id: &str,
     active_tab_id: &str,
+    project_github_urls: &ProjectGithubUrls,
 ) -> WorkspaceShellModel {
     let active_project = projects
         .iter()
@@ -1523,7 +1543,7 @@ fn workspace_shell_model(
             }
         })
         .collect::<Vec<_>>();
-    let sidebar_rows = sidebar_tree_rows(projects, active_section_id);
+    let sidebar_rows = sidebar_tree_rows(projects, active_section_id, project_github_urls);
 
     let mut task_entries = projects
         .iter()
@@ -1615,7 +1635,7 @@ fn workspace_shell_model(
         terminal_panel_tab: terminal_panel.tab,
         terminal_panel_cwd: terminal_panel.cwd,
         terminal_error_details: terminal_panel.error_details,
-        project_summary: format!("{} projects", projects.len()),
+        project_summary: String::new(),
     }
 }
 
@@ -1727,6 +1747,7 @@ fn restore_status_label(status: &impl std::fmt::Debug) -> &'static str {
 fn sidebar_tree_rows(
     projects: &[frame::ProjectSummary],
     active_section_id: &str,
+    project_github_urls: &ProjectGithubUrls,
 ) -> Vec<SidebarTreeEntry> {
     let mut rows = Vec::new();
     let mut row_y = SIDEBAR_TREE_TOP;
@@ -1761,6 +1782,11 @@ fn sidebar_tree_rows(
                 .into(),
             metadata: "".into(),
             path: compact_path(&project.path).into(),
+            github_url: project_github_urls
+                .get(&project.id)
+                .and_then(|url| url.as_deref())
+                .unwrap_or_default()
+                .into(),
             initials: initials(&project.name).into(),
             accent: project_accent_color(&project.id),
             active: false,
@@ -1794,6 +1820,7 @@ fn sidebar_tree_rows(
                     branch: task.branch_name.clone().into(),
                     metadata: task_metadata(task, running).into(),
                     path: "".into(),
+                    github_url: "".into(),
                     initials: initials(&task.name).into(),
                     accent: project_accent_color(&project.id),
                     active: task.section_id == active_section_id,
@@ -2652,6 +2679,38 @@ async fn request_settings_data(
     Ok(())
 }
 
+async fn request_project_github_urls(
+    send: &mut (impl frame::WriteAllAsync + Unpin),
+    next_request_id: &mut u64,
+    projects: &[frame::ProjectSummary],
+    project_github_urls: &ProjectGithubUrls,
+    pending_project_github_requests: &mut HashMap<u64, String>,
+) -> anyhow::Result<()> {
+    for project in projects {
+        if project_github_urls.contains_key(&project.id)
+            || pending_project_github_requests
+                .values()
+                .any(|project_id| project_id == &project.id)
+        {
+            continue;
+        }
+
+        let request_id = *next_request_id;
+        pending_project_github_requests.insert(request_id, project.id.clone());
+        send_control(
+            send,
+            next_request_id,
+            Control::ReadProjectGithubUrl {
+                project_id: project.id.clone(),
+            },
+        )
+        .await
+        .with_context(|| format!("read github url for {}", project.name))?;
+    }
+
+    Ok(())
+}
+
 async fn request_agent_settings(
     send: &mut (impl frame::WriteAllAsync + Unpin),
     next_request_id: &mut u64,
@@ -2790,6 +2849,8 @@ async fn run_terminal_session(
     let (mut send, mut recv) = conn.open_bi().await.context("open bidi stream")?;
 
     let mut next_request_id = 1_u64;
+    let mut project_github_urls = ProjectGithubUrls::new();
+    let mut pending_project_github_requests = HashMap::new();
     send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
     set_terminal_status(app_weak, "terminal: requesting sandbox project tree");
     let (mut projects, mut attached_target) = loop {
@@ -2811,13 +2872,27 @@ async fn run_terminal_session(
                 let Some(target) = first_attachable_target(&projects) else {
                     anyhow::bail!("daemon-sandbox returned no attachable task tabs");
                 };
-                set_workspace_tree(app_weak, &projects, &target.section_id, &target.tab_id);
+                set_workspace_tree(
+                    app_weak,
+                    &projects,
+                    &target.section_id,
+                    &target.tab_id,
+                    &project_github_urls,
+                );
                 break (projects, target);
             }
             WorkerReply::Err { message, .. } => anyhow::bail!("list_projects failed: {message}"),
             _ => {}
         }
     };
+    request_project_github_urls(
+        &mut send,
+        &mut next_request_id,
+        &projects,
+        &project_github_urls,
+        &mut pending_project_github_requests,
+    )
+    .await?;
 
     let mut right_inspector_mode = "changes".to_string();
     let mut right_inspector_project_id =
@@ -3001,6 +3076,13 @@ async fn run_terminal_session(
                             );
                         }
                     }
+                    SlintClientEvent::OpenProjectGithubLink(uri) => match platform::open_uri(&uri)
+                    {
+                        Ok(()) => set_toast(app_weak, "info", "Opened GitHub", uri),
+                        Err(error) => {
+                            set_toast(app_weak, "error", "Could not open GitHub", error)
+                        }
+                    },
                     SlintClientEvent::SelectTask(task_id) => {
                         if let Some(target) = target_for_task_id(&projects, &task_id) {
                             switch_terminal_target(
@@ -3008,6 +3090,7 @@ async fn run_terminal_session(
                                 &mut send,
                                 &mut next_request_id,
                                 &projects,
+                                &project_github_urls,
                                 &mut attached_target,
                                 target,
                                 &mut terminal,
@@ -3049,6 +3132,7 @@ async fn run_terminal_session(
                                 &mut send,
                                 &mut next_request_id,
                                 &projects,
+                                &project_github_urls,
                                 &mut attached_target,
                                 target,
                                 &mut terminal,
@@ -3426,12 +3510,21 @@ async fn run_terminal_session(
                             match envelope.reply {
                                 WorkerReply::ProjectList { projects: latest_projects } => {
                                     projects = latest_projects;
+                                    request_project_github_urls(
+                                        &mut send,
+                                        &mut next_request_id,
+                                        &projects,
+                                        &project_github_urls,
+                                        &mut pending_project_github_requests,
+                                    )
+                                    .await?;
                                     if target_still_exists(&projects, &attached_target) {
                                         set_workspace_tree(
                                             app_weak,
                                             &projects,
                                             &attached_target.section_id,
                                             &attached_target.tab_id,
+                                            &project_github_urls,
                                         );
                                         if right_inspector_project_id.is_empty() {
                                             right_inspector_project_id =
@@ -3453,6 +3546,7 @@ async fn run_terminal_session(
                                             &mut send,
                                             &mut next_request_id,
                                             &projects,
+                                            &project_github_urls,
                                             &mut attached_target,
                                             target,
                                             &mut terminal,
@@ -3474,6 +3568,20 @@ async fn run_terminal_session(
                                         pending_inspector_commit_file_requests.clear();
                                     } else {
                                         set_terminal_status(app_weak, "terminal: project tree has no attachable tabs");
+                                    }
+                                }
+                                WorkerReply::ProjectGithubUrlAck { url } => {
+                                    if let Some(project_id) =
+                                        pending_project_github_requests.remove(&request_id)
+                                    {
+                                        project_github_urls.insert(project_id, url);
+                                        set_workspace_tree(
+                                            app_weak,
+                                            &projects,
+                                            &attached_target.section_id,
+                                            &attached_target.tab_id,
+                                            &project_github_urls,
+                                        );
                                     }
                                 }
                                 WorkerReply::AgentSettingsAck { view } => {
@@ -3525,6 +3633,19 @@ async fn run_terminal_session(
                                         .context("refresh MCP settings")?;
                                 }
                                 WorkerReply::Err { message, .. } => {
+                                    if let Some(project_id) =
+                                        pending_project_github_requests.remove(&request_id)
+                                    {
+                                        project_github_urls.insert(project_id, None);
+                                        set_workspace_tree(
+                                            app_weak,
+                                            &projects,
+                                            &attached_target.section_id,
+                                            &attached_target.tab_id,
+                                            &project_github_urls,
+                                        );
+                                        continue;
+                                    }
                                     if let Some(action_key) =
                                         pending_inspector_changed_action_requests.remove(&request_id)
                                     {
@@ -4057,6 +4178,7 @@ pub(crate) enum SlintClientEvent {
         rows: i32,
     },
     SelectProject(String),
+    OpenProjectGithubLink(String),
     SelectTask(String),
     SelectTab(String),
     AddTerminalTab,
@@ -4139,6 +4261,7 @@ async fn switch_terminal_target<W>(
     send: &mut W,
     next_request_id: &mut u64,
     projects: &[frame::ProjectSummary],
+    project_github_urls: &ProjectGithubUrls,
     current_target: &mut TerminalTarget,
     next_target: TerminalTarget,
     terminal: &mut AlacrittySnapshot,
@@ -4153,6 +4276,7 @@ where
         projects,
         &next_target.section_id,
         &next_target.tab_id,
+        project_github_urls,
     );
 
     if *current_target == next_target {
@@ -5347,11 +5471,27 @@ mod tests {
     #[test]
     fn slint_sidebar_uses_gpui_project_tree_contract() {
         let app_source = include_str!("../ui/app.slint");
+        let components_source = include_str!("../ui/components.slint");
 
         assert!(app_source.contains("sidebar_rows"));
         assert!(app_source.contains("AoSidebarProjectTreeRow"));
         assert!(app_source.contains("AoSidebarTaskTreeRow"));
         assert!(!app_source.contains("OPEN TASKS"));
+        assert!(!app_source.contains("text: project_summary;"));
+        assert!(app_source.contains("project_github_open_requested"));
+        assert!(components_source.contains("icons__github.svg"));
+        assert!(components_source.contains("callback github-clicked(string);"));
+        assert!(components_source
+            .contains("source: @image-url(\"../../desktop/assets/icons/icons__plus.svg\")"));
+    }
+
+    #[test]
+    fn slint_settings_view_preserves_shell_titlebar_contract() {
+        let app_source = include_str!("../ui/app.slint");
+
+        assert!(app_source.contains("if settings_open && !component_fixture_mode: SettingsView"));
+        assert!(app_source.contains("y: root.titlebar-height;"));
+        assert!(app_source.contains("height: parent.height - root.titlebar-height;"));
     }
 
     #[test]
@@ -5505,7 +5645,13 @@ mod tests {
             ),
         ];
 
-        let model = workspace_shell_model(&projects, "section-pin", "0");
+        let mut github_urls = ProjectGithubUrls::new();
+        github_urls.insert(
+            "project-a".to_string(),
+            Some("https://github.com/example/project-a".to_string()),
+        );
+
+        let model = workspace_shell_model(&projects, "section-pin", "0", &github_urls);
         let rows = model
             .sidebar_rows
             .iter()
@@ -5560,6 +5706,11 @@ mod tests {
                 ),
             ]
         );
+        assert_eq!(
+            model.sidebar_rows[0].github_url.as_str(),
+            "https://github.com/example/project-a"
+        );
+        assert_eq!(model.sidebar_rows[3].github_url.as_str(), "");
     }
 
     #[test]
@@ -5585,7 +5736,8 @@ mod tests {
         .expect("failed tab summary fixture should deserialize");
         let projects = vec![sidebar_project("project-a", "Project A", vec![task])];
 
-        let model = workspace_shell_model(&projects, "section-fail", "0");
+        let model =
+            workspace_shell_model(&projects, "section-fail", "0", &ProjectGithubUrls::new());
 
         assert_eq!(model.terminal_panel_state, "failed");
         assert_eq!(model.terminal_panel_title, "Terminal launch failed");

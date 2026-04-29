@@ -42,6 +42,7 @@ use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 use another_one_core::agents::{
     AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, AGENTS,
 };
+use another_one_core::git_actions::find_github_repo_url;
 use another_one_core::mcp::catalog;
 use another_one_core::mcp::registry::McpRegistry;
 use another_one_core::mcp::{McpServer, McpSource, McpTransport};
@@ -685,6 +686,20 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             registry_entries: registry.entries.iter().map(mcp_server_dto).collect(),
             sync_error_provider_ids: Vec::new(),
         }
+    }
+
+    fn read_project_github_url(&self, project_id: &str) -> Option<String> {
+        let project_path = self
+            .with_fresh_project_store(|store| {
+                store
+                    .projects
+                    .iter()
+                    .find(|project| project.id == project_id)
+                    .map(|project| project.path.clone())
+            })
+            .flatten()?;
+
+        tokio::task::block_in_place(|| find_github_repo_url(&project_path))
     }
 
     fn mcp_add_from_catalog(&self, catalog_id: &str) -> Result<(), String> {

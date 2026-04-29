@@ -40,6 +40,7 @@ export struct SidebarTreeEntry {
     branch: string,
     metadata: string,
     path: string,
+    github-url: string,
     initials: string,
     accent: color,
     active: bool,
@@ -860,7 +861,7 @@ export component AoSidebarProjectRow inherits Rectangle {
     Text {
         x: 42px;
         y: 8px;
-        width: parent.width - 96px;
+        width: parent.width - 154px;
         text: entry.loading ? "loading project..." : entry.error ? "project unavailable" : entry.name;
         color: entry.error ? danger-color : entry.loading ? warning-color : text-primary;
         font-family: "Lilex Nerd Font Mono";
@@ -1118,6 +1119,7 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
     callback clicked(string);
     callback menu-clicked(string);
     callback add-clicked(string);
+    callback github-clicked(string);
 
     height: 34px;
     border-radius: 8px;
@@ -1160,7 +1162,7 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
     Text {
         x: 42px;
         y: 8px;
-        width: parent.width - 96px;
+        width: parent.width - 154px;
         text: entry.loading ? "loading project..." : entry.error ? "project unavailable" : entry.name;
         color: entry.error ? danger-color : entry.loading ? warning-color : text-primary;
         font-family: "Lilex Nerd Font Mono";
@@ -1169,7 +1171,7 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
     }
 
     if entry.has-children: Rectangle {
-        x: parent.width - 54px;
+        x: parent.width - 106px;
         y: 9px;
         width: 18px;
         height: 18px;
@@ -1186,15 +1188,15 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
     }
 
     if project-touch.has-hover || project-focus.has-focus: Rectangle {
-        x: parent.width - 62px;
+        x: parent.width - 84px;
         y: 6px;
-        width: 52px;
+        width: 24px;
         height: 22px;
         border-radius: 7px;
         background: overlay-hover;
 
         Image {
-            x: 7px;
+            x: 5px;
             y: 4px;
             width: 14px;
             height: 14px;
@@ -1205,7 +1207,7 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
         menu-touch := TouchArea {
             x: 0px;
             y: 0px;
-            width: 28px;
+            width: parent.width;
             height: parent.height;
             accessible-role: button;
             accessible-label: "Project menu for " + root.entry.name;
@@ -1214,9 +1216,49 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
                 root.menu-clicked(root.entry.project-id);
             }
         }
+    }
+
+    if entry.github-url != "": Rectangle {
+        x: parent.width - 58px;
+        y: 6px;
+        width: 24px;
+        height: 22px;
+        border-radius: 7px;
+        background: github-touch.has-hover ? overlay-hover : transparent;
 
         Image {
-            x: 35px;
+            x: 5px;
+            y: 4px;
+            width: 14px;
+            height: 14px;
+            source: @image-url("../../desktop/assets/icons/icons__github.svg");
+            colorize: icon-color;
+        }
+
+        github-touch := TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            accessible-role: button;
+            accessible-label: "Open GitHub for " + root.entry.name;
+            clicked => {
+                project-focus.focus();
+                root.github-clicked(root.entry.github-url);
+            }
+        }
+    }
+
+    Rectangle {
+        x: parent.width - 32px;
+        y: 6px;
+        width: 24px;
+        height: 22px;
+        border-radius: 7px;
+        background: add-touch.has-hover ? overlay-hover : transparent;
+
+        Image {
+            x: 5px;
             y: 4px;
             width: 14px;
             height: 14px;
@@ -1225,9 +1267,9 @@ export component AoSidebarProjectTreeRow inherits Rectangle {
         }
 
         add-touch := TouchArea {
-            x: 28px;
+            x: 0px;
             y: 0px;
-            width: 24px;
+            width: parent.width;
             height: parent.height;
             accessible-role: button;
             accessible-label: "New task for " + root.entry.name;
