@@ -376,6 +376,30 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
             "Toast details remain visible for manual copy.",
         );
     });
+    let appearance_app = app.as_weak();
+    app.on_appearance_cycle_requested(move || {
+        let Some(app) = appearance_app.upgrade() else {
+            return;
+        };
+        match style::cycle_and_persist_theme(&app) {
+            Ok(applied) => set_toast(
+                &appearance_app,
+                "success",
+                "Theme preference saved",
+                format!(
+                    "{} resolves to {}",
+                    applied.preference_label(),
+                    applied.resolved_label()
+                ),
+            ),
+            Err(error) => set_toast(
+                &appearance_app,
+                "error",
+                "Could not save theme preference",
+                error,
+            ),
+        }
+    });
 
     spawn_terminal_worker(app.as_weak(), client_event_rx);
     app.on_close_requested(|| std::process::exit(0));

@@ -1,16 +1,34 @@
+use std::path::{Path, PathBuf};
+
 use crate::AppWindow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AppearancePreference {
+pub(crate) enum AppearancePreference {
     Light,
     Dark,
     System,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ResolvedAppearance {
+pub(crate) enum ResolvedAppearance {
     Light,
     Dark,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AppliedAppearance {
+    preference: AppearancePreference,
+    resolved: ResolvedAppearance,
+}
+
+impl AppliedAppearance {
+    pub(crate) fn preference_label(self) -> &'static str {
+        self.preference.as_str()
+    }
+
+    pub(crate) fn resolved_label(self) -> &'static str {
+        self.resolved.as_str()
+    }
 }
 
 /// Platform seam for appearance resolution.
@@ -54,10 +72,20 @@ struct SlintTheme {
     danger_color: slint::Color,
 }
 
-pub(crate) fn apply_theme(app: &AppWindow) {
-    let preference = appearance_from_env("ANOTHERONE_SLINT_APPEARANCE")
-        .map(AppearancePreference::from)
-        .unwrap_or(AppearancePreference::System);
+pub(crate) fn apply_theme(app: &AppWindow) -> AppliedAppearance {
+    let preference = load_appearance_preference();
+    apply_theme_preference(app, preference)
+}
+
+pub(crate) fn cycle_and_persist_theme(app: &AppWindow) -> Result<AppliedAppearance, String> {
+    let preference = AppearancePreference::parse(app.get_appearance_preference_label().as_str())
+        .unwrap_or_else(load_appearance_preference)
+        .next();
+    persist_appearance_preference(preference)?;
+    Ok(apply_theme_preference(app, preference))
+}
+
+fn apply_theme_preference(app: &AppWindow, preference: AppearancePreference) -> AppliedAppearance {
     let resolved = resolve_appearance::<HostAppearanceProfile>(preference);
     let theme = SlintTheme::for_appearance(resolved);
 
@@ -80,6 +108,12 @@ pub(crate) fn apply_theme(app: &AppWindow) {
     app.set_warning_color(theme.warning_color);
     app.set_danger_color(theme.danger_color);
     app.set_appearance_label(theme.label.into());
+    app.set_appearance_preference_label(preference.as_str().into());
+
+    AppliedAppearance {
+        preference,
+        resolved,
+    }
 }
 
 fn resolve_appearance<T: SlintAppearanceProfile>(
@@ -92,12 +126,65 @@ fn resolve_appearance<T: SlintAppearanceProfile>(
     }
 }
 
+fn load_appearance_preference() -> AppearancePreference {
+    appearance_preference_from_env("ANOTHERONE_SLINT_APPEARANCE")
+        .or_else(|| {
+            appearance_preference_path()
+                .and_then(|path| read_persisted_appearance_preference(&path).ok().flatten())
+        })
+        .unwrap_or(AppearancePreference::System)
+}
+
+fn persist_appearance_preference(preference: AppearancePreference) -> Result<(), String> {
+    let path = appearance_preference_path()
+        .ok_or_else(|| "could not resolve a config directory for theme preference".to_string())?;
+    write_persisted_appearance_preference(&path, preference)
+}
+
+fn appearance_preference_from_env(name: &str) -> Option<AppearancePreference> {
+    AppearancePreference::parse(&std::env::var(name).ok()?)
+}
+
 fn appearance_from_env(name: &str) -> Option<ResolvedAppearance> {
-    match std::env::var(name).ok()?.to_ascii_lowercase().as_str() {
-        "light" => Some(ResolvedAppearance::Light),
-        "dark" => Some(ResolvedAppearance::Dark),
-        _ => None,
+    match AppearancePreference::parse(&std::env::var(name).ok()?)? {
+        AppearancePreference::Light => Some(ResolvedAppearance::Light),
+        AppearancePreference::Dark => Some(ResolvedAppearance::Dark),
+        AppearancePreference::System => None,
     }
+}
+
+fn appearance_preference_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("ANOTHERONE_SLINT_APPEARANCE_FILE") {
+        return Some(PathBuf::from(path));
+    }
+
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+
+    Some(config_home.join("another-one").join("slint-appearance"))
+}
+
+fn read_persisted_appearance_preference(
+    path: &Path,
+) -> Result<Option<AppearancePreference>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Ok(AppearancePreference::parse(&contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("read {}: {error}", path.display())),
+    }
+}
+
+fn write_persisted_appearance_preference(
+    path: &Path,
+    preference: AppearancePreference,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    std::fs::write(path, format!("{}\n", preference.as_str()))
+        .map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 impl From<ResolvedAppearance> for AppearancePreference {
@@ -105,6 +192,42 @@ impl From<ResolvedAppearance> for AppearancePreference {
         match appearance {
             ResolvedAppearance::Light => Self::Light,
             ResolvedAppearance::Dark => Self::Dark,
+        }
+    }
+}
+
+impl AppearancePreference {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            "system" => Some(Self::System),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::System => "system",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::System => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::System,
+        }
+    }
+}
+
+impl ResolvedAppearance {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
         }
     }
 }
@@ -216,5 +339,55 @@ mod tests {
             resolve_appearance::<LightSystemAppearance>(AppearancePreference::Dark),
             ResolvedAppearance::Dark
         );
+    }
+
+    #[test]
+    fn appearance_preference_parses_all_user_modes() {
+        assert_eq!(
+            AppearancePreference::parse("light"),
+            Some(AppearancePreference::Light)
+        );
+        assert_eq!(
+            AppearancePreference::parse("DARK"),
+            Some(AppearancePreference::Dark)
+        );
+        assert_eq!(
+            AppearancePreference::parse(" system\n"),
+            Some(AppearancePreference::System)
+        );
+    }
+
+    #[test]
+    fn appearance_preference_cycles_through_user_modes() {
+        assert_eq!(
+            AppearancePreference::System.next(),
+            AppearancePreference::Light
+        );
+        assert_eq!(
+            AppearancePreference::Light.next(),
+            AppearancePreference::Dark
+        );
+        assert_eq!(
+            AppearancePreference::Dark.next(),
+            AppearancePreference::System
+        );
+    }
+
+    #[test]
+    fn persisted_appearance_preference_round_trips() {
+        let path = std::env::temp_dir().join(format!(
+            "another-one-slint-appearance-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(read_persisted_appearance_preference(&path).unwrap(), None);
+        write_persisted_appearance_preference(&path, AppearancePreference::Light).unwrap();
+        assert_eq!(
+            read_persisted_appearance_preference(&path).unwrap(),
+            Some(AppearancePreference::Light)
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 }

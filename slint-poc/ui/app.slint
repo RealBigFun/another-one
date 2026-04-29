@@ -155,6 +155,7 @@ export component AppWindow inherits Window {
     in-out property <string> inspector_discard_original_path: "";
     in-out property <bool> inspector_discard_untracked: false;
     in-out property <string> appearance_label: "dark";
+    in-out property <string> appearance_preference_label: "system";
     in-out property <string> platform_label: "linux / keyboard";
     in-out property <string> new_task_name: "";
     in-out property <string> new_task_branch: "";
@@ -213,6 +214,7 @@ export component AppWindow inherits Window {
     callback submit_new_task(string, string, string);
     callback toast_dismissed();
     callback toast_copy_requested();
+    callback appearance_cycle_requested();
     callback settings_nav_selected(string);
     callback settings_toggle_requested(string, string, bool);
     callback settings_action_requested(string, string);
@@ -1320,14 +1322,22 @@ export component AppWindow inherits Window {
                 text-color: text_muted;
             }
 
-            AoStatusPill {
-                x: parent.width - 258px;
+            AoButton {
+                x: parent.width - 286px;
                 y: 7px;
-                width: 122px;
-                label: "theme " + appearance_label;
+                width: 150px;
+                height: 24px;
+                label: "theme " + appearance_preference_label + "/" + appearance_label;
+                control-label: "Cycle theme preference";
+                active: false;
                 bg: transparent;
-                border: transparent;
+                hover-bg: overlay_hover;
+                border: border_color;
+                focus-ring: focus_ring;
                 text-color: text_muted;
+                clicked => {
+                    root.appearance_cycle_requested();
+                }
             }
 
             AoStatusPill {
