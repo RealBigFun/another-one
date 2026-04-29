@@ -193,7 +193,13 @@ impl AnotherOneApp {
             button = button
                 .cursor_pointer()
                 .hover(move |style| style.bg(props.hover_bg))
-                .on_mouse_down(MouseButton::Left, cx.listener(on_click));
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, ev, window, cx| {
+                        cx.stop_propagation();
+                        on_click(this, ev, window, cx);
+                    }),
+                );
 
             if let Some(label) = props.tooltip_label {
                 button = button.tooltip(move |_window, cx| Self::action_tooltip_view(label, cx));
@@ -425,10 +431,26 @@ impl AnotherOneApp {
         let stage_project_id = project_id.to_string();
         let unstage_project_id = project_id.to_string();
         let revert_project_id = project_id.to_string();
+        let open_project_id = project_id.to_string();
         let group_key = match group {
             ChangeGroup::Staged => "staged",
             ChangeGroup::Uncommitted => "uncommitted",
         };
+        let source = match group {
+            ChangeGroup::Staged => crate::project_store::GitDiffSource::Staged,
+            ChangeGroup::Uncommitted => crate::project_store::GitDiffSource::Unstaged,
+        };
+        let is_active_diff = self
+            .workspace_pane
+            .read(cx)
+            .active_git_diff
+            .as_ref()
+            .is_some_and(|selection| {
+                selection.project_id == project_id
+                    && selection.path.as_str() == row.path.as_ref()
+                    && selection.source == source
+            });
+        let active_bg = gpui::white().opacity(0.075);
 
         let mut stats = div().flex().flex_row().items_center().gap(px(8.));
         if additions > 0 {
@@ -521,7 +543,22 @@ impl AnotherOneApp {
             .pr(px(14.))
             .rounded_md()
             .mx(px(4.))
+            .cursor_pointer()
+            .when(is_active_diff, |row| row.bg(active_bg))
             .hover(move |style| style.bg(row_hover))
+            .tooltip(move |_window, cx| Self::action_tooltip_view("Open file diff", cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                    this.focus_handle.focus(window);
+                    if let Some(changed) =
+                        this.changed_file_for_action(&open_project_id, file_index)
+                    {
+                        this.open_changed_file_diff(&open_project_id, &changed, source, cx);
+                    }
+                    cx.stop_propagation();
+                }),
+            )
             .child(
                 div()
                     .flex()

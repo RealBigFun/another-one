@@ -328,6 +328,10 @@ impl WorkspacePane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        if self.active_git_diff.is_some() {
+            return self.render_git_diff_pane(window, cx);
+        }
+
         if let Some(ref project_id) = self.active_project_page.clone() {
             return self.render_project_page(project_id, window, cx);
         }

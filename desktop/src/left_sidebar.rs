@@ -840,6 +840,26 @@ impl AnotherOneApp {
             return;
         }
 
+        if !ev.keystroke.modifiers.modified() {
+            match ev.keystroke.key.as_str() {
+                "up" | "arrowup" | "arrow_up" | "ArrowUp" => {
+                    if self
+                        .navigate_changed_file_diff(crate::app::NavigationDirection::Previous, cx)
+                    {
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+                "down" | "arrowdown" | "arrow_down" | "ArrowDown" => {
+                    if self.navigate_changed_file_diff(crate::app::NavigationDirection::Next, cx) {
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         let _ = self.handle_terminal_key_down(ev, cx);
     }
 

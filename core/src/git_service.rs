@@ -28,10 +28,10 @@ use crate::git_actions::{
     ToolbarActionOutcome, ToolbarGitAction,
 };
 use crate::project_store::{
-    fetch_project_git_state, read_project_branch_commit_state, read_project_branch_compare_state,
-    read_project_git_state, stage_all_changes, stage_changed_file, unstage_all_changes,
-    unstage_changed_file, ChangedFile, ProjectBranchCommitState, ProjectBranchCompareState,
-    ProjectGitState,
+    fetch_project_git_state, read_changed_file_diff, read_project_branch_commit_state,
+    read_project_branch_compare_state, read_project_git_state, stage_all_changes,
+    stage_changed_file, unstage_all_changes, unstage_changed_file, ChangedFile, GitDiff,
+    GitDiffSelection, ProjectBranchCommitState, ProjectBranchCompareState, ProjectGitState,
 };
 
 /// Result payload from `spawn_refresh` — one message per refresh call.
@@ -215,6 +215,24 @@ pub fn spawn_changed_files_mutation(
         };
         let _ = sender.send(ChangedFilesGitMutationReply { project_id, result });
     });
+}
+
+#[derive(Clone)]
+pub struct ChangedFileDiffReply {
+    pub selection: GitDiffSelection,
+    pub result: Result<GitDiff, String>,
+}
+
+pub fn spawn_changed_file_diff_load(
+    selection: GitDiffSelection,
+    project_path: PathBuf,
+) -> broadcast::Receiver<ChangedFileDiffReply> {
+    let (tx, rx) = broadcast::channel(1);
+    thread::spawn(move || {
+        let result = read_changed_file_diff(&project_path, selection.clone());
+        let _ = tx.send(ChangedFileDiffReply { selection, result });
+    });
+    rx
 }
 
 // ---- GitHub lookups -------------------------------------------------
