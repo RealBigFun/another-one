@@ -333,6 +333,11 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
             commit_id: commit_id.to_string(),
         });
     });
+    let inspector_check_open_event_tx = client_event_tx.clone();
+    app.on_inspector_check_open_requested(move |uri| {
+        let _ = inspector_check_open_event_tx
+            .send(SlintClientEvent::OpenInspectorCheckLink(uri.to_string()));
+    });
     let inspector_stage_all_event_tx = client_event_tx.clone();
     app.on_inspector_stage_all_requested(move || {
         let _ = inspector_stage_all_event_tx.send(SlintClientEvent::StageAllChanges);
@@ -2760,6 +2765,14 @@ async fn run_terminal_session(
                             );
                         }
                     }
+                    SlintClientEvent::OpenInspectorCheckLink(uri) => {
+                        match platform::open_uri(&uri) {
+                            Ok(()) => set_toast(app_weak, "info", "Opened check", uri),
+                            Err(error) => {
+                                set_toast(app_weak, "error", "Could not open check", error)
+                            }
+                        }
+                    }
                     SlintClientEvent::StageAllChanges => {
                         send_control(
                             &mut send,
@@ -3416,6 +3429,7 @@ enum SlintClientEvent {
         project_id: String,
         commit_id: String,
     },
+    OpenInspectorCheckLink(String),
     StageAllChanges,
     UnstageAllChanges,
     SubmitNewTask {
@@ -4670,6 +4684,7 @@ mod tests {
             "icons__badge-check.svg",
             "icons__badge-x.svg",
             "icons__badge-clock.svg",
+            "icons__external-link.svg",
         ] {
             assert!(
                 app_source.contains(asset) || components_source.contains(asset),
@@ -4679,6 +4694,7 @@ mod tests {
         assert!(app_source.contains("#262a30"));
         assert!(app_source.contains("right_inspector_compare_available"));
         assert!(app_source.contains("inspector_commit_toggled"));
+        assert!(app_source.contains("inspector_check_open_requested"));
         assert!(app_source.contains("inspector_discard_confirm_open"));
         assert!(app_source.contains("Confirm Discard"));
         assert!(app_source.contains("This action cannot be undone."));
@@ -4926,6 +4942,16 @@ mod tests {
         assert_eq!(rows[2].group.as_str(), "pending");
         assert_eq!(rows[3].title.as_str(), "Unit");
         assert_eq!(rows[3].group.as_str(), "pass");
+    }
+
+    #[test]
+    fn right_inspector_check_rows_preserve_open_link() {
+        let mut check = check_wire("Build", frame::CheckBucket::Fail);
+        check.link = Some("https://github.test/checks/1".to_string());
+
+        let rows = right_inspector_rows_for_checks("project-a", &[check]);
+
+        assert_eq!(rows[1].path.as_str(), "https://github.test/checks/1");
     }
 
     #[test]

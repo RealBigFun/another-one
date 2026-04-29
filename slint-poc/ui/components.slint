@@ -2163,6 +2163,9 @@ export component AoInspectorCheckRow inherits Rectangle {
     in property <color> text-primary;
     in property <color> text-muted;
     in property <color> hover-bg;
+    in property <color> action-hover-bg;
+    in property <color> icon-color;
+    callback open-requested(string);
 
     height: 46px;
     border-radius: 7px;
@@ -2206,7 +2209,7 @@ export component AoInspectorCheckRow inherits Rectangle {
     }
 
     Text {
-        x: parent.width - 82px;
+        x: entry.path == "" ? parent.width - 82px : parent.width - 112px;
         y: 16px;
         width: 68px;
         horizontal-alignment: right;
@@ -2215,6 +2218,22 @@ export component AoInspectorCheckRow inherits Rectangle {
         font-family: "Lilex Nerd Font Mono";
         font-size: 11px;
         font-weight: 600;
+    }
+
+    if entry.path != "": AoAssetIconButton {
+        x: parent.width - 38px;
+        y: 9px;
+        width: 28px;
+        height: 28px;
+        icon-source: @image-url("../../desktop/assets/icons/icons__external-link.svg");
+        control-label: "Open check " + entry.title;
+        bg: transparent;
+        hover-bg: root.action-hover-bg;
+        border: transparent;
+        icon-color: root.icon-color;
+        clicked => {
+            root.open-requested(root.entry.path);
+        }
     }
 }
 

@@ -17,6 +17,7 @@ Source of truth: `desktop/src/right_sidebar.rs`, `desktop/src/app.rs`, `desktop/
 - Changes mode owns the scroll region and renders section headers plus rows. `Staged Changes` and `Changes` are sibling groups under one scroll container.
 - Compare mode is target-branch gated: branch settings decide whether the toolbar entry exists, and compare rows are read-only branch-diff children with no stage/unstage/discard actions.
 - Commit rows are expandable: expansion toggles row-local detail state, requests per-commit file changes, and renders read-only file children under the commit.
+- Checks rows preserve daemon-provided links and open them through the platform URL launcher with toast-backed error handling.
 - Section headers own group collapse and group-level actions. File rows own per-file actions and are children of their section.
 - Destructive discard confirmation is an overlay owned by the right inspector, not by a row.
 
@@ -32,8 +33,8 @@ Source of truth: `desktop/src/right_sidebar.rs`, `desktop/src/app.rs`, `desktop/
 
 - Toolbar states: normal, hover, active, disabled, and loading action feedback.
 - Changes states: loading, clean, dirty, unknown project/unavailable, daemon error, staged group, unstaged group, destructive discard confirmation, per-file pending, and group-level pending.
-- Current slice implements the real toolbar, Changes loading/clean/dirty/error/unavailable states, file/group action callbacks, destructive discard confirmation, Compare-mode availability/data loading, commit row expansion/file-change detail loading, and daemon snapshot refresh.
-- Deferred to later loops: full Checks rows, collapse persistence, pending action spinners, and capture parity.
+- Current slice implements the real toolbar, Changes loading/clean/dirty/error/unavailable states, file/group action callbacks, destructive discard confirmation, Compare-mode availability/data loading, commit row expansion/file-change detail loading, Checks link affordances, and daemon snapshot refresh.
+- Deferred to later loops: collapse persistence, pending action spinners, and capture parity.
 - Feature-specific GPUI colors: inspector background `chrome_bg`, toolbar active background `#262a30`, hover white `0.06`, section divider white `0.06`, file row hover white `0.04`, title `hsla(0,0,0.94,1)`, metadata `hsla(0,0,0.58,1)`, added green `hsla(138,0.50,0.74,1)`, removed red `hsla(352,0.52,0.76,1)`, status add green, delete red, rename/copy blue, modified yellow.
 
 ## Slint Mapping

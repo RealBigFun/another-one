@@ -165,6 +165,7 @@ export component AppWindow inherits Window {
     callback inspector_unstage_file_requested(string, string, bool);
     callback inspector_discard_file_requested(string, string, bool);
     callback inspector_commit_toggled(string, string);
+    callback inspector_check_open_requested(string);
     callback inspector_stage_all_requested();
     callback inspector_unstage_all_requested();
     callback terminal_key(string, bool, bool, bool);
@@ -1027,6 +1028,11 @@ export component AppWindow inherits Window {
                         text-primary: root.text_primary;
                         text-muted: root.text_muted;
                         hover-bg: #ffffff0a;
+                        action-hover-bg: #ffffff14;
+                        icon-color: root.text_secondary;
+                        open-requested(uri) => {
+                            root.inspector_check_open_requested(uri);
+                        }
                     }
                 }
             }
