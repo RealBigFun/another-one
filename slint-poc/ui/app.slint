@@ -212,6 +212,7 @@ export component AppWindow inherits Window {
     callback tab_pin_toggled(string);
     callback task_pin_requested(string, bool);
     callback toolbar_git_action_requested(string);
+    callback add_project_requested();
     callback terminal_add_tab_requested();
     callback terminal_error_copy_requested();
     callback right_inspector_mode_selected(string);
@@ -423,7 +424,7 @@ export component AppWindow inherits Window {
                 icon-color: text_secondary;
                 clicked => {
                     root.toast_kind = "info";
-                    root.toast_message = "Pairing is not implemented in Slint yet";
+                    root.toast_message = "Pairing is not available in this Slint build yet";
                     root.toast_detail = "";
                 }
             }
@@ -582,13 +583,13 @@ export component AppWindow inherits Window {
                     rename-clicked(task-id) => {
                         root.sidebar_task_menu_open = false;
                         root.toast_kind = "info";
-                        root.toast_message = "Rename is handled inline in GPUI";
+                        root.toast_message = "Inline task rename is not available in this Slint build yet";
                         root.toast_detail = task-id;
                     }
                     delete-clicked(task-id) => {
                         root.sidebar_task_menu_open = false;
                         root.toast_kind = "warning";
-                        root.toast_message = "Delete confirmation is routed through a modal";
+                        root.toast_message = "Task deletion confirmation is not available in this Slint build yet";
                         root.toast_detail = task-id;
                     }
                 }
@@ -1385,9 +1386,7 @@ export component AppWindow inherits Window {
                 border: border_color;
                 icon-color: text_secondary;
                 clicked => {
-                    root.toast_kind = "info";
-                    root.toast_message = "Add project is routed through the GPUI host";
-                    root.toast_detail = "";
+                    root.add_project_requested();
                 }
             }
 
@@ -1536,7 +1535,7 @@ export component AppWindow inherits Window {
             item-selected(id) => {
                 root.sidebar_project_menu_open = false;
                 root.toast_kind = "info";
-                root.toast_message = "Task sorting is not wired yet";
+                root.toast_message = "Task sorting is not available in this Slint build yet";
                 root.toast_detail = id;
             }
         }
@@ -1572,12 +1571,12 @@ export component AppWindow inherits Window {
                 }
                 if id == "rename" {
                     root.toast_kind = "info";
-                    root.toast_message = "Inline task rename is not wired yet";
+                    root.toast_message = "Inline task rename is not available in this Slint build yet";
                     root.toast_detail = root.sidebar_menu_target_id;
                 }
                 if id == "delete" {
                     root.toast_kind = "warning";
-                    root.toast_message = "Task deletion confirmation is not wired yet";
+                    root.toast_message = "Task deletion confirmation is not available in this Slint build yet";
                     root.toast_detail = root.sidebar_menu_target_id;
                 }
             }
@@ -1605,7 +1604,7 @@ export component AppWindow inherits Window {
                 x: 28px;
                 y: 54px;
                 width: parent.width - 56px;
-                text: "Deterministic review board for GPUI-equivalent controls, rows, menus, inputs, status cards, and toast surfaces.";
+                text: "Deterministic review board for baseline-equivalent controls, rows, menus, inputs, status cards, and toast surfaces.";
                 color: text_muted;
                 font-family: "Lilex Nerd Font Mono";
                 font-size: 12px;

@@ -352,8 +352,9 @@ impl SettingsState {
             "updates" => {
                 if let Some(row) = self.general_rows.iter_mut().find(|row| row.id == id) {
                     row.status = shared("Checking");
-                    row.status_detail =
-                        shared("Updater command queued; real updater state is not wired yet.");
+                    row.status_detail = shared(
+                        "Updater command queued; update status integration is not available yet.",
+                    );
                     row.action_enabled = false;
                 }
                 SettingsFeedback::info("Checking for updates from the Slint settings model.")
@@ -376,7 +377,8 @@ impl SettingsState {
 
         row.enabled = enabled;
         row.status = shared(if enabled { "Enabled" } else { "Disabled" });
-        row.status_detail = shared("Mirrors the GPUI ProjectStore preference in this Slint slice.");
+        row.status_detail =
+            shared("Mirrors the shared ProjectStore preference in this Slint slice.");
         SettingsFeedback::success(format!(
             "{} {}.",
             row.title,
@@ -888,7 +890,7 @@ fn settings_general_rows() -> Vec<SettingsGeneralRow> {
             title: shared("Sidebar git metadata"),
             detail: shared("Show relative commit time and +/- line counts in task rows."),
             status: shared("Enabled"),
-            status_detail: shared("Persists through ProjectStore in the GPUI baseline."),
+            status_detail: shared("Persists through the shared ProjectStore."),
             enabled: true,
             action_label: shared(""),
             action_enabled: false,
@@ -900,7 +902,7 @@ fn settings_general_rows() -> Vec<SettingsGeneralRow> {
             id: shared("build"),
             title: shared("Build"),
             detail: shared(format!(
-                "Slint POC package v{}; GPUI also exposes short SHA, profile, cargo version, and copyable full SHA.",
+                "Slint package v{}; exposes short SHA, profile, cargo version, and copyable full SHA.",
                 env!("CARGO_PKG_VERSION")
             )),
             status: shared("Static"),

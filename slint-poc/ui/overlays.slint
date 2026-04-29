@@ -394,7 +394,7 @@ export component AoActionModal inherits Rectangle {
     in property <string> action-kind: "shell";
     in property <bool> submitting: false;
     in property <string> validation-message: root.action-name == "" ? "Custom actions need a name." : root.action-kind == "shell" && root.action-command == "" ? "Shell actions need a command." : "";
-    in property <string> status-message: root.validation-message != "" ? root.validation-message : "Command+Enter saves in GPUI. Escape closes; dropdowns close first.";
+    in property <string> status-message: root.validation-message != "" ? root.validation-message : "Command+Enter saves. Escape closes; dropdowns close first.";
     callback dismissed();
     callback saved(string, string);
 

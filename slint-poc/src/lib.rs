@@ -317,6 +317,18 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
         let _ =
             toolbar_git_event_tx.send(SlintClientEvent::RunToolbarGitAction(action_id.to_string()));
     });
+    let add_project_event_tx = client_event_tx.clone();
+    app.on_add_project_requested(move || {
+        let event_tx = add_project_event_tx.clone();
+        std::thread::spawn(move || {
+            let event = match platform::choose_project_folder() {
+                Ok(Some(path)) => SlintClientEvent::AddProjectPath(path.display().to_string()),
+                Ok(None) => SlintClientEvent::AddProjectCancelled,
+                Err(error) => SlintClientEvent::AddProjectFailed(error),
+            };
+            let _ = event_tx.send(event);
+        });
+    });
     let add_tab_event_tx = client_event_tx.clone();
     app.on_terminal_add_tab_requested(move || {
         let _ = add_tab_event_tx.send(SlintClientEvent::AddTerminalTab);
@@ -852,7 +864,7 @@ fn seed_right_inspector_commits_fixture(app: &AppWindow) {
             frame::CommitWire {
                 id: "2f0ad9e4a41f3d0c".to_string(),
                 short_id: "2f0ad9e".to_string(),
-                subject: "fix(slint): dial embedded daemon ticket".to_string(),
+                subject: "fix(slint): dial daemon ticket".to_string(),
                 author_name: "Mason".to_string(),
                 authored_relative: "34 minutes ago".to_string(),
             },
@@ -3083,7 +3095,7 @@ async fn run_terminal_session(
     app_weak: &slint::Weak<AppWindow>,
     client_event_rx: &mut mpsc::UnboundedReceiver<SlintClientEvent>,
 ) -> anyhow::Result<()> {
-    set_terminal_status(app_weak, "terminal: loading embedded daemon ticket");
+    set_terminal_status(app_weak, "terminal: loading daemon ticket");
     let ticket = wait_for_ticket(app_weak).await?;
 
     set_terminal_status(app_weak, "terminal: binding local iroh endpoint");
@@ -3110,6 +3122,7 @@ async fn run_terminal_session(
     let mut pending_project_github_requests = HashMap::new();
     let mut pending_open_in_state_requests = HashSet::new();
     let mut pending_open_in_app_requests = HashMap::new();
+    let mut pending_add_project_requests = HashMap::new();
     send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
     set_terminal_status(app_weak, "terminal: requesting sandbox project tree");
     let (mut projects, mut attached_target) = loop {
@@ -3542,6 +3555,33 @@ async fn run_terminal_session(
                         .await
                         .context("run toolbar git action")?;
                     }
+                    SlintClientEvent::AddProjectPath(path) => {
+                        let path = path.trim().to_string();
+                        if path.is_empty() {
+                            set_toast(
+                                app_weak,
+                                "error",
+                                "Project path is required",
+                                "Choose a folder before adding a project.",
+                            );
+                            continue;
+                        }
+                        let request_id = next_request_id;
+                        pending_add_project_requests.insert(request_id, path.clone());
+                        send_control(&mut send, &mut next_request_id, Control::AddProject { path: path.clone() })
+                            .await
+                            .context("add project")?;
+                        set_toast(app_weak, "info", "Adding project", path);
+                    }
+                    SlintClientEvent::AddProjectCancelled => {}
+                    SlintClientEvent::AddProjectFailed(error) => {
+                        set_toast(
+                            app_weak,
+                            "error",
+                            "Could not choose project folder",
+                            error,
+                        );
+                    }
                     SlintClientEvent::RightInspectorMode(mode) => {
                         right_inspector_mode = mode;
                         request_right_inspector_data(
@@ -3963,8 +4003,29 @@ async fn run_terminal_session(
                                     pending_open_in_state_requests.insert(
                                         request_open_in_state(&mut send, &mut next_request_id)
                                             .await
-                                            .context("refresh open-in state after launch")?,
+                                        .context("refresh open-in state after launch")?,
                                     );
+                                }
+                                WorkerReply::ProjectAdded { project } => {
+                                    pending_add_project_requests.remove(&request_id);
+                                    projects.push(project.clone());
+                                    request_project_github_urls(
+                                        &mut send,
+                                        &mut next_request_id,
+                                        &projects,
+                                        &project_github_urls,
+                                        &mut pending_project_github_requests,
+                                    )
+                                    .await?;
+                                    set_workspace_tree(
+                                        app_weak,
+                                        &projects,
+                                        &attached_target.section_id,
+                                        &attached_target.tab_id,
+                                        &project_github_urls,
+                                    );
+                                    set_toast(app_weak, "success", "Project added", project.name);
+                                    send_control(&mut send, &mut next_request_id, Control::ListProjects).await?;
                                 }
                                 WorkerReply::GitActionScriptsAck { view } => {
                                     settings::apply_git_action_scripts(app_weak, view);
@@ -4009,6 +4070,17 @@ async fn run_terminal_session(
                                             "error",
                                             "Could not open project",
                                             format!("{app_id}: {message}"),
+                                        );
+                                        continue;
+                                    }
+                                    if let Some(path) =
+                                        pending_add_project_requests.remove(&request_id)
+                                    {
+                                        set_toast(
+                                            app_weak,
+                                            "error",
+                                            "Could not add project",
+                                            format!("{path}: {message}"),
                                         );
                                         continue;
                                     }
@@ -4604,6 +4676,9 @@ pub(crate) enum SlintClientEvent {
     SelectProject(String),
     OpenProjectGithubLink(String),
     OpenInApp(String),
+    AddProjectPath(String),
+    AddProjectCancelled,
+    AddProjectFailed(String),
     SelectTask(String),
     SelectTab(String),
     AddTerminalTab,
@@ -4825,7 +4900,7 @@ where
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DaemonTicketSource {
-    Embedded,
+    Primary,
     Sandbox,
 }
 
@@ -4840,7 +4915,7 @@ async fn wait_for_ticket(app_weak: &slint::Weak<AppWindow>) -> anyhow::Result<Da
         match load_ticket() {
             Ok(Some(ticket)) => return Ok(ticket),
             Ok(None) => {
-                set_terminal_status(app_weak, "terminal: waiting for embedded daemon ticket");
+                set_terminal_status(app_weak, "terminal: waiting for daemon ticket");
                 tokio::time::sleep(RETRY_DELAY).await;
             }
             Err(error) => return Err(error),
@@ -4886,7 +4961,7 @@ fn parse_ticket(content: &str) -> anyhow::Result<Option<(EndpointId, Vec<SocketA
 
 fn daemon_ticket_candidates() -> Vec<(DaemonTicketSource, PathBuf)> {
     vec![
-        (DaemonTicketSource::Embedded, embedded_daemon_ticket_path()),
+        (DaemonTicketSource::Primary, primary_daemon_ticket_path()),
         (
             DaemonTicketSource::Sandbox,
             std::env::temp_dir().join("daemon-sandbox.ticket"),
@@ -4906,20 +4981,20 @@ fn pre_authorize_local_client(
 
 fn paired_peers_path_for_ticket_source(source: DaemonTicketSource) -> PathBuf {
     match source {
-        DaemonTicketSource::Embedded => embedded_daemon_paired_peers_path(),
+        DaemonTicketSource::Primary => primary_daemon_paired_peers_path(),
         DaemonTicketSource::Sandbox => sandbox_paired_peers_path(),
     }
 }
 
-fn embedded_daemon_ticket_path() -> PathBuf {
-    embedded_daemon_config_dir().join("endpoint.ticket")
+fn primary_daemon_ticket_path() -> PathBuf {
+    primary_daemon_config_dir().join("endpoint.ticket")
 }
 
-fn embedded_daemon_paired_peers_path() -> PathBuf {
-    embedded_daemon_config_dir().join("paired_peers")
+fn primary_daemon_paired_peers_path() -> PathBuf {
+    primary_daemon_config_dir().join("paired_peers")
 }
 
-fn embedded_daemon_config_dir() -> PathBuf {
+fn primary_daemon_config_dir() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
@@ -6017,7 +6092,7 @@ mod tests {
         assert!(app_source.contains("sidebar_project_menu_entries"));
         assert!(app_source.contains("sidebar_task_pin_menu_entries"));
         assert!(app_source.contains("sidebar_task_unpin_menu_entries"));
-        assert!(app_source.contains("Task sorting is not wired yet"));
+        assert!(app_source.contains("Task sorting is not available in this Slint build yet"));
         assert!(app_source.contains("task_pin_requested"));
         assert!(!app_source.contains("root.project_selected(root.sidebar_menu_target_id);"));
         assert!(!app_source.contains("Project removal requires confirmation"));
@@ -6073,15 +6148,39 @@ mod tests {
     }
 
     #[test]
-    fn slint_footer_uses_gpui_shell_contract() {
+    fn slint_footer_uses_source_shell_contract() {
         let app_source = include_str!("../ui/app.slint");
 
         assert!(app_source.contains("icons__folder-plus.svg"));
         assert!(app_source.contains("icons__git-branch.svg"));
         assert!(app_source.contains("icons__git-split.svg"));
+        assert!(app_source.contains("callback add_project_requested();"));
+        assert!(app_source.contains("root.add_project_requested();"));
         assert!(!app_source.contains("label: layout_label;"));
         assert!(!app_source.contains("\"theme \" + appearance_preference_label"));
         assert!(!app_source.contains("label: platform_label;"));
+    }
+
+    #[test]
+    fn slint_user_facing_copy_does_not_route_through_gpui() {
+        let app_source = include_str!("../ui/app.slint");
+        let overlays_source = include_str!("../ui/overlays.slint");
+        let settings_source = include_str!("settings.rs");
+
+        for source in [app_source, overlays_source] {
+            assert!(!source.contains("routed through"));
+            assert!(!source.contains("handled inline in GPUI"));
+            assert!(!source.contains("saves in GPUI"));
+            assert!(!source.contains("GPUI host"));
+        }
+
+        for phrase in [
+            "Mirrors the GPUI ProjectStore preference",
+            "GPUI baseline",
+            "GPUI also exposes",
+        ] {
+            assert!(!settings_source.contains(phrase));
+        }
     }
 
     #[test]
@@ -6124,10 +6223,10 @@ mod tests {
     }
 
     #[test]
-    fn slint_daemon_ticket_prefers_embedded_daemon_before_sandbox() {
+    fn slint_daemon_ticket_prefers_primary_daemon_before_sandbox() {
         let candidates = daemon_ticket_candidates();
 
-        assert_eq!(candidates[0].0, DaemonTicketSource::Embedded);
+        assert_eq!(candidates[0].0, DaemonTicketSource::Primary);
         assert!(candidates[0]
             .1
             .ends_with("another-one/daemon/endpoint.ticket"));

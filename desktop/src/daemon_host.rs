@@ -52,8 +52,8 @@ use another_one_core::mcp::catalog;
 use another_one_core::mcp::registry::McpRegistry;
 use another_one_core::mcp::{McpServer, McpSource, McpTransport};
 use another_one_core::project_store::{
-    PersistedSectionState, PersistedTerminalTab, ProjectKind as CoreProjectKind, ProjectStore,
-    RepoDefaultCommitAction,
+    prepare_project, PersistedSectionState, PersistedTerminalTab, ProjectKind as CoreProjectKind,
+    ProjectStore, RepoDefaultCommitAction,
 };
 use another_one_core::section::SectionId;
 use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
@@ -479,6 +479,18 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             });
         }
         Ok(active_tab_id)
+    }
+
+    fn add_project<'a>(
+        &'a self,
+        path: String,
+    ) -> RegistryFuture<'a, anyhow::Result<ProjectSummary>> {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || add_project_blocking(inner, PathBuf::from(path)))
+                .await
+                .map_err(|err| anyhow::anyhow!("add project worker failed: {err}"))?
+        })
     }
 
     fn toggle_section_tab_pinned(&self, section_id: &str, tab_id: &str) -> Result<bool, String> {
@@ -1063,6 +1075,31 @@ fn toolbar_action_outcome_wire(outcome: CoreToolbarActionOutcome) -> ToolbarActi
         warning: outcome.warning,
         refresh_git_state: outcome.refresh_git_state,
     }
+}
+
+fn add_project_blocking(
+    inner: Weak<Mutex<RegistryState>>,
+    path: PathBuf,
+) -> anyhow::Result<ProjectSummary> {
+    let prepared = prepare_project(&path).map_err(anyhow::Error::msg)?;
+    let project_id = prepared.project.id.clone();
+    let project_name = prepared.project.name.clone();
+    let arc = inner
+        .upgrade()
+        .ok_or_else(|| anyhow::anyhow!("desktop registry state is unavailable"))?;
+    let mut state = arc
+        .lock()
+        .map_err(|_| anyhow::anyhow!("desktop registry state is unavailable"))?;
+    state.project_store = ProjectStore::load();
+    if !state.project_store.insert_prepared_project(prepared) {
+        anyhow::bail!("{project_name} is already in the sidebar.");
+    }
+    state.project_store = ProjectStore::load();
+
+    project_summaries(&state)
+        .into_iter()
+        .find(|project| project.id == project_id)
+        .ok_or_else(|| anyhow::anyhow!("project was added but is not visible in the sidebar"))
 }
 
 fn run_toolbar_git_action_blocking(

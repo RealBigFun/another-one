@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +80,26 @@ pub(crate) fn copy_text(text: &str) -> Result<(), String> {
     Err(format!("clipboard command failed: {}", errors.join("; ")))
 }
 
+pub(crate) fn choose_project_folder() -> Result<Option<PathBuf>, String> {
+    let programs = folder_picker_programs_for_target(std::env::consts::OS);
+    if programs.is_empty() {
+        return Err(format!(
+            "choosing project folders is not supported on {}",
+            std::env::consts::OS
+        ));
+    }
+
+    let mut errors = Vec::new();
+    for &program in programs {
+        match run_folder_picker_program(program) {
+            Ok(selection) => return Ok(selection),
+            Err(error) => errors.push(error),
+        }
+    }
+
+    Err(format!("folder picker failed: {}", errors.join("; ")))
+}
+
 fn write_clipboard_program(program: ClipboardProgram, text: &str) -> Result<(), String> {
     let mut child = Command::new(program.name)
         .args(program.args)
@@ -101,6 +122,30 @@ fn write_clipboard_program(program: ClipboardProgram, text: &str) -> Result<(), 
         Ok(())
     } else {
         Err(format!("{} exited with {status}", program.name))
+    }
+}
+
+fn run_folder_picker_program(program: FolderPickerProgram) -> Result<Option<PathBuf>, String> {
+    let output = Command::new(program.name)
+        .args(program.args)
+        .output()
+        .map_err(|error| format!("{}: {error}", program.name))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lower = stderr.to_ascii_lowercase();
+        if lower.contains("cancel") || stderr.trim().is_empty() {
+            return Ok(None);
+        }
+        return Err(format!("{} exited with {}", program.name, output.status));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let selected = stdout.trim();
+    if selected.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(PathBuf::from(selected)))
     }
 }
 
@@ -158,6 +203,12 @@ struct ClipboardProgram {
     args: &'static [&'static str],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FolderPickerProgram {
+    name: &'static str,
+    args: &'static [&'static str],
+}
+
 fn copy_programs_for_target(target_os: &str) -> &'static [ClipboardProgram] {
     match target_os {
         "linux" => &[
@@ -173,6 +224,33 @@ fn copy_programs_for_target(target_os: &str) -> &'static [ClipboardProgram] {
         "macos" => &[ClipboardProgram {
             name: "pbcopy",
             args: &[],
+        }],
+        _ => &[],
+    }
+}
+
+fn folder_picker_programs_for_target(target_os: &str) -> &'static [FolderPickerProgram] {
+    match target_os {
+        "linux" => &[
+            FolderPickerProgram {
+                name: "zenity",
+                args: &[
+                    "--file-selection",
+                    "--directory",
+                    "--title=Add Project Folder",
+                ],
+            },
+            FolderPickerProgram {
+                name: "kdialog",
+                args: &["--getexistingdirectory", ".", "Add Project Folder"],
+            },
+        ],
+        "macos" => &[FolderPickerProgram {
+            name: "osascript",
+            args: &[
+                "-e",
+                "POSIX path of (choose folder with prompt \"Add Project Folder\")",
+            ],
         }],
         _ => &[],
     }
@@ -243,5 +321,42 @@ mod tests {
     fn copy_programs_are_absent_on_mobile_targets() {
         assert!(copy_programs_for_target("android").is_empty());
         assert!(copy_programs_for_target("ios").is_empty());
+    }
+
+    #[test]
+    fn folder_picker_programs_use_desktop_platform_tools() {
+        assert_eq!(
+            folder_picker_programs_for_target("linux"),
+            &[
+                FolderPickerProgram {
+                    name: "zenity",
+                    args: &[
+                        "--file-selection",
+                        "--directory",
+                        "--title=Add Project Folder"
+                    ],
+                },
+                FolderPickerProgram {
+                    name: "kdialog",
+                    args: &["--getexistingdirectory", ".", "Add Project Folder"],
+                },
+            ]
+        );
+        assert_eq!(
+            folder_picker_programs_for_target("macos"),
+            &[FolderPickerProgram {
+                name: "osascript",
+                args: &[
+                    "-e",
+                    "POSIX path of (choose folder with prompt \"Add Project Folder\")",
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn folder_picker_programs_are_absent_on_mobile_targets() {
+        assert!(folder_picker_programs_for_target("android").is_empty());
+        assert!(folder_picker_programs_for_target("ios").is_empty());
     }
 }
