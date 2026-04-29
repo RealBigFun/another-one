@@ -1,7 +1,7 @@
 # Peer-to-peer nodes
 
 > Every machine running AnotherOne is an Iroh endpoint. Every client —
-> mobile, desktop UI, CLI, web — picks which endpoint to dial. The
+> Slint, desktop UI, CLI, web — picks which endpoint to dial. The
 > desktop app defaults to dialing itself (in-process), but is free to
 > dial any other paired endpoint.
 
@@ -18,7 +18,7 @@
           \     user's peer mesh   /
            \___     (just IDs)    _/
                 \                /
-                 Mobile (paired with E1, E2, …)
+                 Slint client (paired with E1, E2, …)
                  Web / CLI (same story)
 ```
 
@@ -31,8 +31,8 @@ library + no client }`. A phone = `{ client only }`.
 - **The desktop UI is just a client.** It connects to its own embedded
   core through an `InProcessTransport` — logically equivalent to dialing
   its own EndpointId via Iroh, just optimized to skip the network. This
-  means the desktop's terminal rendering goes through the same
-  [[transport-abstraction]] as mobile's.
+  means terminal rendering goes through the same daemon protocol shape
+  as remote clients.
 
 - **"My sessions" is a per-node thing.** The laptop hosts the sessions
   you started there; the home server hosts the ones you started there.
@@ -68,9 +68,7 @@ library + no client }`. A phone = `{ client only }`.
 ## Related design choices
 
 - [[terminal-wrapping-principle]] applies unchanged to every node.
-- [[transport-abstraction]] is what the client side of this picture uses.
-- [[frb-tokio-runtime]] is how mobile's `IrohTransport` hangs together
-  today.
+- The Iroh frame protocol is what the client side of this picture uses.
 
 ## Open questions (worth noting)
 

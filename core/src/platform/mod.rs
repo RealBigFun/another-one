@@ -83,19 +83,17 @@ pub trait HeadlessPlatform {
     ///
     /// Examples: macOS → `"Cmd"`, Linux → `"Super"`, Windows →
     /// `"Win"`. The strings are exactly what the desktop UI has
-    /// rendered in the keybindings list since before the Flutter
-    /// migration; preserve them verbatim so existing screenshots
-    /// and muscle memory don't drift.
+    /// rendered in the keybindings list historically; preserve them
+    /// verbatim so existing screenshots and muscle memory don't drift.
     fn modifier_label() -> &'static str;
 
     /// Open `url` in the system's default external handler.
     ///
     /// Side-effecting: spawns a child process (`open`, `xdg-open`,
     /// `cmd /C start "" …` on the three desktop platforms). On
-    /// iOS and Android, where Rust can't directly invoke a URL
-    /// handler, this returns `Err` so callers can surface the
-    /// limitation; the future Flutter UI will route URL opens
-    /// through Dart platform channels and bypass this method.
+    /// iOS and Android, where the shell must invoke platform UI APIs,
+    /// this returns `Err` so callers can surface the limitation and
+    /// delegate to platform integration code.
     fn open_external_url(url: &str) -> Result<(), String>;
 
     /// Total physical RAM in bytes, or `None` if the platform
@@ -135,8 +133,8 @@ pub trait HeadlessPlatform {
     ///   * Linux — checks `$PATH`, snap (`/snap/bin`), and flatpak
     ///     install dirs.
     ///   * Windows — `$PATH` only.
-    ///   * iOS / Android — always `false`; the future Flutter UI
-    ///     will route "open in" through Dart platform channels.
+    ///   * iOS / Android — always `false`; Slint platform integration
+    ///     owns app-specific open-in routing on those targets.
     fn is_open_in_app_available(app: crate::open_in::OpenInAppKind) -> bool;
 
     /// A `Command` ready to spawn that opens `path` in `app`.
@@ -145,8 +143,8 @@ pub trait HeadlessPlatform {
     /// the invocation. iOS / Android return a placeholder
     /// `Command` that won't successfully spawn (matches the
     /// "always unavailable" contract from
-    /// [`Self::is_open_in_app_available`]); the future Flutter UI
-    /// won't reach this method on those platforms.
+    /// [`Self::is_open_in_app_available`]); mobile platform shells
+    /// should not reach this method on those targets.
     fn command_for_open_in(
         app: crate::open_in::OpenInAppKind,
         path: &std::path::Path,

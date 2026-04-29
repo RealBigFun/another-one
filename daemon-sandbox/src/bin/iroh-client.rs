@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
     // Per-call request ids — bump for each Control envelope so any
     // matching WorkerReply can be correlated. The smoke test only
     // ever fires one `ListProjects`-shaped call so this is mostly
-    // demonstration; real clients (Dart) will keep a Completer map.
+    // demonstration; real clients keep a request/response map.
     let mut next_request_id: u64 = 1;
     let mut next_id = || {
         let id = next_request_id;

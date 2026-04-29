@@ -2,7 +2,7 @@
 name = "another-one-core"
 version = "0.1.0"
 edition = "2021"
-description = "Headless domain logic for the AnotherOne desktop app — shared by both the GPUI UI and the (future) sandbox/mobile daemon."
+description = "Headless domain logic for AnotherOne clients and daemon-backed transports."
 publish = false
 
 [lib]

@@ -1,15 +1,14 @@
 # Design System
 
 A snapshot of the visual language used in the desktop app
-(`desktop/src/`), extracted so it can travel with us through Phase 1 of
-the mobile plan (core refactor) and be mirrored by the Flutter mobile
-sandbox.
+(`desktop/src/`), extracted so Slint clients can recreate the GPUI
+baseline without visual drift.
 
 ## Why this exists
 
 The desktop is ~276 colour literals and ~60 ad-hoc `hsla(…)` / `rgb(…)`
 calls scattered across its files. That was fine for a single-platform
-app, but with mobile coming online we need:
+app, but with multiple shells coming online we need:
 
 1. A single source of truth to mirror, so mobile visuals don't drift.
 2. A place to say "this colour means *this*" so Phase 1 (core
@@ -27,8 +26,8 @@ app, but with mobile coming online we need:
 - **[[components.md]]** — idioms for buttons, inputs, modals, list
   rows. Cross-references the token docs with real code.
 - **tokens.json** — machine-readable mirror of the token values.
-  Intended to be consumed by the Flutter app later (hand-mirrored for
-  now; auto-generated once a shared `core` crate exists).
+  Intended to be consumed by non-GPUI clients and generated into
+  framework-specific token modules.
 
 All token values are also defined in `desktop/src/tokens.rs` — that's
 where GPUI call sites import from. `tokens.json` and the Rust module
@@ -69,17 +68,17 @@ fn surface(cx: &mut Context<Self>) -> Div {
 }
 ```
 
-## How to use — Dart (mobile, future)
+## How to use — Slint
 
-Until a `core` crate arrives, mobile hand-mirrors `tokens.json` into a
-Dart constants file. Example planned shape:
+Slint should consume generated values from `tokens.json` rather than
+hand-copying colors into `.slint` files. Example target shape:
 
-```dart
-class Tokens {
-  static const cardBg = Color(0xFF2b2d31);
-  static const textPrimary = Color(0xEBFFFFFF); // 92% white
-  static const radiusMd = 8.0;
-  static const spaceSm = 8.0;
+```slint
+export global Tokens {
+    in property <color> card-bg: #2b2d31;
+    in property <color> text-primary: #ebffffff;
+    in property <length> radius-md: 8px;
+    in property <length> space-sm: 8px;
 }
 ```
 

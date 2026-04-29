@@ -21,7 +21,7 @@ impl PlatformServices for MacPlatform {
         // Single source of truth lives in `core::platform::HeadlessPlatform`.
         // This wrapper exists only because the desktop `PlatformServices`
         // trait predates the core abstraction; it'll be removed when the
-        // GPUI binary is deleted in the Flutter migration's Phase 6.
+        // GPUI-specific shell is split from shared platform code.
         CorePlatform::modifier_label()
     }
 

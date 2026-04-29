@@ -23,9 +23,8 @@ interface.
 - [[../apps/daemon-sandbox]] exposes raw PTY bytes, not structured
   messages. Control (resize) is a small JSON control channel, not
   tool-aware.
-- [[../apps/mobile]]'s `TerminalTransport` interface is byte-in, byte-out.
-  The terminal renderer parses ANSI; nothing above it tries to "understand"
-  agent output.
+- Client terminal transports are byte-in, byte-out. The terminal renderer
+  parses ANSI; nothing above it tries to "understand" agent output.
 - Client UIs do not template agent prompts, extract commands from agent
   output, or render agent-specific elements. A bash session and a Claude
   Code session are the same protocol; only the cell grid differs.
@@ -44,7 +43,4 @@ interface.
 
 ## See also
 
-- [[../postmortems/2026-04-23-iroh-android-hang]] — the mobile transport
-  work that keeps this principle intact.
-- [[transport-abstraction]] — how the byte-in/byte-out shape propagates
-  through the code.
+- [[../apps/daemon-sandbox]] — the current daemon-side transport testbed.

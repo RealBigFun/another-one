@@ -22,11 +22,13 @@ impl HeadlessPlatform for IosPlatform {
 
     fn open_external_url(_url: &str) -> Result<(), String> {
         // iOS sandboxes opening URLs behind `UIApplication.open(_:)`,
-        // which is reachable from Swift/Objective-C only. The future
-        // Flutter UI will route URL opens through a Dart platform
-        // channel; this Rust-side implementation exists only so the
-        // trait shape is the same on every target.
-        Err("open_external_url not supported from Rust on iOS; use a Dart platform channel".into())
+        // which is reachable from Swift/Objective-C platform glue.
+        // This Rust-side implementation exists only so the trait
+        // shape is the same on every target.
+        Err(
+            "open_external_url not supported from Rust on iOS; use platform integration glue"
+                .into(),
+        )
     }
 
     fn total_system_memory_bytes() -> Option<u64> {
@@ -50,9 +52,8 @@ impl HeadlessPlatform for IosPlatform {
 
     fn is_open_in_app_available(_app: OpenInAppKind) -> bool {
         // iOS doesn't have an "open in arbitrary app" primitive
-        // accessible to a sandboxed Rust library; the future
-        // Flutter UI will route any "open in" gesture through a
-        // Dart platform channel that talks directly to UIKit.
+        // accessible to a sandboxed Rust library; shell-level
+        // platform glue must talk directly to UIKit.
         false
     }
 
@@ -89,8 +90,8 @@ mod tests {
             result
                 .as_ref()
                 .unwrap_err()
-                .contains("Dart platform channel"),
-            "expected the error to point at the Dart-side workaround, got: {:?}",
+                .contains("platform integration glue"),
+            "expected the error to point at the platform workaround, got: {:?}",
             result.unwrap_err()
         );
     }

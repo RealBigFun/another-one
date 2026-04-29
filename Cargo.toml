@@ -6,7 +6,6 @@ members = [
     "mcp-shim",
     "core",
     "slint-poc",
-    "makepad-poc",
 ]
 
 # Vendored noq-udp with a local fix for quinn-rs/quinn#2399: Android (and some

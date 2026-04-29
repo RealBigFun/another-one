@@ -2,7 +2,7 @@
 name = "daemon-sandbox"
 version = "0.1.0"
 edition = "2021"
-description = "Daemon for mobile-companion. Library form is embedded by the desktop app; the binary form is a standalone PTY sandbox for smoke-testing."
+description = "Daemon transport sandbox. Library form is embedded by the desktop app; the binary form is a standalone PTY sandbox for smoke-testing."
 publish = false
 
 [lib]

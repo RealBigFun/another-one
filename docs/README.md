@@ -5,13 +5,11 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
 
 ## Layout
 
-- [[apps/desktop]] · [[apps/daemon-sandbox]] · [[apps/mobile]] · [[apps/mobile-core]]
+- [[apps/desktop]] · [[apps/daemon-sandbox]] · [[apps/slint-poc]]
   — one doc per workspace member: what it is, how to run, key files.
 - `architecture/` — reusable patterns that have proved out in the codebase.
   Currently: [[architecture/terminal-wrapping-principle]],
-  [[architecture/transport-abstraction]],
   [[architecture/peer-to-peer-nodes]],
-  [[architecture/frb-tokio-runtime]],
   [[architecture/git-mv-for-restructures]].
 - `design/` — the cross-platform design system extracted from the
   desktop app: [[design/README]], [[design/tokens]],
@@ -20,17 +18,13 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
   `docs/design/tokens.json`.
 - `postmortems/` — real debugging sagas with root cause and fix.
   Currently:
-  - [[postmortems/2026-04-23-iroh-android-hang]] — four stacked causes that
-    made `irohConnect` hang silently on the emulator.
   - [[postmortems/2026-04-23-android-gso-quinn-2399]] — Android QUIC sends
     silently dropped by `noq-udp`; fixed via vendored fork at
     `vendor/noq-udp/`.
-  - [[postmortems/2026-04-23-iroh-relay-path-validated]] — off-LAN
-    cellular connection proven to carry through the Iroh dev relay.
 
 ## When to add something
 
-- **App doc** — when a new workspace member (crate or Flutter project) is
+- **App doc** — when a new workspace member or app package is
   added. Keep the template consistent: "what it is / entry points / run /
   known gaps."
 - **Architecture pattern** — when a design decision is made that'll recur

@@ -5,8 +5,8 @@
 //!
 //!   - Optional WebSocket on `ws://127.0.0.1:5617/pty` — legacy,
 //!     unauthenticated, and disabled by default.
-//!   - Iroh QUIC on ALPN `anotherone/pty/1` — the main path; the
-//!     mobile app and `iroh-client` smoke test both dial it.
+//!   - Iroh QUIC on ALPN `anotherone/pty/1` — the main path; Slint
+//!     clients and `iroh-client` smoke test both dial it.
 //!
 //! The library crate (`daemon_sandbox::run_endpoint`) powers the
 //! iroh side. The desktop app links the same library and supplies
@@ -66,9 +66,9 @@ async fn main() -> anyhow::Result<()> {
     let _published_artifacts = publish_sandbox_artifacts(&handle);
 
     // WebSocket transport remains self-contained: it spawns its own
-    // PTY per connection, unrelated to the iroh path. This path only
-    // exists to smoke-test the legacy Flutter WebSocket transport, so
-    // keep it disabled by default and require an explicit opt-in.
+    // PTY per connection, unrelated to the iroh path. This is a
+    // loopback-only diagnostic path, so keep it disabled by default
+    // and require an explicit opt-in.
     let ws_task = if insecure_ws_enabled() {
         let ws_addr: SocketAddr = std::env::var("DAEMON_ADDR")
             .unwrap_or_else(|_| transport_ws::DEFAULT_ADDR.to_string())

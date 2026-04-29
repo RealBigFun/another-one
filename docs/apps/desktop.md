@@ -31,8 +31,8 @@ Build-time config worth knowing:
 ## Key dependencies
 
 - `gpui` 0.2 — Zed's UI framework.
-- `alacritty_terminal` 0.26 — VT emulator; same crate used by
-  [[mobile-core]] (so desktop and mobile agree on parsing).
+- `alacritty_terminal` 0.26 — VT emulator; same parser family used by
+  the Slint terminal POC.
 - `portable-pty` 0.9 — cross-platform PTY spawning. Also used by
   [[daemon-sandbox]].
 
@@ -40,8 +40,8 @@ Build-time config worth knowing:
 
 Per [[../architecture/peer-to-peer-nodes]], this app becomes a *client* of
 its own embedded daemon once `core` is extracted. Its terminal UI will
-consume sessions through the same abstraction any other client (mobile,
-CLI) does — just via in-process calls instead of Iroh-over-LAN.
+consume sessions through the same abstraction any other client does —
+just via in-process calls instead of Iroh-over-LAN.
 
 ## Known gaps
 

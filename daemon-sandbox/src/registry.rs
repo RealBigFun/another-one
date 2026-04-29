@@ -653,9 +653,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     // ── Custom actions + Open In + agents (another-one-ojm.7) ─────
 
     /// Snapshot of the host's "Open In" config — installed-and-enabled
-    /// apps + preferred default. Read-only (the actual `xdg-open`
-    /// spawn stays host-local on the daemon, by design — see
-    /// `connection.dart::openProjectInApp` for why). Default impl
+    /// apps + preferred default. Read-only; the actual `xdg-open`
+    /// spawn stays host-local on the daemon, by design. Default impl
     /// returns `None` for registries that don't surface Open-In
     /// (the sandbox binary has no host editor detection).
     fn open_in_state(&self) -> Option<OpenInStateWire> {

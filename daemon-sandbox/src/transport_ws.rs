@@ -4,11 +4,10 @@
 //! - Binary frames carry raw PTY bytes (both directions).
 //! - Text frames carry JSON control messages; currently just `resize`.
 //!
-//! **Authentication: none.** This transport is an emulator-and-loopback
-//! convenience: the Flutter emulator reaches the host via `10.0.2.2`,
-//! which is really the host's `127.0.0.1`. Any off-LAN device (real
-//! phone, tablet, another machine) **must** use the Iroh transport,
-//! which has pairing + TOFU-allowlist auth.
+//! **Authentication: none.** This transport is loopback-only diagnostic
+//! convenience. Any off-LAN device (real phone, tablet, another machine)
+//! **must** use the Iroh transport, which has pairing + TOFU-allowlist
+//! auth.
 //!
 //! To enforce this, [`serve`] refuses to bind a non-loopback address.
 //! Do not add a "let me turn this off" flag — that's the footgun. If

@@ -24,12 +24,11 @@ impl HeadlessPlatform for AndroidPlatform {
 
     fn open_external_url(_url: &str) -> Result<(), String> {
         // Android opens URLs via `Intent.ACTION_VIEW`, which is
-        // reachable from Java/Kotlin only. The future Flutter UI
-        // will route URL opens through a Dart platform channel;
-        // this Rust-side implementation exists only so the trait
-        // shape is the same on every target.
+        // reachable from JVM platform glue. This Rust-side
+        // implementation exists only so the trait shape is the same
+        // on every target.
         Err(
-            "open_external_url not supported from Rust on Android; use a Dart platform channel"
+            "open_external_url not supported from Rust on Android; use platform integration glue"
                 .into(),
         )
     }
@@ -57,9 +56,8 @@ impl HeadlessPlatform for AndroidPlatform {
 
     fn is_open_in_app_available(_app: OpenInAppKind) -> bool {
         // Android's open-in story is driven by `Intent.ACTION_VIEW`,
-        // which is reachable from Java/Kotlin only. The future
-        // Flutter UI will route any "open in" through a Dart
-        // platform channel; from Rust we always report unavailable.
+        // which is reachable from JVM platform glue. From this
+        // headless Rust trait we always report unavailable.
         false
     }
 
@@ -95,8 +93,8 @@ mod tests {
             result
                 .as_ref()
                 .unwrap_err()
-                .contains("Dart platform channel"),
-            "expected the error to point at the Dart-side workaround, got: {:?}",
+                .contains("platform integration glue"),
+            "expected the error to point at the platform workaround, got: {:?}",
             result.unwrap_err()
         );
     }
