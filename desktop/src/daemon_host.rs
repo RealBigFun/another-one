@@ -36,18 +36,24 @@ use daemon_sandbox::frame::{
     McpSourceDto, McpTransportKindDto, OpenInAppSettingsRowWire, OpenInAppWire,
     OpenInSettingsViewWire, OpenInStateWire, ProjectKind, ProjectSummary, ShortcutSettingsRow,
     ShortcutSettingsView, TabSummary, TaskSummary,
+    ToolbarActionOutcome as ToolbarActionOutcomeWire,
 };
+use daemon_sandbox::registry::RegistryFuture;
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
 use another_one_core::agents::{
     AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, AGENTS,
 };
-use another_one_core::git_actions::find_github_repo_url;
+use another_one_core::git_actions::{
+    execute_toolbar_git_action, find_github_repo_url, GitActionSettings,
+    ToolbarActionOutcome as CoreToolbarActionOutcome, ToolbarGitAction,
+};
 use another_one_core::mcp::catalog;
 use another_one_core::mcp::registry::McpRegistry;
 use another_one_core::mcp::{McpServer, McpSource, McpTransport};
 use another_one_core::project_store::{
     PersistedSectionState, PersistedTerminalTab, ProjectKind as CoreProjectKind, ProjectStore,
+    RepoDefaultCommitAction,
 };
 use another_one_core::section::SectionId;
 use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
@@ -511,6 +517,23 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             (changed, task)
         })
         .unwrap_or((false, None))
+    }
+
+    fn run_toolbar_git_action<'a>(
+        &'a self,
+        project_id: &'a str,
+        action_id: &'a str,
+    ) -> RegistryFuture<'a, anyhow::Result<ToolbarActionOutcomeWire>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let action_id = action_id.to_string();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                run_toolbar_git_action_blocking(inner, &project_id, &action_id)
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("toolbar git action worker failed: {err}"))?
+        })
     }
 
     fn open_in_state(&self) -> Option<OpenInStateWire> {
@@ -1010,6 +1033,89 @@ fn shortcut_action_from_id(id: &str) -> Option<ShortcutAction> {
     }
 }
 
+fn toolbar_git_action_from_id(
+    action_id: &str,
+    base_branch: Option<String>,
+) -> Option<ToolbarGitAction> {
+    match action_id {
+        "commit" => Some(ToolbarGitAction::Commit),
+        "commit-and-push" => Some(ToolbarGitAction::CommitAndPush),
+        "undo-last-commit" => Some(ToolbarGitAction::UndoLastCommit),
+        "fetch" => Some(ToolbarGitAction::Fetch),
+        "pull" => Some(ToolbarGitAction::Pull),
+        "push" => Some(ToolbarGitAction::Push { force: false }),
+        "force-push" => Some(ToolbarGitAction::Push { force: true }),
+        "create-pr" => Some(ToolbarGitAction::CreatePr {
+            draft: false,
+            base_branch,
+        }),
+        "create-draft-pr" => Some(ToolbarGitAction::CreatePr {
+            draft: true,
+            base_branch,
+        }),
+        _ => None,
+    }
+}
+
+fn toolbar_action_outcome_wire(outcome: CoreToolbarActionOutcome) -> ToolbarActionOutcomeWire {
+    ToolbarActionOutcomeWire {
+        toast_message: outcome.toast_message,
+        warning: outcome.warning,
+        refresh_git_state: outcome.refresh_git_state,
+    }
+}
+
+fn run_toolbar_git_action_blocking(
+    inner: Weak<Mutex<RegistryState>>,
+    project_id: &str,
+    action_id: &str,
+) -> anyhow::Result<ToolbarActionOutcomeWire> {
+    let (project_path, action, settings) = {
+        let arc = inner
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("desktop registry state is unavailable"))?;
+        let mut state = arc
+            .lock()
+            .map_err(|_| anyhow::anyhow!("desktop registry state is unavailable"))?;
+        state.project_store = ProjectStore::load();
+        let project = state
+            .project_store
+            .project(project_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unknown project: {project_id}"))?;
+        let base_branch = state
+            .project_store
+            .resolved_branch_settings(project_id)
+            .and_then(|settings| settings.effective_default_target_branch);
+        let action = toolbar_git_action_from_id(action_id, base_branch)
+            .ok_or_else(|| anyhow::anyhow!("unknown toolbar git action: {action_id}"))?;
+        match action {
+            ToolbarGitAction::Commit => state.project_store.set_repo_default_commit_action(
+                project.repo_id.clone(),
+                RepoDefaultCommitAction::Commit,
+            ),
+            ToolbarGitAction::CommitAndPush => state.project_store.set_repo_default_commit_action(
+                project.repo_id.clone(),
+                RepoDefaultCommitAction::CommitAndPush,
+            ),
+            _ => {}
+        }
+        let settings = GitActionSettings {
+            commit_generation_script: state
+                .project_store
+                .git_commit_generation_script()
+                .to_string(),
+            pr_generation_script: state.project_store.git_pr_generation_script().to_string(),
+        };
+        (project.path.clone(), action, settings)
+    };
+
+    let mut progress = |_message: String| {};
+    execute_toolbar_git_action(&project_path, action, settings, &mut progress)
+        .map(toolbar_action_outcome_wire)
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
 fn provider_id(provider: AgentProviderKind) -> &'static str {
     match provider {
         AgentProviderKind::ClaudeCode => "claude-code",
@@ -1403,5 +1509,25 @@ mod tests {
             .ui
             .pinned_task_ids
             .contains("missing-task"));
+    }
+
+    #[test]
+    fn toolbar_git_action_ids_match_wire_contract() {
+        assert!(matches!(
+            toolbar_git_action_from_id("push", None),
+            Some(ToolbarGitAction::Push { force: false })
+        ));
+        assert!(matches!(
+            toolbar_git_action_from_id("force-push", None),
+            Some(ToolbarGitAction::Push { force: true })
+        ));
+        assert!(matches!(
+            toolbar_git_action_from_id("create-pr", Some("main".to_string())),
+            Some(ToolbarGitAction::CreatePr {
+                draft: false,
+                base_branch: Some(_)
+            })
+        ));
+        assert!(toolbar_git_action_from_id("not-real", None).is_none());
     }
 }

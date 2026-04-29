@@ -312,6 +312,11 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
             pinned,
         });
     });
+    let toolbar_git_event_tx = client_event_tx.clone();
+    app.on_toolbar_git_action_requested(move |action_id| {
+        let _ =
+            toolbar_git_event_tx.send(SlintClientEvent::RunToolbarGitAction(action_id.to_string()));
+    });
     let add_tab_event_tx = client_event_tx.clone();
     app.on_terminal_add_tab_requested(move || {
         let _ = add_tab_event_tx.send(SlintClientEvent::AddTerminalTab);
@@ -3512,6 +3517,31 @@ async fn run_terminal_session(
                         .await
                         .context("set task pinned")?;
                     }
+                    SlintClientEvent::RunToolbarGitAction(action_id) => {
+                        let Some(project_id) = active_project_id_for_open_in(
+                            &projects,
+                            &attached_target,
+                            &right_inspector_project_id,
+                        ) else {
+                            set_toast(
+                                app_weak,
+                                "error",
+                                "No active project",
+                                "Select a daemon-backed project before running git actions.",
+                            );
+                            continue;
+                        };
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::RunToolbarGitAction {
+                                project_id,
+                                action_id,
+                            },
+                        )
+                        .await
+                        .context("run toolbar git action")?;
+                    }
                     SlintClientEvent::RightInspectorMode(mode) => {
                         right_inspector_mode = mode;
                         request_right_inspector_data(
@@ -4423,6 +4453,26 @@ async fn run_terminal_session(
                                     )
                                     .await?;
                                 }
+                                WorkerReply::ToolbarActionOutcomeAck { outcome } => {
+                                    let kind = if outcome.warning { "warning" } else { "success" };
+                                    set_toast(app_weak, kind, outcome.toast_message, "");
+                                    if outcome.refresh_git_state {
+                                        send_control(
+                                            &mut send,
+                                            &mut next_request_id,
+                                            Control::ListProjects,
+                                        )
+                                        .await?;
+                                        request_right_inspector_data(
+                                            app_weak,
+                                            &mut send,
+                                            &mut next_request_id,
+                                            &right_inspector_mode,
+                                            &right_inspector_project_id,
+                                        )
+                                        .await?;
+                                    }
+                                }
                                 WorkerReply::TaskPinned { changed, task } => {
                                     send_control(
                                         &mut send,
@@ -4563,6 +4613,7 @@ pub(crate) enum SlintClientEvent {
         task_id: String,
         pinned: bool,
     },
+    RunToolbarGitAction(String),
     RightInspectorMode(String),
     StageChangedFile {
         path: String,
@@ -5970,6 +6021,15 @@ mod tests {
         assert!(app_source.contains("task_pin_requested"));
         assert!(!app_source.contains("root.project_selected(root.sidebar_menu_target_id);"));
         assert!(!app_source.contains("Project removal requires confirmation"));
+    }
+
+    #[test]
+    fn slint_titlebar_push_routes_to_toolbar_git_action() {
+        let app_source = include_str!("../ui/app.slint");
+
+        assert!(app_source.contains("toolbar_git_action_requested"));
+        assert!(app_source.contains("root.toolbar_git_action_requested(\"push\")"));
+        assert!(!app_source.contains("Git actions are routed through the daemon"));
     }
 
     #[test]

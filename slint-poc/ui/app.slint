@@ -211,6 +211,7 @@ export component AppWindow inherits Window {
     callback tab_close_requested(string);
     callback tab_pin_toggled(string);
     callback task_pin_requested(string, bool);
+    callback toolbar_git_action_requested(string);
     callback terminal_add_tab_requested();
     callback terminal_error_copy_requested();
     callback right_inspector_mode_selected(string);
@@ -400,9 +401,7 @@ export component AppWindow inherits Window {
                 border: border_color;
                 text-color: text_primary;
                 clicked => {
-                    root.toast_kind = "info";
-                    root.toast_message = "Git actions are routed through the daemon";
-                    root.toast_detail = active_project_name;
+                    root.toolbar_git_action_requested("push");
                 }
                 menu-clicked => {
                     root.resource_popover_open = false;
