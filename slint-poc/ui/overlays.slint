@@ -8,11 +8,49 @@ import {
     MenuEntry,
 } from "components.slint";
 
+component AoResourceMetricCard inherits Rectangle {
+    in property <string> title;
+    in property <string> value;
+    in property <color> card-bg;
+    in property <color> card-border-color;
+    in property <color> text-primary;
+    in property <color> text-muted;
+
+    height: 64px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: card-border-color;
+    background: card-bg;
+
+    Text {
+        x: 10px;
+        y: 10px;
+        width: parent.width - 20px;
+        text: title;
+        color: text-muted;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 10px;
+        font-weight: 700;
+    }
+
+    Text {
+        x: 10px;
+        y: 32px;
+        width: parent.width - 20px;
+        text: value;
+        color: text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 13px;
+        font-weight: 700;
+    }
+}
+
 export component AoMenuPopover inherits Rectangle {
     in property <length> menu-x;
     in property <length> menu-y;
     in property <length> menu-width: 260px;
     in property <length> menu-height: 136px;
+    in property <bool> dismisses-on-outside-click: true;
     in property <[MenuEntry]> entries;
     in property <color> card-bg;
     in property <color> overlay-border-color;
@@ -31,7 +69,9 @@ export component AoMenuPopover inherits Rectangle {
         width: parent.width;
         height: parent.height;
         clicked => {
-            root.dismissed();
+            if root.dismisses-on-outside-click {
+                root.dismissed();
+            }
         }
     }
 
@@ -57,6 +97,11 @@ export component AoMenuPopover inherits Rectangle {
 
 export component AoResourcePopover inherits Rectangle {
     in property <string> summary;
+    in property <string> app-cpu-label: "tracked";
+    in property <string> app-memory-label: root.summary;
+    in property <string> session-count-label: "--";
+    in property <string> terminal-sessions-state: "empty";
+    in property <string> terminal-sessions-summary: "No active terminal sessions";
     in property <color> card-bg;
     in property <color> terminal-bg;
     in property <color> overlay-border-color;
@@ -68,7 +113,7 @@ export component AoResourcePopover inherits Rectangle {
     callback refresh-requested();
 
     width: 360px;
-    height: 230px;
+    height: 296px;
     border-radius: 16px;
     border-width: 1px;
     border-color: root.overlay-border-color;
@@ -99,29 +144,72 @@ export component AoResourcePopover inherits Rectangle {
         }
     }
 
-    AoStateCard {
+    Text {
         x: 16px;
-        y: 44px;
+        y: 52px;
         width: parent.width - 32px;
-        title: "App shell";
-        body: root.summary;
-        state: "populated";
+        text: "APP SHELL";
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 13px;
+        font-weight: 700;
+    }
+
+    AoResourceMetricCard {
+        x: 16px;
+        y: 78px;
+        width: (parent.width - 44px) / 3;
+        title: "APP CPU";
+        value: root.app-cpu-label;
         card-bg: root.terminal-bg;
         card-border-color: root.overlay-border-color;
         text-primary: root.text-primary;
         text-muted: root.text-muted;
-        success-color: root.success-color;
-        warning-color: root.warning-color;
-        danger-color: root.danger-color;
+    }
+
+    AoResourceMetricCard {
+        x: 22px + (parent.width - 44px) / 3;
+        y: 78px;
+        width: (parent.width - 44px) / 3;
+        title: "APP MEM";
+        value: root.app-memory-label;
+        card-bg: root.terminal-bg;
+        card-border-color: root.overlay-border-color;
+        text-primary: root.text-primary;
+        text-muted: root.text-muted;
+    }
+
+    AoResourceMetricCard {
+        x: 28px + 2 * (parent.width - 44px) / 3;
+        y: 78px;
+        width: (parent.width - 44px) / 3;
+        title: "SESSIONS";
+        value: root.session-count-label;
+        card-bg: root.terminal-bg;
+        card-border-color: root.overlay-border-color;
+        text-primary: root.text-primary;
+        text-muted: root.text-muted;
+    }
+
+    Text {
+        x: 16px;
+        y: 160px;
+        width: parent.width - 32px;
+        text: "TERMINAL SESSIONS";
+        color: root.text-primary;
+        font-family: "Lilex Nerd Font Mono";
+        font-size: 13px;
+        font-weight: 700;
     }
 
     AoStateCard {
         x: 16px;
-        y: 154px;
+        y: 186px;
         width: parent.width - 32px;
-        title: "Terminal sessions";
-        body: "Subprocess CPU/RSS is tracked separately by daemon session.";
-        state: "loading";
+        title: "Session tree";
+        body: root.terminal-sessions-summary;
+        state: root.terminal-sessions-state;
+        action-label: "Refresh";
         card-bg: root.terminal-bg;
         card-border-color: root.overlay-border-color;
         text-primary: root.text-primary;
@@ -129,6 +217,9 @@ export component AoResourcePopover inherits Rectangle {
         success-color: root.success-color;
         warning-color: root.warning-color;
         danger-color: root.danger-color;
+        action-clicked => {
+            root.refresh-requested();
+        }
     }
 }
 
@@ -146,12 +237,16 @@ export component AoNewTaskModal inherits Rectangle {
     in property <color> text-secondary;
     in property <color> text-muted;
     in property <color> danger-color;
+    in property <bool> submitting: false;
+    in property <string> validation-message: root.task-name == "" ? "Task name is required." : "";
+    in property <string> status-message: root.submitting ? "Creating task..." : root.validation-message != "" ? root.validation-message : "Enter creates the task. Escape closes the modal.";
     callback dismissed();
     callback submitted(string, string, string);
 
     background: #00000080;
     property <length> modal-width: min(440px, root.width - 32px);
-    property <length> modal-height: 260px;
+    property <length> modal-height: 286px;
+    property <bool> can-submit: root.task-name != "" && !root.submitting;
 
     TouchArea {
         width: parent.width;
@@ -237,11 +332,23 @@ export component AoNewTaskModal inherits Rectangle {
             placeholder-color: root.text-muted;
         }
 
+        Text {
+            x: 24px;
+            y: 184px;
+            width: parent.width - 48px;
+            text: root.status-message;
+            color: root.validation-message != "" ? root.danger-color : root.text-muted;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 11px;
+            font-weight: root.validation-message != "" ? 700 : 500;
+        }
+
         AoButton {
             x: parent.width - 238px;
-            y: 198px;
+            y: 224px;
             width: 102px;
             label: "Cancel";
+            disabled: root.submitting;
             active: false;
             bg: root.overlay-active;
             hover-bg: root.overlay-hover;
@@ -254,11 +361,11 @@ export component AoNewTaskModal inherits Rectangle {
 
         AoButton {
             x: parent.width - 126px;
-            y: 198px;
+            y: 224px;
             width: 102px;
-            label: "Create";
+            label: root.submitting ? "Creating" : "Create";
             active: true;
-            disabled: root.task-name == "";
+            disabled: !root.can-submit;
             bg: root.overlay-active;
             hover-bg: root.overlay-hover;
             border: root.overlay-border-color;
@@ -284,12 +391,17 @@ export component AoActionModal inherits Rectangle {
     in property <color> text-secondary;
     in property <color> text-muted;
     in property <color> danger-color;
+    in property <string> action-kind: "shell";
+    in property <bool> submitting: false;
+    in property <string> validation-message: root.action-name == "" ? "Custom actions need a name." : root.action-kind == "shell" && root.action-command == "" ? "Shell actions need a command." : "";
+    in property <string> status-message: root.validation-message != "" ? root.validation-message : "Command+Enter saves in GPUI. Escape closes; dropdowns close first.";
     callback dismissed();
     callback saved(string, string);
 
     background: #00000080;
     property <length> modal-width: min(520px, root.width - 32px);
-    property <length> modal-height: 310px;
+    property <length> modal-height: 342px;
+    property <bool> can-save: root.validation-message == "" && !root.submitting;
 
     TouchArea {
         width: parent.width;
@@ -340,7 +452,7 @@ export component AoActionModal inherits Rectangle {
         Text {
             x: 24px;
             y: 58px;
-            text: "Configure the action label and shell command. Command+Enter saves in GPUI.";
+            text: "Configure the action label and shell command.";
             color: root.text-muted;
             font-family: "Lilex Nerd Font Mono";
             font-size: 12px;
@@ -375,11 +487,23 @@ export component AoActionModal inherits Rectangle {
             placeholder-color: root.text-muted;
         }
 
+        Text {
+            x: 24px;
+            y: 196px;
+            width: parent.width - 48px;
+            text: root.status-message;
+            color: root.validation-message != "" ? root.danger-color : root.text-muted;
+            font-family: "Lilex Nerd Font Mono";
+            font-size: 11px;
+            font-weight: root.validation-message != "" ? 700 : 500;
+        }
+
         AoButton {
             x: parent.width - 238px;
-            y: 248px;
+            y: 280px;
             width: 102px;
             label: "Cancel";
+            disabled: root.submitting;
             active: false;
             bg: root.overlay-active;
             hover-bg: root.overlay-hover;
@@ -392,11 +516,11 @@ export component AoActionModal inherits Rectangle {
 
         AoButton {
             x: parent.width - 126px;
-            y: 248px;
+            y: 280px;
             width: 102px;
-            label: "Save";
+            label: root.submitting ? "Saving" : "Save";
             active: true;
-            disabled: root.action-name == "";
+            disabled: !root.can-save;
             bg: root.overlay-active;
             hover-bg: root.overlay-hover;
             border: root.overlay-border-color;
