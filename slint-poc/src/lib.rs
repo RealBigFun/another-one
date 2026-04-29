@@ -1144,6 +1144,23 @@ fn set_right_inspector_state(
     });
 }
 
+fn set_right_inspector_compare_target(
+    app_weak: &slint::Weak<AppWindow>,
+    target_branch: Option<String>,
+) {
+    let app_weak = app_weak.clone();
+    let available = target_branch
+        .as_deref()
+        .is_some_and(|target| !target.trim().is_empty());
+    let target_branch = target_branch.unwrap_or_default();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = app_weak.upgrade() {
+            app.set_right_inspector_compare_available(available);
+            app.set_right_inspector_compare_target(target_branch.into());
+        }
+    });
+}
+
 fn workspace_shell_model(
     projects: &[frame::ProjectSummary],
     active_section_id: &str,
@@ -1724,6 +1741,74 @@ fn right_inspector_rows_for_checks(
     rows
 }
 
+fn right_inspector_rows_for_compare(
+    project_id: &str,
+    view: &frame::BranchCompareWire,
+) -> Vec<RightInspectorRow> {
+    let mut rows = Vec::new();
+    let mut row_y = 0;
+    let additions = view.files.iter().map(|file| file.additions.max(0)).sum();
+    let deletions = view.files.iter().map(|file| file.deletions.max(0)).sum();
+    let current_branch = view.current_branch.as_deref().unwrap_or("current branch");
+    rows.push(right_inspector_section_row(
+        project_id,
+        "compare",
+        &format!("Comparing {current_branch} against {}", view.target_branch),
+        view.files.len(),
+        additions,
+        deletions,
+        row_y,
+    ));
+    row_y += RIGHT_INSPECTOR_SECTION_ROW_HEIGHT;
+
+    for file in &view.files {
+        rows.push(right_inspector_compare_file_row(project_id, file, row_y));
+        row_y += RIGHT_INSPECTOR_FILE_ROW_HEIGHT;
+    }
+
+    rows
+}
+
+fn right_inspector_compare_file_row(
+    project_id: &str,
+    file: &frame::BranchCompareFileWire,
+    row_y: i32,
+) -> RightInspectorRow {
+    let status = status_char(&file.status);
+    let (file_name, parent_dir) = file_name_and_parent(&file.path);
+    let parent_label = file
+        .original_path
+        .as_ref()
+        .map(|original_path| format!("Renamed from {original_path}"))
+        .unwrap_or(parent_dir);
+
+    RightInspectorRow {
+        kind: "file".into(),
+        group: "compare".into(),
+        id: format!(
+            "compare:{}:{}",
+            file.original_path.as_deref().unwrap_or(""),
+            file.path
+        )
+        .into(),
+        project_id: project_id.into(),
+        path: file.path.clone().into(),
+        original_path: file.original_path.clone().unwrap_or_default().into(),
+        row_y,
+        row_height: RIGHT_INSPECTOR_FILE_ROW_HEIGHT,
+        title: file_name.into(),
+        parent_dir: parent_label.into(),
+        status: status.to_string().into(),
+        status_color: changed_file_status_color(status),
+        additions_label: diff_label(file.additions, true).into(),
+        deletions_label: diff_label(file.deletions, false).into(),
+        file_count_label: "".into(),
+        can_stage: false,
+        can_unstage: false,
+        untracked: false,
+    }
+}
+
 fn check_bucket_priority(bucket: &impl std::fmt::Debug) -> u8 {
     match format!("{bucket:?}").as_str() {
         "Fail" => 0,
@@ -2021,6 +2106,7 @@ async fn request_right_inspector_data(
     project_id: &str,
 ) -> anyhow::Result<()> {
     if project_id.trim().is_empty() {
+        set_right_inspector_compare_target(app_weak, None);
         set_right_inspector_state(
             app_weak,
             mode,
@@ -2032,6 +2118,16 @@ async fn request_right_inspector_data(
         );
         return Ok(());
     }
+
+    send_control(
+        send,
+        next_request_id,
+        Control::ReadBranchSettings {
+            project_id: project_id.to_string(),
+        },
+    )
+    .await
+    .context("read branch settings")?;
 
     match mode {
         "changes" => {
@@ -2070,6 +2166,17 @@ async fn request_right_inspector_data(
             )
             .await
             .context("read pull request checks")?;
+        }
+        "compare" => {
+            set_right_inspector_state(
+                app_weak,
+                mode,
+                "loading",
+                "Loading compare view",
+                "Resolving the configured target branch from daemon settings.",
+                format!("Project: {project_id}"),
+                Vec::new(),
+            );
         }
         other => set_right_inspector_deferred(app_weak, other, project_id),
     }
@@ -2279,6 +2386,7 @@ async fn run_terminal_session(
                         if let Some(project) = projects.iter().find(|project| project.id == project_id) {
                             set_project_overview_placeholder(app_weak, project);
                             right_inspector_project_id = project_id;
+                            set_right_inspector_compare_target(app_weak, None);
                             request_right_inspector_data(
                                 app_weak,
                                 &mut send,
@@ -2314,6 +2422,7 @@ async fn run_terminal_session(
                             right_inspector_project_id =
                                 project_id_for_target(&projects, &attached_target)
                                     .unwrap_or_default();
+                            set_right_inspector_compare_target(app_weak, None);
                             request_right_inspector_data(
                                 app_weak,
                                 &mut send,
@@ -2346,6 +2455,7 @@ async fn run_terminal_session(
                             right_inspector_project_id =
                                 project_id_for_target(&projects, &attached_target)
                                     .unwrap_or_default();
+                            set_right_inspector_compare_target(app_weak, None);
                             request_right_inspector_data(
                                 app_weak,
                                 &mut send,
@@ -2573,6 +2683,7 @@ async fn run_terminal_session(
                                             right_inspector_project_id =
                                                 project_id_for_target(&projects, &attached_target)
                                                     .unwrap_or_default();
+                                            set_right_inspector_compare_target(app_weak, None);
                                         }
                                     } else if let Some(target) = first_attachable_target(&projects) {
                                         switch_terminal_target(
@@ -2590,6 +2701,7 @@ async fn run_terminal_session(
                                         right_inspector_project_id =
                                             project_id_for_target(&projects, &attached_target)
                                                 .unwrap_or_default();
+                                        set_right_inspector_compare_target(app_weak, None);
                                     } else {
                                         set_terminal_status(app_weak, "terminal: project tree has no attachable tabs");
                                     }
@@ -2759,6 +2871,82 @@ async fn run_terminal_session(
                                         }
                                     }
                                 }
+                                WorkerReply::BranchSettingsAck { settings } => {
+                                    let target_branch = settings
+                                        .and_then(|settings| settings.effective_default_target_branch)
+                                        .filter(|branch| !branch.trim().is_empty());
+                                    set_right_inspector_compare_target(app_weak, target_branch.clone());
+                                    if right_inspector_mode == "compare" {
+                                        if let Some(target_branch) = target_branch {
+                                            send_control(
+                                                &mut send,
+                                                &mut next_request_id,
+                                                Control::ReadBranchCompareState {
+                                                    project_id: right_inspector_project_id.clone(),
+                                                    target_branch,
+                                                },
+                                            )
+                                            .await
+                                            .context("read branch compare state")?;
+                                        } else {
+                                            set_right_inspector_state(
+                                                app_weak,
+                                                "compare",
+                                                "unavailable",
+                                                "Compare unavailable",
+                                                "No default target branch is configured for this project.",
+                                                format!("Project: {right_inspector_project_id}"),
+                                                Vec::new(),
+                                            );
+                                        }
+                                    }
+                                }
+                                WorkerReply::BranchCompareAck { view } => match view {
+                                    None => set_right_inspector_state(
+                                        app_weak,
+                                        "compare",
+                                        "unavailable",
+                                        "Compare unavailable",
+                                        "The daemon did not recognize the active project for branch compare.",
+                                        format!("Project: {right_inspector_project_id}"),
+                                        Vec::new(),
+                                    ),
+                                    Some(view) if view.files.is_empty() => {
+                                        let target_branch = view.target_branch.clone();
+                                        set_right_inspector_state(
+                                            app_weak,
+                                            "compare",
+                                            "clean",
+                                            "No branch differences",
+                                            format!("No differences from {target_branch}."),
+                                            view.current_branch
+                                                .map(|branch| format!("Branch: {branch}"))
+                                                .unwrap_or_else(|| {
+                                                    format!("Project: {right_inspector_project_id}")
+                                                }),
+                                            Vec::new(),
+                                        );
+                                    }
+                                    Some(view) => {
+                                        let rows = right_inspector_rows_for_compare(
+                                            &right_inspector_project_id,
+                                            &view,
+                                        );
+                                        set_right_inspector_state(
+                                            app_weak,
+                                            "compare",
+                                            "dirty",
+                                            "Branch compare",
+                                            format!(
+                                                "{} files differ from {}.",
+                                                view.files.len(),
+                                                view.target_branch
+                                            ),
+                                            "Read-only branch diff. Stage, unstage, and discard actions are unavailable in compare mode.",
+                                            rows,
+                                        );
+                                    }
+                                },
                                 WorkerReply::SubmitNewTaskAck { section_id } => {
                                     let target = TerminalTarget {
                                         section_id,
@@ -4239,6 +4427,7 @@ mod tests {
             "icons__file_icons__changes.svg",
             "icons__git-commit.svg",
             "icons__tool-check.svg",
+            "icons__git-split.svg",
             "icons__plus.svg",
             "icons__minus.svg",
             "icons__discard.svg",
@@ -4254,6 +4443,7 @@ mod tests {
             );
         }
         assert!(app_source.contains("#262a30"));
+        assert!(app_source.contains("right_inspector_compare_available"));
         assert!(app_source.contains("inspector_discard_confirm_open"));
         assert!(app_source.contains("Confirm Discard"));
         assert!(app_source.contains("This action cannot be undone."));
@@ -4457,6 +4647,46 @@ mod tests {
         assert_eq!(rows[2].group.as_str(), "pending");
         assert_eq!(rows[3].title.as_str(), "Unit");
         assert_eq!(rows[3].group.as_str(), "pass");
+    }
+
+    #[test]
+    fn right_inspector_rows_render_read_only_branch_compare() {
+        let view = frame::BranchCompareWire {
+            current_branch: Some("feature/slint".to_string()),
+            target_branch: "main".to_string(),
+            files: vec![
+                frame::BranchCompareFileWire {
+                    path: "slint-poc/src/lib.rs".to_string(),
+                    original_path: None,
+                    status: "M".to_string(),
+                    additions: 12,
+                    deletions: 3,
+                },
+                frame::BranchCompareFileWire {
+                    path: "desktop/src/old.rs".to_string(),
+                    original_path: Some("desktop/src/new.rs".to_string()),
+                    status: "R".to_string(),
+                    additions: 1,
+                    deletions: 1,
+                },
+            ],
+        };
+
+        let rows = right_inspector_rows_for_compare("project-a", &view);
+
+        assert_eq!(
+            rows[0].title.as_str(),
+            "Comparing feature/slint against main"
+        );
+        assert_eq!(rows[0].additions_label.as_str(), "+13");
+        assert_eq!(rows[0].deletions_label.as_str(), "-4");
+        assert_eq!(rows[1].group.as_str(), "compare");
+        assert!(!rows[1].can_stage);
+        assert_eq!(rows[2].status.as_str(), "R");
+        assert_eq!(
+            rows[2].parent_dir.as_str(),
+            "Renamed from desktop/src/new.rs"
+        );
     }
 
     #[test]

@@ -122,6 +122,8 @@ export component AppWindow inherits Window {
     in-out property <string> right_inspector_title: "Loading changes";
     in-out property <string> right_inspector_summary: "Requesting working-tree state from daemon.";
     in-out property <string> right_inspector_detail: "";
+    in-out property <bool> right_inspector_compare_available: false;
+    in-out property <string> right_inspector_compare_target: "";
     in-out property <bool> inspector_discard_confirm_open: false;
     in-out property <string> inspector_discard_path: "";
     in-out property <string> inspector_discard_original_path: "";
@@ -874,6 +876,24 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.right_inspector_mode = "checks";
                         root.right_inspector_mode_selected("checks");
+                    }
+                }
+
+                if root.right_inspector_compare_available: AoInspectorModeButton {
+                    x: 286px;
+                    y: 0px;
+                    width: 98px;
+                    label: "Compare";
+                    icon-source: @image-url("../../desktop/assets/icons/icons__git-split.svg");
+                    active: root.right_inspector_mode == "compare";
+                    hover-bg: overlay_hover;
+                    active-bg: #262a30;
+                    border: border_color;
+                    text-primary: text_primary;
+                    text-muted: text_muted;
+                    clicked => {
+                        root.right_inspector_mode = "compare";
+                        root.right_inspector_mode_selected("compare");
                     }
                 }
             }
