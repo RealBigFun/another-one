@@ -192,6 +192,13 @@ impl DesktopTerminalRegistry {
         let mut guard = arc.lock().ok()?;
         Some(f(&mut guard))
     }
+
+    fn with_fresh_project_store<R>(&self, f: impl FnOnce(&mut ProjectStore) -> R) -> Option<R> {
+        self.with_state(|state| {
+            state.project_store = ProjectStore::load();
+            f(&mut state.project_store)
+        })
+    }
 }
 
 impl DaemonRegistry for DesktopTerminalRegistry {
@@ -372,9 +379,9 @@ impl DaemonRegistry for DesktopTerminalRegistry {
 
     fn open_in_state(&self) -> Option<OpenInStateWire> {
         let available = detect_available_open_in_apps();
-        self.with_state(|state| {
-            let enabled = state.project_store.enabled_open_in_apps(&available);
-            let preferred = state.project_store.preferred_open_in_app(&available);
+        self.with_fresh_project_store(|store| {
+            let enabled = store.enabled_open_in_apps(&available);
+            let preferred = store.preferred_open_in_app(&available);
             OpenInStateWire {
                 enabled_apps: enabled.into_iter().map(open_in_app_wire).collect(),
                 preferred_app_id: preferred.map(|app| app.id().to_string()),
@@ -383,9 +390,8 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
-        self.with_state(|state| {
-            let enabled_ids = state
-                .project_store
+        self.with_fresh_project_store(|store| {
+            let enabled_ids = store
                 .enabled_agent_ids()
                 .into_iter()
                 .collect::<HashSet<_>>();
@@ -395,7 +401,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                     .filter(|agent| enabled_ids.contains(agent.id))
                     .map(agent_summary_wire)
                     .collect(),
-                default_agent_id: state.project_store.default_agent_id().map(str::to_string),
+                default_agent_id: store.default_agent_id().map(str::to_string),
             }
         })
         .unwrap_or(EnabledAgentsViewWire {
@@ -405,7 +411,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn read_agent_settings(&self) -> AgentSettingsViewWire {
-        self.with_state(|state| agent_settings_view(&state.project_store))
+        self.with_fresh_project_store(|store| agent_settings_view(store))
             .unwrap_or(AgentSettingsViewWire {
                 agents: Vec::new(),
                 default_agent_id: None,
@@ -414,25 +420,25 @@ impl DaemonRegistry for DesktopTerminalRegistry {
 
     fn set_agent_enabled(&self, agent_id: &str, enabled: bool) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_agent_enabled(agent_id, enabled))
+        self.with_fresh_project_store(|store| store.set_agent_enabled(agent_id, enabled))
             .ok_or_else(registry_unavailable)
     }
 
     fn set_default_agent(&self, agent_id: &str) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_default_agent(agent_id))
+        self.with_fresh_project_store(|store| store.set_default_agent(agent_id))
             .ok_or_else(registry_unavailable)
     }
 
     fn set_agent_launch_args(&self, agent_id: &str, args: Vec<String>) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_agent_launch_args(agent_id, args))
+        self.with_fresh_project_store(|store| store.set_agent_launch_args(agent_id, args))
             .ok_or_else(registry_unavailable)
     }
 
     fn read_open_in_settings(&self) -> Option<OpenInSettingsViewWire> {
         let available = detect_available_open_in_apps();
-        self.with_state(|state| OpenInSettingsViewWire {
+        self.with_fresh_project_store(|store| OpenInSettingsViewWire {
             available_apps: available
                 .iter()
                 .copied()
@@ -441,7 +447,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                     label: app.label().to_string(),
                     description: app.description().to_string(),
                     icon_path: app.icon_path().to_string(),
-                    enabled: state.project_store.open_in_app_enabled(app, &available),
+                    enabled: store.open_in_app_enabled(app, &available),
                 })
                 .collect(),
         })
@@ -451,10 +457,8 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let app =
             open_in_app_from_id(app_id).ok_or_else(|| format!("unknown Open-In app: {app_id}"))?;
         let available = detect_available_open_in_apps();
-        self.with_state(|state| {
-            state
-                .project_store
-                .set_open_in_app_enabled(app, enabled, &available);
+        self.with_fresh_project_store(|store| {
+            store.set_open_in_app_enabled(app, enabled, &available);
         })
         .ok_or_else(registry_unavailable)
     }
@@ -463,9 +467,8 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let app =
             open_in_app_from_id(app_id).ok_or_else(|| format!("unknown Open-In app: {app_id}"))?;
         let (path, available) = self
-            .with_state(|state| {
-                let path = state
-                    .project_store
+            .with_fresh_project_store(|store| {
+                let path = store
                     .project(project_id)
                     .map(|project| project.path.clone());
                 (path, detect_available_open_in_apps())
@@ -473,29 +476,22 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             .ok_or_else(registry_unavailable)?;
         let path = path.ok_or_else(|| format!("unknown project: {project_id}"))?;
         open_path_in_app(&path, app)?;
-        self.with_state(|state| {
-            state
-                .project_store
-                .set_preferred_open_in_app(app, &available);
+        self.with_fresh_project_store(|store| {
+            store.set_preferred_open_in_app(app, &available);
         })
         .ok_or_else(registry_unavailable)
     }
 
     fn read_git_action_scripts(&self) -> GitActionScriptsView {
-        self.with_state(|state| GitActionScriptsView {
-            commit_script: state
-                .project_store
-                .git_commit_generation_script()
-                .to_string(),
-            commit_using_default: state
-                .project_store
+        self.with_fresh_project_store(|store| GitActionScriptsView {
+            commit_script: store.git_commit_generation_script().to_string(),
+            commit_using_default: store
                 .ui
                 .git_commit_generation_script
                 .as_deref()
                 .is_none_or(|script| script.trim().is_empty()),
-            pr_script: state.project_store.git_pr_generation_script().to_string(),
-            pr_using_default: state
-                .project_store
+            pr_script: store.git_pr_generation_script().to_string(),
+            pr_using_default: store
                 .ui
                 .git_pr_generation_script
                 .as_deref()
@@ -510,38 +506,33 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn set_git_commit_script(&self, script: &str) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.set_git_commit_generation_script(script))
+        self.with_fresh_project_store(|store| store.set_git_commit_generation_script(script))
             .ok_or_else(registry_unavailable)
     }
 
     fn reset_git_commit_script(&self) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.reset_git_commit_generation_script())
+        self.with_fresh_project_store(|store| store.reset_git_commit_generation_script())
             .ok_or_else(registry_unavailable)
     }
 
     fn set_git_pr_script(&self, script: &str) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.set_git_pr_generation_script(script))
+        self.with_fresh_project_store(|store| store.set_git_pr_generation_script(script))
             .ok_or_else(registry_unavailable)
     }
 
     fn reset_git_pr_script(&self) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.reset_git_pr_generation_script())
+        self.with_fresh_project_store(|store| store.reset_git_pr_generation_script())
             .ok_or_else(registry_unavailable)
     }
 
     fn read_shortcut_settings(&self) -> ShortcutSettingsView {
-        self.with_state(|state| ShortcutSettingsView {
+        self.with_fresh_project_store(|store| ShortcutSettingsView {
             actions: ALL_SHORTCUT_ACTIONS
                 .into_iter()
                 .map(|action| ShortcutSettingsRow {
                     id: shortcut_action_id(action).to_string(),
                     label: action.label().to_string(),
-                    current_binding: state
-                        .project_store
-                        .ui
-                        .shortcuts
-                        .binding_for(action)
-                        .to_string(),
+                    current_binding: store.ui.shortcuts.binding_for(action).to_string(),
                     default_binding: action.default_binding().to_string(),
                 })
                 .collect(),
@@ -554,11 +545,11 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn set_shortcut_binding(&self, action_id: &str, binding: &str) -> Result<(), String> {
         let action = shortcut_action_from_id(action_id)
             .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
-        self.with_state(|state| {
+        self.with_fresh_project_store(|store| {
             if binding.is_empty() {
-                state.project_store.clear_shortcut_binding(action);
+                store.clear_shortcut_binding(action);
             } else {
-                state.project_store.set_shortcut_binding(action, binding);
+                store.set_shortcut_binding(action, binding);
             }
         })
         .ok_or_else(registry_unavailable)
@@ -567,7 +558,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn reset_shortcut_binding(&self, action_id: &str) -> Result<(), String> {
         let action = shortcut_action_from_id(action_id)
             .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
-        self.with_state(|state| state.project_store.reset_shortcut_binding(action))
+        self.with_fresh_project_store(|store| store.reset_shortcut_binding(action))
             .ok_or_else(registry_unavailable)
     }
 
@@ -1047,4 +1038,63 @@ fn daemon_paths() -> anyhow::Result<DaemonPaths> {
         secret_key: dir.join("secret_key"),
         paired_peers: dir.join("paired_peers"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static PROJECT_STORE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvRestore {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.as_ref() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn settings_reads_refresh_project_store_before_projecting_shortcuts() {
+        let _lock = PROJECT_STORE_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp_dir = tempfile::tempdir().expect("temp config dir");
+        let _env = EnvRestore::set("XDG_CONFIG_HOME", temp_dir.path());
+
+        let stale_store = ProjectStore::load();
+        let mut disk_store = ProjectStore::load();
+        disk_store.clear_shortcut_binding(ShortcutAction::NewTask);
+
+        let state = Arc::new(Mutex::new(RegistryState::new(stale_store)));
+        let registry = DesktopTerminalRegistry::new(Arc::downgrade(&state));
+
+        let shortcuts = registry.read_shortcut_settings();
+
+        let new_task = shortcuts
+            .actions
+            .iter()
+            .find(|row| row.id == "new-task")
+            .expect("new-task shortcut row");
+        assert_eq!(new_task.current_binding, "");
+        assert_eq!(
+            new_task.default_binding,
+            ShortcutAction::NewTask.default_binding()
+        );
+    }
 }
