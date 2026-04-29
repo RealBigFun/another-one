@@ -305,6 +305,13 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
             tab_id.to_string(),
         ));
     });
+    let task_pin_event_tx = client_event_tx.clone();
+    app.on_task_pin_requested(move |task_id, pinned| {
+        let _ = task_pin_event_tx.send(SlintClientEvent::SetTaskPinned {
+            task_id: task_id.to_string(),
+            pinned,
+        });
+    });
     let add_tab_event_tx = client_event_tx.clone();
     app.on_terminal_add_tab_requested(move || {
         let _ = add_tab_event_tx.send(SlintClientEvent::AddTerminalTab);
@@ -1228,6 +1235,38 @@ fn seed_component_state_fixture(app: &AppWindow) {
             destructive: false,
         },
     ])));
+    app.set_sidebar_project_menu_entries(slint::ModelRc::new(slint::VecModel::from(vec![
+        MenuEntry {
+            id: "sort-recent".into(),
+            label: "Recent activity".into(),
+            shortcut: "".into(),
+            selected: true,
+            disabled: false,
+            destructive: false,
+        },
+        MenuEntry {
+            id: "sort-most".into(),
+            label: "Most activity".into(),
+            shortcut: "".into(),
+            selected: false,
+            disabled: false,
+            destructive: false,
+        },
+        MenuEntry {
+            id: "sort-manual".into(),
+            label: "Manual".into(),
+            shortcut: "".into(),
+            selected: false,
+            disabled: false,
+            destructive: false,
+        },
+    ])));
+    app.set_sidebar_task_pin_menu_entries(slint::ModelRc::new(slint::VecModel::from(
+        sidebar_task_menu_entries(false),
+    )));
+    app.set_sidebar_task_unpin_menu_entries(slint::ModelRc::new(slint::VecModel::from(
+        sidebar_task_menu_entries(true),
+    )));
 }
 
 fn apply_terminal_surface(app: &AppWindow, surface: TerminalSurface) {
@@ -1391,6 +1430,43 @@ fn open_in_menu_entries(state: &frame::OpenInStateWire) -> (String, Vec<MenuEntr
         })
         .collect();
     (preferred_app_id, entries)
+}
+
+fn sidebar_task_menu_entries(pinned: bool) -> Vec<MenuEntry> {
+    vec![
+        MenuEntry {
+            id: if pinned { "unpin" } else { "pin" }.into(),
+            label: if pinned { "Unpin" } else { "Pin" }.into(),
+            shortcut: "".into(),
+            selected: pinned,
+            disabled: false,
+            destructive: false,
+        },
+        MenuEntry {
+            id: "new-task-from-branch".into(),
+            label: "New task from current branch".into(),
+            shortcut: "".into(),
+            selected: false,
+            disabled: false,
+            destructive: false,
+        },
+        MenuEntry {
+            id: "rename".into(),
+            label: "Rename".into(),
+            shortcut: "".into(),
+            selected: false,
+            disabled: false,
+            destructive: false,
+        },
+        MenuEntry {
+            id: "delete".into(),
+            label: "Delete".into(),
+            shortcut: "".into(),
+            selected: false,
+            disabled: false,
+            destructive: true,
+        },
+    ]
 }
 
 fn set_open_in_state(app_weak: &slint::Weak<AppWindow>, state: frame::OpenInStateWire) {
@@ -3427,6 +3503,15 @@ async fn run_terminal_session(
                         .await
                         .context("toggle terminal tab pin")?;
                     }
+                    SlintClientEvent::SetTaskPinned { task_id, pinned } => {
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::SetTaskPinned { task_id, pinned },
+                        )
+                        .await
+                        .context("set task pinned")?;
+                    }
                     SlintClientEvent::RightInspectorMode(mode) => {
                         right_inspector_mode = mode;
                         request_right_inspector_data(
@@ -4338,6 +4423,31 @@ async fn run_terminal_session(
                                     )
                                     .await?;
                                 }
+                                WorkerReply::TaskPinned { changed, task } => {
+                                    send_control(
+                                        &mut send,
+                                        &mut next_request_id,
+                                        Control::ListProjects,
+                                    )
+                                    .await?;
+                                    match task {
+                                        Some(task) => {
+                                            let state = if task.pinned { "Pinned" } else { "Unpinned" };
+                                            set_toast(
+                                                app_weak,
+                                                if changed { "success" } else { "info" },
+                                                format!("{state} task"),
+                                                task.name,
+                                            );
+                                        }
+                                        None => set_toast(
+                                            app_weak,
+                                            "error",
+                                            "Could not pin task",
+                                            "The daemon did not find that task.",
+                                        ),
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -4449,6 +4559,10 @@ pub(crate) enum SlintClientEvent {
     AddTerminalTab,
     CloseTerminalTab(String),
     ToggleTerminalTabPinned(String),
+    SetTaskPinned {
+        task_id: String,
+        pinned: bool,
+    },
     RightInspectorMode(String),
     StageChangedFile {
         path: String,
@@ -5843,6 +5957,59 @@ mod tests {
         assert_eq!(toast_clipboard_text("Saved", ""), "Saved");
         assert_eq!(toast_clipboard_text("", "detail"), "detail");
         assert_eq!(toast_clipboard_text("", ""), "");
+    }
+
+    #[test]
+    fn slint_sidebar_menus_follow_gpui_project_and_task_menu_roles() {
+        let app_source = include_str!("../ui/app.slint");
+
+        assert!(app_source.contains("sidebar_project_menu_entries"));
+        assert!(app_source.contains("sidebar_task_pin_menu_entries"));
+        assert!(app_source.contains("sidebar_task_unpin_menu_entries"));
+        assert!(app_source.contains("Task sorting is not wired yet"));
+        assert!(app_source.contains("task_pin_requested"));
+        assert!(!app_source.contains("root.project_selected(root.sidebar_menu_target_id);"));
+        assert!(!app_source.contains("Project removal requires confirmation"));
+    }
+
+    #[test]
+    fn sidebar_task_menu_entries_match_gpui_pin_new_rename_delete_order() {
+        let pinned_entries = sidebar_task_menu_entries(true)
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.id.to_string(),
+                    entry.label.to_string(),
+                    entry.destructive,
+                )
+            })
+            .collect::<Vec<_>>();
+        let unpinned_entries = sidebar_task_menu_entries(false)
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.id.to_string(),
+                    entry.label.to_string(),
+                    entry.destructive,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            pinned_entries,
+            vec![
+                ("unpin".to_string(), "Unpin".to_string(), false),
+                (
+                    "new-task-from-branch".to_string(),
+                    "New task from current branch".to_string(),
+                    false,
+                ),
+                ("rename".to_string(), "Rename".to_string(), false),
+                ("delete".to_string(), "Delete".to_string(), true),
+            ]
+        );
+        assert_eq!(unpinned_entries[0].0, "pin");
+        assert_eq!(unpinned_entries[0].1, "Pin");
     }
 
     #[test]

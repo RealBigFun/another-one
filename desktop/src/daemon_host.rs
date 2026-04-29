@@ -491,6 +491,28 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         })
     }
 
+    fn set_task_pinned(&self, task_id: &str, pinned: bool) -> (bool, Option<TaskSummary>) {
+        self.with_state(|state| {
+            state.project_store = ProjectStore::load();
+            if state.project_store.task(task_id).is_none() {
+                return (false, None);
+            }
+
+            let changed = state.project_store.set_task_pinned(task_id, pinned);
+            if changed {
+                state.project_store.save();
+                state.project_store = ProjectStore::load();
+            }
+            let task = state
+                .project_store
+                .task(task_id)
+                .cloned()
+                .map(|task| task_to_summary(state, task));
+            (changed, task)
+        })
+        .unwrap_or((false, None))
+    }
+
     fn open_in_state(&self) -> Option<OpenInStateWire> {
         let available = detect_available_open_in_apps();
         self.with_fresh_project_store(|store| {
@@ -1363,5 +1385,23 @@ mod tests {
         assert_eq!(tab.title, "Claude Code");
         assert_eq!(tab.provider, Some(AgentProviderKind::ClaudeCode));
         assert_eq!(tab.restore_status, TerminalRestoreStatus::NotStarted);
+    }
+
+    #[test]
+    fn set_task_pinned_rejects_unknown_task_without_persisting_pin() {
+        let state = Arc::new(Mutex::new(RegistryState::new(ProjectStore::load())));
+        let registry = DesktopTerminalRegistry::new(Arc::downgrade(&state));
+
+        let (changed, task) = registry.set_task_pinned("missing-task", true);
+
+        assert!(!changed);
+        assert!(task.is_none());
+        assert!(!state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .project_store
+            .ui
+            .pinned_task_ids
+            .contains("missing-task"));
     }
 }
