@@ -15,6 +15,8 @@ import {
     AoResourceIndicator,
     AoSectionLabel,
     AoSegmentedControl,
+    AoSidebarProjectRow,
+    AoSidebarTaskRow,
     AoSplitButton,
     AoStateCard,
     AoStatusPill,
@@ -295,15 +297,14 @@ export component AppWindow inherits Window {
                 font-size: 10px;
             }
 
-            for project[index] in root.project_rows: AoProjectRow {
-                x: 10px;
-                y: 40px + index * 72px;
-                width: parent.width - 20px;
+            for project[index] in root.project_rows: AoSidebarProjectRow {
+                x: 4px;
+                y: 40px + index * 36px;
+                width: parent.width - 8px;
                 entry: project;
                 overlay-hover: root.overlay_hover;
                 overlay-active: root.overlay_active;
                 text-primary: root.text_primary;
-                text-secondary: root.text_secondary;
                 text-muted: root.text_muted;
                 focus-ring: root.focus_ring;
                 danger-color: root.danger_color;
@@ -311,11 +312,14 @@ export component AppWindow inherits Window {
                 clicked(project-id) => {
                     root.project_selected(project-id);
                 }
+                add-clicked(project-id) => {
+                    root.modal_open = true;
+                }
             }
 
             Rectangle {
                 x: 12px;
-                y: 258px;
+                y: 52px + root.project_rows.length * 36px;
                 width: parent.width - 24px;
                 height: 1px;
                 background: divider_color;
@@ -323,8 +327,8 @@ export component AppWindow inherits Window {
 
             AoSectionLabel {
                 x: 16px;
-                y: 276px;
-                text: "TASKS";
+                y: 68px + root.project_rows.length * 36px;
+                text: "OPEN TASKS";
                 label-color: text_muted;
             }
 
@@ -333,7 +337,7 @@ export component AppWindow inherits Window {
                     root.modal_open = true;
                 }
                 x: parent.width - 112px;
-                y: 269px;
+                y: 61px + root.project_rows.length * 36px;
                 width: 96px;
                 label: "New task";
                 active: true;
@@ -343,10 +347,20 @@ export component AppWindow inherits Window {
                 text-color: text_primary;
             }
 
-            for task[index] in root.task_rows: AoTaskRow {
-                x: 10px;
-                y: 304px + index * 64px;
-                width: parent.width - 20px;
+            if root.task_rows.length == 0: Text {
+                x: 16px;
+                y: 100px + root.project_rows.length * 36px;
+                width: parent.width - 32px;
+                text: "No open tasks";
+                color: text_muted;
+                font-family: "Lilex Nerd Font Mono";
+                font-size: 11px;
+            }
+
+            for task[index] in root.task_rows: AoSidebarTaskRow {
+                x: 14px;
+                y: 98px + root.project_rows.length * 36px + index * 46px;
+                width: parent.width - 18px;
                 entry: task;
                 overlay-hover: root.overlay_hover;
                 overlay-active: root.overlay_active;

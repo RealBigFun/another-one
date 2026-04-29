@@ -102,7 +102,17 @@ Events: `clicked(string project_id)`, `menu-clicked(string project_id)`, `add-cl
 
 States: normal, hover, focused, active, expanded/collapsed disclosure, loading, error, add-hover, GitHub-hover, menu-hover.
 
-Baseline use: left sidebar project rows.
+Baseline use: component-state fixtures and expanded project cards.
+
+### `AoSidebarProjectRow`
+
+Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `focus-ring`, `danger-color`, `warning-color`.
+
+Events: `clicked(string project_id)`, `menu-clicked(string project_id)`, `add-clicked(string project_id)`, `github-clicked(string project_id)`.
+
+States: normal, hover, focused, active, expanded/collapsed disclosure, loading, error, project menu, GitHub, and add-task affordances.
+
+Baseline use: production left sidebar compact project rows from `desktop/src/left_sidebar.rs`.
 
 ### `AoTaskRow`
 
@@ -112,7 +122,17 @@ Events: `clicked(string task_id)`, `menu-clicked(string task_id)`, `rename-click
 
 States: normal, hover, focused, active, pinned, running, loading, error, editing, delete-confirm, rename-hover, delete-hover, menu-hover.
 
-Baseline use: left sidebar task/worktree rows.
+Baseline use: component-state fixtures and expanded task cards.
+
+### `AoSidebarTaskRow`
+
+Props: `entry`, `overlay-hover`, `overlay-active`, `text-primary`, `text-muted`, `text-secondary`, `success-color`, `row-border-color`, `focus-ring`, `danger-color`, `warning-color`.
+
+Events: `clicked(string task_id)`, `menu-clicked(string task_id)`, `rename-clicked(string task_id)`, `delete-clicked(string task_id)`.
+
+States: normal, hover, focused, active, pinned, running, loading, error, editing, delete-confirm, rename, and menu affordances.
+
+Baseline use: production left sidebar compact task/worktree rows from `desktop/src/left_sidebar.rs`.
 
 ### `AoTabChip`
 

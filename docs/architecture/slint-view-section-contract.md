@@ -7,7 +7,7 @@ This contract maps GPUI view sections to Slint composition boundaries. Views con
 Sections:
 
 - Titlebar: drawer toggle, active project/task labels, branch pill, Actions split button, Open In action, resource indicator, close button.
-- Left navigation: project header, project rows, task header, New Task action, task rows.
+- Left navigation: project header, compact GPUI-derived project rows, task header, New Task action, compact task/worktree rows with branch/git metadata and running/pinned states.
 - Workspace: tab strip, terminal status line, terminal grid, terminal cursor/background/link spans.
 - Right inspector: section tabs, state cards for working tree/checks/project path.
 - Footer: settings/create controls, branch/worktree labels, layout/theme/platform labels.
@@ -20,7 +20,7 @@ States:
 
 Base components:
 
-- `AoIconButton`, `AoSplitButton`, `AoStatusPill`, `AoResourceIndicator`, `AoProjectRow`, `AoTaskRow`, `AoTabChip`, `AoStateCard`, `AoToast`.
+- `AoIconButton`, `AoSplitButton`, `AoStatusPill`, `AoResourceIndicator`, `AoSidebarProjectRow`, `AoSidebarTaskRow`, `AoTabChip`, `AoStateCard`, `AoToast`.
 
 ## Terminal Workspace View
 
