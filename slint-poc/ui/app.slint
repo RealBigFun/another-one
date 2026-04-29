@@ -122,6 +122,10 @@ export component AppWindow inherits Window {
     in-out property <string> right_inspector_title: "Loading changes";
     in-out property <string> right_inspector_summary: "Requesting working-tree state from daemon.";
     in-out property <string> right_inspector_detail: "";
+    in-out property <bool> inspector_discard_confirm_open: false;
+    in-out property <string> inspector_discard_path: "";
+    in-out property <string> inspector_discard_original_path: "";
+    in-out property <bool> inspector_discard_untracked: false;
     in-out property <string> appearance_label: "dark";
     in-out property <string> platform_label: "linux / keyboard";
     in-out property <string> new_task_name: "";
@@ -978,7 +982,10 @@ export component AppWindow inherits Window {
                             root.inspector_unstage_file_requested(path, original_path, untracked);
                         }
                         discard-file-clicked(path, original_path, untracked) => {
-                            root.inspector_discard_file_requested(path, original_path, untracked);
+                            root.inspector_discard_path = path;
+                            root.inspector_discard_original_path = original_path;
+                            root.inspector_discard_untracked = untracked;
+                            root.inspector_discard_confirm_open = true;
                         }
                     }
 
@@ -996,6 +1003,126 @@ export component AppWindow inherits Window {
                         text-primary: root.text_primary;
                         text-muted: root.text_muted;
                         hover-bg: #ffffff0a;
+                    }
+                }
+            }
+
+            if root.inspector_discard_confirm_open: Rectangle {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                background: #00000080;
+
+                scrim-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    clicked => {
+                        root.inspector_discard_confirm_open = false;
+                        root.inspector_discard_path = "";
+                        root.inspector_discard_original_path = "";
+                        root.inspector_discard_untracked = false;
+                    }
+                }
+
+                Rectangle {
+                    x: 22px;
+                    y: 84px;
+                    width: parent.width - 44px;
+                    height: 232px;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: border_color;
+                    background: card_bg;
+
+                    card-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                    }
+
+                    Image {
+                        x: 18px;
+                        y: 18px;
+                        width: 18px;
+                        height: 18px;
+                        source: @image-url("../../desktop/assets/icons/icons__discard.svg");
+                        colorize: danger_color;
+                    }
+
+                    Text {
+                        x: 46px;
+                        y: 18px;
+                        width: parent.width - 64px;
+                        text: "Confirm Discard";
+                        color: text_primary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 13px;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        x: 18px;
+                        y: 58px;
+                        width: parent.width - 36px;
+                        text: root.inspector_discard_untracked ? "Delete untracked file \"" + root.inspector_discard_path + "\"?" : "Discard changes to \"" + root.inspector_discard_path + "\"?";
+                        color: text_primary;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 12px;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        x: 18px;
+                        y: 116px;
+                        width: parent.width - 36px;
+                        text: "This action cannot be undone.";
+                        color: text_muted;
+                        font-family: "Lilex Nerd Font Mono";
+                        font-size: 11px;
+                    }
+
+                    AoButton {
+                        x: parent.width - 196px;
+                        y: parent.height - 50px;
+                        width: 80px;
+                        label: "Cancel";
+                        control-label: "Cancel discard";
+                        active: true;
+                        bg: overlay_active;
+                        hover-bg: overlay_hover;
+                        border: border_color;
+                        focus-ring: focus_ring;
+                        text-color: text_secondary;
+                        clicked => {
+                            root.inspector_discard_confirm_open = false;
+                            root.inspector_discard_path = "";
+                            root.inspector_discard_original_path = "";
+                            root.inspector_discard_untracked = false;
+                        }
+                    }
+
+                    AoButton {
+                        x: parent.width - 104px;
+                        y: parent.height - 50px;
+                        width: 86px;
+                        label: "Discard";
+                        control-label: "Confirm discard";
+                        active: true;
+                        destructive: true;
+                        bg: #cf3030;
+                        hover-bg: #d95555;
+                        border: #e06b6b;
+                        focus-ring: focus_ring;
+                        text-color: #ffffff;
+                        danger-color: #ffffff;
+                        clicked => {
+                            root.inspector_discard_file_requested(root.inspector_discard_path, root.inspector_discard_original_path, root.inspector_discard_untracked);
+                            root.inspector_discard_confirm_open = false;
+                            root.inspector_discard_path = "";
+                            root.inspector_discard_original_path = "";
+                            root.inspector_discard_untracked = false;
+                        }
                     }
                 }
             }

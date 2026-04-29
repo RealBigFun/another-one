@@ -29,9 +29,9 @@ Source of truth: `desktop/src/right_sidebar.rs`, `desktop/src/app.rs`, `desktop/
 ## Behavior And State Matrix
 
 - Toolbar states: normal, hover, active, disabled, and loading action feedback.
-- Changes states: loading, clean, dirty, unknown project/unavailable, daemon error, staged group, unstaged group, per-file pending, group-level pending, destructive discard confirmation.
-- Current slice implements the real toolbar, Changes loading/clean/dirty/error/unavailable states, file/group action callbacks, and daemon snapshot refresh.
-- Deferred to later loops: commit row expansion/file-change details, full Checks rows, Compare mode, collapse persistence, pending action spinners, and discard confirmation modal parity.
+- Changes states: loading, clean, dirty, unknown project/unavailable, daemon error, staged group, unstaged group, destructive discard confirmation, per-file pending, and group-level pending.
+- Current slice implements the real toolbar, Changes loading/clean/dirty/error/unavailable states, file/group action callbacks, destructive discard confirmation, and daemon snapshot refresh.
+- Deferred to later loops: commit row expansion/file-change details, full Checks rows, Compare mode, collapse persistence, pending action spinners, and capture parity.
 - Feature-specific GPUI colors: inspector background `chrome_bg`, toolbar active background `#262a30`, hover white `0.06`, section divider white `0.06`, file row hover white `0.04`, title `hsla(0,0,0.94,1)`, metadata `hsla(0,0,0.58,1)`, added green `hsla(138,0.50,0.74,1)`, removed red `hsla(352,0.52,0.76,1)`, status add green, delete red, rename/copy blue, modified yellow.
 
 ## Slint Mapping

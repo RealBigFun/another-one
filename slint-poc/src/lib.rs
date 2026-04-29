@@ -2439,13 +2439,18 @@ async fn run_terminal_session(
                         original_path,
                         untracked,
                     } => {
-                        set_toast(
-                            app_weak,
-                            "warning",
-                            "Discard confirmation pending",
-                            "The GPUI inspector requires a destructive confirmation modal before discard is enabled in Slint.",
-                        );
-                        let _ = (path, original_path, untracked);
+                        send_control(
+                            &mut send,
+                            &mut next_request_id,
+                            Control::DiscardChangedFile {
+                                project_id: right_inspector_project_id.clone(),
+                                path,
+                                untracked,
+                                original_path,
+                            },
+                        )
+                        .await
+                        .context("discard changed file")?;
                     }
                     SlintClientEvent::StageAllChanges => {
                         send_control(
@@ -4249,6 +4254,10 @@ mod tests {
             );
         }
         assert!(app_source.contains("#262a30"));
+        assert!(app_source.contains("inspector_discard_confirm_open"));
+        assert!(app_source.contains("Confirm Discard"));
+        assert!(app_source.contains("This action cannot be undone."));
+        assert!(!app_source.contains("Discard confirmation pending"));
         assert!(components_source.contains("#ffffff14"));
         assert!(components_source.contains("#8bd99c"));
         assert!(components_source.contains("#e58b95"));
