@@ -30,13 +30,24 @@ use std::thread;
 
 use tokio::sync::broadcast;
 
-use daemon_sandbox::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
+use daemon_sandbox::frame::{
+    AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire, AgentSummaryWire,
+    EnabledAgentsViewWire, GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView,
+    McpSourceDto, McpTransportKindDto, OpenInAppSettingsRowWire, OpenInAppWire,
+    OpenInSettingsViewWire, OpenInStateWire, ProjectKind, ProjectSummary, ShortcutSettingsRow,
+    ShortcutSettingsView, TabSummary, TaskSummary,
+};
 use daemon_sandbox::{DaemonRegistry, EndpointHandle};
 
-use another_one_core::agents::AgentProviderKind;
+use another_one_core::agents::{AgentProviderKind, AGENTS};
+use another_one_core::mcp::catalog;
+use another_one_core::mcp::registry::McpRegistry;
+use another_one_core::mcp::{McpServer, McpSource, McpTransport};
 use another_one_core::project_store::{ProjectKind as CoreProjectKind, ProjectStore};
 use another_one_core::section::SectionId;
+use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
 
+use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::terminal_runtime::TerminalRuntimeKey;
 
 /// viewer_id used for the in-process desktop view. Stable across the
@@ -350,6 +361,258 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
     }
+
+    fn open_in_state(&self) -> Option<OpenInStateWire> {
+        let available = detect_available_open_in_apps();
+        self.with_state(|state| {
+            let enabled = state.project_store.enabled_open_in_apps(&available);
+            let preferred = state.project_store.preferred_open_in_app(&available);
+            OpenInStateWire {
+                enabled_apps: enabled.into_iter().map(open_in_app_wire).collect(),
+                preferred_app_id: preferred.map(|app| app.id().to_string()),
+            }
+        })
+    }
+
+    fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
+        self.with_state(|state| {
+            let enabled_ids = state
+                .project_store
+                .enabled_agent_ids()
+                .into_iter()
+                .collect::<HashSet<_>>();
+            EnabledAgentsViewWire {
+                agents: AGENTS
+                    .iter()
+                    .filter(|agent| enabled_ids.contains(agent.id))
+                    .map(agent_summary_wire)
+                    .collect(),
+                default_agent_id: state.project_store.default_agent_id().map(str::to_string),
+            }
+        })
+        .unwrap_or(EnabledAgentsViewWire {
+            agents: Vec::new(),
+            default_agent_id: None,
+        })
+    }
+
+    fn read_agent_settings(&self) -> AgentSettingsViewWire {
+        self.with_state(|state| agent_settings_view(&state.project_store))
+            .unwrap_or(AgentSettingsViewWire {
+                agents: Vec::new(),
+                default_agent_id: None,
+            })
+    }
+
+    fn set_agent_enabled(&self, agent_id: &str, enabled: bool) -> Result<bool, String> {
+        ensure_agent_id(agent_id)?;
+        self.with_state(|state| state.project_store.set_agent_enabled(agent_id, enabled))
+            .ok_or_else(registry_unavailable)
+    }
+
+    fn set_default_agent(&self, agent_id: &str) -> Result<bool, String> {
+        ensure_agent_id(agent_id)?;
+        self.with_state(|state| state.project_store.set_default_agent(agent_id))
+            .ok_or_else(registry_unavailable)
+    }
+
+    fn set_agent_launch_args(&self, agent_id: &str, args: Vec<String>) -> Result<bool, String> {
+        ensure_agent_id(agent_id)?;
+        self.with_state(|state| state.project_store.set_agent_launch_args(agent_id, args))
+            .ok_or_else(registry_unavailable)
+    }
+
+    fn read_open_in_settings(&self) -> Option<OpenInSettingsViewWire> {
+        let available = detect_available_open_in_apps();
+        self.with_state(|state| OpenInSettingsViewWire {
+            available_apps: available
+                .iter()
+                .copied()
+                .map(|app| OpenInAppSettingsRowWire {
+                    id: app.id().to_string(),
+                    label: app.label().to_string(),
+                    description: app.description().to_string(),
+                    icon_path: app.icon_path().to_string(),
+                    enabled: state.project_store.open_in_app_enabled(app, &available),
+                })
+                .collect(),
+        })
+    }
+
+    fn set_open_in_app_enabled(&self, app_id: &str, enabled: bool) -> Result<(), String> {
+        let app =
+            open_in_app_from_id(app_id).ok_or_else(|| format!("unknown Open-In app: {app_id}"))?;
+        let available = detect_available_open_in_apps();
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_open_in_app_enabled(app, enabled, &available);
+        })
+        .ok_or_else(registry_unavailable)
+    }
+
+    fn open_project_in_app(&self, project_id: &str, app_id: &str) -> Result<(), String> {
+        let app =
+            open_in_app_from_id(app_id).ok_or_else(|| format!("unknown Open-In app: {app_id}"))?;
+        let (path, available) = self
+            .with_state(|state| {
+                let path = state
+                    .project_store
+                    .project(project_id)
+                    .map(|project| project.path.clone());
+                (path, detect_available_open_in_apps())
+            })
+            .ok_or_else(registry_unavailable)?;
+        let path = path.ok_or_else(|| format!("unknown project: {project_id}"))?;
+        open_path_in_app(&path, app)?;
+        self.with_state(|state| {
+            state
+                .project_store
+                .set_preferred_open_in_app(app, &available);
+        })
+        .ok_or_else(registry_unavailable)
+    }
+
+    fn read_git_action_scripts(&self) -> GitActionScriptsView {
+        self.with_state(|state| GitActionScriptsView {
+            commit_script: state
+                .project_store
+                .git_commit_generation_script()
+                .to_string(),
+            commit_using_default: state
+                .project_store
+                .ui
+                .git_commit_generation_script
+                .as_deref()
+                .is_none_or(|script| script.trim().is_empty()),
+            pr_script: state.project_store.git_pr_generation_script().to_string(),
+            pr_using_default: state
+                .project_store
+                .ui
+                .git_pr_generation_script
+                .as_deref()
+                .is_none_or(|script| script.trim().is_empty()),
+        })
+        .unwrap_or(GitActionScriptsView {
+            commit_script: String::new(),
+            commit_using_default: true,
+            pr_script: String::new(),
+            pr_using_default: true,
+        })
+    }
+
+    fn set_git_commit_script(&self, script: &str) -> Result<bool, String> {
+        self.with_state(|state| state.project_store.set_git_commit_generation_script(script))
+            .ok_or_else(registry_unavailable)
+    }
+
+    fn reset_git_commit_script(&self) -> Result<bool, String> {
+        self.with_state(|state| state.project_store.reset_git_commit_generation_script())
+            .ok_or_else(registry_unavailable)
+    }
+
+    fn set_git_pr_script(&self, script: &str) -> Result<bool, String> {
+        self.with_state(|state| state.project_store.set_git_pr_generation_script(script))
+            .ok_or_else(registry_unavailable)
+    }
+
+    fn reset_git_pr_script(&self) -> Result<bool, String> {
+        self.with_state(|state| state.project_store.reset_git_pr_generation_script())
+            .ok_or_else(registry_unavailable)
+    }
+
+    fn read_shortcut_settings(&self) -> ShortcutSettingsView {
+        self.with_state(|state| ShortcutSettingsView {
+            actions: ALL_SHORTCUT_ACTIONS
+                .into_iter()
+                .map(|action| ShortcutSettingsRow {
+                    id: shortcut_action_id(action).to_string(),
+                    label: action.label().to_string(),
+                    current_binding: state
+                        .project_store
+                        .ui
+                        .shortcuts
+                        .binding_for(action)
+                        .to_string(),
+                    default_binding: action.default_binding().to_string(),
+                })
+                .collect(),
+        })
+        .unwrap_or(ShortcutSettingsView {
+            actions: Vec::new(),
+        })
+    }
+
+    fn set_shortcut_binding(&self, action_id: &str, binding: &str) -> Result<(), String> {
+        let action = shortcut_action_from_id(action_id)
+            .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
+        self.with_state(|state| {
+            if binding.is_empty() {
+                state.project_store.clear_shortcut_binding(action);
+            } else {
+                state.project_store.set_shortcut_binding(action, binding);
+            }
+        })
+        .ok_or_else(registry_unavailable)
+    }
+
+    fn reset_shortcut_binding(&self, action_id: &str) -> Result<(), String> {
+        let action = shortcut_action_from_id(action_id)
+            .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
+        self.with_state(|state| state.project_store.reset_shortcut_binding(action))
+            .ok_or_else(registry_unavailable)
+    }
+
+    fn read_mcp_settings(&self) -> McpSettingsView {
+        let registry = McpRegistry::load();
+        McpSettingsView {
+            catalog_entries: catalog::entries()
+                .iter()
+                .map(mcp_catalog_entry_dto)
+                .collect(),
+            registry_entries: registry.entries.iter().map(mcp_server_dto).collect(),
+            sync_error_provider_ids: Vec::new(),
+        }
+    }
+
+    fn mcp_add_from_catalog(&self, catalog_id: &str) -> Result<(), String> {
+        let Some(entry) = catalog::find(catalog_id) else {
+            return Ok(());
+        };
+        let mut registry = McpRegistry::load();
+        registry.upsert(catalog::instantiate(entry));
+        registry.save().map_err(|err| err.to_string())
+    }
+
+    fn mcp_toggle(&self, entry_id: &str, provider_id: &str, enabled: bool) -> Result<(), String> {
+        let provider = provider_from_id(provider_id)
+            .ok_or_else(|| format!("unknown provider: {provider_id}"))?;
+        let mut registry = McpRegistry::load();
+        if !registry.toggle(entry_id, provider, enabled) {
+            return Err(format!("unknown MCP entry: {entry_id}"));
+        }
+        let sync_errors = mcp_sync_errors(registry.sync_all());
+        registry.save().map_err(|err| err.to_string())?;
+        if sync_errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("MCP sync failed: {}", sync_errors.join("; ")))
+        }
+    }
+
+    fn mcp_remove(&self, entry_id: &str) -> Result<(), String> {
+        let mut registry = McpRegistry::load();
+        if !registry.remove(entry_id) {
+            return Ok(());
+        }
+        let sync_errors = mcp_sync_errors(registry.sync_all());
+        registry.save().map_err(|err| err.to_string())?;
+        if sync_errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("MCP sync failed: {}", sync_errors.join("; ")))
+        }
+    }
 }
 
 /// Parse a wire `section_id` (a `SectionId::store_key()`) + `tab_id`
@@ -473,6 +736,166 @@ fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
         AgentProviderKind::RovoDev => AgentProvider::RovoDev,
         AgentProviderKind::Forge => AgentProvider::Forge,
     }
+}
+
+fn agent_summary_wire(agent: &another_one_core::agents::AgentDef) -> AgentSummaryWire {
+    AgentSummaryWire {
+        id: agent.id.to_string(),
+        label: agent.label.to_string(),
+        icon_path: agent.icon.to_string(),
+        provider: agent.provider.map(map_agent_provider),
+    }
+}
+
+fn agent_settings_view(store: &ProjectStore) -> AgentSettingsViewWire {
+    let default_agent_id = store.default_agent_id().map(str::to_string);
+    AgentSettingsViewWire {
+        agents: AGENTS
+            .iter()
+            .map(|agent| AgentSettingsRowWire {
+                id: agent.id.to_string(),
+                label: agent.label.to_string(),
+                icon_path: agent.icon.to_string(),
+                provider: agent.provider.map(map_agent_provider),
+                enabled: store.agent_enabled(agent.id),
+                is_default: store.agent_is_default(agent.id),
+                launch_args: store.agent_launch_args(agent.id).to_vec(),
+            })
+            .collect(),
+        default_agent_id,
+    }
+}
+
+fn ensure_agent_id(agent_id: &str) -> Result<(), String> {
+    if AGENTS.iter().any(|agent| agent.id == agent_id) {
+        Ok(())
+    } else {
+        Err(format!("unknown agent: {agent_id}"))
+    }
+}
+
+fn registry_unavailable() -> String {
+    "desktop registry state is unavailable".to_string()
+}
+
+fn open_in_app_wire(app: OpenInAppKind) -> OpenInAppWire {
+    OpenInAppWire {
+        id: app.id().to_string(),
+        label: app.label().to_string(),
+        description: app.description().to_string(),
+        icon_path: app.icon_path().to_string(),
+    }
+}
+
+fn open_in_app_from_id(id: &str) -> Option<OpenInAppKind> {
+    OpenInAppKind::all().into_iter().find(|app| app.id() == id)
+}
+
+fn shortcut_action_id(action: ShortcutAction) -> &'static str {
+    match action {
+        ShortcutAction::CycleProjects => "cycle-projects",
+        ShortcutAction::NewTabInCurrentTask => "new-tab-in-current-task",
+        ShortcutAction::NewTask => "new-task",
+        ShortcutAction::CloseCurrentTab => "close-current-tab",
+        ShortcutAction::NextTab => "next-tab",
+        ShortcutAction::PreviousTab => "previous-tab",
+        ShortcutAction::NextTask => "next-task",
+        ShortcutAction::PreviousTask => "previous-task",
+    }
+}
+
+fn shortcut_action_from_id(id: &str) -> Option<ShortcutAction> {
+    match id {
+        "cycle-projects" => Some(ShortcutAction::CycleProjects),
+        "new-tab-in-current-task" => Some(ShortcutAction::NewTabInCurrentTask),
+        "new-task" => Some(ShortcutAction::NewTask),
+        "close-current-tab" => Some(ShortcutAction::CloseCurrentTab),
+        "next-tab" => Some(ShortcutAction::NextTab),
+        "previous-tab" => Some(ShortcutAction::PreviousTab),
+        "next-task" => Some(ShortcutAction::NextTask),
+        "previous-task" => Some(ShortcutAction::PreviousTask),
+        _ => None,
+    }
+}
+
+fn provider_id(provider: AgentProviderKind) -> &'static str {
+    match provider {
+        AgentProviderKind::ClaudeCode => "claude-code",
+        AgentProviderKind::CursorAgent => "cursor-agent",
+        AgentProviderKind::Codex => "codex",
+        AgentProviderKind::Pi => "pi",
+        AgentProviderKind::Gemini => "gemini",
+        AgentProviderKind::OpenCode => "opencode",
+        AgentProviderKind::Amp => "amp",
+        AgentProviderKind::RovoDev => "rovo-dev",
+        AgentProviderKind::Forge => "forge",
+    }
+}
+
+fn provider_from_id(id: &str) -> Option<AgentProviderKind> {
+    match id {
+        "claude-code" => Some(AgentProviderKind::ClaudeCode),
+        "cursor-agent" => Some(AgentProviderKind::CursorAgent),
+        "codex" => Some(AgentProviderKind::Codex),
+        "pi" => Some(AgentProviderKind::Pi),
+        "gemini" => Some(AgentProviderKind::Gemini),
+        "opencode" => Some(AgentProviderKind::OpenCode),
+        "amp" => Some(AgentProviderKind::Amp),
+        "rovo-dev" => Some(AgentProviderKind::RovoDev),
+        "forge" => Some(AgentProviderKind::Forge),
+        _ => None,
+    }
+}
+
+fn mcp_source_dto(source: McpSource) -> McpSourceDto {
+    match source {
+        McpSource::Catalog => McpSourceDto::Catalog,
+        McpSource::Custom => McpSourceDto::Custom,
+        McpSource::BuiltInDaemon => McpSourceDto::BuiltInDaemon,
+    }
+}
+
+fn mcp_transport_kind_dto(transport: &McpTransport) -> McpTransportKindDto {
+    match transport {
+        McpTransport::Stdio { .. } => McpTransportKindDto::Stdio,
+        McpTransport::Http { .. } => McpTransportKindDto::Http,
+    }
+}
+
+fn mcp_server_dto(server: &McpServer) -> McpServerDto {
+    let mut enabled_for = server
+        .enabled_for
+        .iter()
+        .map(|provider| provider_id(*provider).to_string())
+        .collect::<Vec<_>>();
+    enabled_for.sort();
+    McpServerDto {
+        id: server.id.clone(),
+        label: server.label.clone(),
+        source: mcp_source_dto(server.source),
+        transport_kind: mcp_transport_kind_dto(&server.transport),
+        enabled_for,
+    }
+}
+
+fn mcp_catalog_entry_dto(entry: &catalog::CatalogEntry) -> McpCatalogEntryDto {
+    McpCatalogEntryDto {
+        id: entry.id.to_string(),
+        label: entry.label.to_string(),
+        description: entry.description.to_string(),
+        docs_url: entry.docs_url.to_string(),
+    }
+}
+
+fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Vec<String> {
+    report
+        .into_iter()
+        .filter_map(|(provider, result)| {
+            result
+                .err()
+                .map(|err| format!("{}: {err:#}", provider_id(provider)))
+        })
+        .collect()
 }
 
 /// Spawn the embedded daemon on a dedicated OS thread with its own
