@@ -26,39 +26,51 @@ and the parallel fan-out reads it as the source of truth.
 
 ### Extractions landed so far
 
-| Module | Lines | New tests | Notes |
+| # | Module | Lines | Highlights |
 |---|---|---|---|
-| `slint-poc/src/daemon_ticket.rs` | ~170 | 1 source-contract pin (GPUI writer paths) + 2 existing | Self-contained; no AppWindow coupling. `wait_for_ticket` stays in lib.rs because it sets terminal status. |
-| `slint-poc/src/toast.rs` | ~95 | 1 source-contract pin (`show_*_toast` symbols) + 1 clipboard behavior | Mirrors the GPUI toast helper surface. Removes the duplicate `toast_clipboard_text_joins_message_and_detail` test left in lib.rs. |
-| `slint-poc/src/titlebar.rs` | ~180 | 1 source-contract pin (titlebar overlay symbols) + 2 existing | Bounded utilities only: build chip, debug banner, Open In menu projection. Custom-actions and git-toolbar dispatchers still in lib.rs. |
-| `slint-poc/src/right_inspector.rs` | ~600 | 1 source-contract pin (`changed_files_panel` + daemon wire types) + 2 helper tests | Pure data shapers for Changes/Commits/Checks/Compare modes plus the four row-height constants and `InspectorCommitFileChangesState` enum. AppWindow mutators (`set_right_inspector_*`) stay in lib.rs. |
+| 1 | `slint-poc/src/daemon_ticket.rs` | ~170 | DaemonTicket discovery + parsing + pre-auth. Source-contract pin to GPUI writer paths. |
+| 2 | `slint-poc/src/toast.rs` | ~95 | set_toast / clear_toast / toast_clipboard_text. Pin to GPUI show_*_toast. |
+| 3 | `slint-poc/src/titlebar.rs` | ~180 | build_chip_label, debug_banner_text, Open In menu projection. Pin to titlebar overlay symbols. |
+| 4 | `slint-poc/src/right_inspector.rs` | ~820 | All Changes/Commits/Checks/Compare row builders + AppWindow mutators + InspectorCommitFileChangesState + four row-height constants. |
+| 5 | `slint-poc/src/visual_fixtures.rs` | ~790 | seed_shell_model + seed_visual_state_fixture + seed_component_state_fixture + per-mode right-inspector fixtures. |
+| 6 | `slint-poc/src/util.rs` | ~145 | Cross-cutting frame formatters (compact_path, initials, project_accent_color, project_kind_label, provider_label, restore_status_label, task_metadata, worktree_name) + PROJECT_ACCENTS palette. |
+| 7 | `slint-poc/src/terminal_target.rs` | ~150 | TerminalTarget + 9 resolution helpers shared by sidebar and terminal. |
+| 8 | `slint-poc/src/resource.rs` | ~145 | set_resource_usage AppWindow mutator + resource_sessions_summary + resource_usage_rows. |
+| 9 | `slint-poc/src/workspace_shell.rs` | ~500 | WorkspaceShellModel + ProjectGithubUrls + set_workspace_tree + workspace_shell_model + sidebar_tree_rows + sidebar_task_menu_entries + TerminalPanelModel + active_tab_for_task. |
+| 10 | `slint-poc/src/terminal_input.rs` | ~335 | Slint key/pointer event types + pure terminal protocol encoders. |
+| 11 | `slint-poc/src/terminal_view.rs` | ~115 | TerminalSurface POD + AppWindow mutators (set_terminal_status, set_project_overview_placeholder, set_terminal_surface, set_terminal_selection, apply_terminal_surface). |
+| 12 | `slint-poc/src/terminal_colors.rs` | ~150 | Pure ANSI/indexed/named color resolution. |
+| 13 | `slint-poc/src/terminal_runs.rs` | ~250 | ResolvedCellStyle + run accumulator + cell helpers + cursor/background/link span coalescers. |
 
-`slint-poc/src/lib.rs` shrunk from 7,554 → 6,723 lines (~11% reduction).
-Test count rose from 111 → 117 (six new source-contract / behavior tests
-added across the extractions).
+`slint-poc/src/lib.rs` shrunk from 7,554 → ~4,290 lines (~43% reduction).
+Test count rose from 111 → 124 (13 new source-contract / behavior tests
+added across the extractions). All extractions verified with `cargo fmt
+-p slint-poc && cargo test -p slint-poc --lib`.
 
 ### Extractions still pending
 
-In rough order of priority and isolability:
+The biggest remaining chunk is the terminal renderer itself —
+`spawn_terminal_worker` (~1,900 lines) plus `AlacrittySnapshot` impl
+(~700 lines) plus their `RuntimeEventProxy` / `TerminalSize` /
+`window_size_from_grid` support and `seed_terminal_fidelity_fixture`.
+These are tightly coupled; they should extract together as
+`slint-poc/src/terminal_renderer.rs` in a single focused slice.
 
-1. `visual_fixtures.rs` — `seed_visual_state_fixture` and friends (~500
-   lines). Bounded; needs a few helpers in lib.rs marked `pub(crate)`.
-2. `right_inspector` AppWindow mutators (~200 lines): the
-   `set_right_inspector_*` family that currently lives near
-   `right_inspector_rows_for_changed_files_with_collapsed`'s former home.
-3. `terminal_workspace.rs` skeleton — tab strip data shaping, terminal
-   panel model, restore status helpers.
-4. `left_sidebar.rs` skeleton — sidebar tree row builders, project/task
-   menus, footer affordances.
-5. `terminal_renderer.rs` — `spawn_terminal_worker`, `AlacrittySnapshot`,
-   and the cell/color resolution helpers (~2,500 lines, the largest
-   remaining chunk).
-6. `daemon.rs` — outbound `Control` senders + inbound `WorkerReply`
-   dispatcher (~600 lines).
-7. `app.rs` — bootstrap residual after everything above moves.
+Smaller follow-ups:
 
-UI / Slint and `desktop/src/daemon_host.rs` splits (A.3, A.4) remain
-unstarted. They land after the lib.rs split is fully done.
+1. `terminal_render_probe.rs` — the public `TerminalRenderProbeReport`
+   struct + `run_terminal_render_probe` plus `percentile`,
+   `mib_per_second`, `current_rss_kib` helpers. Crate-root `pub use`
+   re-export must stay because `scripts/slint/terminal_render_probe.rs`
+   binary consumes them.
+2. `daemon.rs` — outbound `Control` senders (`switch_terminal_target`
+   etc.) + the inbound `WorkerReply` dispatcher.
+3. `app.rs` — `run_app` bootstrap + `android_main` + remaining callback
+   wiring.
+
+UI / Slint (`app.slint` split) and `desktop/src/daemon_host.rs` splits
+(A.3, A.4) remain unstarted. They land after the lib.rs split is fully
+done.
 
 ## Surface ownership
 
