@@ -85,6 +85,16 @@ pub(crate) fn cycle_and_persist_theme(app: &AppWindow) -> Result<AppliedAppearan
     Ok(apply_theme_preference(app, preference))
 }
 
+pub(crate) fn select_and_persist_theme(
+    app: &AppWindow,
+    preference: &str,
+) -> Result<AppliedAppearance, String> {
+    let preference = AppearancePreference::parse(preference)
+        .ok_or_else(|| format!("unknown theme preference {preference}"))?;
+    persist_appearance_preference(preference)?;
+    Ok(apply_theme_preference(app, preference))
+}
+
 fn apply_theme_preference(app: &AppWindow, preference: AppearancePreference) -> AppliedAppearance {
     let resolved = resolve_appearance::<HostAppearanceProfile>(preference);
     let theme = SlintTheme::for_appearance(resolved);
@@ -355,6 +365,12 @@ mod tests {
             AppearancePreference::parse(" system\n"),
             Some(AppearancePreference::System)
         );
+    }
+
+    #[test]
+    fn appearance_preference_rejects_unknown_user_modes() {
+        assert_eq!(AppearancePreference::parse("auto"), None);
+        assert_eq!(AppearancePreference::parse(""), None);
     }
 
     #[test]

@@ -367,7 +367,7 @@ export component SettingsView inherits Rectangle {
                         font-size: 10px;
                     }
 
-                    AoStatusPill {
+                    if row.id != "appearance": AoStatusPill {
                         x: parent.width - (row.secondary-action-label == "" ? 248px : 356px);
                         y: 27px;
                         width: 102px;
@@ -375,6 +375,57 @@ export component SettingsView inherits Rectangle {
                         bg: row.enabled ? root.overlay-active : root.card-bg;
                         border: root.settings-border-color;
                         text-color: row.enabled ? root.text-primary : root.text-secondary;
+                    }
+
+                    if row.id == "appearance": AoButton {
+                        x: parent.width - 344px;
+                        y: 28px;
+                        width: 100px;
+                        label: "Light";
+                        control-label: "Set appearance to Light";
+                        active: row.status == "Light";
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("appearance", "light");
+                        }
+                    }
+
+                    if row.id == "appearance": AoButton {
+                        x: parent.width - 236px;
+                        y: 28px;
+                        width: 100px;
+                        label: "Dark";
+                        control-label: "Set appearance to Dark";
+                        active: row.status == "Dark";
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("appearance", "dark");
+                        }
+                    }
+
+                    if row.id == "appearance": AoButton {
+                        x: parent.width - 128px;
+                        y: 28px;
+                        width: 108px;
+                        label: "System";
+                        control-label: "Set appearance to System";
+                        active: row.status == "System";
+                        bg: root.overlay-active;
+                        hover-bg: root.overlay-hover;
+                        border: root.settings-border-color;
+                        focus-ring: root.focus-ring;
+                        text-color: root.text-primary;
+                        clicked => {
+                            root.action-requested("appearance", "system");
+                        }
                     }
 
                     if row.toggle-row: AoCheckbox {
@@ -395,7 +446,7 @@ export component SettingsView inherits Rectangle {
                         }
                     }
 
-                    if !row.toggle-row && row.action-label != "": AoButton {
+                    if row.id != "appearance" && !row.toggle-row && row.action-label != "": AoButton {
                         x: parent.width - (row.secondary-action-label == "" ? 128px : 236px);
                         y: 28px;
                         width: 108px;
@@ -413,7 +464,7 @@ export component SettingsView inherits Rectangle {
                         }
                     }
 
-                    if !row.toggle-row && row.secondary-action-label != "": AoButton {
+                    if row.id != "appearance" && !row.toggle-row && row.secondary-action-label != "": AoButton {
                         x: parent.width - 128px;
                         y: 28px;
                         width: 108px;

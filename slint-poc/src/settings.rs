@@ -5,7 +5,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use tokio::sync::mpsc;
 
 use crate::{
-    AppWindow, SettingsAgentRow, SettingsGeneralRow, SettingsGitActionPanel, SettingsMcpRow,
+    style, AppWindow, SettingsAgentRow, SettingsGeneralRow, SettingsGitActionPanel, SettingsMcpRow,
     SettingsNavEntry, SettingsOpenInRow, SettingsShortcutRow, SlintClientEvent,
 };
 
@@ -63,7 +63,9 @@ const DEFAULT_PR_SCRIPT: &str = concat!(
 
 pub(crate) fn seed_settings_model(app: &AppWindow) {
     app.set_settings_nav_entries(model(settings_nav_entries()));
-    SettingsState::baseline().apply_to(app);
+    let mut state = SettingsState::baseline();
+    state.sync_appearance_from_app(app);
+    state.apply_to(app);
 }
 
 pub(crate) fn wire_settings_callbacks(
@@ -97,8 +99,33 @@ pub(crate) fn wire_settings_callbacks(
             let (request, feedback) = {
                 let mut state = action_state.borrow_mut();
                 state.sync_from(&app);
-                let request = state.request_for_action(scope.as_str(), id.as_str());
-                let feedback = state.handle_action(scope.as_str(), id.as_str());
+                let (request, feedback) = if scope.as_str() == "appearance" {
+                    let feedback = match style::select_and_persist_theme(&app, id.as_str()) {
+                        Ok(applied) => {
+                            state.sync_appearance_labels(
+                                applied.preference_label(),
+                                applied.resolved_label(),
+                            );
+                            SettingsFeedback::success(format!(
+                                "Theme preference saved: {} resolves to {}.",
+                                applied.preference_label(),
+                                applied.resolved_label()
+                            ))
+                        }
+                        Err(error) => {
+                            state.sync_appearance_from_app(&app);
+                            SettingsFeedback::error(format!(
+                                "Could not save theme preference: {error}"
+                            ))
+                        }
+                    };
+                    (None, feedback)
+                } else {
+                    (
+                        state.request_for_action(scope.as_str(), id.as_str()),
+                        state.handle_action(scope.as_str(), id.as_str()),
+                    )
+                };
                 state.apply_to(&app);
                 (request, feedback)
             };
@@ -181,6 +208,31 @@ impl SettingsState {
         self.git_action_panels = collect_model(app.get_settings_git_action_panels());
         self.shortcut_rows = collect_model(app.get_settings_shortcut_rows());
         self.mcp_rows = collect_model(app.get_settings_mcp_rows());
+        self.sync_appearance_from_app(app);
+    }
+
+    fn sync_appearance_from_app(&mut self, app: &AppWindow) {
+        self.sync_appearance_labels(
+            app.get_appearance_preference_label().as_str(),
+            app.get_appearance_label().as_str(),
+        );
+    }
+
+    fn sync_appearance_labels(&mut self, preference: &str, resolved: &str) {
+        let Some(row) = self
+            .general_rows
+            .iter_mut()
+            .find(|row| row.id == "appearance")
+        else {
+            return;
+        };
+
+        row.status = shared(display_appearance_label(preference));
+        row.status_detail = shared(format!(
+            "Currently resolves to {}; components consume semantic color roles.",
+            display_appearance_label(resolved)
+        ));
+        row.enabled = resolved.eq_ignore_ascii_case("light");
     }
 
     fn select_section(&mut self, section: &str) -> Option<SettingsFeedback> {
@@ -819,6 +871,19 @@ fn mcp_source_label(source: frame::McpSourceDto) -> &'static str {
 fn settings_general_rows() -> Vec<SettingsGeneralRow> {
     vec![
         SettingsGeneralRow {
+            id: shared("appearance"),
+            title: shared("Appearance"),
+            detail: shared("Choose Light, Dark, or follow the host system preference."),
+            status: shared("System"),
+            status_detail: shared("Currently resolves to Dark; components consume semantic color roles."),
+            enabled: false,
+            action_label: shared(""),
+            action_enabled: true,
+            secondary_action_label: shared(""),
+            secondary_action_enabled: false,
+            toggle_row: false,
+        },
+        SettingsGeneralRow {
             id: shared("sidebar-git-metadata"),
             title: shared("Sidebar git metadata"),
             detail: shared("Show relative commit time and +/- line counts in task rows."),
@@ -1062,6 +1127,15 @@ fn mcp_row(
     }
 }
 
+fn display_appearance_label(label: &str) -> &'static str {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "light" => "Light",
+        "dark" => "Dark",
+        "system" => "System",
+        _ => "Unknown",
+    }
+}
+
 fn show_settings_toast(app: &AppWindow, kind: &str, message: impl Into<SharedString>) {
     app.set_toast_kind(kind.into());
     app.set_toast_message(message.into());
@@ -1197,6 +1271,37 @@ mod tests {
         state.select_section("agents");
 
         assert!(state.shortcut_rows.iter().all(|row| !row.capturing));
+    }
+
+    #[test]
+    fn general_settings_expose_explicit_appearance_selection() {
+        let row = settings_general_rows()
+            .into_iter()
+            .find(|row| row.id == "appearance")
+            .expect("appearance settings row");
+
+        assert_eq!(row.title, "Appearance");
+        assert_eq!(row.status, "System");
+        assert!(!row.toggle_row);
+        assert!(SLINT_SETTINGS.contains("root.action-requested(\"appearance\", \"light\")"));
+        assert!(SLINT_SETTINGS.contains("root.action-requested(\"appearance\", \"dark\")"));
+        assert!(SLINT_SETTINGS.contains("root.action-requested(\"appearance\", \"system\")"));
+    }
+
+    #[test]
+    fn appearance_row_tracks_preference_and_resolved_mode() {
+        let mut state = SettingsState::baseline();
+
+        state.sync_appearance_labels("system", "light");
+
+        let row = state
+            .general_rows
+            .iter()
+            .find(|row| row.id == "appearance")
+            .expect("appearance settings row");
+        assert_eq!(row.status, "System");
+        assert!(row.status_detail.as_str().contains("Light"));
+        assert!(row.enabled);
     }
 
     #[test]
