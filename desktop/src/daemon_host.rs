@@ -201,8 +201,16 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn list_projects(&self) -> Vec<ProjectSummary> {
-        self.with_state(|state| project_summaries(state))
-            .unwrap_or_default()
+        self.with_state(|state| {
+            // Project/task data lives in the same store as main
+            // (`.../another-one/projects.json`). Refresh here so
+            // daemon clients never read a stale GPUI snapshot after
+            // project/task mutations; live PTY running state is still
+            // layered from this registry's broadcast maps below.
+            state.project_store = ProjectStore::load();
+            project_summaries(state)
+        })
+        .unwrap_or_default()
     }
 
     fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>> {
