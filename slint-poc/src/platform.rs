@@ -114,111 +114,102 @@ fn choose_project_folder_for_target(target_os: &str) -> Result<Option<PathBuf>, 
 
 #[cfg(target_os = "linux")]
 fn choose_project_folder_with_xdg_portal() -> Result<Option<PathBuf>, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .map_err(|error| format!("failed to start platform folder picker runtime: {error}"))?;
+    use std::collections::HashMap;
+    use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
-    runtime.block_on(async {
-        use futures_util::StreamExt;
-        use std::collections::HashMap;
-        use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+    let connection = zbus::blocking::Connection::session()
+        .map_err(|error| format!("platform folder picker session bus failed: {error}"))?;
+    let unique_name = connection
+        .unique_name()
+        .ok_or_else(|| "platform folder picker session bus has no unique name".to_string())?;
+    let handle_token = xdg_portal_handle_token();
+    let sender = unique_name
+        .as_str()
+        .trim_start_matches(':')
+        .replace('.', "_");
+    let request_path = format!("/org/freedesktop/portal/desktop/request/{sender}/{handle_token}");
 
-        let connection = zbus::Connection::session()
-            .await
-            .map_err(|error| format!("platform folder picker session bus failed: {error}"))?;
-        let unique_name = connection
-            .unique_name()
-            .ok_or_else(|| "platform folder picker session bus has no unique name".to_string())?;
-        let handle_token = xdg_portal_handle_token();
-        let sender = unique_name
-            .as_str()
-            .trim_start_matches(':')
-            .replace('.', "_");
-        let request_path =
-            format!("/org/freedesktop/portal/desktop/request/{sender}/{handle_token}");
+    let request_proxy = xdg_portal_request_proxy(&connection, &request_path)?;
+    let mut response_stream = request_proxy
+        .receive_signal("Response")
+        .map_err(|error| format!("platform folder picker response listener failed: {error}"))?;
+    let file_chooser = xdg_portal_file_chooser_proxy(&connection)?;
 
-        let mut response_stream =
-            xdg_portal_request_response_stream(&connection, &request_path).await?;
-        let file_chooser = xdg_portal_file_chooser_proxy(&connection).await?;
+    let mut options: HashMap<&str, Value<'_>> = HashMap::new();
+    options.insert("handle_token", Value::from(handle_token.as_str()));
+    options.insert("directory", Value::from(true));
+    options.insert("modal", Value::from(true));
+    options.insert("multiple", Value::from(false));
+    options.insert("accept_label", Value::from("Add"));
 
-        let mut options: HashMap<&str, Value<'_>> = HashMap::new();
-        options.insert("handle_token", Value::from(handle_token.as_str()));
-        options.insert("directory", Value::from(true));
-        options.insert("modal", Value::from(true));
-        options.insert("multiple", Value::from(false));
-        options.insert("accept_label", Value::from("Add"));
+    let returned_path: OwnedObjectPath = file_chooser
+        .call("OpenFile", &("", "Add Project Folder", options))
+        .map_err(|error| format!("platform folder picker failed: {error}"))?;
 
-        let returned_path: OwnedObjectPath = file_chooser
-            .call("OpenFile", &("", "Add Project Folder", options))
-            .await
-            .map_err(|error| format!("platform folder picker failed: {error}"))?;
-        if returned_path.as_str() != request_path {
-            response_stream =
-                xdg_portal_request_response_stream(&connection, returned_path.as_str()).await?;
-        }
+    let returned_request_proxy;
+    if returned_path.as_str() != request_path {
+        returned_request_proxy = Some(xdg_portal_request_proxy(
+            &connection,
+            returned_path.as_str(),
+        )?);
+        response_stream = returned_request_proxy
+            .as_ref()
+            .expect("returned request proxy was just set")
+            .receive_signal("Response")
+            .map_err(|error| format!("platform folder picker response listener failed: {error}"))?;
+    }
 
-        let response = response_stream
-            .next()
-            .await
-            .ok_or_else(|| "platform folder picker closed without a response".to_string())?;
-        let (code, mut results): (u32, HashMap<String, OwnedValue>) = response
-            .body()
-            .deserialize()
-            .map_err(|error| format!("platform folder picker response was invalid: {error}"))?;
+    let response = response_stream
+        .next()
+        .ok_or_else(|| "platform folder picker closed without a response".to_string())?;
+    let (code, mut results): (u32, HashMap<String, OwnedValue>) = response
+        .body()
+        .deserialize()
+        .map_err(|error| format!("platform folder picker response was invalid: {error}"))?;
 
-        match code {
-            0 => {}
-            1 => return Ok(None),
-            _ => return Err("platform folder picker failed".to_string()),
-        }
+    match code {
+        0 => {}
+        1 => return Ok(None),
+        _ => return Err("platform folder picker failed".to_string()),
+    }
 
-        let Some(uris_value) = results.remove("uris") else {
-            return Ok(None);
-        };
-        let uris = Vec::<String>::try_from(uris_value).map_err(|error| {
-            format!("platform folder picker returned invalid folder URI list: {error}")
-        })?;
-        let Some(uri) = uris.first() else {
-            return Ok(None);
-        };
+    let Some(uris_value) = results.remove("uris") else {
+        return Ok(None);
+    };
+    let uris = Vec::<String>::try_from(uris_value).map_err(|error| {
+        format!("platform folder picker returned invalid folder URI list: {error}")
+    })?;
+    let Some(uri) = uris.first() else {
+        return Ok(None);
+    };
 
-        file_uri_to_path(uri)
-    })
+    file_uri_to_path(uri)
 }
 
 #[cfg(target_os = "linux")]
-async fn xdg_portal_request_response_stream(
-    connection: &zbus::Connection,
-    request_path: &str,
-) -> Result<zbus::proxy::SignalStream<'static>, String> {
-    let proxy = zbus::Proxy::new(
+fn xdg_portal_request_proxy<'a>(
+    connection: &'a zbus::blocking::Connection,
+    request_path: &'a str,
+) -> Result<zbus::blocking::Proxy<'a>, String> {
+    zbus::blocking::Proxy::new(
         connection,
         "org.freedesktop.portal.Desktop",
         request_path,
         "org.freedesktop.portal.Request",
     )
-    .await
-    .map_err(|error| format!("platform folder picker request failed: {error}"))?;
-
-    proxy
-        .receive_signal("Response")
-        .await
-        .map_err(|error| format!("platform folder picker response listener failed: {error}"))
+    .map_err(|error| format!("platform folder picker request failed: {error}"))
 }
 
 #[cfg(target_os = "linux")]
-async fn xdg_portal_file_chooser_proxy(
-    connection: &zbus::Connection,
-) -> Result<zbus::Proxy<'_>, String> {
-    zbus::Proxy::new(
+fn xdg_portal_file_chooser_proxy(
+    connection: &zbus::blocking::Connection,
+) -> Result<zbus::blocking::Proxy<'_>, String> {
+    zbus::blocking::Proxy::new(
         connection,
         "org.freedesktop.portal.Desktop",
         "/org/freedesktop/portal/desktop",
         "org.freedesktop.portal.FileChooser",
     )
-    .await
     .map_err(|error| format!("platform folder picker is unavailable: {error}"))
 }
 
@@ -366,28 +357,13 @@ fn effective_folder_picker_available_for_target(target_os: &str) -> bool {
 
 #[cfg(target_os = "linux")]
 fn linux_file_chooser_portal_available() -> bool {
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-    else {
+    let Ok(connection) = zbus::blocking::Connection::session() else {
         return false;
     };
-
-    runtime
-        .block_on(async {
-            let connection = zbus::Connection::session().await?;
-            let proxy = zbus::Proxy::new(
-                &connection,
-                "org.freedesktop.portal.Desktop",
-                "/org/freedesktop/portal/desktop",
-                "org.freedesktop.portal.FileChooser",
-            )
-            .await?;
-            let _: u32 = proxy.get_property("version").await?;
-            Ok::<bool, zbus::Error>(true)
-        })
-        .unwrap_or(false)
+    let Ok(proxy) = xdg_portal_file_chooser_proxy(&connection) else {
+        return false;
+    };
+    proxy.get_property::<u32>("version").is_ok()
 }
 
 #[cfg(not(target_os = "linux"))]
