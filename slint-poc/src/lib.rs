@@ -29,6 +29,7 @@ mod settings;
 mod style;
 mod terminal_input;
 mod terminal_target;
+mod terminal_view;
 mod titlebar;
 mod toast;
 mod util;
@@ -60,11 +61,14 @@ use terminal_target::{
     project_id_for_target, target_for_tab_id, target_for_task_id, target_still_exists,
     TerminalTarget,
 };
+use terminal_view::{
+    apply_terminal_surface, set_project_overview_placeholder, set_terminal_selection,
+    set_terminal_status, set_terminal_surface, TerminalSurface,
+};
 use titlebar::{build_chip_label, debug_banner_text, set_open_in_state, set_open_in_unavailable};
 use toast::{clear_toast, set_toast, toast_clipboard_text};
 #[cfg(test)]
 use util::{compact_path, initials, provider_label, restore_status_label, task_metadata};
-use util::{project_kind_label, worktree_name};
 use visual_fixtures::{seed_component_state_fixture, seed_shell_model, seed_visual_state_fixture};
 #[cfg(test)]
 use workspace_shell::{
@@ -566,21 +570,6 @@ fn seed_terminal_fidelity_fixture(app: &AppWindow) {
         "terminal fidelity fixture: ANSI/indexed/truecolor, graphemes, wide cells, OSC8 link, selection, cursor"
             .into(),
     );
-}
-
-fn apply_terminal_surface(app: &AppWindow, surface: TerminalSurface) {
-    app.set_terminal_background_spans(slint::ModelRc::new(slint::VecModel::from(
-        surface.background_spans,
-    )));
-    app.set_terminal_cursor_spans(slint::ModelRc::new(slint::VecModel::from(
-        surface.cursor_spans,
-    )));
-    app.set_terminal_link_spans(slint::ModelRc::new(slint::VecModel::from(
-        surface.link_spans,
-    )));
-    app.set_terminal_runs(slint::ModelRc::new(slint::VecModel::from(
-        surface.text_runs,
-    )));
 }
 
 fn spawn_terminal_worker(
@@ -2677,76 +2666,6 @@ async fn wait_for_ticket(app_weak: &slint::Weak<AppWindow>) -> anyhow::Result<Da
     }
 }
 
-fn set_terminal_status(app_weak: &slint::Weak<AppWindow>, status: impl Into<String>) {
-    let app_weak = app_weak.clone();
-    let status = status.into();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app_weak.upgrade() {
-            app.set_terminal_status(status.into());
-        }
-    });
-}
-
-fn set_project_overview_placeholder(
-    app_weak: &slint::Weak<AppWindow>,
-    project: &frame::ProjectSummary,
-    github_url: &str,
-) {
-    let app_weak = app_weak.clone();
-    let project_id = project.id.clone();
-    let project_name = project.name.clone();
-    let branch_name = project
-        .current_branch
-        .as_deref()
-        .unwrap_or_else(|| project_kind_label(project.kind))
-        .to_string();
-    let worktree_name = worktree_name(&project.path);
-    let project_path = project.path.clone();
-    let github_url = github_url.to_string();
-    let status = format!("project overview: {project_name} (Slint project page parity pending)");
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app_weak.upgrade() {
-            app.set_active_project_id(project_id.into());
-            app.set_active_project_name(project_name.into());
-            app.set_active_task_name("Project overview".into());
-            app.set_active_branch_name(branch_name.into());
-            app.set_active_worktree_name(worktree_name.into());
-            app.set_active_project_path(project_path.into());
-            app.set_active_project_github_url(github_url.into());
-            app.set_terminal_status(status.into());
-        }
-    });
-}
-
-fn set_terminal_surface(app_weak: &slint::Weak<AppWindow>, surface: TerminalSurface) {
-    let app_weak = app_weak.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app_weak.upgrade() {
-            app.set_terminal_background_spans(slint::ModelRc::new(slint::VecModel::from(
-                surface.background_spans,
-            )));
-            app.set_terminal_cursor_spans(slint::ModelRc::new(slint::VecModel::from(
-                surface.cursor_spans,
-            )));
-            app.set_terminal_link_spans(slint::ModelRc::new(slint::VecModel::from(
-                surface.link_spans,
-            )));
-            app.set_terminal_runs(slint::ModelRc::new(slint::VecModel::from(
-                surface.text_runs,
-            )));
-        }
-    });
-}
-
-fn set_terminal_selection(app_weak: &slint::Weak<AppWindow>, spans: Vec<TerminalSelectionSpan>) {
-    let app_weak = app_weak.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app_weak.upgrade() {
-            app.set_terminal_selection_spans(slint::ModelRc::new(slint::VecModel::from(spans)));
-        }
-    });
-}
-
 #[derive(Clone)]
 struct RuntimeEventProxy {
     queue: Arc<Mutex<VecDeque<Event>>>,
@@ -2785,14 +2704,6 @@ struct AlacrittySnapshot {
     parser: ansi::Processor<ansi::StdSyncHandler>,
     event_queue: Arc<Mutex<VecDeque<Event>>>,
     size: TerminalSize,
-}
-
-#[derive(Default)]
-struct TerminalSurface {
-    text_runs: Vec<TerminalTextRun>,
-    background_spans: Vec<TerminalBackgroundSpan>,
-    cursor_spans: Vec<TerminalCursorSpan>,
-    link_spans: Vec<TerminalLinkSpan>,
 }
 
 #[derive(Clone, PartialEq)]
