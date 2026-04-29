@@ -3,6 +3,12 @@
 This is a greenfield app, and has no users.
 This app is built for mac and linux - any changes must keep this in mind.
 
+## Workspace Storage
+
+- Do not put temporary project clones, copied worktrees, or large build artifacts under `/tmp`; this machine maps `/tmp` to a RAM disk.
+- Use `$HOME/.local/share/another-one/tmp-projects/` for temporary project clones or copied worktrees that need to survive during development.
+- Small process-local temp files are fine in the system temp directory, but repo-sized artifacts are not.
+
 ## UI Rules
 
 - This applies to icon-only controls and text-based actions alike unless the element is purely decorative or intentionally non-interactive.
