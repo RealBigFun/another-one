@@ -289,13 +289,6 @@ pub struct BranchCompareFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectBranchCompareState {
-    pub current_branch: Option<String>,
-    pub target_branch: String,
-    pub files: Vec<BranchCompareFile>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchCommit {
     pub id: String,
     pub short_id: String,
@@ -2131,65 +2124,6 @@ pub fn fetch_project_git_state(path: &Path) -> Result<ProjectGitState, String> {
     }
 
     Ok(read_project_git_state(path, true))
-}
-
-pub fn read_project_branch_compare_state(
-    path: &Path,
-    target_branch: &str,
-) -> Result<ProjectBranchCompareState, String> {
-    let spec = format!("{target_branch}...HEAD");
-    let name_status_output = git_command(path)
-        .args(["diff", "--name-status", "-M", "-z", &spec])
-        .output()
-        .map_err(|error| {
-            format!("Could not compare the current branch against {target_branch}: {error}")
-        })?;
-    if !name_status_output.status.success() {
-        return Err(format_git_command_failure(
-            &format!("Could not compare the current branch against {target_branch}"),
-            &name_status_output,
-        ));
-    }
-
-    let numstat_output = git_command(path)
-        .args(["diff", "--numstat", "-M", "-z", &spec])
-        .output()
-        .map_err(|error| {
-            format!("Could not inspect compare stats against {target_branch}: {error}")
-        })?;
-    if !numstat_output.status.success() {
-        return Err(format_git_command_failure(
-            &format!("Could not inspect compare stats against {target_branch}"),
-            &numstat_output,
-        ));
-    }
-
-    let mut stats_by_key = parse_branch_compare_numstat_entries(&numstat_output.stdout)
-        .into_iter()
-        .map(|entry| ((entry.path.clone(), entry.original_path.clone()), entry))
-        .collect::<HashMap<_, _>>();
-
-    let mut files = parse_branch_compare_name_status_entries(&name_status_output.stdout)
-        .into_iter()
-        .map(|entry| {
-            let stats = stats_by_key.remove(&(entry.path.clone(), entry.original_path.clone()));
-            BranchCompareFile {
-                path: entry.path,
-                original_path: entry.original_path,
-                status: entry.status,
-                additions: stats.as_ref().map_or(0, |entry| entry.additions),
-                deletions: stats.as_ref().map_or(0, |entry| entry.deletions),
-            }
-        })
-        .collect::<Vec<_>>();
-
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-
-    Ok(ProjectBranchCompareState {
-        current_branch: git_current_branch(path),
-        target_branch: target_branch.to_string(),
-        files,
-    })
 }
 
 pub fn read_project_branch_commit_state(

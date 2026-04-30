@@ -29,9 +29,9 @@ use crate::git_actions::{
 };
 use crate::project_store::{
     fetch_project_git_state, read_changed_file_diff, read_project_branch_commit_state,
-    read_project_branch_compare_state, read_project_git_state, stage_all_changes,
-    stage_changed_file, unstage_all_changes, unstage_changed_file, ChangedFile, GitDiff,
-    GitDiffSelection, ProjectBranchCommitState, ProjectBranchCompareState, ProjectGitState,
+    read_project_git_state, stage_all_changes, stage_changed_file, unstage_all_changes,
+    unstage_changed_file, ChangedFile, GitDiff, GitDiffSelection, ProjectBranchCommitState,
+    ProjectGitState,
 };
 
 /// Result payload from `spawn_refresh` — one message per refresh call.
@@ -41,7 +41,6 @@ pub struct GitRefreshReply {
     pub include_metadata: bool,
     pub state: ProjectGitState,
     pub commit_state: Option<Result<ProjectBranchCommitState, String>>,
-    pub compare_state: Option<Result<ProjectBranchCompareState, String>>,
 }
 
 #[derive(Clone)]
@@ -50,7 +49,7 @@ pub struct RemoteBranchRefreshReply {
     pub result: Result<ProjectGitState, String>,
 }
 
-/// Spawn a background git-status / metadata / commit / compare read for
+/// Spawn a background git-status / metadata / commit read for
 /// one project and return a receiver that will yield exactly one
 /// [`GitRefreshReply`] when it completes.
 ///
@@ -64,14 +63,11 @@ pub struct RemoteBranchRefreshReply {
 ///   working-tree state.
 /// - `commit_limit` — if `Some(n)`, request the last `n` commits for
 ///   the current branch; drives the commit-list sidebar.
-/// - `compare_target_branch` — if `Some(branch)`, diff the current
-///   branch against `branch` for the compare view.
 pub fn spawn_refresh(
     project_id: String,
     project_path: PathBuf,
     include_metadata: bool,
     commit_limit: Option<usize>,
-    compare_target_branch: Option<String>,
 ) -> broadcast::Receiver<GitRefreshReply> {
     let (tx, rx) = broadcast::channel(1);
     thread::spawn(move || {
@@ -79,15 +75,11 @@ pub fn spawn_refresh(
         let commit_state = commit_limit.map(|requested_limit| {
             read_project_branch_commit_state(&project_path, requested_limit)
         });
-        let compare_state = compare_target_branch
-            .as_deref()
-            .map(|target_branch| read_project_branch_compare_state(&project_path, target_branch));
         let _ = tx.send(GitRefreshReply {
             project_id,
             include_metadata,
             state,
             commit_state,
-            compare_state,
         });
     });
     rx
