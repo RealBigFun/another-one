@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
@@ -43,6 +43,17 @@ pub(crate) enum TerminalMouseEncoding {
     Sgr,
     /// `?1005h`: UTF-8 columns clamped to 2015.
     Utf8,
+}
+
+/// Single hit returned by [`LiveTerminalRuntime::search_scrollback`].
+/// Coordinates are in alacritty's grid frame: `line` is `Line.0`
+/// (negative = scrollback above the active screen, 0..=screen_lines-1
+/// is in viewport), `[start_col, end_col)` is a half-open cell range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalScrollbackMatch {
+    pub line: i32,
+    pub start_col: usize,
+    pub end_col: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -274,6 +285,17 @@ impl LiveTerminalRuntime {
         self.write_input(payload.as_bytes())
     }
 
+    /// Current scrollback offset (`0` = bottom / live screen). Lifted
+    /// to the host so the search overlay can map grid-coord matches
+    /// onto the visible viewport.
+    pub fn display_offset(&self) -> usize {
+        self.term.grid().display_offset()
+    }
+
+    pub fn screen_lines(&self) -> usize {
+        self.term.grid().screen_lines()
+    }
+
     pub fn is_alternate_screen(&self) -> bool {
         self.term
             .mode()
@@ -321,6 +343,49 @@ impl LiveTerminalRuntime {
     /// focused-but-previously-backgrounded tab needs a rebuild this tick.
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// Walk the full alacritty grid (history + viewport) and return all
+    /// matches of `query`. Empty queries yield an empty list. Search is
+    /// always case-insensitive — matches the typical "Cmd-F" UX where
+    /// users don't think about case.
+    ///
+    /// Match positions are reported in alacritty grid coordinates: `line`
+    /// is `Line.0` (negative for scrollback rows, 0..=screen_lines-1 for
+    /// viewport), and `[start_col, end_col)` is a half-open cell range.
+    /// Multi-byte UTF-8 chars occupy a single cell so column ranges line
+    /// up with cell positions, not UTF-8 byte offsets.
+    pub fn search_scrollback(&self, query: &str) -> Vec<TerminalScrollbackMatch> {
+        search_scrollback_in_term(&self.term, query)
+    }
+
+    /// Adjust `display_offset` so the given match lies near the vertical
+    /// middle of the viewport. No-op if the match is already visible
+    /// without scrolling.
+    pub fn scroll_to_match(&mut self, target: &TerminalScrollbackMatch) -> bool {
+        let grid = self.term.grid();
+        let screen_lines = grid.screen_lines() as i32;
+        let history_size = grid.history_size() as i32;
+        let current = grid.display_offset() as i32;
+        // Viewport with offset D shows grid lines [-D - screen_lines + 1 ..= -D].
+        // The match at row R inside the viewport satisfies:
+        //   R = target.line + screen_lines - 1 + D
+        // so to land R = screen_lines / 2 (vertical middle):
+        //   D = screen_lines/2 - target.line - screen_lines + 1
+        let top = -current - screen_lines + 1;
+        let bot = -current;
+        if target.line >= top && target.line <= bot {
+            return false;
+        }
+        let centered = (screen_lines / 2) - target.line - screen_lines + 1;
+        let target_offset = centered.clamp(0, history_size);
+        let delta = target_offset - current;
+        if delta == 0 {
+            return false;
+        }
+        self.term.scroll_display(Scroll::Delta(delta));
+        self.dirty = true;
+        true
     }
 
     pub fn scroll_display(&mut self, lines: i32) -> bool {
@@ -378,6 +443,86 @@ pub(crate) fn encode_paste_payload(text: &str, bracketed: bool) -> String {
         .replace("\x1b[201~", "")
         .replace("\r\n", "\r");
     format!("\u{1b}[200~{}\u{1b}[201~", sanitized)
+}
+
+/// Walk the full alacritty grid (history + viewport) and return all
+/// case-insensitive substring matches of `query`. Empty queries yield
+/// an empty list. Match positions are in alacritty grid coordinates:
+/// `line` is `Line.0` (negative for scrollback rows, 0..=screen_lines-1
+/// is in viewport), `[start_col, end_col)` is a half-open cell range.
+pub(crate) fn search_scrollback_in_term<T: EventListener>(
+    term: &Term<T>,
+    query: &str,
+) -> Vec<TerminalScrollbackMatch> {
+    let query = query.trim_end_matches('\0');
+    if query.is_empty() {
+        return Vec::new();
+    }
+    // Lowercase the query into a Vec<char> so we can compare
+    // char-by-char without re-walking UTF-8 bytes. Some chars
+    // lowercase to multi-char sequences; flatten those eagerly.
+    let needle_chars: Vec<char> = query.chars().flat_map(|ch| ch.to_lowercase()).collect();
+    if needle_chars.is_empty() {
+        return Vec::new();
+    }
+    let mut matches = Vec::new();
+    let grid = term.grid();
+    let columns = grid.columns();
+    let topmost = grid.topmost_line().0;
+    let bottommost = grid.bottommost_line().0;
+
+    for line in topmost..=bottommost {
+        let mut chars: Vec<char> = Vec::with_capacity(columns);
+        let mut cols: Vec<usize> = Vec::with_capacity(columns);
+        for col in 0..columns {
+            let cell = &grid[alacritty_terminal::index::Line(line)]
+                [alacritty_terminal::index::Column(col)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            chars.push(cell.c);
+            cols.push(col);
+        }
+        if chars.len() < needle_chars.len() {
+            continue;
+        }
+        // Naive O(n·m) scan — terminal rows are short (≤ ~500 cols)
+        // and the typical needle is 1–20 chars, so this stays fast
+        // even on a 100k-row scrollback.
+        'outer: for start in 0..=chars.len() - needle_chars.len() {
+            for (offset, needle_ch) in needle_chars.iter().copied().enumerate() {
+                let row_ch = chars[start + offset];
+                let row_lowered = row_ch.to_lowercase().next().unwrap_or(row_ch);
+                if row_lowered != needle_ch {
+                    continue 'outer;
+                }
+            }
+            let start_col = cols[start];
+            let last_char = start + needle_chars.len() - 1;
+            // Account for wide chars (CJK etc): the cell after the
+            // anchor-cell is a `WIDE_CHAR_SPACER` and was filtered out
+            // of `cols`, so the bare `cols[last] + 1` highlight would
+            // only cover the left half of a 2-cell glyph.
+            let last_col = cols[last_char];
+            let last_anchor_cell = &grid[alacritty_terminal::index::Line(line)]
+                [alacritty_terminal::index::Column(last_col)];
+            let last_cell_width = if last_anchor_cell.flags.contains(Flags::WIDE_CHAR) {
+                2
+            } else {
+                1
+            };
+            let end_col = last_col + last_cell_width;
+            matches.push(TerminalScrollbackMatch {
+                line,
+                start_col,
+                end_col,
+            });
+        }
+    }
+    matches
 }
 
 fn build_surface_snapshot<T: EventListener>(
@@ -1044,6 +1189,80 @@ mod tests {
 
     use alacritty_terminal::event::VoidListener;
     use alacritty_terminal::term::test::TermSize;
+
+    fn term_from_ansi(rows: usize, cols: usize, bytes: &[u8]) -> Term<VoidListener> {
+        let mut term = Term::new(
+            Config::default(),
+            &TermSize::new(cols, rows),
+            VoidListener,
+        );
+        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
+        parser.advance(&mut term, bytes);
+        term
+    }
+
+    #[test]
+    fn search_scrollback_finds_match_in_viewport() {
+        let term = term_from_ansi(4, 32, b"hello world\r\nrust hello rust\r\n");
+        let matches = search_scrollback_in_term(&term, "hello");
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].start_col, 0);
+        assert_eq!(matches[0].end_col, 5);
+        assert_eq!(matches[1].start_col, 5);
+        assert_eq!(matches[1].end_col, 10);
+    }
+
+    #[test]
+    fn search_scrollback_is_case_insensitive() {
+        let term = term_from_ansi(4, 32, b"Hello World\r\n");
+        let m = search_scrollback_in_term(&term, "WORLD");
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].start_col, 6);
+        assert_eq!(m[0].end_col, 11);
+    }
+
+    #[test]
+    fn search_scrollback_empty_query_yields_empty() {
+        let term = term_from_ansi(4, 32, b"hello\r\n");
+        assert!(search_scrollback_in_term(&term, "").is_empty());
+        assert!(search_scrollback_in_term(&term, "\0\0").is_empty());
+    }
+
+    #[test]
+    fn search_scrollback_walks_history_above_viewport() {
+        // 4-row terminal, push 8 rows so 4 lines fall into scrollback.
+        let mut bytes: Vec<u8> = Vec::new();
+        for i in 0..8 {
+            bytes.extend_from_slice(format!("row{i}\r\n").as_bytes());
+        }
+        let term = term_from_ansi(4, 16, &bytes);
+        // "row1" should now live in scrollback (above the visible viewport).
+        let m = search_scrollback_in_term(&term, "row1");
+        assert_eq!(m.len(), 1);
+        assert!(
+            m[0].line < 0,
+            "expected scrollback (negative line), got {}",
+            m[0].line
+        );
+    }
+
+    #[test]
+    fn search_scrollback_wide_char_match_spans_two_columns() {
+        // Match anchored on a 2-cell-wide CJK glyph should report
+        // end_col one past its right cell, not its anchor cell.
+        let term = term_from_ansi(4, 16, "look 日本 here\r\n".as_bytes());
+        let m = search_scrollback_in_term(&term, "日");
+        assert_eq!(m.len(), 1);
+        // "look " takes cols 0..5, then 日 occupies cols 5+6.
+        assert_eq!(m[0].start_col, 5);
+        assert_eq!(m[0].end_col, 7, "wide-char highlight covers 2 cells");
+    }
+
+    #[test]
+    fn search_scrollback_no_match_yields_empty() {
+        let term = term_from_ansi(4, 32, b"hello world\r\n");
+        assert!(search_scrollback_in_term(&term, "zzz").is_empty());
+    }
 
     fn snapshot_from_ansi(bytes: &[u8]) -> TerminalSurfaceSnapshot {
         let size = TerminalGridSize {

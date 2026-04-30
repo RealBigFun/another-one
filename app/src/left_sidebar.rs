@@ -680,6 +680,13 @@ impl AnotherOneApp {
             return;
         }
 
+        // Cmd-F search overlay claims keystrokes first so typed
+        // characters extend the query rather than feeding the TUI.
+        if self.terminal_search.is_some() {
+            self.handle_terminal_search_key_down(ev, cx);
+            return;
+        }
+
         if self.custom_action_modal.is_some() {
             self.handle_custom_action_modal_key_down(ev, cx);
             return;

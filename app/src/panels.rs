@@ -134,6 +134,96 @@ impl AnotherOneApp {
             )
     }
 
+    /// Top-anchored search bar shown over the active terminal pane
+    /// when `Cmd-F` is pressed. Non-IME — captures plain ASCII and
+    /// Cmd-V paste through `handle_terminal_search_key_down`.
+    pub(crate) fn terminal_search_bar_overlay(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(state) = self.terminal_search.clone() else {
+            return div().id("terminal-search-bar");
+        };
+
+        let count_label = if state.matches.is_empty() {
+            if state.query.is_empty() {
+                "".to_string()
+            } else {
+                "0/0".to_string()
+            }
+        } else {
+            format!("{}/{}", state.current_index + 1, state.matches.len())
+        };
+        let query_text = state.query.clone();
+        let placeholder = if query_text.is_empty() {
+            Some("Search scrollback…")
+        } else {
+            None
+        };
+
+        div()
+            .id("terminal-search-bar")
+            .absolute()
+            .top(px(12.))
+            .right(px(20.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .h(px(34.))
+            .px(px(10.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(gpui::black().opacity(0.35))
+            .bg(rgb(0x2b2d31))
+            .shadow_lg()
+            .child(
+                div()
+                    .min_w(px(220.))
+                    .text_sm()
+                    .text_color(if query_text.is_empty() {
+                        hsla(0., 0., 0.92, 0.45)
+                    } else {
+                        hsla(0., 0., 0.92, 1.0)
+                    })
+                    .child(if let Some(text) = placeholder {
+                        text.to_string()
+                    } else {
+                        query_text.clone()
+                    }),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(hsla(0., 0., 0.92, 0.7))
+                    .min_w(px(48.))
+                    .child(count_label),
+            )
+            .child(terminal_search_button(
+                "terminal-search-prev",
+                "↑",
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.terminal_search_advance(false, cx);
+                    cx.stop_propagation();
+                }),
+            ))
+            .child(terminal_search_button(
+                "terminal-search-next",
+                "↓",
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.terminal_search_advance(true, cx);
+                    cx.stop_propagation();
+                }),
+            ))
+            .child(terminal_search_button(
+                "terminal-search-close",
+                "×",
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.close_terminal_search(cx);
+                    cx.stop_propagation();
+                }),
+            ))
+    }
+
     pub(crate) fn terminal_context_menu_overlay(
         &self,
         window: &Window,
@@ -757,6 +847,15 @@ impl WorkspacePane {
                 .app
                 .upgrade()
                 .and_then(|app_entity| app_entity.read(cx).terminal_selection_for(&key));
+            let search_highlights = self
+                .app
+                .upgrade()
+                .map(|app_entity| {
+                    app_entity
+                        .read(cx)
+                        .terminal_search_viewport_highlights(&key)
+                })
+                .unwrap_or_default();
             let font_size = px(self.font_size);
             return div()
                 .relative()
@@ -953,12 +1052,23 @@ impl WorkspacePane {
                                 font_size,
                                 selection,
                                 hovered_link,
+                                &search_highlights,
                             );
                         },
                     )
                     .absolute()
                     .inset_0(),
-                );
+                )
+                .children(self.app.upgrade().and_then(|app_entity| {
+                    let active = app_entity
+                        .read(cx)
+                        .terminal_search
+                        .as_ref()
+                        .is_some_and(|state| state.key == key);
+                    active.then(|| app_entity.update(cx, |app, app_cx| {
+                        app.terminal_search_bar_overlay(app_cx).into_any_element()
+                    }))
+                }));
         }
 
         let status_title = if pending {
@@ -1164,6 +1274,30 @@ fn terminal_error_details(error: String, body_col: gpui::Hsla) -> impl IntoEleme
     details
 }
 
+fn terminal_search_button<F>(
+    id: &'static str,
+    label: &'static str,
+    on_click: F,
+) -> impl IntoElement
+where
+    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(px(24.))
+        .h(px(24.))
+        .rounded(px(4.))
+        .text_sm()
+        .text_color(hsla(0., 0., 0.92, 0.85))
+        .cursor_pointer()
+        .hover(|hover| hover.bg(gpui::white().opacity(0.06)))
+        .on_mouse_down(MouseButton::Left, on_click)
+        .child(label)
+}
+
 fn terminal_context_menu_item<F>(
     id: &'static str,
     label: &'static str,
@@ -1208,6 +1342,7 @@ fn paint_terminal_snapshot(
     font_size: Pixels,
     selection: Option<TerminalSelectionRange>,
     hovered_link: Option<TerminalLinkRange>,
+    search_highlights: &[(usize, usize, usize, bool)],
 ) {
     for (line_index, line) in snapshot.lines.iter().enumerate() {
         let top = bounds.origin.y + padding + cell_height * line_index as f32;
@@ -1222,6 +1357,23 @@ fn paint_terminal_snapshot(
                 span.color,
             ));
         }
+    }
+
+    // Search highlights paint above cell backgrounds (so vim/htop's
+    // colored cells don't obscure them) but underneath text glyphs.
+    for &(line, start_col, end_col, is_current) in search_highlights {
+        let top = bounds.origin.y + padding + cell_height * line as f32;
+        let left = bounds.origin.x + padding + cell_width * start_col as f32;
+        let width = cell_width * (end_col.saturating_sub(start_col)) as f32;
+        let bg = if is_current {
+            hsla(0.13, 0.85, 0.55, 0.85)
+        } else {
+            hsla(0.13, 0.5, 0.45, 0.55)
+        };
+        window.paint_quad(fill(
+            Bounds::new(point(left, top), size(width, cell_height)),
+            bg,
+        ));
     }
 
     if let Some(selection) = selection {

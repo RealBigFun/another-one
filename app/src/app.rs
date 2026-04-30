@@ -19,6 +19,16 @@ use gpui::{
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
 actions!(
+    terminal_search,
+    [
+        TerminalFind,
+        TerminalSearchClose,
+        TerminalSearchNext,
+        TerminalSearchPrev,
+        TerminalSearchBackspace
+    ]
+);
+actions!(
     navigation,
     [
         NextTab,
@@ -54,8 +64,8 @@ use crate::terminal_launch::{
 };
 use crate::terminal_runtime::{
     LiveTerminalRuntime, TerminalGridSize, TerminalMouseEncoding, TerminalMouseLevel,
-    TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
-    TERMINAL_LINE_HEIGHT_RATIO,
+    TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalScrollbackMatch,
+    TerminalSurfaceSnapshot, TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
 pub use another_one_core::section::SectionId;
@@ -587,6 +597,18 @@ pub(crate) struct SidebarTaskMenuState {
     pub(crate) is_worktree: bool,
     pub(crate) anchor_x: f32,
     pub(crate) anchor_y: f32,
+}
+
+/// Cmd-F scrollback search overlay for one terminal pane. Lives at the
+/// app level so the highlight set survives renders without re-running
+/// the scan on every paint. `current_index` always points at a valid
+/// entry of `matches` when non-empty.
+#[derive(Debug, Clone)]
+pub(crate) struct TerminalSearchState {
+    pub(crate) key: TerminalRuntimeKey,
+    pub(crate) query: String,
+    pub(crate) matches: Vec<TerminalScrollbackMatch>,
+    pub(crate) current_index: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1381,6 +1403,9 @@ pub struct AnotherOneApp {
     terminal_scroll_remainder_lines: HashMap<TerminalRuntimeKey, f32>,
     /// Mouse selection state for the currently selected terminal text.
     terminal_selection: Option<TerminalSelectionState>,
+    /// Active scrollback search (Cmd-F). At most one terminal at a time;
+    /// opening the search on a different terminal closes any previous.
+    pub(crate) terminal_search: Option<TerminalSearchState>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Child process ids for hidden prewarmed launches.
@@ -4045,6 +4070,7 @@ impl AnotherOneApp {
             terminal_surface_snapshots: HashMap::new(),
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
+            terminal_search: None,
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -5577,6 +5603,206 @@ impl AnotherOneApp {
         Ok(())
     }
 
+    /// Open the Cmd-F scrollback search overlay over the active
+    /// terminal. No-op when no terminal is active. If a search is
+    /// already open on a different terminal, replaces it.
+    pub(crate) fn open_terminal_search(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(key) = self.active_terminal_key(cx) else {
+            return false;
+        };
+        // If already open on this same terminal, just keep state.
+        if self
+            .terminal_search
+            .as_ref()
+            .is_some_and(|state| state.key == key)
+        {
+            cx.notify();
+            return true;
+        }
+        self.terminal_search = Some(TerminalSearchState {
+            key,
+            query: String::new(),
+            matches: Vec::new(),
+            current_index: 0,
+        });
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn close_terminal_search(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.terminal_search.take().is_some() {
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Re-run the scrollback search with the current `query` and reset
+    /// the selected match to the closest one to the visible viewport.
+    /// Called whenever the query changes.
+    fn refresh_terminal_search_results(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.terminal_search.as_ref() else {
+            return;
+        };
+        let key = state.key.clone();
+        let query = state.query.clone();
+        let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
+            return;
+        };
+        let mut matches = runtime.search_scrollback(&query);
+        // Sort top-to-bottom (most-negative line first), left-to-right
+        // so prev/next traversal is deterministic regardless of the
+        // scan order chosen by `search_scrollback_in_term`.
+        matches.sort_by_key(|m| (m.line, m.start_col));
+        // Now pick a starting index against the sorted list — the first
+        // match at or below the current viewport top so the initial
+        // selection feels local to where the user was looking.
+        let display_offset = runtime.display_offset() as i32;
+        let top_grid_line = -display_offset - runtime.screen_lines() as i32 + 1;
+        let mut current_index = 0;
+        for (idx, m) in matches.iter().enumerate() {
+            if m.line >= top_grid_line {
+                current_index = idx;
+                break;
+            }
+        }
+        if let Some(state) = self.terminal_search.as_mut() {
+            state.matches = matches;
+            state.current_index = current_index.min(state.matches.len().saturating_sub(1));
+        }
+        self.scroll_to_current_search_match(cx);
+        cx.notify();
+    }
+
+    fn scroll_to_current_search_match(&mut self, _cx: &mut Context<Self>) {
+        let Some(state) = self.terminal_search.as_ref() else {
+            return;
+        };
+        let Some(target) = state.matches.get(state.current_index).copied() else {
+            return;
+        };
+        let key = state.key.clone();
+        if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+            if runtime.scroll_to_match(&target) {
+                let snapshot = runtime.snapshot();
+                self.terminal_surface_snapshots.insert(key, snapshot);
+            }
+        }
+    }
+
+    pub(crate) fn terminal_search_input(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        let Some(state) = self.terminal_search.as_mut() else {
+            return false;
+        };
+        state.query.push_str(text);
+        self.refresh_terminal_search_results(cx);
+        true
+    }
+
+    pub(crate) fn terminal_search_backspace(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(state) = self.terminal_search.as_mut() else {
+            return false;
+        };
+        if state.query.pop().is_none() {
+            return false;
+        }
+        self.refresh_terminal_search_results(cx);
+        true
+    }
+
+    pub(crate) fn terminal_search_advance(
+        &mut self,
+        forward: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = self.terminal_search.as_mut() else {
+            return false;
+        };
+        if state.matches.is_empty() {
+            return false;
+        }
+        let len = state.matches.len();
+        state.current_index = if forward {
+            (state.current_index + 1) % len
+        } else {
+            (state.current_index + len - 1) % len
+        };
+        self.scroll_to_current_search_match(cx);
+        cx.notify();
+        true
+    }
+
+    /// Project grid-coordinate matches onto the visible viewport.
+    /// Returned tuples are `(viewport_line, start_col, end_col, is_current)`
+    /// — only matches that overlap the viewport are emitted.
+    pub(crate) fn terminal_search_viewport_highlights(
+        &self,
+        key: &TerminalRuntimeKey,
+    ) -> Vec<(usize, usize, usize, bool)> {
+        let Some(state) = self.terminal_search.as_ref() else {
+            return Vec::new();
+        };
+        if state.key != *key || state.matches.is_empty() {
+            return Vec::new();
+        }
+        let Some(runtime) = self.live_terminal_runtimes.get(key) else {
+            return Vec::new();
+        };
+        let display_offset = runtime.display_offset() as i32;
+        let screen_lines = runtime.screen_lines() as i32;
+        let mut out = Vec::new();
+        for (idx, m) in state.matches.iter().enumerate() {
+            let viewport_row = m.line + screen_lines - 1 + display_offset;
+            if viewport_row < 0 || viewport_row >= screen_lines {
+                continue;
+            }
+            out.push((
+                viewport_row as usize,
+                m.start_col,
+                m.end_col,
+                idx == state.current_index,
+            ));
+        }
+        out
+    }
+
+    pub(crate) fn handle_terminal_search_key_down(
+        &mut self,
+        ev: &gpui::KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal_search.is_none() {
+            return;
+        }
+        cx.stop_propagation();
+        let mods = ev.keystroke.modifiers;
+        match ev.keystroke.key.as_str() {
+            "escape" => {
+                self.close_terminal_search(cx);
+            }
+            "enter" => {
+                self.terminal_search_advance(!mods.shift, cx);
+            }
+            "backspace" => {
+                self.terminal_search_backspace(cx);
+            }
+            "tab" => {}
+            _ => {
+                if mods.platform && ev.keystroke.key.as_str() == "v" {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        self.terminal_search_input(&text, cx);
+                    }
+                } else if mods.control || mods.platform || mods.function {
+                    // Ignore other modifiers — let the global action
+                    // dispatcher handle e.g. Cmd-W.
+                } else if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+                    self.terminal_search_input(key_char, cx);
+                }
+            }
+        }
+    }
+
     pub(crate) fn paste_into_active_terminal(&mut self, cx: &App, text: &str) -> bool {
         let Some(key) = self.active_terminal_key(cx) else {
             return false;
@@ -6171,6 +6397,53 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    fn handle_terminal_find(
+        &mut self,
+        _: &TerminalFind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.open_terminal_search(cx) {
+            // Pull keyboard focus onto the search overlay so the next
+            // keystrokes feed the query input, not the underlying TUI.
+            self.focus_handle.focus(window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    fn handle_terminal_search_close(
+        &mut self,
+        _: &TerminalSearchClose,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.close_terminal_search(cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn handle_terminal_search_next(
+        &mut self,
+        _: &TerminalSearchNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal_search_advance(true, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn handle_terminal_search_prev(
+        &mut self,
+        _: &TerminalSearchPrev,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal_search_advance(false, cx) {
+            cx.stop_propagation();
+        }
+    }
+
     fn next_tab(&mut self, _: &NextTab, _: &mut Window, cx: &mut Context<Self>) {
         if self.navigate_tab_shortcut(NavigationDirection::Next, cx) {
             cx.stop_propagation();
@@ -6225,6 +6498,7 @@ impl AnotherOneApp {
                 .read(cx)
                 .terminal_context_menu
                 .is_some()
+            || self.terminal_search.is_some()
             || self
                 .workspace_pane
                 .read(cx)
@@ -12537,6 +12811,10 @@ impl AnotherOneApp {
                 .on_action(cx.listener(Self::next_project))
                 .on_action(cx.listener(Self::new_tab))
                 .on_action(cx.listener(Self::new_task))
+                .on_action(cx.listener(Self::handle_terminal_find))
+                .on_action(cx.listener(Self::handle_terminal_search_close))
+                .on_action(cx.listener(Self::handle_terminal_search_next))
+                .on_action(cx.listener(Self::handle_terminal_search_prev))
                 .child(header)
                 .child(body)
                 .child(self.new_task_modal_overlay(cx))
@@ -12940,6 +13218,10 @@ impl Render for AnotherOneApp {
                 .on_action(cx.listener(Self::next_project))
                 .on_action(cx.listener(Self::new_tab))
                 .on_action(cx.listener(Self::new_task))
+                .on_action(cx.listener(Self::handle_terminal_find))
+                .on_action(cx.listener(Self::handle_terminal_search_close))
+                .on_action(cx.listener(Self::handle_terminal_search_next))
+                .on_action(cx.listener(Self::handle_terminal_search_prev))
                 .when(supports_custom_chrome, |d| {
                     d.child(self.custom_title_strip(window, cx, busy))
                 })
