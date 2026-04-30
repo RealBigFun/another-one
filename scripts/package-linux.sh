@@ -109,9 +109,9 @@ fi
 BINARY_PATH="$RELEASE_DIR/$PACKAGE_NAME"
 SHIM_BINARY_PATH="$RELEASE_DIR/$SHIM_NAME"
 
-ASSETS_SOURCE="$ROOT_DIR/desktop/assets"
-DESKTOP_SOURCE="$ROOT_DIR/desktop/assets/app-icon/linux/another-one.desktop"
-ICON_SOURCE="$ROOT_DIR/desktop/assets/app-icon/linux/another-one.png"
+ASSETS_SOURCE="$ROOT_DIR/app/assets"
+DESKTOP_SOURCE="$ROOT_DIR/app/assets/app-icon/linux/another-one.desktop"
+ICON_SOURCE="$ROOT_DIR/app/assets/app-icon/linux/another-one.png"
 
 LINUXDEPLOY_VERSION="continuous"
 LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/${LINUXDEPLOY_VERSION}/linuxdeploy-${ARCH}.AppImage"
@@ -156,8 +156,8 @@ mkdir -p \
 install -m 0755 "$BINARY_PATH" "$APPDIR/usr/bin/$PACKAGE_NAME"
 install -m 0755 "$SHIM_BINARY_PATH" "$APPDIR/usr/bin/$SHIM_NAME"
 
-# Copy the entire desktop/assets/ tree as the runtime asset root.
-# `desktop/src/assets.rs::linux_appimage_resource_root()` resolves
+# Copy the entire app/assets/ tree as the runtime asset root.
+# `app/src/assets.rs::linux_appimage_resource_root()` resolves
 # this via $APPDIR, so the binary loads fonts, icons, and SVGs from
 # inside the AppImage instead of the build-time CARGO_MANIFEST_DIR.
 cp -r "$ASSETS_SOURCE" "$APPDIR/usr/share/$PACKAGE_NAME/"

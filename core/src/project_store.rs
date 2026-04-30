@@ -1307,6 +1307,51 @@ impl ProjectStore {
         }
     }
 
+    /// Replace the projects + tasks state with a snapshot pushed by
+    /// the paired daemon (mobile clients receive these as
+    /// `WorkerReply::ProjectList`). Synthesizes a one-repo-per-project
+    /// `RepoRecord` since the wire format doesn't carry the repo
+    /// grouping today, then runs the same `sanitize` +
+    /// `rebuild_runtime_views` the on-disk loader uses so callers see
+    /// the stock `projects` / `tasks` runtime views — the existing
+    /// sidebar render path picks the data up unchanged. Does **not**
+    /// `save()` to disk; the daemon is the source of truth, the local
+    /// cache stays ephemeral.
+    pub fn set_remote_snapshot(&mut self, projects: Vec<Project>, tasks: Vec<Task>) {
+        self.repos = projects
+            .iter()
+            .map(|p| {
+                (
+                    p.repo_id.clone(),
+                    RepoRecord {
+                        id: p.repo_id.clone(),
+                        common_dir: None,
+                        branch_order: Vec::new(),
+                        branches_by_name: HashMap::new(),
+                    },
+                )
+            })
+            .collect();
+        self.projects_by_id = projects
+            .iter()
+            .map(|p| (p.id.clone(), p.clone()))
+            .collect();
+        self.project_order = projects.iter().map(|p| p.id.clone()).collect();
+        self.tasks_by_id = tasks
+            .iter()
+            .map(|t| (t.id.clone(), t.clone()))
+            .collect();
+        self.task_ids_by_root_project.clear();
+        for task in &tasks {
+            self.task_ids_by_root_project
+                .entry(task.root_project_id.clone())
+                .or_default()
+                .push(task.id.clone());
+        }
+        self.sanitize();
+        self.rebuild_runtime_views();
+    }
+
     pub fn set_left_sidebar_open(&mut self, is_open: bool) {
         if self.ui.left_sidebar_open == is_open {
             return;

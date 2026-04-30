@@ -17,7 +17,7 @@ Options:
 
 Environment overrides (used by CI):
   CARGO_VERSION       Override the bundled CFBundleShortVersionString
-                      (defaults to the version in desktop/Cargo.toml).
+                      (defaults to the version in app/Cargo.toml).
   RELEASE_ID          Full git SHA stamped into output filenames.
   BUILD_NUMBER        Monotonic CFBundleVersion value (default: 1).
   TARGET_TRIPLE       Cargo target triple, e.g. aarch64-apple-darwin.
@@ -78,7 +78,7 @@ MIN_MACOS_VERSION="11.0"
 
 CARGO_VERSION="${CARGO_VERSION:-}"
 if [[ -z "$CARGO_VERSION" ]]; then
-  CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$ROOT_DIR/desktop/Cargo.toml")"
+  CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$ROOT_DIR/app/Cargo.toml")"
 fi
 RELEASE_ID="${RELEASE_ID:-}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
@@ -143,8 +143,8 @@ STAGING_DIR="$PACKAGE_DIR/dmg-staging"
 NOTARY_ZIP="$PACKAGE_DIR/$APP_NAME.notary.zip"
 UPDATE_PAYLOAD="$PACKAGE_DIR/$APP_NAME.app.tar.gz"
 
-ICON_PATH="$ROOT_DIR/desktop/assets/app-icon/macos/$APP_NAME.icns"
-ASSETS_SOURCE="$ROOT_DIR/desktop/assets"
+ICON_PATH="$ROOT_DIR/app/assets/app-icon/macos/$APP_NAME.icns"
+ASSETS_SOURCE="$ROOT_DIR/app/assets"
 
 if [[ ! -f "$ICON_PATH" ]]; then
   echo "Expected macOS app icon at $ICON_PATH." >&2
@@ -214,7 +214,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 install -m 755 "$BINARY_PATH" "$MACOS_DIR/$PACKAGE_NAME"
 # Bundle the shim next to the main exe. `shim_binary_path()` in
-# desktop/src/app.rs resolves the shim relative to current_exe,
+# app/src/app.rs resolves the shim relative to current_exe,
 # so it has to live in Contents/MacOS/ alongside the main binary.
 install -m 755 "$SHIM_BINARY_PATH" "$MACOS_DIR/$SHIM_NAME"
 ditto "$ASSETS_SOURCE" "$ASSETS_DIR"

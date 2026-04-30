@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["desktop", "daemon-sandbox", "mcp-shim", "core"]
+members = ["app", "daemon", "daemon-client", "mcp-shim", "core"]
 
 # Vendored noq-udp with a local fix for quinn-rs/quinn#2399: Android (and some
 # Linux NIC drivers) accept UDP_SEGMENT at setsockopt time but then fail the
@@ -9,3 +9,7 @@ members = ["desktop", "daemon-sandbox", "mcp-shim", "core"]
 # individual datagrams. Remove once upstream ships a fix and we bump iroh.
 [patch.crates-io]
 noq-udp = { path = "vendor/noq-udp" }
+# Required by gpui's git rev — the published `async-task` on crates.io
+# misses fixes that gpui-mobile's example also patches in. Keep this
+# in sync with gpui-mobile if its pin moves.
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
