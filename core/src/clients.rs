@@ -98,6 +98,13 @@ pub struct OpenTaskRequest {
     /// caller's `Focus` onto the new tab. Drives the "MCP demo
     /// scrolls the user's view to the new tab" UX.
     pub focus_after_open: bool,
+    /// GUI-internal hint: when the new-task modal prewarmed a PTY
+    /// ahead of the user clicking submit, the warm launch id rides
+    /// in here so the resulting tab attaches to that running PTY
+    /// instead of starting a fresh one. Skipped over the wire — MCP
+    /// and mobile clients always leave this `None`.
+    #[serde(skip, default)]
+    pub warm_launch_hint: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -113,6 +120,9 @@ pub struct OpenTabRequest {
     pub section_id: SectionId,
     pub launch_config: TerminalLaunchConfig,
     pub focus_after_open: bool,
+    /// GUI-internal hint, same semantics as `OpenTaskRequest.warm_launch_hint`.
+    #[serde(skip, default)]
+    pub warm_launch_hint: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

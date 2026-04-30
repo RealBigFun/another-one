@@ -106,6 +106,8 @@ pub(crate) struct RegistryState {
     /// Close-tab asks routed in from the daemon (MCP). Same shape
     /// as `pending_spawn_terminals`.
     pub(crate) pending_close_tabs: Vec<PendingCloseTab>,
+    /// Select-focus asks routed in from the daemon (MCP).
+    pub(crate) pending_select_focus: Vec<PendingSelectFocus>,
     /// Keys currently mid-spawn. Populated when either path
     /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
     /// kicks off a `spawn_terminal_launch`; cleared on
@@ -127,6 +129,7 @@ impl RegistryState {
             pending_tab_launches: Vec::new(),
             pending_spawn_terminals: Vec::new(),
             pending_close_tabs: Vec::new(),
+            pending_select_focus: Vec::new(),
             in_flight_launches: HashSet::new(),
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
@@ -182,6 +185,16 @@ pub(crate) struct TabResizeRequest {
     pub key: TerminalRuntimeKey,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// MCP `select_focus` ask — moves a client's focus, optionally on
+/// behalf of a peer (privileged surface). The drain emits the
+/// underlying `client_select_for` call on the GPUI thread.
+pub(crate) struct PendingSelectFocus {
+    pub focus: another_one_core::clients::Focus,
+    pub for_client: Option<another_one_core::clients::ClientId>,
+    pub client_handle: Option<String>,
+    pub responder: std::sync::mpsc::SyncSender<Result<(), String>>,
 }
 
 /// MCP `close_tab` ask. Same queue/drain pattern as the spawn case.

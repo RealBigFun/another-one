@@ -156,6 +156,17 @@ pub struct RunCommandResponse {
 /// indefinitely.
 pub const RUN_COMMAND_TIMEOUT_CEILING_MS: u64 = 5 * 60 * 1_000;
 
+/// `select` argument — moves the calling client's `Focus`. With
+/// `for_client` set, the daemon treats this as a privileged
+/// operation and moves *that* client's focus instead (used for
+/// MCP-driven demos where the harness wants the human's GUI to
+/// scroll to a particular tab).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SelectFocusRequest {
+    pub focus: crate::clients::Focus,
+    pub for_client: Option<crate::clients::ClientId>,
+}
+
 /// The trait the MCP server dispatches against. Implementations
 /// own whatever bridge is needed to reach the live app state
 /// (today: `RegistryState` lookups for reads, pending-queue
@@ -188,4 +199,28 @@ pub trait McpOrchestrator: Send + Sync {
     fn run_command(&self, req: RunCommandRequest) -> anyhow::Result<RunCommandResponse>;
 
     fn close_tab(&self, tab_id: &str) -> anyhow::Result<()>;
+
+    /// Move a client's `Focus`. Without `for_client` the calling
+    /// MCP session moves its own focus; with it set, the daemon
+    /// treats the call as privileged and drives the named peer's
+    /// view (today the only target that has a visible view is the
+    /// GUI client `gui:desktop`).
+    fn select_focus(&self, _req: SelectFocusRequest) -> anyhow::Result<()> {
+        anyhow::bail!("select_focus is not implemented by this orchestrator")
+    }
+
+    /// Drain at most `max_events` recent `ClientEvent`s from the
+    /// daemon-wide event bus. Polled by MCP harnesses to learn what
+    /// the user (or a peer client) just did. Implementations that
+    /// don't have an event source return an empty vec.
+    ///
+    /// This is intentionally a *poll* rather than a streaming
+    /// subscription — MCP's request/response shape doesn't lend
+    /// itself to long-lived streams, and harnesses that need
+    /// realtime updates can call this on a timer. A cleaner
+    /// streaming surface (bidirectional notifications) is a v3
+    /// extension once the event vocabulary stabilises.
+    fn poll_events(&self, _max_events: usize) -> Vec<crate::clients::ClientEvent> {
+        Vec::new()
+    }
 }

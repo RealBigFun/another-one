@@ -282,6 +282,36 @@ impl McpOrchestrator for DesktopMcpOrchestrator {
         Err(anyhow::anyhow!(NOT_YET_WIRED))
     }
 
+    fn select_focus(
+        &self,
+        req: another_one_core::mcp::orchestrator::SelectFocusRequest,
+    ) -> anyhow::Result<()> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        {
+            let arc = self
+                .inner
+                .upgrade()
+                .ok_or_else(|| anyhow::anyhow!("desktop registry has been dropped"))?;
+            let mut state = arc
+                .lock()
+                .map_err(|_| anyhow::anyhow!("registry mutex poisoned"))?;
+            state
+                .pending_select_focus
+                .push(crate::daemon_host::PendingSelectFocus {
+                    focus: req.focus,
+                    for_client: req.for_client,
+                    client_handle: None,
+                    responder: tx,
+                });
+        }
+        let resp = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|err| {
+                anyhow::anyhow!("select_focus: render-tick drain timed out: {err}")
+            })?;
+        resp.map_err(|msg| anyhow::anyhow!(msg))
+    }
+
     fn close_tab(&self, tab_id: &str) -> anyhow::Result<()> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         {

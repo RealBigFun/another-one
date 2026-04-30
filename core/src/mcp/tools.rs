@@ -10,8 +10,8 @@
 use serde_json::{json, Value};
 
 use crate::mcp::orchestrator::{
-    McpOrchestrator, RunCommandRequest, SpawnTaskRequest, SpawnTerminalRequest,
-    RUN_COMMAND_TIMEOUT_CEILING_MS,
+    McpOrchestrator, RunCommandRequest, SelectFocusRequest, SpawnTaskRequest,
+    SpawnTerminalRequest, RUN_COMMAND_TIMEOUT_CEILING_MS,
 };
 
 /// Error kinds the dispatcher produces. `server.rs` maps these to
@@ -135,6 +135,32 @@ pub fn tool_manifest() -> Value {
                 "required": ["tab_id"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "select_focus",
+            "description":
+                "Move a client's focus. Without `for_client`, the calling MCP \
+                 session moves its own focus. With `for_client` set (privileged), \
+                 the daemon moves the named peer client's view — the most common \
+                 use is `for_client = \"gui:desktop\"` to scroll the human's GUI \
+                 to a tab the harness just spawned.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "focus": { "type": "object",
+                        "description":
+                            "One of {None: null}, {Project: {project_id}}, \
+                             {Task: {project_id, task_id}}, {Tab: {project_id, \
+                             task_id?, section_id, tab_id}}." },
+                    "for_client": {
+                        "type": ["string", "null"],
+                        "description":
+                            "Optional ClientId to drive on behalf of (e.g. \"gui:desktop\")."
+                    }
+                },
+                "required": ["focus"],
+                "additionalProperties": false
+            }
         }
     ])
 }
@@ -232,6 +258,13 @@ pub fn call(
             let tab_id = string_arg(args, "tab_id")?;
             orchestrator
                 .close_tab(&tab_id)
+                .map(|_| json!({ "ok": true }))
+                .map_err(ToolError::Execution)
+        }
+        "select_focus" => {
+            let req: SelectFocusRequest = parse_args(args)?;
+            orchestrator
+                .select_focus(req)
                 .map(|_| json!({ "ok": true }))
                 .map_err(ToolError::Execution)
         }

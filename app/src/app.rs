@@ -5531,7 +5531,7 @@ impl AnotherOneApp {
             None,
             project_path,
             Some(req.launch_config.clone()),
-            None,
+            req.warm_launch_hint,
             cx,
         );
 
@@ -5627,6 +5627,20 @@ impl AnotherOneApp {
                     tab_id: tab_id.clone(),
                 },
             );
+        }
+
+        // If a warm launch was prewarmed (GUI fast path), attach it
+        // to the new tab key. Cold path (no warm hint) lets the
+        // existing render-tick `ensure_active_terminal_runtime`
+        // spawn the PTY when the section becomes active.
+        if let Some(warm_id) = req.warm_launch_hint {
+            let key = TerminalRuntimeKey {
+                section_id: section_id.clone(),
+                tab_id: tab_id.clone(),
+            };
+            if !self.attach_prewarmed_launch_to_tab(warm_id, key, cx) {
+                self.cancel_prewarmed_launch(warm_id);
+            }
         }
 
         let _ = self.client_event_bus.send(ClientEvent::TabOpened {
@@ -5787,6 +5801,7 @@ impl AnotherOneApp {
                         section_id,
                         launch_config,
                         focus_after_open: true,
+                        warm_launch_hint: None,
                     },
                     cx,
                 )
@@ -5811,6 +5826,7 @@ impl AnotherOneApp {
                     launch_config,
                     cwd: req.cwd.as_ref().map(std::path::PathBuf::from),
                     focus_after_open: true,
+                    warm_launch_hint: None,
                 },
                 cx,
             )
@@ -5818,6 +5834,32 @@ impl AnotherOneApp {
         Ok(another_one_core::mcp::orchestrator::SpawnTerminalResponse {
             tab_id: response.tab_id,
         })
+    }
+
+    pub(crate) fn drain_pending_select_focus(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::PendingSelectFocus> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_select_focus.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_select_focus)
+        };
+        let mut changed = false;
+        for req in pending {
+            let actor = ClientId::mcp(req.client_handle.as_deref().unwrap_or("anonymous"));
+            let target = req.for_client.unwrap_or_else(|| actor.clone());
+            let result = self
+                .client_select_for(actor, target, req.focus, cx)
+                .map_err(|e| e.to_string());
+            let _ = req.responder.send(result);
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+        changed
     }
 
     pub(crate) fn drain_pending_close_tabs(&mut self, cx: &mut Context<Self>) -> bool {
@@ -7628,37 +7670,51 @@ impl AnotherOneApp {
                 launch_config,
                 warm_launch_id,
             } => {
-                let Some(project) = self.project_store.project(&project_id).cloned() else {
-                    self.show_error_toast("Could not find the selected project.", cx);
-                    self.cancel_active_new_task_prewarm();
-                    self.new_task_modal = None;
-                    return;
+                // GUI submit funnels through the same client-trait
+                // verb that MCP uses; `warm_launch_hint` carries the
+                // GUI's prewarm fast-path, MCP leaves it None.
+                let resolved_name = resolved_task_name(&task_name, &generated_task_name);
+                let req = OpenTaskRequest {
+                    client_id: ClientId::gui_desktop(),
+                    project_id: project_id.clone(),
+                    task_name: Some(resolved_name.clone()),
+                    branch_name: if source_branch.is_empty() {
+                        None
+                    } else {
+                        Some(source_branch.clone())
+                    },
+                    kind: TaskKind::Direct,
+                    launch_config,
+                    cwd: None,
+                    focus_after_open: true,
+                    warm_launch_hint: warm_launch_id,
                 };
-
-                let branch_name = crate::project_store::current_branch(&project.path)
-                    .or_else(|| self.project_store.current_branch_name(&project.id))
-                    .unwrap_or(source_branch);
-
-                let task_name = resolved_task_name(&task_name, &generated_task_name);
-                self.insert_and_open_task(
-                    project.id.clone(),
-                    project.id.clone(),
-                    TaskKind::Direct,
-                    task_name.clone(),
-                    branch_name.clone(),
-                    None,
-                    project.path.clone(),
-                    Some(launch_config.clone()),
-                    warm_launch_id,
-                    cx,
-                );
-                self.new_task_modal = None;
-                let success_message = if branch_name.is_empty() {
-                    format!("Opened direct task {}.", task_name)
-                } else {
-                    format!("Opened direct task {} on {}.", task_name, branch_name)
-                };
-                self.show_success_toast(success_message, cx);
+                match self.client_open_task(req, cx) {
+                    Ok(_) => {
+                        self.new_task_modal = None;
+                        let branch_label = self
+                            .project_store
+                            .project(&project_id)
+                            .and_then(|p| {
+                                another_one_core::project_store::current_branch(&p.path)
+                            })
+                            .or_else(|| {
+                                self.project_store.current_branch_name(&project_id)
+                            })
+                            .unwrap_or_else(|| source_branch.clone());
+                        let success_message = if branch_label.is_empty() {
+                            format!("Opened direct task {}.", resolved_name)
+                        } else {
+                            format!("Opened direct task {} on {}.", resolved_name, branch_label)
+                        };
+                        self.show_success_toast(success_message, cx);
+                    }
+                    Err(err) => {
+                        self.show_error_toast(format!("{err}"), cx);
+                        self.cancel_active_new_task_prewarm();
+                        self.new_task_modal = None;
+                    }
+                }
             }
             TaskLaunchRequest::Worktree {
                 project_id,
@@ -13552,6 +13608,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_daemon_handle(cx);
                             should_notify |= this.drain_pending_spawn_terminals(cx);
                             should_notify |= this.drain_pending_close_tabs(cx);
+                            should_notify |= this.drain_pending_select_focus(cx);
                             should_notify |= this.drain_pending_tab_launches(cx);
                             should_notify |= this.drain_pending_tab_resizes(cx);
                             should_notify |= this.drain_qr_scan_queue(cx);
