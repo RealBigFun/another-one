@@ -108,6 +108,11 @@ pub(crate) struct TerminalCursorSnapshot {
     pub width: usize,
     pub kind: TerminalCursorKind,
     pub color: Hsla,
+    /// `true` when the running TUI requested a blinking cursor variant
+    /// via DECSCUSR (`CSI Ps SP q`). The renderer modulates opacity over
+    /// time when this is set; the host bumps its refresh cadence so the
+    /// blink animation is visible at idle.
+    pub blinking: bool,
 }
 
 #[derive(Clone)]
@@ -261,15 +266,11 @@ impl LiveTerminalRuntime {
     }
 
     pub fn paste_text(&self, text: &str) -> io::Result<()> {
-        let payload = if self
+        let bracketed = self
             .term
             .mode()
-            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE)
-        {
-            format!("\u{1b}[200~{}\u{1b}[201~", text)
-        } else {
-            text.to_string()
-        };
+            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+        let payload = encode_paste_payload(text, bracketed);
         self.write_input(payload.as_bytes())
     }
 
@@ -349,6 +350,36 @@ impl LiveTerminalRuntime {
     }
 }
 
+/// Wrap pasted text with the xterm bracketed-paste markers when the
+/// running TUI has opted into the protocol (DECSET 2004). When it has
+/// not, the bytes are forwarded as-is so naive shells still receive a
+/// usable payload.
+///
+/// Two security/UX hardenings happen even when bracketed mode is on:
+///
+/// 1. **Paste-end smuggling.** A malicious payload that carries an
+///    embedded `\x1b[201~` would close the paste early and let the rest
+///    of the bytes be interpreted as commands. We strip both `\x1b[200~`
+///    and `\x1b[201~` markers from the payload before wrapping (see
+///    xterm's "Allow paste of binary data" notes and the CVE-2003-0063
+///    family). The three replacement patterns can never resynthesize a
+///    marker — `\x1b[200~` requires the literal `~` and neither strip
+///    nor `\r\n→\r` introduces one — so a single pass is safe.
+///
+/// 2. **CRLF → CR.** xterm-style paste passes `\r` for line breaks (the
+///    same byte the keyboard sends for Enter in raw mode). Lone `\n` is
+///    deliberately preserved so a paste of literal LF survives intact.
+pub(crate) fn encode_paste_payload(text: &str, bracketed: bool) -> String {
+    if !bracketed {
+        return text.to_string();
+    }
+    let sanitized = text
+        .replace("\x1b[200~", "")
+        .replace("\x1b[201~", "")
+        .replace("\r\n", "\r");
+    format!("\u{1b}[200~{}\u{1b}[201~", sanitized)
+}
+
 fn build_surface_snapshot<T: EventListener>(
     term: &Term<T>,
     size: TerminalGridSize,
@@ -358,6 +389,10 @@ fn build_surface_snapshot<T: EventListener>(
     let cursor = (renderable.cursor.shape != CursorShape::Hidden)
         .then(|| point_to_viewport(display_offset, renderable.cursor.point))
         .flatten();
+    // `RenderableCursor` only carries `shape`; `blinking` is on the full
+    // `CursorStyle` returned by `term.cursor_style()`. Pull it once here
+    // and thread through to the snapshot.
+    let cursor_blinking = term.cursor_style().blinking;
     let mut lines = Vec::with_capacity(size.rows as usize);
     let mut positioned_runs = Vec::new();
     let mut cursor_snapshot = None;
@@ -418,6 +453,7 @@ fn build_surface_snapshot<T: EventListener>(
                     column,
                     cell_width,
                     renderable.cursor.shape,
+                    cursor_blinking,
                     &cell_style,
                 ) {
                     if snapshot.kind == TerminalCursorKind::Block {
@@ -689,6 +725,7 @@ fn cursor_snapshot_from_cell(
     column: usize,
     width: usize,
     cursor_shape: CursorShape,
+    blinking: bool,
     cell_style: &ResolvedCellStyle,
 ) -> Option<TerminalCursorSnapshot> {
     let kind = match cursor_shape {
@@ -705,6 +742,7 @@ fn cursor_snapshot_from_cell(
         width,
         kind,
         color: cell_style.foreground,
+        blinking,
     })
 }
 
@@ -1018,6 +1056,105 @@ mod tests {
         let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
         parser.advance(&mut term, bytes);
         build_surface_snapshot(&term, size)
+    }
+
+    #[test]
+    fn snapshot_captures_decscusr_blinking_bar() {
+        // DECSCUSR `5 q` = blinking bar.
+        let snapshot = snapshot_from_ansi(b"\x1b[5 q hi");
+        let cursor = snapshot.cursor.as_ref().expect("cursor present");
+        assert_eq!(cursor.kind, TerminalCursorKind::Beam);
+        assert!(cursor.blinking, "DECSCUSR 5 → blinking");
+    }
+
+    #[test]
+    fn snapshot_captures_decscusr_blinking_block() {
+        // DECSCUSR `1 q` = explicit blinking block.
+        let snapshot = snapshot_from_ansi(b"\x1b[1 q hi");
+        let cursor = snapshot
+            .cursor
+            .as_ref()
+            .expect("cursor present after DECSCUSR 1");
+        assert_eq!(cursor.kind, TerminalCursorKind::Block);
+        assert!(cursor.blinking, "DECSCUSR 1 → blinking block");
+    }
+
+    #[test]
+    fn snapshot_captures_decscusr_zero_resets_to_default_steady_block() {
+        // VT520 says `0 q` is "blinking block", but alacritty's config
+        // default is steady block — so `0 q` here lands on steady. Lock
+        // that behavior so a future config-default change is noticed.
+        let snapshot = snapshot_from_ansi(b"\x1b[0 q hi");
+        let cursor = snapshot
+            .cursor
+            .as_ref()
+            .expect("cursor present after DECSCUSR 0");
+        assert_eq!(cursor.kind, TerminalCursorKind::Block);
+        assert!(!cursor.blinking, "alacritty default = steady");
+    }
+
+    #[test]
+    fn snapshot_captures_decscusr_steady_underline() {
+        // DECSCUSR `4 q` = steady underline.
+        let snapshot = snapshot_from_ansi(b"\x1b[4 q hi");
+        let cursor = snapshot.cursor.as_ref().expect("cursor present");
+        assert_eq!(cursor.kind, TerminalCursorKind::Underline);
+        assert!(!cursor.blinking, "DECSCUSR 4 → steady");
+    }
+
+    #[test]
+    fn encode_paste_payload_passes_through_when_unbracketed() {
+        let raw = "hello world\n";
+        assert_eq!(encode_paste_payload(raw, false), raw);
+    }
+
+    #[test]
+    fn encode_paste_payload_wraps_with_markers_when_bracketed() {
+        assert_eq!(
+            encode_paste_payload("hi", true),
+            "\u{1b}[200~hi\u{1b}[201~"
+        );
+    }
+
+    #[test]
+    fn encode_paste_payload_strips_embedded_end_marker() {
+        let input = "safe\u{1b}[201~rm -rf /\u{1b}[201~tail";
+        let out = encode_paste_payload(input, true);
+        // The end-marker only appears once — at the very end as our trailer.
+        let occurrences = out.matches("\u{1b}[201~").count();
+        assert_eq!(occurrences, 1, "got: {:?}", out);
+        assert!(out.starts_with("\u{1b}[200~"));
+        assert!(out.ends_with("\u{1b}[201~"));
+        assert!(out.contains("safe"));
+        assert!(out.contains("rm -rf /"));
+        assert!(out.contains("tail"));
+    }
+
+    #[test]
+    fn encode_paste_payload_strips_embedded_start_marker() {
+        let input = "before\u{1b}[200~after";
+        let out = encode_paste_payload(input, true);
+        // start-marker only appears once: as our header.
+        assert_eq!(out.matches("\u{1b}[200~").count(), 1, "got: {:?}", out);
+        assert!(out.contains("beforeafter"));
+    }
+
+    #[test]
+    fn encode_paste_payload_normalizes_crlf_to_cr() {
+        let out = encode_paste_payload("line1\r\nline2\r\nline3", true);
+        assert_eq!(out, "\u{1b}[200~line1\rline2\rline3\u{1b}[201~");
+    }
+
+    #[test]
+    fn encode_paste_payload_preserves_lone_lf_and_cr() {
+        let out = encode_paste_payload("a\nb\rc", true);
+        assert_eq!(out, "\u{1b}[200~a\nb\rc\u{1b}[201~");
+    }
+
+    #[test]
+    fn encode_paste_payload_preserves_multibyte_utf8() {
+        let out = encode_paste_payload("café 日本語 🦀", true);
+        assert_eq!(out, "\u{1b}[200~café 日本語 🦀\u{1b}[201~");
     }
 
     #[test]

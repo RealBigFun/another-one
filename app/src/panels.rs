@@ -1265,15 +1265,23 @@ fn paint_terminal_snapshot(
     let width = cell_width * cursor.width as f32;
     let rect = Bounds::new(point(left, top), size(width, cell_height));
 
+    let color = if cursor.blinking {
+        let mut faded = cursor.color;
+        faded.a *= cursor_blink_opacity();
+        faded
+    } else {
+        cursor.color
+    };
+
     match cursor.kind {
-        TerminalCursorKind::Block => window.paint_quad(fill(rect, cursor.color)),
+        TerminalCursorKind::Block => window.paint_quad(fill(rect, color)),
         TerminalCursorKind::HollowBlock => {
-            window.paint_quad(outline(rect, cursor.color, BorderStyle::default()));
+            window.paint_quad(outline(rect, color, BorderStyle::default()));
         }
         TerminalCursorKind::Beam => {
             window.paint_quad(fill(
                 Bounds::new(point(left, top), size(px(2.), cell_height)),
-                cursor.color,
+                color,
             ));
         }
         TerminalCursorKind::Underline => {
@@ -1282,9 +1290,26 @@ fn paint_terminal_snapshot(
                     point(left, top + cell_height - px(2.)),
                     size(width.max(px(1.)), px(2.)),
                 ),
-                cursor.color,
+                color,
             ));
         }
+    }
+}
+
+/// Cursor blink phase modulator: a square wave with a 1000 ms period
+/// (500 ms on, 500 ms off) measured against process start. Returns 1.0
+/// or 0.25 — we keep a sliver of opacity even on the "off" phase so
+/// users see a clear "this cell still holds the cursor" hint.
+pub(crate) fn cursor_blink_opacity() -> f32 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    let epoch = EPOCH.get_or_init(Instant::now);
+    let phase_ms = epoch.elapsed().as_millis() % 1000;
+    if phase_ms < 500 {
+        1.0
+    } else {
+        0.25
     }
 }
 

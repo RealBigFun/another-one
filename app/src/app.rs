@@ -9190,7 +9190,15 @@ impl AnotherOneApp {
             || !self.prewarmed_terminal_launches.is_empty()
             || self.last_terminal_activity.elapsed() < TERMINAL_FAST_REFRESH_GRACE;
 
-        if terminal_fast_refresh || self.resource_indicator_open {
+        // A blinking cursor needs steady redraws to actually animate.
+        // Without bumping the cadence the terminal sits idle until the
+        // next user keystroke / output and the blink flickers irregular.
+        let any_blinking_cursor = self
+            .terminal_surface_snapshots
+            .values()
+            .any(|snapshot| snapshot.cursor.as_ref().is_some_and(|c| c.blinking));
+
+        if terminal_fast_refresh || self.resource_indicator_open || any_blinking_cursor {
             TOAST_ANIMATION_REFRESH_INTERVAL
         } else if self.toasts.is_empty()
             && self.copied_toast.is_none()
