@@ -154,6 +154,9 @@ struct PendingPositionedRun {
 pub(crate) struct TerminalRuntimeUpdate {
     pub title: Option<String>,
     pub reset_title: bool,
+    /// True when the running TUI rang the terminal bell (`\x07`) during
+    /// this drain pass. The host briefly flashes the pane to surface it.
+    pub bell: bool,
 }
 
 #[derive(Clone)]
@@ -248,8 +251,8 @@ impl LiveTerminalRuntime {
                     Event::TextAreaSizeRequest(formatter) => {
                         pty_writes.push(formatter(window_size_from_grid(self.size)).into_bytes());
                     }
+                    Event::Bell => update.bell = true,
                     Event::Wakeup
-                    | Event::Bell
                     | Event::MouseCursorDirty
                     | Event::CursorBlinkingChange
                     | Event::ClipboardStore(_, _)
@@ -1275,6 +1278,44 @@ mod tests {
         let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
         parser.advance(&mut term, bytes);
         build_surface_snapshot(&term, size)
+    }
+
+    #[test]
+    fn bell_event_surfaces_in_runtime_update() {
+        // We can't drive a full LiveTerminalRuntime without a PTY, but
+        // we can verify Term raises Event::Bell on `\x07` and that our
+        // drain loop sets `update.bell = true`. Mirror the drain loop
+        // inline using a dedicated proxy so we don't need PTY plumbing.
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+
+        let queue: Arc<Mutex<VecDeque<Event>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let proxy_queue = queue.clone();
+        struct Proxy {
+            queue: Arc<Mutex<VecDeque<Event>>>,
+        }
+        impl EventListener for Proxy {
+            fn send_event(&self, event: Event) {
+                self.queue.lock().unwrap().push_back(event);
+            }
+        }
+        let mut term = Term::new(
+            Config::default(),
+            &TermSize::new(8, 4),
+            Proxy {
+                queue: proxy_queue,
+            },
+        );
+        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
+        parser.advance(&mut term, b"a\x07b");
+
+        let mut update = TerminalRuntimeUpdate::default();
+        while let Some(event) = queue.lock().unwrap().pop_front() {
+            if matches!(event, Event::Bell) {
+                update.bell = true;
+            }
+        }
+        assert!(update.bell, "BEL byte should surface as update.bell");
     }
 
     #[test]

@@ -92,6 +92,9 @@ pub(crate) const SIDEBAR_TASK_DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_
 const PROJECT_EXPAND_ANIMATION_DURATION: Duration = Duration::from_millis(160);
 const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
 const TERMINAL_RECENT_OUTPUT_LIMIT: usize = 16 * 1024;
+/// How long a terminal bell flash stays visible. Short enough to feel
+/// like a glance, long enough to register.
+pub(crate) const BELL_FLASH_DURATION: Duration = Duration::from_millis(180);
 pub(crate) const RECENT_COMMITS_PAGE_SIZE: usize = 20;
 
 /// Max queued `TerminalLaunchReply`s between PTY reader threads and
@@ -1406,6 +1409,9 @@ pub struct AnotherOneApp {
     /// Active scrollback search (Cmd-F). At most one terminal at a time;
     /// opening the search on a different terminal closes any previous.
     pub(crate) terminal_search: Option<TerminalSearchState>,
+    /// Last time each terminal rang its bell. The renderer flashes the
+    /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
+    pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Child process ids for hidden prewarmed launches.
@@ -4071,6 +4077,7 @@ impl AnotherOneApp {
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
             terminal_search: None,
+            terminal_bell_at: HashMap::new(),
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -4505,19 +4512,35 @@ impl AnotherOneApp {
         } else {
             0.0
         };
-        let width = (f32::from(viewport.width)
-            - self.sidebar_w
-            - self.right_w
-            - GUTTER * 2.0
-            - TERMINAL_VIEW_PADDING * 2.0)
-            .max(MIN_MAIN);
-        let height = (f32::from(viewport.height)
-            - FOOTER_H
-            - titlebar_height
-            - TERMINAL_TAB_BAR_H
-            - MAIN_PANE_BOTTOM_PAD
-            - TERMINAL_VIEW_PADDING * 2.0)
-            .max(120.0);
+        // Narrow (mobile) layouts give the terminal the entire viewport
+        // width minus padding — no sidebars to subtract. On rotate, the
+        // viewport flips dimensions and this recomputes against the
+        // new bounds, which then drives a `master.resize(...)` call in
+        // `drain_pending_tab_resizes` (TIOCSWINSZ → SIGWINCH).
+        let (width, height) = if self.is_narrow(window) {
+            let width = (f32::from(viewport.width) - TERMINAL_VIEW_PADDING * 2.0).max(MIN_MAIN);
+            let height = (f32::from(viewport.height)
+                - titlebar_height
+                - TERMINAL_TAB_BAR_H
+                - TERMINAL_VIEW_PADDING * 2.0)
+                .max(120.0);
+            (width, height)
+        } else {
+            let width = (f32::from(viewport.width)
+                - self.sidebar_w
+                - self.right_w
+                - GUTTER * 2.0
+                - TERMINAL_VIEW_PADDING * 2.0)
+                .max(MIN_MAIN);
+            let height = (f32::from(viewport.height)
+                - FOOTER_H
+                - titlebar_height
+                - TERMINAL_TAB_BAR_H
+                - MAIN_PANE_BOTTOM_PAD
+                - TERMINAL_VIEW_PADDING * 2.0)
+                .max(120.0);
+            (width, height)
+        };
         TerminalGridSize::from_panel_size(width, height, self.font_size)
     }
 
@@ -4894,6 +4917,9 @@ impl AnotherOneApp {
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                         let terminal_update = runtime.apply_output(&bytes);
                         output_dirty_keys.insert(key.clone());
+                        if terminal_update.bell {
+                            self.terminal_bell_at.insert(key.clone(), Instant::now());
+                        }
                         self.update_terminal_tab(&key, cx, |tab| {
                             apply_terminal_title_update(tab, &terminal_update);
                         });
@@ -5093,6 +5119,9 @@ impl AnotherOneApp {
                             let terminal_update = runtime.apply_output(&bytes);
                             self.terminal_surface_snapshots
                                 .insert(key.clone(), runtime.snapshot());
+                            if terminal_update.bell {
+                                self.terminal_bell_at.insert(key.clone(), Instant::now());
+                            }
                             self.update_terminal_tab(&key, cx, |tab| {
                                 apply_terminal_title_update(tab, &terminal_update);
                             });
@@ -5765,6 +5794,20 @@ impl AnotherOneApp {
             ));
         }
         out
+    }
+
+    /// Returns 0.0..=1.0: 1.0 immediately after the bell rings, fading to
+    /// 0 at `BELL_FLASH_DURATION`. Used by the renderer to draw a
+    /// translucent overlay.
+    pub(crate) fn terminal_bell_intensity(&self, key: &TerminalRuntimeKey) -> f32 {
+        let Some(at) = self.terminal_bell_at.get(key) else {
+            return 0.0;
+        };
+        let elapsed = at.elapsed();
+        if elapsed >= BELL_FLASH_DURATION {
+            return 0.0;
+        }
+        1.0 - (elapsed.as_millis() as f32 / BELL_FLASH_DURATION.as_millis() as f32)
     }
 
     pub(crate) fn handle_terminal_search_key_down(
@@ -9472,7 +9515,16 @@ impl AnotherOneApp {
             .values()
             .any(|snapshot| snapshot.cursor.as_ref().is_some_and(|c| c.blinking));
 
-        if terminal_fast_refresh || self.resource_indicator_open || any_blinking_cursor {
+        let any_bell_active = self
+            .terminal_bell_at
+            .values()
+            .any(|at| at.elapsed() < BELL_FLASH_DURATION);
+
+        if terminal_fast_refresh
+            || self.resource_indicator_open
+            || any_blinking_cursor
+            || any_bell_active
+        {
             TOAST_ANIMATION_REFRESH_INTERVAL
         } else if self.toasts.is_empty()
             && self.copied_toast.is_none()
@@ -10899,6 +10951,7 @@ mod tests {
             &TerminalRuntimeUpdate {
                 title: Some("cargo test".to_string()),
                 reset_title: false,
+                bell: false,
             },
         );
         assert_eq!(tab.title, "Run tests");
@@ -10908,6 +10961,7 @@ mod tests {
             &TerminalRuntimeUpdate {
                 title: None,
                 reset_title: true,
+                bell: false,
             },
         );
         assert_eq!(tab.title, "Run tests");
@@ -10923,6 +10977,7 @@ mod tests {
             &TerminalRuntimeUpdate {
                 title: Some("cargo test".to_string()),
                 reset_title: false,
+                bell: false,
             },
         );
         assert_eq!(tab.title, "cargo test");
@@ -10932,6 +10987,7 @@ mod tests {
             &TerminalRuntimeUpdate {
                 title: None,
                 reset_title: true,
+                bell: false,
             },
         );
         assert_eq!(tab.title, "Terminal");

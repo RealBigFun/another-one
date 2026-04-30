@@ -856,6 +856,11 @@ impl WorkspacePane {
                         .terminal_search_viewport_highlights(&key)
                 })
                 .unwrap_or_default();
+            let bell_intensity = self
+                .app
+                .upgrade()
+                .map(|app_entity| app_entity.read(cx).terminal_bell_intensity(&key))
+                .unwrap_or(0.0);
             let font_size = px(self.font_size);
             return div()
                 .relative()
@@ -1068,6 +1073,12 @@ impl WorkspacePane {
                     active.then(|| app_entity.update(cx, |app, app_cx| {
                         app.terminal_search_bar_overlay(app_cx).into_any_element()
                     }))
+                }))
+                .children((bell_intensity > 0.0).then(|| {
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(hsla(0.13, 0.95, 0.65, 0.18 * bell_intensity))
                 }));
         }
 
