@@ -142,6 +142,25 @@ pub struct CloseTabRequest {
     pub tab_id: String,
 }
 
+/// Mobile (or any other "viewer") asks the daemon to make sure a
+/// particular tab is live and start streaming its bytes. Different
+/// shape from `OpenTab` — the tab already exists in the project
+/// store (it was persisted by an earlier client); we're just
+/// connecting a viewer to it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AttachTabRequest {
+    pub client_id: ClientId,
+    pub section_id: SectionId,
+    pub tab_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AttachTabResponse {
+    /// `true` if this call started the PTY; `false` if it was
+    /// already running (idempotent attach).
+    pub launched: bool,
+}
+
 /// State change that any client can observe. Each event tracks the
 /// `originator` so subscribers can ignore self-fired events (avoiding
 /// echo loops) and surface remote-driven changes specifically.
@@ -166,6 +185,18 @@ pub enum ClientEvent {
         originator: ClientId,
         target: ClientId,
         focus: Focus,
+    },
+    /// PTY bytes streamed off a live tab. Emitted as the daemon
+    /// reads chunks off the PTY — caller doesn't have to poll
+    /// `read_terminal_output` to mirror content. No `originator`:
+    /// the PTY isn't a client, and bytes carry their own causation.
+    /// Volume note: a chatty TUI can blast the bus capacity (256
+    /// events) faster than a slow consumer drains it; that consumer
+    /// will see `try_recv` return `Lagged{skipped}` and should
+    /// resync via `read_terminal_output`.
+    Output {
+        tab_id: String,
+        bytes: Vec<u8>,
     },
 }
 

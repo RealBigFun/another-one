@@ -70,8 +70,8 @@ use crate::terminal_runtime::{
 use crate::theme;
 pub use another_one_core::section::SectionId;
 use another_one_core::clients::{
-    ClientEvent, ClientId, CloseTabRequest, Focus, OpenTabRequest, OpenTabResponse,
-    OpenTaskRequest, OpenTaskResponse, SelectRequest,
+    AttachTabRequest, AttachTabResponse, ClientEvent, ClientId, CloseTabRequest, Focus,
+    OpenTabRequest, OpenTabResponse, OpenTaskRequest, OpenTaskResponse, SelectRequest,
 };
 
 const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
@@ -4940,6 +4940,14 @@ impl AnotherOneApp {
                         self.update_terminal_tab(&key, cx, |tab| {
                             apply_terminal_title_update(tab, &terminal_update);
                         });
+                        // Mirror the chunk to MCP subscribers. Each
+                        // session has its own broadcast::Receiver so
+                        // a slow consumer doesn't stall the daemon's
+                        // own output processing.
+                        self.emit_client_event(ClientEvent::Output {
+                            tab_id: key.tab_id.clone(),
+                            bytes: bytes.clone(),
+                        });
                         updated = true;
                     } else if self.maybe_retry_claude_restore(&key, cx) {
                         updated = true;
@@ -5378,70 +5386,26 @@ impl AnotherOneApp {
         };
         let mut changed = false;
         for request in pending {
-            if self.live_terminal_runtimes.contains_key(&request.key)
-                || self
-                    .terminal_manager
-                    .pending_launches
-                    .contains(&request.key)
-            {
-                continue;
-            }
-
-            // Find the Task + PersistedTerminalTab carrying this key.
-            let section_store_key = request.key.section_id.store_key();
-            let Some((task, tab)) = self.project_store.tasks.values().flatten().find_map(|t| {
-                if t.section_id != section_store_key {
-                    return None;
+            // Routed through the same client-trait verb a future
+            // privileged MCP "wake this tab" call would use. Mobile
+            // attach is just one driver of `client_attach_tab`.
+            // We don't have a stable mobile-endpoint id here yet —
+            // attribute the event to a generic mobile client until
+            // `pending_tab_launches` carries the originating peer.
+            let attach = AttachTabRequest {
+                client_id: ClientId("mobile:attach".to_string()),
+                section_id: request.key.section_id.clone(),
+                tab_id: request.key.tab_id.clone(),
+            };
+            match self.client_attach_tab(attach, cx) {
+                Ok(resp) if resp.launched => changed = true,
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(?request.key, %err, "attach_tab declined; mobile launch dropped");
                 }
-                t.tabs
-                    .iter()
-                    .find(|pt| pt.id == request.key.tab_id)
-                    .map(|pt| (t, pt))
-            }) else {
-                continue;
-            };
-            let Some(launch_config) = tab.launch_config.clone() else {
-                continue;
-            };
-            let agent_launch_args = self.agent_launch_args_for_launch_config(&launch_config);
-
-            let cwd = task
-                .cwd
-                .clone()
-                .or_else(|| self.project_path(&task.target_project_id));
-            // Default grid; mobile will send TabResize after attach
-            // and the desktop's own active-tab path will refine it.
-            let size = TerminalGridSize {
-                cols: 100,
-                rows: 30,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
-
-            self.terminal_manager
-                .pending_launches
-                .insert(request.key.clone());
-            // Mark in-flight in the daemon-visible registry so a
-            // mobile retry during the "spawn dispatched, Launched
-            // not yet observed" window doesn't queue a duplicate.
-            if let Ok(mut state) = self.registry_state.lock() {
-                state.in_flight_launches.insert(request.key.clone());
             }
-            self.update_terminal_tab(&request.key, cx, |tab| {
-                tab.restore_status = TerminalRestoreStatus::Launching;
-            });
-            spawn_terminal_launch(
-                self.terminal_launch_sender.clone(),
-                request.key.clone(),
-                cwd,
-                launch_config,
-                agent_launch_args,
-                size,
-            );
-            changed = true;
         }
         if changed {
-            self.last_terminal_activity = Instant::now();
             cx.notify();
         }
         changed
@@ -5709,6 +5673,94 @@ impl AnotherOneApp {
 
         self.sync_registry_project_store();
         Ok(OpenTabResponse { tab_id })
+    }
+
+    /// `DaemonClient::attach_tab` — make sure the tab's PTY is
+    /// live and start broadcasting its bytes. Idempotent: a follow-
+    /// up attach for an already-running tab returns
+    /// `launched: false` without spawning a duplicate PTY. Used by
+    /// mobile clients connecting in via iroh; in principle MCP
+    /// could also call this to "wake" a persisted-but-cold tab,
+    /// though MCP today expects to drive its own tabs.
+    pub(crate) fn client_attach_tab(
+        &mut self,
+        req: AttachTabRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<AttachTabResponse> {
+        let key = TerminalRuntimeKey {
+            section_id: req.section_id.clone(),
+            tab_id: req.tab_id.clone(),
+        };
+
+        if self.live_terminal_runtimes.contains_key(&key)
+            || self.terminal_manager.pending_launches.contains(&key)
+        {
+            return Ok(AttachTabResponse { launched: false });
+        }
+
+        let section_store_key = req.section_id.store_key();
+        let (task, persisted_tab) = self
+            .project_store
+            .tasks
+            .values()
+            .flatten()
+            .find_map(|t| {
+                if t.section_id != section_store_key {
+                    return None;
+                }
+                t.tabs
+                    .iter()
+                    .find(|pt| pt.id == req.tab_id)
+                    .map(|pt| (t.clone(), pt.clone()))
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no persisted tab for section {} / tab {}",
+                    section_store_key,
+                    req.tab_id
+                )
+            })?;
+        let launch_config = persisted_tab.launch_config.clone().ok_or_else(|| {
+            anyhow::anyhow!("persisted tab {} has no launch_config", req.tab_id)
+        })?;
+        let agent_launch_args = self.agent_launch_args_for_launch_config(&launch_config);
+        let cwd = task
+            .cwd
+            .clone()
+            .or_else(|| self.project_path(&task.target_project_id));
+        // Default grid; the attaching viewer will follow up with a
+        // resize to its actual viewport. Min-across-viewers logic
+        // in `RegistryState::recompute_effective_size` drives the
+        // PTY to whatever's actually being displayed.
+        let size = TerminalGridSize {
+            cols: 100,
+            rows: 30,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        self.terminal_manager.pending_launches.insert(key.clone());
+        if let Ok(mut state) = self.registry_state.lock() {
+            state.in_flight_launches.insert(key.clone());
+        }
+        self.update_terminal_tab(&key, cx, |tab| {
+            tab.restore_status = TerminalRestoreStatus::Launching;
+        });
+        spawn_terminal_launch(
+            self.terminal_launch_sender.clone(),
+            key.clone(),
+            cwd,
+            launch_config,
+            agent_launch_args,
+            size,
+        );
+        self.last_terminal_activity = Instant::now();
+        self.emit_client_event(ClientEvent::TabOpened {
+            originator: req.client_id,
+            section_id: req.section_id,
+            tab_id: req.tab_id,
+        });
+        Ok(AttachTabResponse { launched: true })
     }
 
     /// `DaemonClient::close_tab` — close a tab by id (any client).
