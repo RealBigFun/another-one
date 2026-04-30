@@ -502,6 +502,13 @@ pub struct PersistedSectionState {
     pub tabs: Vec<PersistedTerminalTab>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchivedProjectActions {
+    pub project_path: PathBuf,
+    #[serde(default)]
+    pub actions: Vec<ProjectAction>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(default = "default_left_sidebar_open")]
@@ -533,6 +540,8 @@ pub struct UiState {
     #[serde(default)]
     pub global_actions: Vec<ProjectAction>,
     #[serde(default)]
+    pub archived_project_actions: Vec<ArchivedProjectActions>,
+    #[serde(default)]
     pub show_sidebar_git_metadata: bool,
 }
 
@@ -553,6 +562,7 @@ impl Default for UiState {
             git_pr_generation_script: None,
             shortcuts: ShortcutSettings::default(),
             global_actions: Vec::new(),
+            archived_project_actions: Vec::new(),
             show_sidebar_git_metadata: false,
         }
     }
@@ -1231,6 +1241,7 @@ impl ProjectStore {
 
     fn remove_exact_project(&mut self, project_id: &str) -> Option<Project> {
         let removed_project = self.projects_by_id.remove(project_id)?;
+        self.archive_project_actions(&removed_project);
         self.project_order
             .retain(|candidate_id| candidate_id != project_id);
 
@@ -1259,6 +1270,47 @@ impl ProjectStore {
         }
 
         Some(removed_project)
+    }
+
+    fn archive_project_actions(&mut self, project: &Project) {
+        if project.actions.is_empty() {
+            return;
+        }
+
+        let archived = self
+            .ui
+            .archived_project_actions
+            .iter_mut()
+            .find(|archived| archived.project_path == project.path);
+        if let Some(archived) = archived {
+            for action in project.actions.iter().cloned() {
+                upsert_action(&mut archived.actions, action);
+            }
+        } else {
+            self.ui
+                .archived_project_actions
+                .push(ArchivedProjectActions {
+                    project_path: project.path.clone(),
+                    actions: project.actions.clone(),
+                });
+        }
+    }
+
+    fn restore_archived_project_actions(&mut self, project: &mut Project) {
+        let Some(archive_index) = self
+            .ui
+            .archived_project_actions
+            .iter()
+            .position(|archived| archived.project_path == project.path)
+        else {
+            return;
+        };
+
+        let archived = self.ui.archived_project_actions.remove(archive_index);
+        for mut action in archived.actions {
+            action.scope = ProjectActionScope::Project;
+            upsert_action(&mut project.actions, action);
+        }
     }
 
     pub fn remove_task(&mut self, root_project_id: &str, task_id: &str) -> Option<Task> {
@@ -1362,6 +1414,7 @@ impl ProjectStore {
         }
 
         let mut project = prepared.project;
+        self.restore_archived_project_actions(&mut project);
         project.repo_id = repo_id;
         self.project_order.push(project.id.clone());
         self.projects_by_id.insert(project.id.clone(), project);
@@ -3934,12 +3987,12 @@ mod tests {
         parse_git_diff_patch, parse_recent_branch_commit_page, project_action_agent_launch_args,
         read_changed_file_diff, read_project_git_state, remove_task_worktree, review_worktree_slug,
         slugify_branch_name, unique_branch_name_for_repo, worktree_parent_dir_with_root,
-        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, CreateBranchMode, DiffRowKind,
-        GitDiffSelection, GitDiffSource, PersistedSectionState, PersistedTerminalTab, Project,
-        ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind,
-        ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings, ProjectCheckoutState,
-        ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task, TaskKind,
-        TaskWorktreeBranchMode, UiState,
+        ArchivedProjectActions, BranchCompareNameStatusEntry, BranchCompareNumStatEntry,
+        CreateBranchMode, DiffRowKind, GitDiffSelection, GitDiffSource, PersistedSectionState,
+        PersistedTerminalTab, PreparedProject, Project, ProjectAction, ProjectActionAccess,
+        ProjectActionIcon, ProjectActionKind, ProjectActionScope, ProjectBranchSettingField,
+        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
+        RepoRecord, StoreFile, Task, TaskKind, TaskWorktreeBranchMode, UiState,
     };
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -4471,6 +4524,7 @@ mod tests {
         assert_eq!(project.branch_settings, ProjectBranchSettings::default());
         assert!(project.actions.is_empty());
         assert!(store.ui.global_actions.is_empty());
+        assert!(store.ui.archived_project_actions.is_empty());
     }
 
     #[test]
@@ -4529,17 +4583,32 @@ mod tests {
                 access: ProjectActionAccess::WorkspaceWrite,
             },
         });
+        store
+            .ui
+            .archived_project_actions
+            .push(ArchivedProjectActions {
+                project_path: PathBuf::from("/tmp/removed-root"),
+                actions: vec![sample_shell_action(
+                    "archived-action",
+                    ProjectActionScope::Project,
+                )],
+            });
 
         let json = serde_json::to_string(&store).expect("store should serialize");
         let round_trip: StoreFile = serde_json::from_str(&json).expect("store should deserialize");
 
         assert_eq!(round_trip.projects["root"].actions.len(), 1);
         assert_eq!(round_trip.ui.global_actions.len(), 1);
+        assert_eq!(round_trip.ui.archived_project_actions.len(), 1);
         assert_eq!(
             round_trip.projects["root"].actions[0].kind,
             ProjectActionKind::Shell {
                 command: "cargo test".to_string()
             }
+        );
+        assert_eq!(
+            round_trip.ui.archived_project_actions[0].actions[0].id,
+            "archived-action"
         );
     }
 
@@ -4618,6 +4687,54 @@ mod tests {
         assert_eq!(visible_actions.len(), 1);
         assert_eq!(visible_actions[0].id, "action-ok");
         assert_eq!(visible_actions[0].scope, ProjectActionScope::Project);
+    }
+
+    #[test]
+    fn insert_prepared_project_restores_archived_actions_for_same_path() {
+        let mut project = sample_project("root", None);
+        project.actions.push(sample_shell_action(
+            "action-ok",
+            ProjectActionScope::Project,
+        ));
+        let project_path = project.path.clone();
+        let mut store = sample_project_store(project);
+
+        store.remove_project("root");
+        assert_eq!(store.ui.archived_project_actions.len(), 1);
+
+        let prepared_project = Project {
+            id: "new-root".to_string(),
+            repo_id: "new-repo".to_string(),
+            name: "Project new-root".to_string(),
+            path: project_path,
+            kind: ProjectKind::Root,
+            checkout: ProjectCheckoutState::default(),
+            branch_settings: ProjectBranchSettings::default(),
+            actions: Vec::new(),
+            worktree_name: None,
+            repo_common_dir: None,
+        };
+        let inserted = store.insert_prepared_project(PreparedProject {
+            project: prepared_project,
+            repo: RepoRecord {
+                id: "new-repo".to_string(),
+                common_dir: None,
+                branch_order: Vec::new(),
+                branches_by_name: HashMap::new(),
+            },
+        });
+
+        assert!(inserted);
+        assert!(store.ui.archived_project_actions.is_empty());
+        let restored_project = store
+            .project("new-root")
+            .expect("re-added project should exist");
+        assert_eq!(restored_project.actions.len(), 1);
+        assert_eq!(restored_project.actions[0].id, "action-ok");
+        assert_eq!(
+            restored_project.actions[0].scope,
+            ProjectActionScope::Project
+        );
     }
 
     #[test]
@@ -4817,6 +4934,7 @@ mod tests {
                 git_pr_generation_script: None,
                 shortcuts: ShortcutSettings::default(),
                 global_actions: Vec::new(),
+                archived_project_actions: Vec::new(),
                 show_sidebar_git_metadata: false,
             },
         };
@@ -4963,6 +5081,10 @@ mod tests {
     fn remove_project_should_remove_worktree_siblings_in_same_repo_group() {
         let mut root_project = sample_project("root", None);
         root_project.repo_id = "repo".to_string();
+        root_project.actions.push(sample_shell_action(
+            "action-ok",
+            ProjectActionScope::Project,
+        ));
         let mut worktree_project = sample_project("wt", Some("wt"));
         worktree_project.repo_id = "repo".to_string();
 
@@ -5112,6 +5234,16 @@ mod tests {
         assert!(store.repos.is_empty());
         assert!(store.ui.expanded_repo_ids.is_empty());
         assert!(store.ui.repo_default_commit_actions.is_empty());
+        assert_eq!(store.ui.archived_project_actions.len(), 1);
+        assert_eq!(
+            store.ui.archived_project_actions[0].project_path,
+            PathBuf::from("/tmp/root")
+        );
+        assert_eq!(store.ui.archived_project_actions[0].actions.len(), 1);
+        assert_eq!(
+            store.ui.archived_project_actions[0].actions[0].id,
+            "action-ok"
+        );
         assert_eq!(store.ui.last_active_section_id, None);
     }
 
