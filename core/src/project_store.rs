@@ -1,6 +1,9 @@
 //! Persistent project store.
 //!
-//! Projects are saved as JSON in `~/.config/another-one/projects.json`.
+//! Projects are saved as JSON in the app config directory.
+//!
+//! On macOS, dev and installed builds intentionally share
+//! `~/Library/Application Support/another-one/projects.json`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -1789,8 +1792,7 @@ impl ProjectStore {
     }
 
     fn config_path() -> PathBuf {
-        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        base.join("another-one").join("projects.json")
+        app_config_dir().join("projects.json")
     }
 
     fn read_from_disk(path: &Path) -> StoreFile {
@@ -1907,6 +1909,25 @@ impl ProjectStore {
         self.rebuild_runtime_views();
         self.save();
     }
+}
+
+#[cfg(target_os = "macos")]
+fn app_config_dir() -> PathBuf {
+    dirs::home_dir()
+        .map(|home| {
+            home.join("Library")
+                .join("Application Support")
+                .join("another-one")
+        })
+        .or_else(|| dirs::config_dir().map(|base| base.join("another-one")))
+        .unwrap_or_else(|| PathBuf::from(".").join("another-one"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn app_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("another-one")
 }
 
 pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {
