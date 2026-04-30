@@ -1427,10 +1427,6 @@ pub struct AnotherOneApp {
     /// `FocusChanged` event flows onto the bus — closing the loop
     /// for MCP harnesses that want to observe the human.
     pub(crate) last_observed_gui_focus: Focus,
-    /// Broadcast bus for `ClientEvent`s. Every client-mediated state
-    /// change (task opened, tab opened/closed, focus moved) fires one
-    /// event so subscribers can reflect remote-driven changes locally.
-    pub(crate) client_event_bus: tokio::sync::broadcast::Sender<ClientEvent>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Child process ids for hidden prewarmed launches.
@@ -4099,7 +4095,6 @@ impl AnotherOneApp {
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
-            client_event_bus: tokio::sync::broadcast::channel(256).0,
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -5532,19 +5527,13 @@ impl AnotherOneApp {
         true
     }
 
-    /// Emit a `ClientEvent`: forwarded onto the broadcast bus (for
-    /// future async subscribers) and pushed onto the
-    /// `RegistryState.recent_events` ring buffer (for MCP
-    /// `poll_events`). One helper so neither delivery channel is
-    /// silently skipped at any call site.
+    /// Emit a `ClientEvent` on the daemon-side broadcast bus. Every
+    /// MCP session has its own `broadcast::Receiver` clone, so
+    /// concurrent harnesses see the same event independently —
+    /// no shared queue to race on.
     fn emit_client_event(&self, event: ClientEvent) {
-        let _ = self.client_event_bus.send(event.clone());
-        if let Ok(mut state) = self.registry_state.lock() {
-            const CAP: usize = 1024;
-            if state.recent_events.len() == CAP {
-                state.recent_events.pop_front();
-            }
-            state.recent_events.push_back(event);
+        if let Ok(state) = self.registry_state.lock() {
+            let _ = state.event_bus.send(event);
         }
     }
 

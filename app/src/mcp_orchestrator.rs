@@ -282,27 +282,10 @@ impl McpOrchestrator for DesktopMcpOrchestrator {
         Err(anyhow::anyhow!(NOT_YET_WIRED))
     }
 
-    fn poll_events(&self, max_events: usize) -> Vec<another_one_core::clients::ClientEvent> {
-        // Drain up to `max_events` from `RegistryState.recent_events`.
-        // Each call removes what it returns — the queue is a single
-        // shared FIFO across MCP sessions today (per-session
-        // receivers are a v3 follow-up).
-        let cap = max_events.max(1).min(1024);
-        self.with_state(|state| {
-            // We need mutable access to drain; `with_state` only
-            // gives `&RegistryState`. Acquire the lock manually for
-            // this call site.
-            let _ = state;
-        });
-        let arc = match self.inner.upgrade() {
-            Some(a) => a,
-            None => return Vec::new(),
-        };
-        let Ok(mut state) = arc.lock() else {
-            return Vec::new();
-        };
-        let n = cap.min(state.recent_events.len());
-        state.recent_events.drain(..n).collect()
+    fn subscribe_events(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<another_one_core::clients::ClientEvent>> {
+        self.with_state(|state| state.event_bus.subscribe())
     }
 
     fn select_focus(

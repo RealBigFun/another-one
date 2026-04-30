@@ -209,18 +209,14 @@ pub trait McpOrchestrator: Send + Sync {
         anyhow::bail!("select_focus is not implemented by this orchestrator")
     }
 
-    /// Drain at most `max_events` recent `ClientEvent`s from the
-    /// daemon-wide event bus. Polled by MCP harnesses to learn what
-    /// the user (or a peer client) just did. Implementations that
-    /// don't have an event source return an empty vec.
-    ///
-    /// This is intentionally a *poll* rather than a streaming
-    /// subscription — MCP's request/response shape doesn't lend
-    /// itself to long-lived streams, and harnesses that need
-    /// realtime updates can call this on a timer. A cleaner
-    /// streaming surface (bidirectional notifications) is a v3
-    /// extension once the event vocabulary stabilises.
-    fn poll_events(&self, _max_events: usize) -> Vec<crate::clients::ClientEvent> {
-        Vec::new()
+    /// Subscribe a per-session `broadcast::Receiver` to the
+    /// daemon's `ClientEvent` stream. The MCP server holds one
+    /// receiver per connection so concurrent sessions see events
+    /// independently (no shared FIFO to race on). Implementations
+    /// that don't have an event source return `None`.
+    fn subscribe_events(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>> {
+        None
     }
 }

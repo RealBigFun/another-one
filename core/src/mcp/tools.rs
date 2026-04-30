@@ -182,11 +182,16 @@ pub fn tool_manifest() -> Value {
 
 /// Dispatch a `tools/call` to the orchestrator. Returns the
 /// structured payload that `server.rs` wraps into an MCP content
-/// response.
+/// response. The `session` argument carries per-connection state —
+/// today, the per-session `broadcast::Receiver` that backs
+/// `poll_events`. Stays in the call path even for tools that don't
+/// touch session state so the future surface (notifications, output
+/// streams) has somewhere to land without another signature change.
 pub fn call(
     name: &str,
     args: &Value,
     orchestrator: &dyn McpOrchestrator,
+    session: &mut crate::mcp::server::SessionState,
 ) -> Result<Value, ToolError> {
     match name {
         "list_projects" => Ok(json!(orchestrator.list_projects())),
@@ -284,12 +289,18 @@ pub fn call(
                 .map_err(ToolError::Execution)
         }
         "poll_events" => {
+            // Per-session drain: the receiver was subscribed at
+            // connect time. Each session has its own view of the
+            // bus, so two harnesses polling concurrently each see
+            // the full event stream — no shared FIFO to race on.
+            let _ = orchestrator;
             let max = args
                 .get("max_events")
                 .and_then(|v| v.as_u64())
                 .map(|n| n as usize)
-                .unwrap_or(64);
-            Ok(json!(orchestrator.poll_events(max)))
+                .unwrap_or(64)
+                .min(1024);
+            Ok(json!(session.drain_events(max)))
         }
         _ => Err(ToolError::UnknownTool),
     }

@@ -100,11 +100,56 @@ const MAX_SESSION_BYTES: u64 = 16 * 1024 * 1024;
 /// and concatenated JSON-RPC — some MCP clients pack back-to-back
 /// requests without a separator. Whitespace between messages
 /// (spaces, tabs, LF, CRLF) is consumed by the deserialiser.
+/// Per-session state held by `serve` for the lifetime of one MCP
+/// connection. Today this is just the per-session
+/// `broadcast::Receiver` used by `poll_events`; it gives sessions
+/// independent views into the daemon's `ClientEvent` stream so two
+/// connected harnesses don't drain each other.
+pub struct SessionState {
+    events_rx: Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>>,
+}
+
+impl SessionState {
+    pub fn new(events_rx: Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>>) -> Self {
+        Self { events_rx }
+    }
+
+    /// Drain up to `max` events from the session's receiver.
+    /// Lagged signals (slow consumer dropped behind the bus's
+    /// capacity) are translated into a synthetic
+    /// `FocusChanged{originator: gui:desktop, target: gui:desktop, focus: None}`
+    /// — wrong content but the right shape to tell the caller "you
+    /// missed events; resync." A more honest representation is a
+    /// `Lagged { skipped }` variant; that goes in once
+    /// `ClientEvent` settles further (v4 follow-up).
+    pub fn drain_events(&mut self, max: usize) -> Vec<crate::clients::ClientEvent> {
+        let Some(rx) = self.events_rx.as_mut() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for _ in 0..max {
+            use tokio::sync::broadcast::error::TryRecvError;
+            match rx.try_recv() {
+                Ok(ev) => out.push(ev),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_skipped)) => {
+                    // Skip lagged signal entries; the next try_recv
+                    // will return the oldest still-buffered event.
+                    continue;
+                }
+            }
+        }
+        out
+    }
+}
+
 pub fn serve<R: Read, W: Write>(
     reader: R,
     mut writer: W,
     orchestrator: Arc<dyn McpOrchestrator>,
 ) -> std::io::Result<()> {
+    let mut session = SessionState::new(orchestrator.subscribe_events());
     let capped = reader.take(MAX_SESSION_BYTES);
     let buffered = BufReader::new(capped);
     let stream = Deserializer::from_reader(buffered).into_iter::<Value>();
@@ -130,7 +175,7 @@ pub fn serve<R: Read, W: Write>(
             }
         };
 
-        let response = dispatch(&request, orchestrator.as_ref());
+        let response = dispatch(&request, orchestrator.as_ref(), &mut session);
         // Notifications (no id) don't get a response.
         let Some(response) = response else {
             continue;
@@ -142,7 +187,11 @@ pub fn serve<R: Read, W: Write>(
     Ok(())
 }
 
-fn dispatch(req: &Request, orchestrator: &dyn McpOrchestrator) -> Option<String> {
+fn dispatch(
+    req: &Request,
+    orchestrator: &dyn McpOrchestrator,
+    session: &mut SessionState,
+) -> Option<String> {
     let is_notification = req.id.is_none();
 
     match req.method.as_str() {
@@ -154,7 +203,7 @@ fn dispatch(req: &Request, orchestrator: &dyn McpOrchestrator) -> Option<String>
             if is_notification {
                 return None;
             }
-            Some(handle_tool_call(req, orchestrator))
+            Some(handle_tool_call(req, orchestrator, session))
         }
         "shutdown" => {
             if is_notification {
@@ -188,7 +237,11 @@ fn initialize_result() -> Value {
     })
 }
 
-fn handle_tool_call(req: &Request, orchestrator: &dyn McpOrchestrator) -> String {
+fn handle_tool_call(
+    req: &Request,
+    orchestrator: &dyn McpOrchestrator,
+    session: &mut SessionState,
+) -> String {
     let name = match req.params.get("name").and_then(|v| v.as_str()) {
         Some(s) => s,
         None => {
@@ -201,7 +254,7 @@ fn handle_tool_call(req: &Request, orchestrator: &dyn McpOrchestrator) -> String
     };
     let args = req.params.get("arguments").cloned().unwrap_or(json!({}));
 
-    match tools::call(name, &args, orchestrator) {
+    match tools::call(name, &args, orchestrator, session) {
         Ok(result) => {
             // MCP tools/call success shape:
             //   { content: [ { type: "text", text: "..." } ], isError?: false, structuredContent? }
