@@ -89,7 +89,7 @@ objc = "0.2"
 # has the headless arm available and `guess_compositor()`'s "Wayland"
 # return value falls through to `unreachable!()`.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui_platform", features = ["wayland", "x11"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui_platform", features = ["wayland", "x11", "font-kit"] }
 
 # Android: NativeActivity-driven GPUI shell. `gpui-mobile` implements
 # `gpui::Platform` for android (Vulkan/wgpu) and ios (Metal/wgpu) on
