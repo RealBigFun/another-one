@@ -423,7 +423,9 @@ fn fixed_title_for_project_action(action: &ProjectAction) -> Option<String> {
 // Moved to `another_one_core::git_service::GitRefreshReply`; the
 // struct stays named the same at this path so existing call sites
 // keep compiling, but the body + the spawn worker now live in core.
-use another_one_core::git_service::GitRefreshReply;
+use another_one_core::git_service::{
+    ChangedFileDiffReply, GitRefreshReply, RemoteBranchRefreshReply,
+};
 
 enum GitActionReply {
     Progress {
@@ -451,12 +453,25 @@ pub(crate) enum CommitFileChangesState {
     Failed(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum GitDiffPaneState {
+    Loading,
+    Loaded(Arc<crate::project_store::GitDiff>),
+    Failed(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RightSidebarMode {
     WorkingTree,
     Commits,
     Checks,
     Compare,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkspaceKeyboardFocus {
+    MainPane,
+    GitPanel,
 }
 
 struct TerminalRuntimeRequest {
@@ -732,6 +747,8 @@ pub(crate) struct WorkspacePane {
     pub(crate) active_section: Option<SectionId>,
     /// Currently displayed project page (project_id). Mutually exclusive with terminal view.
     pub(crate) active_project_page: Option<String>,
+    /// Currently displayed read-only changed-file diff.
+    pub(crate) active_git_diff: Option<crate::project_store::GitDiffSelection>,
     /// Whether the Open PRs section is collapsed on the project page.
     pub(crate) project_page_prs_collapsed: bool,
     /// Active PR filter tab index (0=All Open, 1=Needs My Review, 2=My PRs, 3=Draft).
@@ -744,6 +761,8 @@ pub(crate) struct WorkspacePane {
     pub(crate) terminal_tab_menu: Option<TerminalTabMenuState>,
     /// Confirmation state for closing a pinned terminal tab.
     pub(crate) pinned_tab_close_confirm: Option<PinnedTabCloseConfirmState>,
+    /// Last workspace region that intentionally claimed bare navigation keys.
+    pub(crate) keyboard_focus: WorkspaceKeyboardFocus,
 }
 
 impl WorkspacePane {
@@ -764,6 +783,7 @@ impl WorkspacePane {
             font_size,
             active_section,
             active_project_page: None,
+            active_git_diff: None,
             project_page_prs_collapsed: false,
             project_page_pr_filter: 0,
             project_page_pr_query: String::new(),
@@ -771,6 +791,7 @@ impl WorkspacePane {
             section_states,
             terminal_tab_menu: None,
             pinned_tab_close_confirm: None,
+            keyboard_focus: WorkspaceKeyboardFocus::MainPane,
         }
     }
 
@@ -838,6 +859,8 @@ impl WorkspacePane {
             || self.active_section.is_some();
         self.active_project_page = Some(project_id);
         self.active_section = None;
+        self.active_git_diff = None;
+        self.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
         if changed {
             cx.notify();
         }
@@ -856,8 +879,13 @@ impl WorkspacePane {
             &mut self.active_project_page,
             section_id,
         );
+        let closed_git_diff = self.active_git_diff.is_some();
+        if changed || closed_git_diff {
+            self.active_git_diff = None;
+            self.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
+        }
         self.persist_active_section(cx);
-        if changed {
+        if changed || closed_git_diff {
             cx.notify();
         }
     }
@@ -885,6 +913,7 @@ impl WorkspacePane {
             .is_some_and(|section| project_ids.contains(&section.project_id))
         {
             self.active_section = None;
+            self.active_git_diff = None;
             changed = true;
         }
 
@@ -894,6 +923,7 @@ impl WorkspacePane {
             .is_some_and(|project_id| project_ids.contains(project_id))
         {
             self.active_project_page = None;
+            self.active_git_diff = None;
             changed = true;
         }
 
@@ -925,6 +955,7 @@ impl WorkspacePane {
         {
             self.active_section = None;
             self.active_project_page = None;
+            self.active_git_diff = None;
             changed = true;
         }
 
@@ -1253,10 +1284,16 @@ pub struct AnotherOneApp {
     changed_files_git_mutation_sender: broadcast::Sender<ChangedFilesGitMutationReply>,
     /// Receiver for background right-sidebar git mutation replies.
     changed_files_git_mutation_receiver: broadcast::Receiver<ChangedFilesGitMutationReply>,
+    /// Active changed-file diff load result for the main pane.
+    pub(crate) git_diff_state: Option<GitDiffPaneState>,
+    /// Receiver for the in-flight changed-file diff load.
+    git_diff_receiver: Option<broadcast::Receiver<ChangedFileDiffReply>>,
     /// Whether an automatic git refresh is already running.
     pub(crate) git_refresh_in_flight: bool,
     /// Receiver for the in-flight automatic git refresh result.
     git_refresh_receiver: Option<broadcast::Receiver<GitRefreshReply>>,
+    /// Receiver for refreshing remote refs while the new-task modal is open.
+    new_task_branch_refresh_receiver: Option<broadcast::Receiver<RemoteBranchRefreshReply>>,
     /// Receiver for the in-flight new task worktree creation result.
     task_creation_receiver: Option<broadcast::Receiver<TaskCreationReply>>,
     /// Receiver for the in-flight create-branch operation.
@@ -3787,8 +3824,11 @@ impl AnotherOneApp {
             pending_changed_files_git_mutations: HashMap::new(),
             changed_files_git_mutation_sender,
             changed_files_git_mutation_receiver,
+            git_diff_state: None,
+            git_diff_receiver: None,
             git_refresh_in_flight: false,
             git_refresh_receiver: None,
+            new_task_branch_refresh_receiver: None,
             task_creation_receiver: None,
             branch_creation_receiver: None,
             pending_task_launch: None,
@@ -3929,9 +3969,7 @@ impl AnotherOneApp {
             resource_usage: ResourceUsageSnapshot::default(),
             resource_usage_sampler: ResourceUsageSampler::default(),
             last_resource_usage_refresh: Instant::now() - RESOURCE_REFRESH_INTERVAL_CLOSED,
-            updater: crate::updater::UpdaterHandle::spawn(
-                crate::updater::BuildIdentity::current(),
-            ),
+            updater: crate::updater::UpdaterHandle::spawn(crate::updater::BuildIdentity::current()),
             updater_state: crate::updater::UpdateState::Idle,
         };
 
@@ -5991,6 +6029,18 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn close_active_tab_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.workspace_pane.read(cx).active_git_diff.is_some() {
+            self.git_diff_receiver = None;
+            self.git_diff_state = None;
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.active_git_diff = None;
+                workspace.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
+                cx.notify();
+            });
+            cx.notify();
+            return true;
+        }
+
         if self.navigation_shortcuts_blocked(cx) {
             return false;
         }
@@ -6270,6 +6320,55 @@ impl AnotherOneApp {
             Err(broadcast::error::TryRecvError::Closed) => {
                 self.git_refresh_in_flight = false;
                 self.git_refresh_receiver = None;
+                false
+            }
+        }
+    }
+
+    pub(crate) fn start_new_task_branch_refresh(
+        &mut self,
+        project_id: String,
+        project_path: std::path::PathBuf,
+    ) {
+        self.new_task_branch_refresh_receiver = Some(
+            another_one_core::git_service::spawn_remote_branch_refresh(project_id, project_path),
+        );
+    }
+
+    fn drain_new_task_branch_refresh(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(receiver) = self.new_task_branch_refresh_receiver.as_mut() else {
+            return false;
+        };
+
+        match receiver.try_recv() {
+            Ok(reply) => {
+                self.new_task_branch_refresh_receiver = None;
+                match reply.result {
+                    Ok(state) => {
+                        let mut changed = self.apply_project_git_state(&reply.project_id, state);
+                        let invalid_settings = self
+                            .project_store
+                            .clear_missing_branch_settings(&reply.project_id);
+                        changed |= self.handle_invalid_project_branch_settings(
+                            &reply.project_id,
+                            invalid_settings,
+                            cx,
+                        );
+                        changed
+                    }
+                    Err(error) => {
+                        self.show_warning_toast(error, cx);
+                        true
+                    }
+                }
+            }
+            Err(broadcast::error::TryRecvError::Empty) => false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                log::warn!("new task branch refresh drain lagged {n} messages");
+                false
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
+                self.new_task_branch_refresh_receiver = None;
                 false
             }
         }
@@ -7098,6 +7197,113 @@ impl AnotherOneApp {
             .map(|project| project.path.clone())
     }
 
+    pub(crate) fn open_changed_file_diff(
+        &mut self,
+        project_id: &str,
+        changed: &ChangedFile,
+        source: crate::project_store::GitDiffSource,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.project_path(project_id) else {
+            self.show_error_toast("Could not find the selected project.", cx);
+            return;
+        };
+
+        let (status, additions, deletions) = match source {
+            crate::project_store::GitDiffSource::Staged => (
+                changed.index_status,
+                changed.staged_additions,
+                changed.staged_deletions,
+            ),
+            crate::project_store::GitDiffSource::Unstaged => (
+                if changed.untracked {
+                    'A'
+                } else {
+                    changed.worktree_status
+                },
+                changed.unstaged_additions,
+                changed.unstaged_deletions,
+            ),
+        };
+        let selection = crate::project_store::GitDiffSelection {
+            project_id: project_id.to_string(),
+            path: changed.path.clone(),
+            original_path: changed.original_path.clone(),
+            source,
+            status,
+            additions,
+            deletions,
+            untracked: changed.untracked,
+        };
+
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.active_git_diff = Some(selection.clone());
+            workspace.keyboard_focus = WorkspaceKeyboardFocus::GitPanel;
+            cx.notify();
+        });
+        self.git_diff_state = Some(GitDiffPaneState::Loading);
+        self.git_diff_receiver = Some(another_one_core::git_service::spawn_changed_file_diff_load(
+            selection,
+            project_path,
+        ));
+        cx.notify();
+    }
+
+    pub(crate) fn navigate_changed_file_diff(
+        &mut self,
+        direction: NavigationDirection,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(active_selection) = self.workspace_pane.read(cx).active_git_diff.clone() else {
+            return false;
+        };
+        let project_id = active_selection.project_id.clone();
+        let Some(files) = self.changed_files.get(&project_id) else {
+            return false;
+        };
+
+        let staged_collapsed = self.collapsed_change_sections.contains("staged");
+        let uncommitted_collapsed = self.collapsed_change_sections.contains("uncommitted");
+        let mut targets = Vec::new();
+        for (index, changed) in files.iter().enumerate() {
+            if changed.has_staged_changes() && !staged_collapsed {
+                targets.push((index, crate::project_store::GitDiffSource::Staged));
+            }
+        }
+        for (index, changed) in files.iter().enumerate() {
+            if changed.has_unstaged_changes() && !uncommitted_collapsed {
+                targets.push((index, crate::project_store::GitDiffSource::Unstaged));
+            }
+        }
+        if targets.is_empty() {
+            return false;
+        }
+
+        let current_index = targets
+            .iter()
+            .position(|(index, source)| {
+                files
+                    .get(*index)
+                    .is_some_and(|changed| changed.path == active_selection.path)
+                    && *source == active_selection.source
+            })
+            .unwrap_or(0);
+        let next_index = wrapped_index(targets.len(), current_index, direction).unwrap_or(0);
+        let (file_index, source) = targets[next_index];
+        let Some(changed) = files.get(file_index).cloned() else {
+            return false;
+        };
+
+        self.open_changed_file_diff(&project_id, &changed, source, cx);
+        true
+    }
+
+    pub(crate) fn clear_changed_file_diff_state(&mut self, cx: &mut Context<Self>) {
+        self.git_diff_receiver = None;
+        self.git_diff_state = None;
+        cx.notify();
+    }
+
     pub(crate) fn changed_files_actions_busy(&self, _project_id: &str) -> bool {
         self.active_git_action.is_some()
     }
@@ -7479,6 +7685,40 @@ impl AnotherOneApp {
         }
 
         should_notify
+    }
+
+    fn drain_changed_file_diff(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(receiver) = self.git_diff_receiver.as_mut() else {
+            return false;
+        };
+
+        match receiver.try_recv() {
+            Ok(reply) => {
+                self.git_diff_receiver = None;
+                let active_selection = self.workspace_pane.read(cx).active_git_diff.clone();
+                if active_selection.as_ref() != Some(&reply.selection) {
+                    return false;
+                }
+
+                self.git_diff_state = Some(match reply.result {
+                    Ok(diff) => GitDiffPaneState::Loaded(Arc::new(diff)),
+                    Err(error) => {
+                        self.show_error_toast(error.clone(), cx);
+                        GitDiffPaneState::Failed(error)
+                    }
+                });
+                true
+            }
+            Err(broadcast::error::TryRecvError::Empty) => false,
+            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                log::warn!("changed_file_diff drain lagged {n} messages");
+                false
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
+                self.git_diff_receiver = None;
+                false
+            }
+        }
     }
 
     fn drain_task_creation(&mut self, cx: &mut Context<Self>) -> bool {
@@ -11845,7 +12085,9 @@ impl Render for AnotherOneApp {
                             let mut should_notify = false;
                             should_notify |= this.drain_git_action(cx);
                             should_notify |= this.drain_changed_files_git_mutations(cx);
+                            should_notify |= this.drain_changed_file_diff(cx);
                             should_notify |= this.drain_git_refresh(cx);
+                            should_notify |= this.drain_new_task_branch_refresh(cx);
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_branch_creation(cx);
                             should_notify |= this.drain_project_add(cx);

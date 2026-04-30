@@ -318,6 +318,67 @@ pub struct ProjectCommitFileChanges {
     pub files: Vec<BranchCompareFile>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitDiffSource {
+    Staged,
+    Unstaged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitDiffSelection {
+    pub project_id: String,
+    pub path: String,
+    pub original_path: Option<String>,
+    pub source: GitDiffSource,
+    pub status: char,
+    pub additions: i32,
+    pub deletions: i32,
+    pub untracked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitDiff {
+    pub selection: GitDiffSelection,
+    pub files: Vec<DiffFile>,
+    pub raw_patch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffFile {
+    pub old_path: Option<String>,
+    pub new_path: Option<String>,
+    pub hunks: Vec<DiffHunk>,
+    pub additions: i32,
+    pub deletions: i32,
+    pub binary: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffHunk {
+    pub old_start: usize,
+    pub old_count: usize,
+    pub new_start: usize,
+    pub new_count: usize,
+    pub header: String,
+    pub rows: Vec<DiffRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffRow {
+    pub kind: DiffRowKind,
+    pub old_line: Option<usize>,
+    pub new_line: Option<usize>,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffRowKind {
+    Context,
+    Added,
+    Deleted,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskKind {
     Direct,
@@ -1985,6 +2046,21 @@ pub fn read_project_git_state(path: &Path, include_metadata: bool) -> ProjectGit
     }
 }
 
+pub fn fetch_project_git_state(path: &Path) -> Result<ProjectGitState, String> {
+    let output = git_command(path)
+        .args(["fetch", "--all", "--prune"])
+        .output()
+        .map_err(|error| format!("Could not refresh remote branches: {error}"))?;
+    if !output.status.success() {
+        return Err(format_git_command_failure(
+            "Could not refresh remote branches",
+            &output,
+        ));
+    }
+
+    Ok(read_project_git_state(path, true))
+}
+
 pub fn read_project_branch_compare_state(
     path: &Path,
     target_branch: &str,
@@ -2115,6 +2191,147 @@ pub fn read_project_commit_file_changes(
         commit_id: commit_id.to_string(),
         files,
     })
+}
+
+pub fn git_diff_command_args(selection: &GitDiffSelection) -> Vec<String> {
+    let mut args = vec!["diff".to_string()];
+    if selection.source == GitDiffSource::Staged {
+        args.push("--cached".to_string());
+    }
+    args.extend([
+        "--no-ext-diff".to_string(),
+        "--no-color".to_string(),
+        "--".to_string(),
+    ]);
+    if let Some(original_path) = selection.original_path.as_deref() {
+        args.push(original_path.to_string());
+    }
+    args.push(selection.path.clone());
+    args
+}
+
+pub fn read_changed_file_diff(
+    project_path: &Path,
+    selection: GitDiffSelection,
+) -> Result<GitDiff, String> {
+    let args = git_diff_command_args(&selection);
+    let output = git_command(project_path)
+        .args(args.iter().map(String::as_str))
+        .output()
+        .map_err(|error| format!("Could not load diff for {}: {error}", selection.path))?;
+    if !output.status.success() {
+        return Err(format_git_command_failure(
+            &format!("Could not load diff for {}", selection.path),
+            &output,
+        ));
+    }
+
+    let raw_patch = String::from_utf8_lossy(&output.stdout).to_string();
+    if raw_patch.trim().is_empty()
+        && selection.source == GitDiffSource::Unstaged
+        && selection.untracked
+    {
+        return read_untracked_file_diff(project_path, selection);
+    }
+
+    Ok(GitDiff {
+        selection,
+        files: parse_git_diff_patch(&raw_patch),
+        raw_patch,
+    })
+}
+
+pub fn parse_git_diff_patch(patch: &str) -> Vec<DiffFile> {
+    let mut files = Vec::new();
+    let mut current_file: Option<DiffFile> = None;
+    let mut current_hunk: Option<DiffHunk> = None;
+    let mut old_line = 0usize;
+    let mut new_line = 0usize;
+
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            finish_diff_hunk(&mut current_file, &mut current_hunk);
+            if let Some(file) = current_file.take() {
+                files.push(file);
+            }
+            let (old_path, new_path) = parse_diff_git_paths(line);
+            current_file = Some(DiffFile {
+                old_path,
+                new_path,
+                hunks: Vec::new(),
+                additions: 0,
+                deletions: 0,
+                binary: false,
+                message: None,
+            });
+            continue;
+        }
+
+        let Some(file) = current_file.as_mut() else {
+            continue;
+        };
+
+        if let Some(path) = line.strip_prefix("--- ") {
+            file.old_path = normalize_diff_path(path);
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("+++ ") {
+            file.new_path = normalize_diff_path(path);
+            continue;
+        }
+        if line.starts_with("Binary files ") || line.starts_with("GIT binary patch") {
+            file.binary = true;
+            file.message.get_or_insert_with(|| line.to_string());
+            continue;
+        }
+        if line.starts_with("@@ ") {
+            finish_diff_hunk(&mut current_file, &mut current_hunk);
+            if let Some((hunk, parsed_old_line, parsed_new_line)) = parse_diff_hunk_header(line) {
+                old_line = parsed_old_line;
+                new_line = parsed_new_line;
+                current_hunk = Some(hunk);
+            }
+            continue;
+        }
+
+        let Some(hunk) = current_hunk.as_mut() else {
+            continue;
+        };
+        if let Some(content) = line.strip_prefix(' ') {
+            hunk.rows.push(DiffRow {
+                kind: DiffRowKind::Context,
+                old_line: Some(old_line),
+                new_line: Some(new_line),
+                content: content.to_string(),
+            });
+            old_line += 1;
+            new_line += 1;
+        } else if let Some(content) = line.strip_prefix('+') {
+            hunk.rows.push(DiffRow {
+                kind: DiffRowKind::Added,
+                old_line: None,
+                new_line: Some(new_line),
+                content: content.to_string(),
+            });
+            file.additions += 1;
+            new_line += 1;
+        } else if let Some(content) = line.strip_prefix('-') {
+            hunk.rows.push(DiffRow {
+                kind: DiffRowKind::Deleted,
+                old_line: Some(old_line),
+                new_line: None,
+                content: content.to_string(),
+            });
+            file.deletions += 1;
+            old_line += 1;
+        }
+    }
+
+    finish_diff_hunk(&mut current_file, &mut current_hunk);
+    if let Some(file) = current_file {
+        files.push(file);
+    }
+    files
 }
 
 fn read_project_git_metadata(path: &Path) -> ProjectGitMetadata {
@@ -2303,6 +2520,133 @@ fn combine_commit_file_changes(
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
     files
+}
+
+fn read_untracked_file_diff(
+    project_path: &Path,
+    selection: GitDiffSelection,
+) -> Result<GitDiff, String> {
+    let bytes = std::fs::read(project_path.join(&selection.path))
+        .map_err(|error| format!("Could not read untracked file {}: {error}", selection.path))?;
+    let content = match String::from_utf8(bytes) {
+        Ok(content) => content,
+        Err(_) => {
+            return Ok(GitDiff {
+                raw_patch: String::new(),
+                files: vec![DiffFile {
+                    old_path: None,
+                    new_path: Some(selection.path.clone()),
+                    hunks: Vec::new(),
+                    additions: 0,
+                    deletions: 0,
+                    binary: true,
+                    message: Some("Binary or unsupported untracked file.".to_string()),
+                }],
+                selection,
+            });
+        }
+    };
+
+    let rows = content
+        .lines()
+        .enumerate()
+        .map(|(index, line)| DiffRow {
+            kind: DiffRowKind::Added,
+            old_line: None,
+            new_line: Some(index + 1),
+            content: line.to_string(),
+        })
+        .collect::<Vec<_>>();
+    let additions = rows.len() as i32;
+    let hunks = if rows.is_empty() {
+        Vec::new()
+    } else {
+        vec![DiffHunk {
+            old_start: 0,
+            old_count: 0,
+            new_start: 1,
+            new_count: rows.len(),
+            header: format!("@@ -0,0 +1,{} @@", rows.len()),
+            rows,
+        }]
+    };
+
+    Ok(GitDiff {
+        raw_patch: String::new(),
+        files: vec![DiffFile {
+            old_path: None,
+            new_path: Some(selection.path.clone()),
+            hunks,
+            additions,
+            deletions: 0,
+            binary: false,
+            message: None,
+        }],
+        selection,
+    })
+}
+
+fn finish_diff_hunk(file: &mut Option<DiffFile>, hunk: &mut Option<DiffHunk>) {
+    let Some(hunk) = hunk.take() else {
+        return;
+    };
+    if let Some(file) = file.as_mut() {
+        file.hunks.push(hunk);
+    }
+}
+
+fn parse_diff_git_paths(line: &str) -> (Option<String>, Option<String>) {
+    let mut parts = line.split_whitespace();
+    let _ = parts.next();
+    let _ = parts.next();
+    let old_path = parts.next().and_then(normalize_diff_path);
+    let new_path = parts.next().and_then(normalize_diff_path);
+    (old_path, new_path)
+}
+
+fn normalize_diff_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    if path == "/dev/null" {
+        return None;
+    }
+    Some(
+        path.strip_prefix("a/")
+            .or_else(|| path.strip_prefix("b/"))
+            .unwrap_or(path)
+            .to_string(),
+    )
+}
+
+fn parse_diff_hunk_header(line: &str) -> Option<(DiffHunk, usize, usize)> {
+    let mut parts = line.split_whitespace();
+    let marker = parts.next()?;
+    if marker != "@@" {
+        return None;
+    }
+    let old_range = parts.next()?;
+    let new_range = parts.next()?;
+    let (old_start, old_count) = parse_diff_hunk_range(old_range.strip_prefix('-')?)?;
+    let (new_start, new_count) = parse_diff_hunk_range(new_range.strip_prefix('+')?)?;
+    Some((
+        DiffHunk {
+            old_start,
+            old_count,
+            new_start,
+            new_count,
+            header: line.to_string(),
+            rows: Vec::new(),
+        },
+        old_start,
+        new_start,
+    ))
+}
+
+fn parse_diff_hunk_range(range: &str) -> Option<(usize, usize)> {
+    if let Some((start, count)) = range.split_once(',') {
+        Some((start.parse().ok()?, count.parse().ok()?))
+    } else {
+        Some((range.parse().ok()?, 1))
+    }
 }
 
 fn parse_branch_commit_entries(bytes: &[u8]) -> Vec<BranchCommit> {
@@ -2973,12 +3317,32 @@ pub fn remove_task_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()
 
     if output.status.success() {
         Ok(())
+    } else if is_git_worktree_not_working_tree_error(&output) && worktree_path.exists() {
+        remove_worktree_path_from_disk(worktree_path)
     } else {
         Err(format_git_command_failure(
             "Could not delete the worktree",
             &output,
         ))
     }
+}
+
+fn is_git_worktree_not_working_tree_error(output: &Output) -> bool {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stderr.contains("is not a working tree") || stdout.contains("is not a working tree")
+}
+
+fn remove_worktree_path_from_disk(worktree_path: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(worktree_path)
+        .map_err(|error| format!("Could not inspect the worktree folder: {error}"))?;
+
+    if metadata.file_type().is_dir() {
+        std::fs::remove_dir_all(worktree_path)
+    } else {
+        std::fs::remove_file(worktree_path)
+    }
+    .map_err(|error| format!("Could not delete the worktree folder: {error}"))
 }
 
 pub fn delete_local_branch(repo_path: &Path, branch_name: &str) -> Result<(), String> {
@@ -3545,13 +3909,15 @@ mod tests {
 
     use super::{
         app_worktrees_root, combine_commit_file_changes, create_branch_from_head,
-        create_task_worktree, current_branch, format_git_command_error, git_stdout,
-        parse_branch_commit_entries, parse_branch_compare_name_status_entries,
-        parse_branch_compare_numstat_entries, parse_recent_branch_commit_page,
-        project_action_agent_launch_args, review_worktree_slug, slugify_branch_name,
-        unique_branch_name_for_repo, worktree_parent_dir_with_root, BranchCompareNameStatusEntry,
-        BranchCompareNumStatEntry, CreateBranchMode, PersistedSectionState, PersistedTerminalTab,
-        Project, ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind,
+        create_task_worktree, current_branch, fetch_project_git_state, format_git_command_error,
+        git_diff_command_args, git_stdout, parse_branch_commit_entries,
+        parse_branch_compare_name_status_entries, parse_branch_compare_numstat_entries,
+        parse_git_diff_patch, parse_recent_branch_commit_page, project_action_agent_launch_args,
+        read_changed_file_diff, read_project_git_state, remove_task_worktree, review_worktree_slug,
+        slugify_branch_name, unique_branch_name_for_repo, worktree_parent_dir_with_root,
+        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, CreateBranchMode, DiffRowKind,
+        GitDiffSelection, GitDiffSource, PersistedSectionState, PersistedTerminalTab, Project,
+        ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind,
         ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings, ProjectCheckoutState,
         ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task, TaskKind,
         TaskWorktreeBranchMode, UiState,
@@ -3870,6 +4236,50 @@ mod tests {
     }
 
     #[test]
+    fn fetch_project_git_state_refreshes_remote_only_branch_catalog() {
+        let repo = init_repo();
+        let origin = tempfile::tempdir().expect("origin dir should exist");
+        run_git(origin.path(), &["init", "--bare"]);
+        let origin_url = origin.path().to_string_lossy().to_string();
+        run_git(repo.path(), &["remote", "add", "origin", &origin_url]);
+
+        run_git(repo.path(), &["switch", "-c", "feature/latest-remote"]);
+        fs::write(repo.path().join("file.txt"), "base\nremote\n").expect("file should write");
+        run_git(repo.path(), &["add", "."]);
+        run_git(repo.path(), &["commit", "-m", "remote feature"]);
+        run_git(repo.path(), &["push", "origin", "feature/latest-remote"]);
+        run_git(repo.path(), &["switch", "main"]);
+        run_git(repo.path(), &["branch", "-D", "feature/latest-remote"]);
+        run_git(
+            repo.path(),
+            &[
+                "update-ref",
+                "-d",
+                "refs/remotes/origin/feature/latest-remote",
+            ],
+        );
+
+        let before = read_project_git_state(repo.path(), true);
+        assert!(
+            !before.metadata.as_ref().is_some_and(|metadata| metadata
+                .branch_order
+                .iter()
+                .any(|branch| branch == "origin/feature/latest-remote")),
+            "test setup should start without the remote-tracking branch"
+        );
+
+        let after =
+            fetch_project_git_state(repo.path()).expect("remote branch refresh should succeed");
+        assert!(
+            after.metadata.as_ref().is_some_and(|metadata| metadata
+                .branch_order
+                .iter()
+                .any(|branch| branch == "origin/feature/latest-remote")),
+            "fetch should refresh the branch catalog with remote-only branches"
+        );
+    }
+
+    #[test]
     fn create_task_worktree_errors_when_existing_branch_is_checked_out_elsewhere() {
         let repo = init_repo();
 
@@ -3891,6 +4301,23 @@ mod tests {
         assert!(
             error.contains(&repo.path().display().to_string()),
             "error should include checkout path, was {error:?}"
+        );
+    }
+
+    #[test]
+    fn remove_task_worktree_deletes_plain_directory_when_git_says_it_is_not_a_working_tree() {
+        let repo = init_repo();
+        let worktree_path = repo.path().parent().unwrap().join("plain-task-folder");
+        fs::create_dir_all(&worktree_path).expect("plain task folder should exist");
+        fs::write(worktree_path.join("notes.txt"), "leftover task data\n")
+            .expect("task folder file should write");
+
+        remove_task_worktree(repo.path(), &worktree_path)
+            .expect("plain task folder should be deleted");
+
+        assert!(
+            !worktree_path.exists(),
+            "plain task folder should be removed from disk"
         );
     }
 
@@ -5441,5 +5868,194 @@ mod tests {
 
         assert!(store.set_agent_enabled("claude-code", false));
         assert_eq!(store.default_agent_id(), Some("codex"));
+    }
+
+    fn sample_diff_selection(source: GitDiffSource) -> GitDiffSelection {
+        GitDiffSelection {
+            project_id: "project-1".to_string(),
+            path: "src/main.rs".to_string(),
+            original_path: None,
+            source,
+            status: 'M',
+            additions: 1,
+            deletions: 1,
+            untracked: false,
+        }
+    }
+
+    #[test]
+    fn git_diff_command_args_put_paths_after_separator() {
+        let selection = sample_diff_selection(GitDiffSource::Staged);
+
+        assert_eq!(
+            git_diff_command_args(&selection),
+            vec![
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--no-color",
+                "--",
+                "src/main.rs"
+            ]
+        );
+    }
+
+    #[test]
+    fn git_diff_command_args_include_original_path_for_renames() {
+        let mut selection = sample_diff_selection(GitDiffSource::Unstaged);
+        selection.path = "new/path.rs".to_string();
+        selection.original_path = Some("old/path.rs".to_string());
+        selection.status = 'R';
+
+        assert_eq!(
+            git_diff_command_args(&selection),
+            vec![
+                "diff",
+                "--no-ext-diff",
+                "--no-color",
+                "--",
+                "old/path.rs",
+                "new/path.rs"
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_git_diff_patch_handles_modified_file() {
+        let patch = "\
+diff --git a/src/main.rs b/src/main.rs
+index 1111111..2222222 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    println!(\"old\");
++    println!(\"new\");
+ }
+";
+
+        let files = parse_git_diff_patch(patch);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].old_path.as_deref(), Some("src/main.rs"));
+        assert_eq!(files[0].new_path.as_deref(), Some("src/main.rs"));
+        assert_eq!(files[0].additions, 1);
+        assert_eq!(files[0].deletions, 1);
+        assert_eq!(files[0].hunks.len(), 1);
+        assert_eq!(files[0].hunks[0].rows[1].kind, DiffRowKind::Deleted);
+        assert_eq!(files[0].hunks[0].rows[2].kind, DiffRowKind::Added);
+    }
+
+    #[test]
+    fn parse_git_diff_patch_handles_added_file() {
+        let patch = "\
+diff --git a/new.txt b/new.txt
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1,2 @@
++one
++two
+";
+
+        let files = parse_git_diff_patch(patch);
+
+        assert_eq!(files[0].old_path, None);
+        assert_eq!(files[0].new_path.as_deref(), Some("new.txt"));
+        assert_eq!(files[0].additions, 2);
+        assert_eq!(files[0].deletions, 0);
+    }
+
+    #[test]
+    fn parse_git_diff_patch_handles_deleted_file() {
+        let patch = "\
+diff --git a/old.txt b/old.txt
+deleted file mode 100644
+index 1111111..0000000
+--- a/old.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-one
+-two
+";
+
+        let files = parse_git_diff_patch(patch);
+
+        assert_eq!(files[0].old_path.as_deref(), Some("old.txt"));
+        assert_eq!(files[0].new_path, None);
+        assert_eq!(files[0].additions, 0);
+        assert_eq!(files[0].deletions, 2);
+    }
+
+    #[test]
+    fn parse_git_diff_patch_handles_renamed_file() {
+        let patch = "\
+diff --git a/old.txt b/new.txt
+similarity index 92%
+rename from old.txt
+rename to new.txt
+index 1111111..2222222 100644
+--- a/old.txt
++++ b/new.txt
+@@ -1 +1 @@
+-old
++new
+";
+
+        let files = parse_git_diff_patch(patch);
+
+        assert_eq!(files[0].old_path.as_deref(), Some("old.txt"));
+        assert_eq!(files[0].new_path.as_deref(), Some("new.txt"));
+        assert_eq!(files[0].additions, 1);
+        assert_eq!(files[0].deletions, 1);
+    }
+
+    #[test]
+    fn parse_git_diff_patch_handles_empty_patch() {
+        assert!(parse_git_diff_patch("").is_empty());
+    }
+
+    #[test]
+    fn parse_git_diff_patch_marks_binary_file() {
+        let patch = "\
+diff --git a/image.png b/image.png
+index 1111111..2222222 100644
+Binary files a/image.png and b/image.png differ
+";
+
+        let files = parse_git_diff_patch(patch);
+
+        assert!(files[0].binary);
+        assert_eq!(
+            files[0].message.as_deref(),
+            Some("Binary files a/image.png and b/image.png differ")
+        );
+        assert!(files[0].hunks.is_empty());
+    }
+
+    #[test]
+    fn read_changed_file_diff_renders_untracked_file_as_added() {
+        let repo = tempfile::tempdir().expect("temp repo");
+        Command::new("git")
+            .args(["init"])
+            .current_dir(repo.path())
+            .output()
+            .expect("init repo");
+        fs::write(repo.path().join("new.txt"), "one\ntwo\n").expect("write untracked file");
+        let mut selection = sample_diff_selection(GitDiffSource::Unstaged);
+        selection.path = "new.txt".to_string();
+        selection.status = 'A';
+        selection.additions = 2;
+        selection.deletions = 0;
+        selection.untracked = true;
+
+        let diff = read_changed_file_diff(repo.path(), selection).expect("read untracked diff");
+
+        assert_eq!(diff.files.len(), 1);
+        assert_eq!(diff.files[0].additions, 2);
+        assert_eq!(diff.files[0].deletions, 0);
+        assert_eq!(diff.files[0].hunks[0].rows[0].kind, DiffRowKind::Added);
+        assert_eq!(diff.files[0].hunks[0].rows[1].content, "two");
     }
 }

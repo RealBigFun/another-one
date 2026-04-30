@@ -1141,7 +1141,11 @@ impl AnotherOneApp {
         let short_sha = identity.short_sha;
         let full_sha = identity.full_sha;
         let cargo_version = identity.cargo_version;
-        let profile_label = if identity.is_dev_build { "debug" } else { "release" };
+        let profile_label = if identity.is_dev_build {
+            "debug"
+        } else {
+            "release"
+        };
 
         let (status_label, status_detail) = updater_status_strings(&self.updater_state);
         let check_disabled =
@@ -1267,9 +1271,7 @@ impl AnotherOneApp {
                         div()
                             .text_size(rems(11. / 16.))
                             .text_color(TEXT_SECONDARY())
-                            .child(format!(
-                                "{short_sha} · {profile_label} · v{cargo_version}",
-                            )),
+                            .child(format!("{short_sha} · {profile_label} · v{cargo_version}",)),
                     )
                     .child(
                         div()
@@ -1394,9 +1396,7 @@ impl AnotherOneApp {
                     .text_size(rems(12. / 16.))
                     .line_height(rems(18. / 16.))
                     .text_color(TEXT_SECONDARY())
-                    .child(
-                        "Identity for this installed build, plus controls for in-app updates.",
-                    ),
+                    .child("Identity for this installed build, plus controls for in-app updates."),
             )
             .child(
                 div()
@@ -3236,10 +3236,7 @@ fn updater_status_strings(state: &crate::updater::UpdateState) -> (String, Optio
             manifest, asset, ..
         } => (
             format!("Update available: {}", &manifest.short_sha),
-            Some(format!(
-                "{}/{} · {}",
-                asset.os, asset.arch, asset.kind
-            )),
+            Some(format!("{}/{} · {}", asset.os, asset.arch, asset.kind)),
         ),
         UpdateState::Downloading {
             manifest,
@@ -3255,14 +3252,9 @@ fn updater_status_strings(state: &crate::updater::UpdateState) -> (String, Optio
                 )),
                 _ => Some(format!("{} downloaded", format_bytes(*downloaded))),
             };
-            (
-                format!("Downloading {}…", &manifest.short_sha),
-                detail,
-            )
+            (format!("Downloading {}…", &manifest.short_sha), detail)
         }
-        UpdateState::ReadyToInstall {
-            manifest, path, ..
-        } => (
+        UpdateState::ReadyToInstall { manifest, path, .. } => (
             format!("Update {} ready to install", &manifest.short_sha),
             Some(path.display().to_string()),
         ),

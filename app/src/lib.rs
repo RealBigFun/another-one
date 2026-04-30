@@ -15,6 +15,7 @@ mod build_info;
 mod create_branch_modal;
 mod custom_actions_modal;
 mod daemon_host;
+mod git_diff_pane;
 mod iroh_client;
 mod layout;
 mod leakscope;

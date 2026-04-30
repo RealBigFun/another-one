@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs as unix_fs;
@@ -681,115 +680,10 @@ fn apply_terminal_environment(builder: &mut CommandBuilder, cwd: &Path) {
 fn apply_agent_command_path(builder: &mut CommandBuilder, cwd: &Path) {
     builder.env(
         "PATH",
-        agent_command_path_env(cwd).to_string_lossy().into_owned(),
+        crate::command_env::command_path_env(cwd)
+            .to_string_lossy()
+            .into_owned(),
     );
-}
-
-fn agent_command_path_env(cwd: &Path) -> OsString {
-    std::env::join_paths(agent_command_path_dirs(cwd)).unwrap_or_else(|_| {
-        std::env::var_os("PATH").unwrap_or_else(|| OsString::from(default_agent_command_path()))
-    })
-}
-
-fn agent_command_path_dirs(cwd: &Path) -> Vec<PathBuf> {
-    command_path_dirs(
-        std::env::var_os("PATH").as_deref(),
-        shell_initialized_path_dirs(cwd),
-        dirs::home_dir().as_deref(),
-    )
-}
-
-fn command_path_dirs(
-    current_path: Option<&std::ffi::OsStr>,
-    shell_initialized_dirs: Vec<PathBuf>,
-    home: Option<&Path>,
-) -> Vec<PathBuf> {
-    let mut dirs = shell_initialized_dirs;
-
-    if let Some(path) = current_path {
-        dirs.extend(std::env::split_paths(&path));
-    }
-
-    if let Some(home) = home {
-        dirs.push(home.join(".local/bin"));
-        dirs.push(home.join(".cargo/bin"));
-    }
-
-    dirs.extend(default_agent_command_path().split(':').map(PathBuf::from));
-
-    let mut unique = Vec::new();
-    for dir in dirs {
-        if !unique.iter().any(|existing| existing == &dir) {
-            unique.push(dir);
-        }
-    }
-    unique
-}
-
-fn shell_initialized_path_dirs(cwd: &Path) -> Vec<PathBuf> {
-    read_shell_initialized_path_dirs(cwd)
-}
-
-fn read_shell_initialized_path_dirs(cwd: &Path) -> Vec<PathBuf> {
-    let Some(shell) = user_shell_path() else {
-        return Vec::new();
-    };
-
-    let Ok(output) = std::process::Command::new(shell)
-        .args(["-lic", "printf '\\n__ANOTHER_ONE_PATH__%s\\n' \"$PATH\""])
-        .current_dir(cwd)
-        .output()
-    else {
-        return Vec::new();
-    };
-
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let Some(path) = stdout
-        .lines()
-        .rev()
-        .find_map(|line| line.strip_prefix("__ANOTHER_ONE_PATH__"))
-    else {
-        return Vec::new();
-    };
-
-    std::env::split_paths(path).collect()
-}
-
-fn user_shell_path() -> Option<OsString> {
-    if let Some(shell) = std::env::var_os("SHELL").filter(|shell| !shell.is_empty()) {
-        return Some(shell);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        Some(OsString::from("/bin/zsh"))
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Some(OsString::from("/bin/bash"))
-    }
-
-    #[cfg(not(unix))]
-    {
-        None
-    }
-}
-
-fn default_agent_command_path() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:/snap/bin"
-    }
 }
 
 impl PiSessionCapture {
@@ -1254,14 +1148,13 @@ fn newest_matching_jsonl(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_command, claude_project_dir_name, claude_session_exists, command_path_dirs,
-        discover_codex_session, discover_codex_session_from_index,
-        discover_codex_session_from_saved_sessions, discover_pi_session,
-        discovery_timeout_for_kind, pi_session_capture_extension_path, pi_session_exists,
-        prepare_codex_home_override_from, read_session_capture, resolve_claude_session,
-        resolve_pi_session, DiscoveryKind, PiSessionCapture, SessionCaptureState,
-        TerminalSessionKind, TerminalSessionRef, CLAUDE_BYPASS_PERMISSIONS_ARG,
-        CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
+        build_command, claude_project_dir_name, claude_session_exists, discover_codex_session,
+        discover_codex_session_from_index, discover_codex_session_from_saved_sessions,
+        discover_pi_session, discovery_timeout_for_kind, pi_session_capture_extension_path,
+        pi_session_exists, prepare_codex_home_override_from, read_session_capture,
+        resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
+        SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
+        CLAUDE_BYPASS_PERMISSIONS_ARG, CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
     };
     use crate::agents::{AgentProviderKind, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
@@ -1303,29 +1196,6 @@ mod tests {
             .expect("command should have a file name");
         assert_eq!(command_name, expected[0]);
         assert_eq!(&argv[1..], &expected[1..]);
-    }
-
-    #[test]
-    fn command_path_dirs_prefers_worktree_shell_path() {
-        let current_path =
-            env::join_paths([PathBuf::from("/app/bin"), PathBuf::from("/shell/node")])
-                .expect("test path should be joinable");
-
-        let dirs = command_path_dirs(
-            Some(current_path.as_os_str()),
-            vec![PathBuf::from("/shell/node"), PathBuf::from("/shell/bin")],
-            Some(Path::new("/home/tester")),
-        );
-
-        assert_eq!(
-            &dirs[..4],
-            [
-                PathBuf::from("/shell/node"),
-                PathBuf::from("/shell/bin"),
-                PathBuf::from("/app/bin"),
-                PathBuf::from("/home/tester/.local/bin"),
-            ]
-        );
     }
 
     #[test]
