@@ -206,34 +206,55 @@ impl McpOrchestrator for DesktopMcpOrchestrator {
         Err(anyhow::anyhow!(NOT_YET_WIRED))
     }
 
-    fn spawn_terminal(&self, _req: SpawnTerminalRequest) -> anyhow::Result<SpawnTerminalResponse> {
-        Err(anyhow::anyhow!(NOT_YET_WIRED))
+    fn spawn_terminal(&self, req: SpawnTerminalRequest) -> anyhow::Result<SpawnTerminalResponse> {
+        if req.project_id.is_none() && req.task_id.is_none() {
+            anyhow::bail!("spawn_terminal requires one of 'project_id' or 'task_id'");
+        }
+        // Bounded sync channel; capacity 1 because exactly one
+        // response message ever travels through it.
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        {
+            let arc = self
+                .inner
+                .upgrade()
+                .ok_or_else(|| anyhow::anyhow!("desktop registry has been dropped"))?;
+            let mut state = arc
+                .lock()
+                .map_err(|_| anyhow::anyhow!("registry mutex poisoned"))?;
+            state
+                .pending_spawn_terminals
+                .push(crate::daemon_host::PendingSpawnTerminal {
+                    project_id: req.project_id,
+                    task_id: req.task_id,
+                    cwd: req.cwd,
+                    client_handle: None,
+                    responder: tx,
+                });
+        }
+        // Wait for the GPUI render tick to drain. 30 s is generous —
+        // the drain runs on every refresh tick (≤ 250 ms idle), so a
+        // healthy app responds in well under a second. The cap keeps
+        // a wedged GPUI thread from holding the MCP worker forever.
+        let resp = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|err| anyhow::anyhow!("spawn_terminal: render-tick drain timed out: {err}"))?;
+        resp.map_err(|msg| anyhow::anyhow!(msg))
     }
 
     fn send_input(&self, tab_id: &str, bytes: &[u8]) -> anyhow::Result<()> {
-        // Resolve the tab's owning section so we can key into the
-        // writers map the way `DesktopTerminalRegistry::tab_input`
-        // does.
+        // Resolve the writer by tab_id alone — `writers` is keyed by
+        // `TerminalRuntimeKey` (section_id + tab_id), but tab ids are
+        // UUIDs so a direct scan is unambiguous and works for tabs
+        // attached to either a Task or a project-root section. The
+        // earlier code walked `project_store.tasks` to recover the
+        // section_id, which silently lost project-root tabs (the
+        // ones MCP `spawn_terminal` creates).
         let writer = self
             .with_state(|state| {
-                let (section, _task_id) = state
-                    .project_store
-                    .projects
+                state
+                    .writers
                     .iter()
-                    .flat_map(|p| state.project_store.tasks.get(&p.id).into_iter().flatten())
-                    .find_map(|task| {
-                        if task.tabs.iter().any(|t| t.id == tab_id) {
-                            let section = SectionId::from_store_key(&task.section_id)?;
-                            Some((section, task.id.clone()))
-                        } else {
-                            None
-                        }
-                    })?;
-                let key = TerminalRuntimeKey {
-                    section_id: section,
-                    tab_id: tab_id.to_string(),
-                };
-                state.writers.get(&key).cloned()
+                    .find_map(|(key, w)| (key.tab_id == tab_id).then(|| w.clone()))
             })
             .flatten();
 
@@ -261,8 +282,28 @@ impl McpOrchestrator for DesktopMcpOrchestrator {
         Err(anyhow::anyhow!(NOT_YET_WIRED))
     }
 
-    fn close_tab(&self, _tab_id: &str) -> anyhow::Result<()> {
-        Err(anyhow::anyhow!(NOT_YET_WIRED))
+    fn close_tab(&self, tab_id: &str) -> anyhow::Result<()> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        {
+            let arc = self
+                .inner
+                .upgrade()
+                .ok_or_else(|| anyhow::anyhow!("desktop registry has been dropped"))?;
+            let mut state = arc
+                .lock()
+                .map_err(|_| anyhow::anyhow!("registry mutex poisoned"))?;
+            state
+                .pending_close_tabs
+                .push(crate::daemon_host::PendingCloseTab {
+                    tab_id: tab_id.to_string(),
+                    client_handle: None,
+                    responder: tx,
+                });
+        }
+        let resp = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|err| anyhow::anyhow!("close_tab: render-tick drain timed out: {err}"))?;
+        resp.map_err(|msg| anyhow::anyhow!(msg))
     }
 }
 

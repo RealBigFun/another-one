@@ -69,6 +69,10 @@ use crate::terminal_runtime::{
 };
 use crate::theme;
 pub use another_one_core::section::SectionId;
+use another_one_core::clients::{
+    ClientEvent, ClientId, CloseTabRequest, Focus, OpenTabRequest, OpenTabResponse,
+    OpenTaskRequest, OpenTaskResponse, SelectRequest,
+};
 
 const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 const ACTIVE_GIT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
@@ -1412,6 +1416,15 @@ pub struct AnotherOneApp {
     /// Last time each terminal rang its bell. The renderer flashes the
     /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
     pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
+    /// Per-client focus tracker. Every connected client (the GUI, any
+    /// MCP harness, mobile peers) has at most one entry here. The
+    /// `select` / `select_for` verbs on the `DaemonClient` trait flow
+    /// through this map.
+    pub(crate) client_focus: HashMap<ClientId, Focus>,
+    /// Broadcast bus for `ClientEvent`s. Every client-mediated state
+    /// change (task opened, tab opened/closed, focus moved) fires one
+    /// event so subscribers can reflect remote-driven changes locally.
+    pub(crate) client_event_bus: tokio::sync::broadcast::Sender<ClientEvent>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Child process ids for hidden prewarmed launches.
@@ -4078,6 +4091,8 @@ impl AnotherOneApp {
             terminal_selection: None,
             terminal_search: None,
             terminal_bell_at: HashMap::new(),
+            client_focus: HashMap::new(),
+            client_event_bus: tokio::sync::broadcast::channel(256).0,
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -5425,6 +5440,412 @@ impl AnotherOneApp {
         }
         if changed {
             self.last_terminal_activity = Instant::now();
+            cx.notify();
+        }
+        changed
+    }
+
+    /// Drain `RegistryState.pending_spawn_terminals` (MCP
+    /// `spawn_terminal` asks routed through the daemon). Each entry
+    /// carries a sync responder; we resolve the project/task it
+    /// targets, ensure the section exists, add a fresh shell tab
+    /// with default `TerminalLaunchConfig`, queue the PTY launch on
+    /// the existing `pending_tab_launches` path so the next drain
+    /// pass actually starts the shell, and reply with the new tab
+    /// id. Errors are sent back as strings — bubbling up to the MCP
+    /// caller as a JSON-RPC error.
+    pub(crate) fn drain_pending_spawn_terminals(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::PendingSpawnTerminal> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_spawn_terminals.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_spawn_terminals)
+        };
+        let mut changed = false;
+        for req in pending {
+            let result = self.fulfill_spawn_terminal(&req, cx);
+            // The receiver may have hung up if the MCP caller's
+            // recv_timeout fired; treat the send failure as a
+            // benign drop, not a panic.
+            let _ = req.responder.send(result);
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// `DaemonClient::open_task` for AnotherOneApp. Single source of
+    /// truth that both the GUI new-task modal and the MCP
+    /// `spawn_terminal` flow go through. Resolves project/branch
+    /// defaults, calls `insert_and_open_task` (which adds to
+    /// `project_store.tasks`, expands the project in the sidebar,
+    /// activates the section, and starts the PTY), syncs the
+    /// daemon's project-store snapshot, and emits a `TaskOpened`
+    /// event on the bus.
+    pub(crate) fn client_open_task(
+        &mut self,
+        req: OpenTaskRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<OpenTaskResponse> {
+        let project = self
+            .project_store
+            .project(&req.project_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unknown project_id {}", req.project_id))?;
+        let branch_name = req.branch_name.clone().unwrap_or_else(|| {
+            another_one_core::project_store::current_branch(&project.path)
+                .or_else(|| self.project_store.current_branch_name(&project.id))
+                .unwrap_or_default()
+        });
+        let task_name = req
+            .task_name
+            .as_ref()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(crate::new_task_modal::generate_task_name);
+        let project_path = req.cwd.clone().unwrap_or_else(|| project.path.clone());
+
+        // Only the Direct kind goes through the synchronous
+        // `insert_and_open_task` path. Worktree creation is async
+        // (background `project_service::spawn_task_creation`) and
+        // hasn't been migrated to the trait yet.
+        match req.kind {
+            another_one_core::project_store::TaskKind::Direct => {}
+            other => anyhow::bail!(
+                "client_open_task: kind {:?} not yet routed through the client trait",
+                other
+            ),
+        }
+
+        self.insert_and_open_task(
+            project.id.clone(),
+            project.id.clone(),
+            req.kind,
+            task_name.clone(),
+            branch_name,
+            None,
+            project_path,
+            Some(req.launch_config.clone()),
+            None,
+            cx,
+        );
+
+        // The new task always becomes the active section by virtue of
+        // `insert_and_open_task`'s `activate_section` call, so the
+        // active terminal key is the just-added tab.
+        let key = self
+            .active_terminal_key(cx)
+            .ok_or_else(|| anyhow::anyhow!("task created but no active terminal key resolved"))?;
+        let task_id = self
+            .project_store
+            .tasks
+            .values()
+            .flatten()
+            .find(|t| t.section_id == key.section_id.store_key())
+            .map(|t| t.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("task created but not visible in project_store"))?;
+
+        if req.focus_after_open {
+            self.client_focus.insert(
+                req.client_id.clone(),
+                Focus::Tab {
+                    project_id: project.id.clone(),
+                    task_id: Some(task_id.clone()),
+                    section_id: key.section_id.clone(),
+                    tab_id: key.tab_id.clone(),
+                },
+            );
+        }
+
+        let _ = self.client_event_bus.send(ClientEvent::TaskOpened {
+            originator: req.client_id.clone(),
+            task_id: task_id.clone(),
+            section_id: key.section_id.clone(),
+            tab_id: key.tab_id.clone(),
+        });
+
+        // Push fresh project_store snapshot to the daemon so MCP
+        // read tools (`list_tasks`, `list_tabs`) see the new entries
+        // on the next call without waiting for an unrelated tick.
+        self.sync_registry_project_store();
+
+        Ok(OpenTaskResponse {
+            task_id,
+            section_id: key.section_id,
+            tab_id: key.tab_id,
+        })
+    }
+
+    /// `DaemonClient::open_tab` — append a tab to an existing
+    /// section. Used by MCP when the caller already supplied a
+    /// `task_id` (so they don't want a brand-new task) and by the
+    /// GUI's add-agent modal for the same case.
+    pub(crate) fn client_open_tab(
+        &mut self,
+        req: OpenTabRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<OpenTabResponse> {
+        let section_id = req.section_id.clone();
+        let project_path = self
+            .project_store
+            .project(&section_id.project_id)
+            .map(|p| p.path.clone());
+        let added_tab_id = self.workspace_pane.update(cx, |workspace, cx| {
+            if req.focus_after_open {
+                workspace.activate_section(
+                    section_id.clone(),
+                    project_path.clone(),
+                    Some(req.launch_config.clone()),
+                    cx,
+                );
+            } else {
+                workspace.ensure_section(
+                    section_id.clone(),
+                    project_path.clone(),
+                    Some(req.launch_config.clone()),
+                    cx,
+                );
+            }
+            workspace.add_tab_with_launch_config(&section_id, req.launch_config.clone(), None, cx)
+        });
+        let tab_id = added_tab_id.ok_or_else(|| {
+            anyhow::anyhow!("could not add tab to section {}", section_id.store_key())
+        })?;
+
+        if req.focus_after_open {
+            self.client_focus.insert(
+                req.client_id.clone(),
+                Focus::Tab {
+                    project_id: section_id.project_id.clone(),
+                    task_id: section_id.task_id.clone(),
+                    section_id: section_id.clone(),
+                    tab_id: tab_id.clone(),
+                },
+            );
+        }
+
+        let _ = self.client_event_bus.send(ClientEvent::TabOpened {
+            originator: req.client_id,
+            section_id,
+            tab_id: tab_id.clone(),
+        });
+
+        self.sync_registry_project_store();
+        Ok(OpenTabResponse { tab_id })
+    }
+
+    /// `DaemonClient::close_tab` — close a tab by id (any client).
+    pub(crate) fn client_close_tab(
+        &mut self,
+        req: CloseTabRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let target = self.workspace_pane.read(cx).section_states.iter().find_map(
+            |(section_id, state)| {
+                state
+                    .tabs
+                    .iter()
+                    .position(|t| t.id == req.tab_id)
+                    .map(|idx| (section_id.clone(), idx))
+            },
+        );
+        let Some((section_id, tab_index)) = target else {
+            anyhow::bail!("tab {} not found", req.tab_id);
+        };
+        let removed = self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.close_tab(&section_id, tab_index, cx)
+        });
+        if removed.is_none() {
+            anyhow::bail!("close_tab: workspace declined to remove tab {}", req.tab_id);
+        }
+        let _ = self.client_event_bus.send(ClientEvent::TabClosed {
+            originator: req.client_id,
+            tab_id: req.tab_id.clone(),
+        });
+        self.sync_registry_project_store();
+        Ok(())
+    }
+
+    /// `DaemonClient::select` — update the calling client's focus.
+    /// When the caller is the GUI we *also* activate the section so
+    /// the user actually sees the change. For other clients it's
+    /// just a bookkeeping update — privileged clients use
+    /// `client_select_for` to drive a peer's view.
+    pub(crate) fn client_select(
+        &mut self,
+        req: SelectRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        self.client_focus
+            .insert(req.client_id.clone(), req.focus.clone());
+        if req.client_id == ClientId::gui_desktop() {
+            self.apply_focus_to_workspace(&req.focus, cx);
+        }
+        let _ = self.client_event_bus.send(ClientEvent::FocusChanged {
+            originator: req.client_id.clone(),
+            target: req.client_id,
+            focus: req.focus,
+        });
+        Ok(())
+    }
+
+    /// `PrivilegedClient::select_for` — drive a peer client's focus.
+    /// Used by MCP to scroll the GUI's view to a tab the harness
+    /// just spawned.
+    pub(crate) fn client_select_for(
+        &mut self,
+        actor: ClientId,
+        target: ClientId,
+        focus: Focus,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        self.client_focus.insert(target.clone(), focus.clone());
+        if target == ClientId::gui_desktop() {
+            self.apply_focus_to_workspace(&focus, cx);
+        }
+        let _ = self.client_event_bus.send(ClientEvent::FocusChanged {
+            originator: actor,
+            target,
+            focus,
+        });
+        Ok(())
+    }
+
+    fn apply_focus_to_workspace(&mut self, focus: &Focus, cx: &mut Context<Self>) {
+        match focus {
+            Focus::None => {}
+            Focus::Project { project_id } => {
+                self.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.activate_project_page(project_id.clone(), cx);
+                });
+            }
+            Focus::Task {
+                project_id: _,
+                task_id: _,
+            } => {
+                // Tasks-without-tab is rare; the GUI doesn't have a
+                // dedicated affordance, so we no-op for now. v2 can
+                // extend this once the trait stabilises.
+            }
+            Focus::Tab {
+                section_id,
+                tab_id,
+                project_id: _,
+                task_id: _,
+            } => {
+                let section_id = section_id.clone();
+                let target_tab_id = tab_id.clone();
+                self.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.activate_section(section_id.clone(), None, None, cx);
+                    if let Some(state) = workspace.section_states.get_mut(&section_id) {
+                        if let Some(idx) = state.tabs.iter().position(|t| t.id == target_tab_id) {
+                            state.active_tab = idx;
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        }
+    }
+
+    fn fulfill_spawn_terminal(
+        &mut self,
+        req: &crate::daemon_host::PendingSpawnTerminal,
+        cx: &mut Context<Self>,
+    ) -> Result<another_one_core::mcp::orchestrator::SpawnTerminalResponse, String> {
+        // MCP `spawn_terminal` is a thin wrapper: turn the
+        // wire-format request into the `OpenTask{,Tab}Request`
+        // vocabulary and delegate to the trait surface. The GUI's
+        // new-task path goes through the same surface, so this
+        // function intentionally has no domain logic of its own.
+        let client_id = ClientId::mcp(
+            req.client_handle
+                .as_deref()
+                .unwrap_or("anonymous"),
+        );
+        let launch_config = crate::agents::TerminalLaunchConfig::default();
+
+        if let Some(task_id) = req.task_id.clone() {
+            // "Add a tab to an existing task" — attach to the task's
+            // section.
+            let task = self
+                .project_store
+                .task(&task_id)
+                .cloned()
+                .ok_or_else(|| format!("unknown task_id {task_id}"))?;
+            let section_id = SectionId::from_store_key(&task.section_id)
+                .ok_or_else(|| format!("malformed section_id on task {task_id}"))?;
+            let response = self
+                .client_open_tab(
+                    OpenTabRequest {
+                        client_id,
+                        section_id,
+                        launch_config,
+                        focus_after_open: true,
+                    },
+                    cx,
+                )
+                .map_err(|e| e.to_string())?;
+            return Ok(another_one_core::mcp::orchestrator::SpawnTerminalResponse {
+                tab_id: response.tab_id,
+            });
+        }
+
+        let project_id = req
+            .project_id
+            .clone()
+            .ok_or_else(|| "project_id required when task_id is absent".to_string())?;
+        let response = self
+            .client_open_task(
+                OpenTaskRequest {
+                    client_id,
+                    project_id,
+                    task_name: None,
+                    branch_name: None,
+                    kind: crate::project_store::TaskKind::Direct,
+                    launch_config,
+                    cwd: req.cwd.as_ref().map(std::path::PathBuf::from),
+                    focus_after_open: true,
+                },
+                cx,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(another_one_core::mcp::orchestrator::SpawnTerminalResponse {
+            tab_id: response.tab_id,
+        })
+    }
+
+    pub(crate) fn drain_pending_close_tabs(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::PendingCloseTab> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_close_tabs.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_close_tabs)
+        };
+        let mut changed = false;
+        for req in pending {
+            let client_id = ClientId::mcp(req.client_handle.as_deref().unwrap_or("anonymous"));
+            let result = self
+                .client_close_tab(
+                    CloseTabRequest {
+                        client_id,
+                        tab_id: req.tab_id,
+                    },
+                    cx,
+                )
+                .map_err(|e| e.to_string());
+            let _ = req.responder.send(result);
+            changed = true;
+        }
+        if changed {
             cx.notify();
         }
         changed
@@ -13129,6 +13550,8 @@ impl Render for AnotherOneApp {
                                 this.sync_registry_project_store();
                             }
                             should_notify |= this.drain_daemon_handle(cx);
+                            should_notify |= this.drain_pending_spawn_terminals(cx);
+                            should_notify |= this.drain_pending_close_tabs(cx);
                             should_notify |= this.drain_pending_tab_launches(cx);
                             should_notify |= this.drain_pending_tab_resizes(cx);
                             should_notify |= this.drain_qr_scan_queue(cx);

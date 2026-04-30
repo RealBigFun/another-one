@@ -98,6 +98,14 @@ pub(crate) struct RegistryState {
     /// different path today for legacy reasons; both produce the same
     /// end state (a live entry in `broadcasts` + `writers`).
     pub(crate) pending_tab_launches: Vec<TabLaunchRequest>,
+    /// Spawn-terminal asks routed in from the daemon (MCP). Each
+    /// carries a sync channel responder that the GPUI-thread drain
+    /// uses to deliver the new tab id (or an error string) back to
+    /// the blocking MCP caller. Cleared every render tick.
+    pub(crate) pending_spawn_terminals: Vec<PendingSpawnTerminal>,
+    /// Close-tab asks routed in from the daemon (MCP). Same shape
+    /// as `pending_spawn_terminals`.
+    pub(crate) pending_close_tabs: Vec<PendingCloseTab>,
     /// Keys currently mid-spawn. Populated when either path
     /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
     /// kicks off a `spawn_terminal_launch`; cleared on
@@ -117,6 +125,8 @@ impl RegistryState {
             writers: HashMap::new(),
             pending_resizes: Vec::new(),
             pending_tab_launches: Vec::new(),
+            pending_spawn_terminals: Vec::new(),
+            pending_close_tabs: Vec::new(),
             in_flight_launches: HashSet::new(),
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
@@ -172,6 +182,30 @@ pub(crate) struct TabResizeRequest {
     pub key: TerminalRuntimeKey,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// MCP `close_tab` ask. Same queue/drain pattern as the spawn case.
+pub(crate) struct PendingCloseTab {
+    pub tab_id: String,
+    pub client_handle: Option<String>,
+    pub responder: std::sync::mpsc::SyncSender<Result<(), String>>,
+}
+
+/// MCP `spawn_terminal` ask. Carries the request + a sync responder
+/// the GPUI-thread drain sends the resulting tab id back through.
+/// `responder` is `Option<…>` so the drain can take it; once taken
+/// the entry is consumed.
+pub(crate) struct PendingSpawnTerminal {
+    pub project_id: Option<String>,
+    pub task_id: Option<String>,
+    pub cwd: Option<String>,
+    /// Optional caller-identifying string. Lifted into a `ClientId`
+    /// of the form `mcp:<handle>` so the event bus can attribute
+    /// the resulting `TaskOpened` / `TabOpened` event to the
+    /// originating MCP client. None → "anonymous".
+    pub client_handle: Option<String>,
+    pub responder:
+        std::sync::mpsc::SyncSender<Result<another_one_core::mcp::orchestrator::SpawnTerminalResponse, String>>,
 }
 
 /// `DaemonRegistry` implementation that projects `AnotherOneApp`
@@ -982,7 +1016,7 @@ fn run(
     let mcp_orch_for_task = mcp_orchestrator.clone();
     runtime.spawn(async move {
         let mut attempt: u32 = 0;
-        loop {
+        let listener = loop {
             match daemon::transport_mcp::spawn(
                 mcp_path_for_task.clone(),
                 mcp_orch_for_task.clone(),
@@ -1000,8 +1034,7 @@ fn run(
                             mcp_path_for_task.display()
                         );
                     }
-                    std::mem::forget(listener);
-                    return;
+                    break listener;
                 }
                 Err(err) => {
                     if attempt == 0 {
@@ -1025,7 +1058,15 @@ fn run(
                     attempt += 1;
                 }
             }
-        }
+        };
+        // Park the task forever, holding the listener in scope. When
+        // the daemon's runtime shuts down (process exit) the task is
+        // aborted and the listener's `Drop` runs — which unlinks the
+        // socket file. Combined with the panic hook + SIGTERM/SIGINT
+        // handler in `transport_mcp::spawn`, every termination path
+        // cleans up the socket transparently to the user.
+        std::future::pending::<()>().await;
+        drop(listener);
     });
 
     let endpoint_result = runtime.block_on(async {

@@ -18,6 +18,7 @@
 mod command_env;
 
 pub mod agents;
+pub mod clients;
 pub mod git_actions;
 pub mod git_service;
 pub mod leakscope;

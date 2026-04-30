@@ -7,7 +7,7 @@
 
 /// Identifies a section: a specific branch within a specific project,
 /// optionally narrowed to a specific task.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SectionId {
     pub project_id: String,
     pub branch_name: String,
