@@ -1421,6 +1421,12 @@ pub struct AnotherOneApp {
     /// `select` / `select_for` verbs on the `DaemonClient` trait flow
     /// through this map.
     pub(crate) client_focus: HashMap<ClientId, Focus>,
+    /// Last `Focus` known for the GUI client. Compared on every drain
+    /// tick to detect mouse-driven navigation (sidebar clicks, tab
+    /// switches, project-page activations) so a corresponding
+    /// `FocusChanged` event flows onto the bus — closing the loop
+    /// for MCP harnesses that want to observe the human.
+    pub(crate) last_observed_gui_focus: Focus,
     /// Broadcast bus for `ClientEvent`s. Every client-mediated state
     /// change (task opened, tab opened/closed, focus moved) fires one
     /// event so subscribers can reflect remote-driven changes locally.
@@ -4092,6 +4098,7 @@ impl AnotherOneApp {
             terminal_search: None,
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
+            last_observed_gui_focus: Focus::None,
             client_event_bus: tokio::sync::broadcast::channel(256).0,
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
@@ -5477,6 +5484,52 @@ impl AnotherOneApp {
             cx.notify();
         }
         changed
+    }
+
+    /// Probe the workspace for GUI-driven focus changes (mouse clicks
+    /// on the sidebar, tab switches, project-page activations) and
+    /// emit a `FocusChanged` event when the workspace's active
+    /// section/tab differs from `last_observed_gui_focus`. Called on
+    /// every drain tick so MCP `poll_events` sees what the human just
+    /// did, attributed to `gui:desktop`.
+    pub(crate) fn observe_gui_focus(&mut self, cx: &App) -> bool {
+        let workspace = self.workspace_pane.read(cx);
+        let current = if let Some(section_id) = workspace.active_section.clone() {
+            let active_tab = workspace
+                .section_states
+                .get(&section_id)
+                .and_then(|state| state.tabs.get(state.active_tab))
+                .map(|tab| tab.id.clone());
+            match active_tab {
+                Some(tab_id) => Focus::Tab {
+                    project_id: section_id.project_id.clone(),
+                    task_id: section_id.task_id.clone(),
+                    section_id: section_id.clone(),
+                    tab_id,
+                },
+                None => Focus::Task {
+                    project_id: section_id.project_id.clone(),
+                    task_id: section_id.task_id.clone().unwrap_or_default(),
+                },
+            }
+        } else if let Some(project_id) = workspace.active_project_page.clone() {
+            Focus::Project { project_id }
+        } else {
+            Focus::None
+        };
+        let _ = workspace;
+        if current == self.last_observed_gui_focus {
+            return false;
+        }
+        self.last_observed_gui_focus = current.clone();
+        let gui = ClientId::gui_desktop();
+        self.client_focus.insert(gui.clone(), current.clone());
+        self.emit_client_event(ClientEvent::FocusChanged {
+            originator: gui.clone(),
+            target: gui,
+            focus: current,
+        });
+        true
     }
 
     /// Emit a `ClientEvent`: forwarded onto the broadcast bus (for
@@ -13625,6 +13678,11 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_pending_spawn_terminals(cx);
                             should_notify |= this.drain_pending_close_tabs(cx);
                             should_notify |= this.drain_pending_select_focus(cx);
+                            // Observe GUI-driven focus changes after
+                            // the spawn/close/select drains so any
+                            // event WE just produced isn't double-
+                            // emitted as if the user clicked it.
+                            this.observe_gui_focus(cx);
                             should_notify |= this.drain_pending_tab_launches(cx);
                             should_notify |= this.drain_pending_tab_resizes(cx);
                             should_notify |= this.drain_qr_scan_queue(cx);
