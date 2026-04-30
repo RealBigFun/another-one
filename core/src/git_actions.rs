@@ -235,7 +235,7 @@ fn simple_toolbar_git_command(action: ToolbarGitAction) -> Option<SimpleToolbarG
             args: &["reset", "--soft", "HEAD~1"],
             failure_prefix: "Undo last commit failed",
             success_toast: "Undid the last commit.",
-            warning: false,
+            warning: true,
             refresh_git_state: true,
         }),
         ToolbarGitAction::Fetch => Some(SimpleToolbarGitCommand {
@@ -316,7 +316,7 @@ pub fn find_latest_pull_request_status(
     }
 
     let gh = find_gh_cli(repo_path)?;
-    let mut command = external_command(gh, repo_path);
+    let mut command = gh_command(gh, repo_path);
     let output = command
         .args(find_latest_pull_request_args(head_branch))
         .output()
@@ -354,7 +354,7 @@ pub fn find_pull_request_checks(
         "Could not load PR checks. GitHub CLI (`gh`) is not installed or not on the app PATH."
             .to_string()
     })?;
-    let mut command = external_command(gh, repo_path);
+    let mut command = gh_command(gh, repo_path);
     command.args(["pr", "checks"]);
     if let Some(pull_request_number) = pull_request_number {
         command.arg(pull_request_number.to_string());
@@ -398,8 +398,7 @@ pub fn find_pull_request_checks(
 
 fn parse_pull_request_checks_output(output: &str) -> Vec<PullRequestCheck> {
     output
-        .split(['\n', '\r'])
-        .map(str::trim_end)
+        .lines()
         .filter(|line| !line.is_empty())
         .flat_map(|line| {
             let columns = line.split('\t').collect::<Vec<_>>();
@@ -704,7 +703,7 @@ fn create_pull_request(
             ToolbarActionError::from_message(format!("Create PR failed. {message}"))
         })?;
 
-    let mut cmd = external_command(gh, repo_path);
+    let mut cmd = gh_command(gh, repo_path);
     cmd.args(create_pull_request_args(
         &head_branch,
         draft,
@@ -1338,6 +1337,17 @@ fn external_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command
     command
 }
 
+fn gh_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command {
+    let mut command = external_command(program, cwd);
+    command
+        .env("GH_FORCE_TTY", "0")
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0")
+        .env("CLICOLOR_FORCE", "0")
+        .env("FORCE_COLOR", "0");
+    command
+}
+
 fn find_codex_cli(repo_path: &Path) -> Option<PathBuf> {
     crate::command_env::find_executable(
         "codex",
@@ -1371,7 +1381,7 @@ fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
 mod tests {
     use super::{
         create_pull_request_args, default_commit_generation_script, default_pr_generation_script,
-        find_latest_pull_request_args, git_stdout, indicates_missing_pull_request,
+        find_latest_pull_request_args, gh_command, git_stdout, indicates_missing_pull_request,
         indicates_missing_pull_request_checks, normalize_github_remote,
         normalize_pull_request_check_bucket, parse_commit_message,
         parse_pull_request_checks_output, parse_pull_request_content, push_branch,
@@ -1379,6 +1389,7 @@ mod tests {
         simple_toolbar_git_command, PullRequestCheckBucket, ToolbarGitAction,
         GIT_PULL_REQUEST_CONTEXT_TOKEN, GIT_PULL_REQUEST_FORMAT_CONTRACT,
     };
+    use std::ffi::OsStr;
     use std::path::Path;
     use std::process::Command;
     use tempfile::TempDir;
@@ -1513,6 +1524,32 @@ mod tests {
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn gh_command_disables_forced_color_output() {
+        let command = gh_command("gh", Path::new("."));
+
+        assert_eq!(
+            command_env_value(&command, "GH_FORCE_TTY").as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            command_env_value(&command, "NO_COLOR").as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            command_env_value(&command, "CLICOLOR").as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            command_env_value(&command, "CLICOLOR_FORCE").as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            command_env_value(&command, "FORCE_COLOR").as_deref(),
+            Some("0")
         );
     }
 
@@ -1747,6 +1784,13 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    fn command_env_value(command: &Command, key: &str) -> Option<String> {
+        command
+            .get_envs()
+            .find(|(name, _)| *name == OsStr::new(key))
+            .and_then(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+    }
 }
 
 pub fn find_project_pull_requests(
@@ -1770,7 +1814,7 @@ pub fn find_project_pull_requests(
         search_terms.push(query.to_string());
     }
 
-    let mut command = external_command(gh, repo_path);
+    let mut command = gh_command(gh, repo_path);
     command.args([
         "pr",
         "list",
