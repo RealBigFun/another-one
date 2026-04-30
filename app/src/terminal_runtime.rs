@@ -21,6 +21,36 @@ pub(crate) use another_one_core::terminal_types::{
     TERMINAL_LINE_HEIGHT_RATIO,
 };
 
+/// xterm-style mouse-tracking level negotiated by the running TUI.
+/// Drives whether the host reports up, drag, or any-motion events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalMouseLevel {
+    /// `?9h` — X10: button presses only.
+    ClickOnly,
+    /// `?1000h` baseline + `?1002h`: presses, releases, and drags
+    /// while a button is held.
+    ButtonDrag,
+    /// `?1003h`: every motion event in addition to drags/clicks.
+    AnyMotion,
+}
+
+/// Wire encoding used to serialize a mouse event back to the application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalMouseEncoding {
+    /// Original CSI M payload, columns clamped to 223.
+    Default,
+    /// `?1006h`: SGR-style `CSI < b ; col ; row ; M/m`.
+    Sgr,
+    /// `?1005h`: UTF-8 columns clamped to 2015.
+    Utf8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalMouseProtocol {
+    pub level: TerminalMouseLevel,
+    pub encoding: TerminalMouseEncoding,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TerminalSurfaceSnapshot {
     pub text: String,
@@ -247,6 +277,30 @@ impl LiveTerminalRuntime {
         self.term
             .mode()
             .contains(alacritty_terminal::term::TermMode::ALT_SCREEN)
+    }
+
+    /// Inspect the active mouse-tracking mode, if any. Returns `None` when
+    /// the application has not enabled mouse reporting — in which case the
+    /// host should treat mouse events as native (selection, link click).
+    pub fn mouse_protocol(&self) -> Option<TerminalMouseProtocol> {
+        let mode = self.term.mode();
+        let level = if mode.contains(alacritty_terminal::term::TermMode::MOUSE_MOTION) {
+            TerminalMouseLevel::AnyMotion
+        } else if mode.contains(alacritty_terminal::term::TermMode::MOUSE_DRAG) {
+            TerminalMouseLevel::ButtonDrag
+        } else if mode.contains(alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK) {
+            TerminalMouseLevel::ClickOnly
+        } else {
+            return None;
+        };
+        let encoding = if mode.contains(alacritty_terminal::term::TermMode::SGR_MOUSE) {
+            TerminalMouseEncoding::Sgr
+        } else if mode.contains(alacritty_terminal::term::TermMode::UTF8_MOUSE) {
+            TerminalMouseEncoding::Utf8
+        } else {
+            TerminalMouseEncoding::Default
+        };
+        Some(TerminalMouseProtocol { level, encoding })
     }
 
     pub fn request_soft_redraw(&self) -> io::Result<()> {

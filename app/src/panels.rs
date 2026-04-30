@@ -2,15 +2,15 @@
 
 use gpui::{
     canvas, div, fill, hsla, outline, point, prelude::*, px, rems, rgb, size, svg, App,
-    BorderStyle, Bounds, ClipboardItem, Context, MouseButton, MouseDownEvent, Pixels, Render,
-    ScrollWheelEvent, SharedString, Window,
+    BorderStyle, Bounds, ClipboardItem, Context, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Render, ScrollWheelEvent, SharedString, Window,
 };
 
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
 use crate::app::{
-    terminal_link_ranges, AnotherOneApp, TerminalLinkRange, TerminalSelectionRange,
-    WorkspaceKeyboardFocus, WorkspacePane,
+    terminal_link_ranges, AnotherOneApp, TerminalLinkRange, TerminalMouseAction,
+    TerminalMouseButton, TerminalSelectionRange, WorkspaceKeyboardFocus, WorkspacePane,
 };
 use crate::layout::{TERMINAL_TAB_BAR_H, TERMINAL_VIEW_PADDING};
 use crate::terminal_runtime::{
@@ -131,6 +131,88 @@ impl AnotherOneApp {
                                     .child(label),
                             ),
                     ),
+            )
+    }
+
+    pub(crate) fn terminal_context_menu_overlay(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(menu) = self.workspace_pane.read(cx).terminal_context_menu.clone() else {
+            return div().id("terminal-context-menu-popover");
+        };
+
+        let has_link = menu.link.is_some();
+        let has_selection = menu.selected_text.is_some();
+        let item_count = if has_link { 3 } else { 2 };
+        let menu_w = 168.0;
+        let menu_h = (item_count as f32) * 32.0 + 8.0;
+        let window_w = f32::from(window.bounds().size.width);
+        let window_h = f32::from(window.bounds().size.height);
+        let left = (menu.anchor_x + 4.0).min((window_w - menu_w - 8.0).max(8.0));
+        let top = (menu.anchor_y + 4.0).min((window_h - menu_h - 8.0).max(8.0));
+
+        let mut items = div()
+            .flex()
+            .flex_col()
+            .py(px(4.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        if has_link {
+            items = items.child(terminal_context_menu_item(
+                "terminal-context-menu-open-link",
+                "Open Link",
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.terminal_context_menu_open_link(cx);
+                    cx.stop_propagation();
+                }),
+                true,
+            ));
+        }
+
+        items = items.child(terminal_context_menu_item(
+            "terminal-context-menu-copy",
+            "Copy",
+            cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                if has_selection {
+                    this.terminal_context_menu_copy(cx);
+                } else {
+                    this.dismiss_terminal_context_menu(cx);
+                }
+                cx.stop_propagation();
+            }),
+            has_selection,
+        ));
+
+        items = items.child(terminal_context_menu_item(
+            "terminal-context-menu-paste",
+            "Paste",
+            cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                this.terminal_context_menu_paste(cx);
+                cx.stop_propagation();
+            }),
+            true,
+        ));
+
+        div()
+            .id("terminal-context-menu-popover")
+            .absolute()
+            .left(px(left.max(8.0)))
+            .top(px(top.max(8.0)))
+            .on_mouse_down_out(cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                this.dismiss_terminal_context_menu(cx);
+            }))
+            .child(
+                div()
+                    .w(px(menu_w))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(gpui::black().opacity(0.35))
+                    .bg(rgb(0x2b2d31))
+                    .shadow_lg()
+                    .overflow_hidden()
+                    .child(items),
             )
     }
 
@@ -439,6 +521,7 @@ impl WorkspacePane {
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(move |this, ev: &MouseDownEvent, _window, cx| {
+                                this.terminal_context_menu = None;
                                 this.terminal_tab_menu = Some(crate::app::TerminalTabMenuState {
                                     section_id: sid_menu.clone(),
                                     tab_id: tab_id_for_menu.clone(),
@@ -666,6 +749,10 @@ impl WorkspacePane {
             let canvas_snapshot = snapshot.clone();
             let selection_key = key.clone();
             let scroll_key = key.clone();
+            let mouse_up_key = key.clone();
+            let mouse_move_key = key.clone();
+            let mouse_right_key = key.clone();
+            let mouse_middle_key = key.clone();
             let selection = self
                 .app
                 .upgrade()
@@ -684,6 +771,17 @@ impl WorkspacePane {
                         this.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
                         this.focus_handle.focus(window, cx);
                         let _ = this.app.update(cx, |app, app_cx| {
+                            if app.forward_terminal_mouse_event(
+                                &selection_key,
+                                TerminalMouseButton::Left,
+                                TerminalMouseAction::Press,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                                return;
+                            }
                             if app.open_terminal_link_at_click(&selection_key, ev, window, app_cx) {
                                 app_cx.stop_propagation();
                                 return;
@@ -692,9 +790,135 @@ impl WorkspacePane {
                         });
                     }),
                 )
-                .on_scroll_wheel(
-                    cx.listener(move |this, ev: &ScrollWheelEvent, _window, cx| {
+                .on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                         let _ = this.app.update(cx, |app, app_cx| {
+                            if app.forward_terminal_mouse_event(
+                                &mouse_middle_key,
+                                TerminalMouseButton::Middle,
+                                TerminalMouseAction::Press,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                            }
+                        });
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            if app.forward_terminal_mouse_event(
+                                &mouse_right_key,
+                                TerminalMouseButton::Right,
+                                TerminalMouseAction::Press,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                                return;
+                            }
+                            app.open_terminal_context_menu(
+                                &mouse_right_key,
+                                ev.position,
+                                window,
+                                app_cx,
+                            );
+                            app_cx.stop_propagation();
+                        });
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(move |this, ev: &MouseUpEvent, window, cx| {
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            if app.forward_terminal_mouse_event(
+                                &mouse_up_key,
+                                TerminalMouseButton::Left,
+                                TerminalMouseAction::Release,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                            }
+                        });
+                    }),
+                )
+                .on_mouse_move(
+                    cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            let action = if ev.dragging() {
+                                TerminalMouseAction::Drag
+                            } else {
+                                TerminalMouseAction::Motion
+                            };
+                            let button = if ev.dragging() {
+                                match ev.pressed_button {
+                                    Some(MouseButton::Left) => TerminalMouseButton::Left,
+                                    Some(MouseButton::Middle) => TerminalMouseButton::Middle,
+                                    Some(MouseButton::Right) => TerminalMouseButton::Right,
+                                    _ => TerminalMouseButton::Left,
+                                }
+                            } else {
+                                TerminalMouseButton::None
+                            };
+                            if app.forward_terminal_mouse_event(
+                                &mouse_move_key,
+                                button,
+                                action,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                            }
+                        });
+                    }),
+                )
+                .on_scroll_wheel(
+                    cx.listener(move |this, ev: &ScrollWheelEvent, window, cx| {
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            let pixel_delta = ev.delta.pixel_delta(px(1.));
+                            let dy = f32::from(pixel_delta.y);
+                            let dx = f32::from(pixel_delta.x);
+                            // Vertical wheel maps to 64 (up) / 65 (down);
+                            // horizontal to 66 (left) / 67 (right) per
+                            // xterm. Pick the dominant axis for a single
+                            // forwarded event — apps that care about both
+                            // axes get them as separate scroll ticks.
+                            let dominant_button = if dy.abs() >= dx.abs() && dy != 0.0 {
+                                Some(if dy > 0.0 {
+                                    TerminalMouseButton::WheelUp
+                                } else {
+                                    TerminalMouseButton::WheelDown
+                                })
+                            } else if dx != 0.0 {
+                                Some(if dx > 0.0 {
+                                    TerminalMouseButton::WheelRight
+                                } else {
+                                    TerminalMouseButton::WheelLeft
+                                })
+                            } else {
+                                None
+                            };
+                            if let Some(button) = dominant_button {
+                                if app.forward_terminal_mouse_event(
+                                    &scroll_key,
+                                    button,
+                                    TerminalMouseAction::Press,
+                                    ev.position,
+                                    ev.modifiers,
+                                    window,
+                                ) {
+                                    app_cx.stop_propagation();
+                                    return;
+                                }
+                            }
                             if app.scroll_terminal(&scroll_key, ev.delta, app_cx) {
                                 app_cx.stop_propagation();
                             }
@@ -938,6 +1162,39 @@ fn terminal_error_details(error: String, body_col: gpui::Hsla) -> impl IntoEleme
     }
 
     details
+}
+
+fn terminal_context_menu_item<F>(
+    id: &'static str,
+    label: &'static str,
+    on_click: F,
+    enabled: bool,
+) -> impl IntoElement
+where
+    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
+    let mut item = div()
+        .id(id)
+        .flex()
+        .items_center()
+        .h(px(30.))
+        .px(px(14.))
+        .text_sm()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .child(label);
+
+    if enabled {
+        item = item
+            .text_color(hsla(0., 0., 0.92, 1.))
+            .cursor_pointer()
+            .hover(|hover| hover.bg(gpui::white().opacity(0.06)));
+    } else {
+        item = item.text_color(hsla(0., 0., 0.92, 0.4));
+    }
+    // Always attach the listener: when disabled, the closure dismisses the
+    // menu instead of acting. Without this the outer container's
+    // `stop_propagation` would swallow the click and leave the menu open.
+    item.on_mouse_down(MouseButton::Left, on_click)
 }
 
 fn paint_terminal_snapshot(

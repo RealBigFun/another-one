@@ -53,8 +53,9 @@ use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
 };
 use crate::terminal_runtime::{
-    LiveTerminalRuntime, TerminalGridSize, TerminalRuntimeKey, TerminalRuntimeUpdate,
-    TerminalSurfaceSnapshot, TERMINAL_LINE_HEIGHT_RATIO,
+    LiveTerminalRuntime, TerminalGridSize, TerminalMouseEncoding, TerminalMouseLevel,
+    TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
+    TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
 pub use another_one_core::section::SectionId;
@@ -596,6 +597,23 @@ pub(crate) struct TerminalTabMenuState {
     pub(crate) anchor_y: f32,
 }
 
+/// Right-click context menu over the terminal pane. Surfaced when the
+/// running TUI is NOT consuming mouse events (`mouse_protocol() == None`),
+/// otherwise the right-click is forwarded to the application and this
+/// state stays `None`.
+#[derive(Debug, Clone)]
+pub(crate) struct TerminalContextMenuState {
+    pub(crate) key: TerminalRuntimeKey,
+    pub(crate) anchor_x: f32,
+    pub(crate) anchor_y: f32,
+    /// If the click landed on a hyperlink, this carries the target — the
+    /// menu offers an "Open Link" item only when this is `Some`.
+    pub(crate) link: Option<String>,
+    /// Selection text captured at menu-open time, so "Copy" works even if
+    /// the menu's own click clears the visual selection state.
+    pub(crate) selected_text: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PinnedTabCloseConfirmState {
     pub(crate) section_id: SectionId,
@@ -759,6 +777,8 @@ pub(crate) struct WorkspacePane {
     pub(crate) section_states: HashMap<SectionId, SectionState>,
     /// Context menu for a terminal tab.
     pub(crate) terminal_tab_menu: Option<TerminalTabMenuState>,
+    /// Right-click context menu over a terminal pane (Copy/Paste/Open Link).
+    pub(crate) terminal_context_menu: Option<TerminalContextMenuState>,
     /// Confirmation state for closing a pinned terminal tab.
     pub(crate) pinned_tab_close_confirm: Option<PinnedTabCloseConfirmState>,
     /// Last workspace region that intentionally claimed bare navigation keys.
@@ -790,6 +810,7 @@ impl WorkspacePane {
             project_page_pr_query_draft: String::new(),
             section_states,
             terminal_tab_menu: None,
+            terminal_context_menu: None,
             pinned_tab_close_confirm: None,
             keyboard_focus: WorkspaceKeyboardFocus::MainPane,
         }
@@ -2477,9 +2498,23 @@ fn terminal_text_link_byte_ranges(text: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
+const TERMINAL_LINK_SCHEMES: &[&str] = &[
+    "https://",
+    "http://",
+    "ssh://",
+    "sftp://",
+    "ftps://",
+    "ftp://",
+    "file://",
+    "git://",
+    "vscode://",
+    "mailto:",
+];
+
 fn terminal_link_prefix_after(text: &str, start: usize) -> Option<(usize, &'static str)> {
-    ["https://", "http://"]
-        .into_iter()
+    TERMINAL_LINK_SCHEMES
+        .iter()
+        .copied()
         .filter_map(|prefix| text[start..].find(prefix).map(|offset| (offset, prefix)))
         .min_by_key(|(offset, _)| *offset)
 }
@@ -2495,13 +2530,168 @@ fn trim_terminal_link_suffix(link: &str) -> &str {
 
 fn normalize_terminal_link(link: &str) -> Option<String> {
     let link = trim_terminal_link_suffix(link.trim());
-    if link.len() <= "http://".len() {
+    let scheme = TERMINAL_LINK_SCHEMES
+        .iter()
+        .copied()
+        .find(|prefix| link.starts_with(prefix))?;
+    let body = &link[scheme.len()..];
+    if body.is_empty() || body.chars().any(char::is_whitespace) {
         return None;
     }
-    if link.starts_with("https://") || link.starts_with("http://") {
-        Some(link.to_string())
+    Some(link.to_string())
+}
+
+/// Mouse buttons we report to the application. Mirrors xterm's encoding
+/// table — left/middle/right map to button bits 0/1/2; wheel up/down ride
+/// in the high "extra" range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalMouseButton {
+    Left,
+    Middle,
+    Right,
+    WheelUp,
+    WheelDown,
+    WheelLeft,
+    WheelRight,
+    /// Used for motion events while no button is held (any-motion mode).
+    None,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalMouseAction {
+    Press,
+    Release,
+    /// Pointer moved while at least one button is held — encoded with the
+    /// motion bit (32) plus the held button.
+    Drag,
+    /// Pointer moved with no buttons held (only emitted in any-motion mode).
+    Motion,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) struct TerminalMouseModifiers {
+    pub shift: bool,
+    pub alt: bool,
+    pub control: bool,
+}
+
+/// Encode a mouse event to the byte sequence the running TUI expects on
+/// stdin. `col` and `row` are 0-based cell coordinates (we add 1 here per
+/// the wire protocol). Returns `None` when the event isn't legal under the
+/// negotiated mode (e.g. a motion event in click-only mode).
+pub(crate) fn encode_terminal_mouse_event(
+    protocol: TerminalMouseProtocol,
+    button: TerminalMouseButton,
+    action: TerminalMouseAction,
+    col: usize,
+    row: usize,
+    modifiers: TerminalMouseModifiers,
+) -> Option<Vec<u8>> {
+    match action {
+        TerminalMouseAction::Press | TerminalMouseAction::Release => {}
+        TerminalMouseAction::Drag => {
+            if matches!(protocol.level, TerminalMouseLevel::ClickOnly) {
+                return None;
+            }
+        }
+        TerminalMouseAction::Motion => {
+            if !matches!(protocol.level, TerminalMouseLevel::AnyMotion) {
+                return None;
+            }
+        }
+    }
+    if matches!(action, TerminalMouseAction::Release)
+        && matches!(protocol.level, TerminalMouseLevel::ClickOnly)
+    {
+        // X10-style click-only mode never reports releases.
+        return None;
+    }
+
+    let mut button_code: u32 = match button {
+        TerminalMouseButton::Left => 0,
+        TerminalMouseButton::Middle => 1,
+        TerminalMouseButton::Right => 2,
+        TerminalMouseButton::None => 3,
+        TerminalMouseButton::WheelUp => 64,
+        TerminalMouseButton::WheelDown => 65,
+        TerminalMouseButton::WheelLeft => 66,
+        TerminalMouseButton::WheelRight => 67,
+    };
+    if matches!(action, TerminalMouseAction::Drag | TerminalMouseAction::Motion) {
+        button_code += 32;
+    }
+    if modifiers.shift {
+        button_code += 4;
+    }
+    if modifiers.alt {
+        button_code += 8;
+    }
+    if modifiers.control {
+        button_code += 16;
+    }
+
+    // Wire columns/rows are 1-based.
+    let wire_col = col.saturating_add(1);
+    let wire_row = row.saturating_add(1);
+
+    match protocol.encoding {
+        TerminalMouseEncoding::Sgr => {
+            // SGR signals release with a trailing `m`; the X10
+            // "always-button-3" release quirk does NOT apply here — the
+            // actual button code is preserved so the app knows which
+            // button was released.
+            let trailer = if matches!(action, TerminalMouseAction::Release) {
+                'm'
+            } else {
+                'M'
+            };
+            Some(
+                format!(
+                    "\u{1b}[<{};{};{}{}",
+                    button_code, wire_col, wire_row, trailer
+                )
+                .into_bytes(),
+            )
+        }
+        TerminalMouseEncoding::Default => {
+            // Legacy CSI M payload: bytes are clamped to 32..=255, columns
+            // beyond 223 are dropped per xterm.
+            let cb = (button_code as u8).saturating_add(32);
+            let cx = (wire_col.min(223) as u8).saturating_add(32);
+            let cy = (wire_row.min(223) as u8).saturating_add(32);
+            let release_cb = if matches!(action, TerminalMouseAction::Release) {
+                3u8.saturating_add(32)
+            } else {
+                cb
+            };
+            Some(vec![0x1b, b'[', b'M', release_cb, cx, cy])
+        }
+        TerminalMouseEncoding::Utf8 => {
+            // ?1005h: same shape as Default but col/row are encoded as
+            // UTF-8 codepoints, so columns up to 2015 are reachable.
+            let mut buf = Vec::with_capacity(8);
+            buf.extend_from_slice(b"\x1b[M");
+            let cb_value = if matches!(action, TerminalMouseAction::Release) {
+                3u32 + 32
+            } else {
+                button_code + 32
+            };
+            push_utf8_mouse_byte(&mut buf, cb_value);
+            push_utf8_mouse_byte(&mut buf, wire_col.min(2015) as u32 + 32);
+            push_utf8_mouse_byte(&mut buf, wire_row.min(2015) as u32 + 32);
+            Some(buf)
+        }
+    }
+}
+
+fn push_utf8_mouse_byte(buf: &mut Vec<u8>, value: u32) {
+    if value < 0x80 {
+        buf.push(value as u8);
+    } else if let Some(ch) = char::from_u32(value) {
+        let mut tmp = [0u8; 4];
+        buf.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
     } else {
-        None
+        buf.push(b'?');
     }
 }
 
@@ -5513,6 +5703,64 @@ impl AnotherOneApp {
         })
     }
 
+    /// Forward a mouse event to the application running in the terminal
+    /// when it has enabled xterm mouse-tracking (vim, htop, tmux, …).
+    /// Returns `true` if the event was consumed — callers should then skip
+    /// native selection / link handling and stop propagation.
+    ///
+    /// xterm convention: holding `shift` overrides the application's mouse
+    /// mode so the user can still drag to select text. We honor that here.
+    pub(crate) fn forward_terminal_mouse_event(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        button: TerminalMouseButton,
+        action: TerminalMouseAction,
+        position: gpui::Point<Pixels>,
+        modifiers: gpui::Modifiers,
+        window: &mut Window,
+    ) -> bool {
+        if modifiers.shift {
+            return false;
+        }
+        let Some(runtime) = self.live_terminal_runtimes.get(key) else {
+            return false;
+        };
+        let Some(protocol) = runtime.mouse_protocol() else {
+            return false;
+        };
+        let Some(metrics) = self.terminal_panel_metrics_for_key(key, window) else {
+            return false;
+        };
+        let Some(cell_position) = terminal_cell_position_from_mouse(position, &metrics) else {
+            return false;
+        };
+        let mods = TerminalMouseModifiers {
+            shift: modifiers.shift,
+            alt: modifiers.alt,
+            control: modifiers.control,
+        };
+        let Some(payload) = encode_terminal_mouse_event(
+            protocol,
+            button,
+            action,
+            cell_position.column,
+            cell_position.line,
+            mods,
+        ) else {
+            return false;
+        };
+        if let Err(err) = runtime.write_input(&payload) {
+            tracing::warn!(
+                target: "another_one::terminal",
+                error = %err,
+                key = ?key,
+                "failed to forward mouse event to terminal — falling back to local handling"
+            );
+            return false;
+        }
+        true
+    }
+
     pub(crate) fn start_terminal_selection(
         &mut self,
         key: TerminalRuntimeKey,
@@ -5562,6 +5810,121 @@ impl AnotherOneApp {
             })
         };
         cx.notify();
+        true
+    }
+
+    /// Open the right-click context menu over the terminal pane. Called
+    /// only when `forward_terminal_mouse_event` declined (i.e. mouse mode
+    /// off, or shift held). Captures any selection + link target at click
+    /// time so the menu items remain meaningful even if the user moves
+    /// the pointer before choosing.
+    pub(crate) fn open_terminal_context_menu(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let metrics = self.terminal_panel_metrics_for_key(key, window);
+        let link = metrics.as_ref().and_then(|metrics| {
+            let cell = terminal_cell_position_from_mouse(position, metrics)?;
+            self.terminal_surface_snapshots
+                .get(key)
+                .and_then(|snapshot| terminal_link_at_position(snapshot, cell))
+        });
+        let selected_text = self
+            .terminal_selection_for(key)
+            .and_then(|selection| {
+                self.terminal_surface_snapshots
+                    .get(key)
+                    .and_then(|snapshot| terminal_selected_text(snapshot, selection))
+            });
+        let state = TerminalContextMenuState {
+            key: key.clone(),
+            anchor_x: f32::from(position.x),
+            anchor_y: f32::from(position.y),
+            link,
+            selected_text,
+        };
+        self.workspace_pane.update(cx, |workspace, cx| {
+            // Mutually exclusive with the tab-pin menu — opening one
+            // implicitly dismisses the other so they never stack.
+            workspace.terminal_tab_menu = None;
+            workspace.terminal_context_menu = Some(state);
+            cx.notify();
+        });
+    }
+
+    /// Dismiss the terminal context menu without taking action.
+    pub(crate) fn dismiss_terminal_context_menu(&mut self, cx: &mut Context<Self>) {
+        self.workspace_pane.update(cx, |workspace, cx| {
+            if workspace.terminal_context_menu.take().is_some() {
+                cx.notify();
+            }
+        });
+    }
+
+    /// Copy the captured selection text to the clipboard, then dismiss.
+    pub(crate) fn terminal_context_menu_copy(&mut self, cx: &mut Context<Self>) -> bool {
+        let text = self
+            .workspace_pane
+            .read(cx)
+            .terminal_context_menu
+            .as_ref()
+            .and_then(|menu| menu.selected_text.clone());
+        let Some(text) = text else {
+            self.dismiss_terminal_context_menu(cx);
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.dismiss_terminal_context_menu(cx);
+        true
+    }
+
+    /// Paste current clipboard text into the terminal that owned the menu.
+    pub(crate) fn terminal_context_menu_paste(&mut self, cx: &mut Context<Self>) -> bool {
+        let key = self
+            .workspace_pane
+            .read(cx)
+            .terminal_context_menu
+            .as_ref()
+            .map(|menu| menu.key.clone());
+        let Some(key) = key else {
+            return false;
+        };
+        let Some(item) = cx.read_from_clipboard() else {
+            self.dismiss_terminal_context_menu(cx);
+            return false;
+        };
+        let Some(text) = item.text() else {
+            self.dismiss_terminal_context_menu(cx);
+            return false;
+        };
+        let pasted = self
+            .live_terminal_runtimes
+            .get(&key)
+            .map(|runtime| runtime.paste_text(&text).is_ok())
+            .unwrap_or(false);
+        self.dismiss_terminal_context_menu(cx);
+        pasted
+    }
+
+    /// Open the link captured at menu-open time via the OS handler.
+    pub(crate) fn terminal_context_menu_open_link(&mut self, cx: &mut Context<Self>) -> bool {
+        let link = self
+            .workspace_pane
+            .read(cx)
+            .terminal_context_menu
+            .as_ref()
+            .and_then(|menu| menu.link.clone());
+        let Some(link) = link else {
+            self.dismiss_terminal_context_menu(cx);
+            return false;
+        };
+        if let Err(err) = crate::platform::CurrentPlatform::open_external_url(&link) {
+            self.show_error_toast(err, cx);
+        }
+        self.dismiss_terminal_context_menu(cx);
         true
     }
 
@@ -5857,6 +6220,11 @@ impl AnotherOneApp {
             || self.sidebar_task_rename.is_some()
             || self.sidebar_task_menu.is_some()
             || self.workspace_pane.read(cx).terminal_tab_menu.is_some()
+            || self
+                .workspace_pane
+                .read(cx)
+                .terminal_context_menu
+                .is_some()
             || self
                 .workspace_pane
                 .read(cx)
@@ -9717,16 +10085,17 @@ fn remove_terminal_runtime_state<T>(
 mod tests {
     use super::{
         apply_terminal_session_backfill, apply_terminal_title_update, choose_initial_section,
-        fixed_title_for_project_action, global_tab_navigation_targets, new_tab_seed_agent_id,
-        next_global_tab_navigation_target, next_project_navigation_target,
-        next_task_navigation_target, persisted_active_section_key, remove_terminal_runtime_state,
-        resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
-        sidebar_task_navigation_targets, terminal_line_selection_range, terminal_link_at_position,
-        terminal_link_ranges, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
-        AnotherOneApp, AppToast, NavigationDirection, NewTaskShortcutTarget, SectionId,
-        SectionState, TerminalCellPosition, TerminalLinkRange, TerminalSelectionRange, TerminalTab,
-        ToastKind, TERMINAL_RECENT_OUTPUT_LIMIT,
+        encode_terminal_mouse_event, fixed_title_for_project_action,
+        global_tab_navigation_targets, new_tab_seed_agent_id, next_global_tab_navigation_target,
+        next_project_navigation_target, next_task_navigation_target, persisted_active_section_key,
+        remove_terminal_runtime_state, resolve_new_task_shortcut_target,
+        root_project_navigation_targets, select_active_section, sidebar_task_navigation_targets,
+        terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
+        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
+        terminal_word_selection_range, trim_to_recent_output_limit, AnotherOneApp, AppToast,
+        NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition,
+        TerminalLinkRange, TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers,
+        TerminalSelectionRange, TerminalTab, ToastKind, TERMINAL_RECENT_OUTPUT_LIMIT,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -9737,8 +10106,8 @@ mod tests {
         ProjectActionKind, ProjectActionScope, ProjectCheckoutState, ProjectKind, Task, TaskKind,
     };
     use crate::terminal_runtime::{
-        TerminalCellSnapshot, TerminalLineSnapshot, TerminalRuntimeKey, TerminalRuntimeUpdate,
-        TerminalSurfaceSnapshot,
+        TerminalCellSnapshot, TerminalLineSnapshot, TerminalMouseEncoding, TerminalMouseLevel,
+        TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
     };
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, ScrollDelta};
     use std::collections::{HashMap, HashSet};
@@ -11552,6 +11921,316 @@ mod tests {
     }
 
     #[test]
+    fn terminal_link_ranges_include_ssh_and_git_urls() {
+        let text = "clone git://github.com/foo/bar.git from ssh://user@host:22/path";
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: text.len(),
+            lines: vec![TerminalLineSnapshot {
+                text: text.to_string(),
+                cells: text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| terminal_cell(column, ch))
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let git_start = text.find("git://").unwrap();
+        let git_end = git_start + "git://github.com/foo/bar.git".len();
+        let ssh_start = text.find("ssh://").unwrap();
+        let ssh_end = text.len();
+
+        assert_eq!(
+            terminal_link_ranges(&snapshot),
+            vec![
+                TerminalLinkRange {
+                    line: 0,
+                    start_column: git_start,
+                    end_column: git_end,
+                },
+                TerminalLinkRange {
+                    line: 0,
+                    start_column: ssh_start,
+                    end_column: ssh_end,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_link_ranges_include_file_and_mailto() {
+        let text = "see file:///etc/hosts or mailto:foo@example.com.";
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: text.len(),
+            lines: vec![TerminalLineSnapshot {
+                text: text.to_string(),
+                cells: text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| terminal_cell(column, ch))
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let file_start = text.find("file://").unwrap();
+        let file_end = file_start + "file:///etc/hosts".len();
+        let mailto_start = text.find("mailto:").unwrap();
+        let mailto_end = mailto_start + "mailto:foo@example.com".len();
+
+        assert_eq!(
+            terminal_link_ranges(&snapshot),
+            vec![
+                TerminalLinkRange {
+                    line: 0,
+                    start_column: file_start,
+                    end_column: file_end,
+                },
+                TerminalLinkRange {
+                    line: 0,
+                    start_column: mailto_start,
+                    end_column: mailto_end,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_sgr_press_and_release() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ButtonDrag,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let press = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Press,
+            10, // col
+            5,  // row
+            TerminalMouseModifiers::default(),
+        )
+        .expect("press encoded");
+        assert_eq!(press, b"\x1b[<0;11;6M".to_vec());
+
+        let release = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Release,
+            10,
+            5,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("release encoded");
+        assert_eq!(release, b"\x1b[<0;11;6m".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_sgr_drag_carries_motion_bit() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ButtonDrag,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let drag = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Drag,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("drag encoded");
+        // Left button (0) + motion bit (32) = 32.
+        assert_eq!(drag, b"\x1b[<32;1;1M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_sgr_modifiers() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ButtonDrag,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let event = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Right,
+            TerminalMouseAction::Press,
+            0,
+            0,
+            TerminalMouseModifiers {
+                shift: false,
+                alt: true,
+                control: true,
+            },
+        )
+        .expect("encoded");
+        // Right (2) + alt (8) + control (16) = 26.
+        assert_eq!(event, b"\x1b[<26;1;1M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_wheel() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let up = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::WheelUp,
+            TerminalMouseAction::Press,
+            3,
+            7,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("wheel up");
+        assert_eq!(up, b"\x1b[<64;4;8M".to_vec());
+
+        let down = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::WheelDown,
+            TerminalMouseAction::Press,
+            3,
+            7,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("wheel down");
+        assert_eq!(down, b"\x1b[<65;4;8M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_horizontal_wheel() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let left = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::WheelLeft,
+            TerminalMouseAction::Press,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("wheel left");
+        assert_eq!(left, b"\x1b[<66;1;1M".to_vec());
+
+        let right = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::WheelRight,
+            TerminalMouseAction::Press,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("wheel right");
+        assert_eq!(right, b"\x1b[<67;1;1M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_default_legacy_clamp() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Default,
+        };
+        let event = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Press,
+            5,
+            10,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("encoded");
+        // CSI M, button 0+32=32, col=5+1+32=38, row=10+1+32=43.
+        assert_eq!(event, vec![0x1b, b'[', b'M', 32, 38, 43]);
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_default_release_uses_button_3() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ButtonDrag,
+            encoding: TerminalMouseEncoding::Default,
+        };
+        let event = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Release,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("encoded");
+        // CSI M with button=3+32=35, col=33, row=33.
+        assert_eq!(event, vec![0x1b, b'[', b'M', 35, 33, 33]);
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_motion_requires_any_motion_level() {
+        let click_only = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        assert!(encode_terminal_mouse_event(
+            click_only,
+            TerminalMouseButton::None,
+            TerminalMouseAction::Motion,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .is_none());
+        assert!(encode_terminal_mouse_event(
+            click_only,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Drag,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .is_none());
+
+        let any_motion = TerminalMouseProtocol {
+            level: TerminalMouseLevel::AnyMotion,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let motion = encode_terminal_mouse_event(
+            any_motion,
+            TerminalMouseButton::None,
+            TerminalMouseAction::Motion,
+            1,
+            1,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("any-motion accepts motion");
+        // None button (3) + motion bit (32) = 35.
+        assert_eq!(motion, b"\x1b[<35;2;2M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_click_only_drops_release() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        assert!(encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Release,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .is_none());
+    }
+
+    #[test]
     fn terminal_word_selection_range_selects_clicked_word() {
         let snapshot = TerminalSurfaceSnapshot {
             text: String::new(),
@@ -12267,6 +12946,7 @@ impl Render for AnotherOneApp {
                 .child(self.project_menu_overlay(sw, cx))
                 .child(self.sidebar_task_menu_overlay(window, cx))
                 .child(self.terminal_tab_menu_overlay(window, cx))
+                .child(self.terminal_context_menu_overlay(window, cx))
                 .child(self.new_task_modal_overlay(cx))
                 .child(self.create_branch_modal_overlay(cx))
                 .child(self.add_agent_modal_overlay(cx))
