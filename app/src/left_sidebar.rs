@@ -274,6 +274,48 @@ impl AnotherOneApp {
         for project_id in project_ids {
             self.project_store.remove_project(project_id);
         }
+        self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
+        let fallback_section = self.fallback_section_after_project_removal();
+        self.project_store.save();
+
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.remove_project_sections(&project_id_set, cx);
+            if workspace.active_section.is_none() && workspace.active_project_page.is_none() {
+                if let Some((section_id, cwd)) = fallback_section.clone() {
+                    workspace.activate_section(section_id, Some(cwd), None, cx);
+                }
+            }
+        });
+
+        cx.notify();
+    }
+
+    fn remove_worktree_project_id(
+        &mut self,
+        project_id: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Project> {
+        let project_id_set = std::collections::HashSet::from([project_id.to_string()]);
+        let removed_repo_ids = Self::removed_repo_ids_without_remaining_projects(
+            &self.project_store.projects,
+            &project_id_set,
+        );
+        let removed_project = self.project_store.remove_worktree_project(project_id)?;
+        self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
+
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.remove_project_sections(&project_id_set, cx);
+        });
+
+        cx.notify();
+        Some(removed_project)
+    }
+
+    fn clear_removed_project_references(
+        &mut self,
+        project_id_set: &std::collections::HashSet<String>,
+        removed_repo_ids: &std::collections::HashSet<String>,
+    ) {
         self.changed_files
             .retain(|project_id, _| !project_id_set.contains(project_id));
         self.project_github_links
@@ -337,19 +379,6 @@ impl AnotherOneApp {
         self.project_github_link_requests
             .retain(|project_id| !project_id_set.contains(project_id));
         self.project_remove_confirm = None;
-        let fallback_section = self.fallback_section_after_project_removal();
-        self.project_store.save();
-
-        self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.remove_project_sections(&project_id_set, cx);
-            if workspace.active_section.is_none() && workspace.active_project_page.is_none() {
-                if let Some((section_id, cwd)) = fallback_section.clone() {
-                    workspace.activate_section(section_id, Some(cwd), None, cx);
-                }
-            }
-        });
-
-        cx.notify();
     }
 
     pub(crate) fn request_remove_project_group(
@@ -638,7 +667,10 @@ impl AnotherOneApp {
         }
 
         self.sidebar_task_delete_confirm = None;
-        self.remove_project_group_ids(std::slice::from_ref(&confirm.project_id), cx);
+        let removed_worktree_project = self.remove_worktree_project_id(&confirm.project_id, cx);
+        if removed_worktree_project.is_none() {
+            self.project_store.save();
+        }
         if was_active_project
             && self
                 .project_store

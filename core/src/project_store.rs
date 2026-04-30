@@ -1188,45 +1188,9 @@ impl ProjectStore {
                 (candidate.repo_id == repo_id).then(|| candidate_id.clone())
             })
             .collect::<HashSet<_>>();
-        let removed_section_prefixes = removed_project_ids
-            .iter()
-            .map(|removed_project_id| format!("{removed_project_id}::"))
-            .collect::<Vec<_>>();
 
         for removed_project_id in &removed_project_ids {
-            self.projects_by_id.remove(removed_project_id);
-        }
-        self.project_order
-            .retain(|candidate_id| !removed_project_ids.contains(candidate_id));
-
-        let removed_task_ids = self
-            .tasks_by_id
-            .values()
-            .filter(|task| {
-                removed_project_ids.contains(&task.root_project_id)
-                    || removed_project_ids.contains(&task.target_project_id)
-            })
-            .map(|task| task.id.clone())
-            .collect::<Vec<_>>();
-        for task_id in removed_task_ids {
-            let _ = self.remove_task_by_id(&task_id);
-        }
-        self.terminal_sections.retain(|section_id, _| {
-            !removed_section_prefixes
-                .iter()
-                .any(|prefix| section_id.starts_with(prefix))
-        });
-        if self
-            .ui
-            .last_active_section_id
-            .as_ref()
-            .is_some_and(|section_id| {
-                removed_section_prefixes
-                    .iter()
-                    .any(|prefix| section_id.starts_with(prefix))
-            })
-        {
-            self.ui.last_active_section_id = None;
+            let _ = self.remove_exact_project(removed_project_id);
         }
 
         if !self
@@ -1240,6 +1204,61 @@ impl ProjectStore {
         }
         self.rebuild_runtime_views();
         self.save();
+    }
+
+    pub fn remove_worktree_project(&mut self, project_id: &str) -> Option<Project> {
+        let project = self.projects_by_id.get(project_id)?;
+        if project.kind != ProjectKind::Worktree {
+            return None;
+        }
+
+        let removed_project = self.remove_exact_project(project_id)?;
+        if !self
+            .projects_by_id
+            .values()
+            .any(|candidate| candidate.repo_id == removed_project.repo_id)
+        {
+            self.repos.remove(&removed_project.repo_id);
+            self.ui.expanded_repo_ids.remove(&removed_project.repo_id);
+            self.ui
+                .repo_default_commit_actions
+                .remove(&removed_project.repo_id);
+        }
+        self.rebuild_runtime_views();
+        self.save();
+        Some(removed_project)
+    }
+
+    fn remove_exact_project(&mut self, project_id: &str) -> Option<Project> {
+        let removed_project = self.projects_by_id.remove(project_id)?;
+        self.project_order
+            .retain(|candidate_id| candidate_id != project_id);
+
+        let removed_task_ids = self
+            .tasks_by_id
+            .values()
+            .filter(|task| {
+                task.root_project_id == project_id || task.target_project_id == project_id
+            })
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        for task_id in removed_task_ids {
+            let _ = self.remove_task_by_id(&task_id);
+        }
+
+        let removed_section_prefix = format!("{project_id}::");
+        self.terminal_sections
+            .retain(|section_id, _| !section_id.starts_with(&removed_section_prefix));
+        if self
+            .ui
+            .last_active_section_id
+            .as_deref()
+            .is_some_and(|section_id| section_id.starts_with(&removed_section_prefix))
+        {
+            self.ui.last_active_section_id = None;
+        }
+
+        Some(removed_project)
     }
 
     pub fn remove_task(&mut self, root_project_id: &str, task_id: &str) -> Option<Task> {
@@ -5093,6 +5112,233 @@ mod tests {
         assert!(store.repos.is_empty());
         assert!(store.ui.expanded_repo_ids.is_empty());
         assert!(store.ui.repo_default_commit_actions.is_empty());
+        assert_eq!(store.ui.last_active_section_id, None);
+    }
+
+    #[test]
+    fn remove_worktree_project_should_preserve_root_project_state() {
+        let mut root_project = sample_project("root", None);
+        root_project.repo_id = "repo".to_string();
+        let mut worktree_project = sample_project("wt", Some("wt"));
+        worktree_project.repo_id = "repo".to_string();
+        let mut other_project = sample_project("other", None);
+        other_project.repo_id = "other-repo".to_string();
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([
+                (
+                    "repo".to_string(),
+                    RepoRecord {
+                        id: "repo".to_string(),
+                        common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                        branch_order: vec!["main".to_string(), "feature/worktree".to_string()],
+                        branches_by_name: HashMap::from([(
+                            "main".to_string(),
+                            super::RepoBranchRecord {
+                                name: "main".to_string(),
+                                last_commit_relative: "1 day ago".to_string(),
+                                is_default: true,
+                                ahead_count: 0,
+                                behind_count: 0,
+                            },
+                        )]),
+                    },
+                ),
+                (
+                    "other-repo".to_string(),
+                    RepoRecord {
+                        id: "other-repo".to_string(),
+                        common_dir: Some(PathBuf::from("/tmp/other/.git")),
+                        branch_order: vec!["main".to_string()],
+                        branches_by_name: HashMap::new(),
+                    },
+                ),
+            ]),
+            projects_by_id: HashMap::from([
+                ("root".to_string(), root_project),
+                ("wt".to_string(), worktree_project),
+                ("other".to_string(), other_project),
+            ]),
+            projects: Vec::new(),
+            project_order: vec!["root".to_string(), "wt".to_string(), "other".to_string()],
+            tasks_by_id: HashMap::from([
+                (
+                    "task-root".to_string(),
+                    Task {
+                        id: "task-root".to_string(),
+                        name: "Root task".to_string(),
+                        kind: TaskKind::Direct,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "root".to_string(),
+                        branch_name: "main".to_string(),
+                        section_id: "root::main::task-root".to_string(),
+                        worktree_project_id: None,
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                    },
+                ),
+                (
+                    "task-worktree".to_string(),
+                    Task {
+                        id: "task-worktree".to_string(),
+                        name: "Worktree task".to_string(),
+                        kind: TaskKind::Worktree,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "wt".to_string(),
+                        branch_name: "feature/worktree".to_string(),
+                        section_id: "wt::feature/worktree::task-worktree".to_string(),
+                        worktree_project_id: Some("wt".to_string()),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Claude Code".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt")),
+                    },
+                ),
+            ]),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::from([(
+                "root".to_string(),
+                vec!["task-root".to_string(), "task-worktree".to_string()],
+            )]),
+            terminal_sections: HashMap::from([
+                (
+                    "root::main::task-root".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                    },
+                ),
+                (
+                    "wt::feature/worktree::task-worktree".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Claude Code".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                    },
+                ),
+                (
+                    "other::main::task-other".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/other")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Other".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                    },
+                ),
+            ]),
+            ui: UiState {
+                expanded_repo_ids: HashSet::from(["repo".to_string(), "other-repo".to_string()]),
+                repo_default_commit_actions: HashMap::from([(
+                    "repo".to_string(),
+                    RepoDefaultCommitAction::CommitAndPush,
+                )]),
+                last_active_section_id: Some("wt::feature/worktree::task-worktree".to_string()),
+                ..UiState::default()
+            },
+            file_path: PathBuf::from("/tmp/projects.json"),
+        };
+        store.refresh_runtime_views();
+
+        let removed = store.remove_worktree_project("wt");
+
+        assert_eq!(removed.map(|project| project.id), Some("wt".to_string()));
+        assert!(store.project("root").is_some());
+        assert!(store.project("wt").is_none());
+        assert!(store.project("other").is_some());
+        assert_eq!(
+            store.project_order,
+            vec!["root".to_string(), "other".to_string()]
+        );
+        assert!(store.task("task-root").is_some());
+        assert!(store.task("task-worktree").is_none());
+        assert_eq!(
+            store.tasks.get("root").map(|tasks| tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>()),
+            Some(vec!["task-root"])
+        );
+        assert!(store
+            .terminal_sections
+            .contains_key("root::main::task-root"));
+        assert!(store
+            .terminal_sections
+            .contains_key("other::main::task-other"));
+        assert!(!store
+            .terminal_sections
+            .contains_key("wt::feature/worktree::task-worktree"));
+        assert!(store.repos.contains_key("repo"));
+        assert_eq!(
+            store
+                .repos
+                .get("repo")
+                .map(|repo| repo.branch_order.as_slice()),
+            Some(["main".to_string(), "feature/worktree".to_string()].as_slice())
+        );
+        assert!(store.ui.expanded_repo_ids.contains("repo"));
+        assert_eq!(
+            store.ui.repo_default_commit_actions.get("repo"),
+            Some(&RepoDefaultCommitAction::CommitAndPush)
+        );
         assert_eq!(store.ui.last_active_section_id, None);
     }
 
