@@ -56,6 +56,7 @@ impl HeadlessPlatform for WindowsPlatform {
             OpenInAppKind::Cursor => command_exists(&["cursor"]),
             OpenInAppKind::Zed => command_exists(&["zed"]),
             OpenInAppKind::VsCode => command_exists(&["code"]),
+            OpenInAppKind::Ghostty => command_exists(&["ghostty"]),
             OpenInAppKind::FileManager => true,
         }
     }
@@ -65,6 +66,7 @@ impl HeadlessPlatform for WindowsPlatform {
             OpenInAppKind::Cursor => Command::new("cursor"),
             OpenInAppKind::Zed => Command::new("zed"),
             OpenInAppKind::VsCode => Command::new("code"),
+            OpenInAppKind::Ghostty => Command::new("ghostty"),
             OpenInAppKind::FileManager => Command::new("explorer"),
         };
         command.arg(path);

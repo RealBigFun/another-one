@@ -77,6 +77,7 @@ fn default_binary_name(app: OpenInAppKind) -> &'static str {
         OpenInAppKind::Cursor => "cursor",
         OpenInAppKind::Zed => "zed",
         OpenInAppKind::VsCode => "code",
+        OpenInAppKind::Ghostty => "ghostty",
         OpenInAppKind::FileManager => "xdg-open",
     }
 }
@@ -86,6 +87,7 @@ fn binary_candidates(app: OpenInAppKind) -> &'static [&'static str] {
         OpenInAppKind::Cursor => &["cursor"],
         OpenInAppKind::Zed => &["zed", "zeditor"],
         OpenInAppKind::VsCode => &["code", "code-insiders"],
+        OpenInAppKind::Ghostty => &["ghostty"],
         OpenInAppKind::FileManager => &["xdg-open"],
     }
 }
@@ -95,6 +97,7 @@ fn flatpak_candidates(app: OpenInAppKind) -> &'static [&'static str] {
         OpenInAppKind::Cursor => &[],
         OpenInAppKind::Zed => &["dev.zed.Zed"],
         OpenInAppKind::VsCode => &["com.visualstudio.code"],
+        OpenInAppKind::Ghostty => &["com.mitchellh.ghostty"],
         OpenInAppKind::FileManager => &[],
     }
 }

@@ -5103,6 +5103,7 @@ impl AnotherOneApp {
             let Some(launch_config) = tab.launch_config.clone() else {
                 continue;
             };
+            let agent_launch_args = self.agent_launch_args_for_launch_config(&launch_config);
 
             let cwd = task
                 .cwd
@@ -5134,7 +5135,7 @@ impl AnotherOneApp {
                 request.key.clone(),
                 cwd,
                 launch_config,
-                Vec::new(),
+                agent_launch_args,
                 size,
             );
             changed = true;

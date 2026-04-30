@@ -5250,7 +5250,8 @@ mod tests {
             }
         });
 
-        let store: StoreFile = serde_json::from_value(json).expect("store JSON should deserialize");
+        let store: StoreFile =
+            serde_json::from_value(json).expect("store JSON should deserialize");
         let json = serde_json::to_value(&store).expect("store JSON should serialize");
 
         assert_eq!(
@@ -5265,6 +5266,35 @@ mod tests {
                         .collect::<Vec<_>>()
                 }),
             Some(vec!["--future-flag".to_string()])
+        );
+    }
+
+    #[test]
+    fn store_file_deserializes_ghostty_open_in_settings() {
+        let json = serde_json::json!({
+            "version": super::STORE_VERSION,
+            "repos": {},
+            "projects": {},
+            "project_order": [],
+            "tasks": {},
+            "task_ids_by_root_project": {},
+            "sections": {},
+            "ui": {
+                "enabled_open_in_apps": ["zed", "vs-code", "file-manager", "ghostty"],
+                "preferred_open_in_app": "ghostty"
+            }
+        });
+
+        let store: StoreFile = serde_json::from_value(json).expect("store JSON should deserialize");
+
+        assert!(store
+            .ui
+            .enabled_open_in_apps
+            .as_ref()
+            .is_some_and(|apps| apps.contains(&OpenInAppKind::Ghostty)));
+        assert_eq!(
+            store.ui.preferred_open_in_app,
+            Some(OpenInAppKind::Ghostty)
         );
     }
 

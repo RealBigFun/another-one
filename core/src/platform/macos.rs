@@ -48,6 +48,7 @@ impl HeadlessPlatform for MacosPlatform {
             OpenInAppKind::VsCode => {
                 macos_app_exists("Visual Studio Code") || command_exists(&["code"])
             }
+            OpenInAppKind::Ghostty => macos_app_exists("Ghostty") || command_exists(&["ghostty"]),
             OpenInAppKind::FileManager => macos_app_exists("Finder"),
         }
     }
@@ -63,6 +64,9 @@ impl HeadlessPlatform for MacosPlatform {
             }
             OpenInAppKind::VsCode => {
                 command.args(["-a", "Visual Studio Code"]).arg(path);
+            }
+            OpenInAppKind::Ghostty => {
+                command.args(["-a", "Ghostty"]).arg(path);
             }
             OpenInAppKind::FileManager => {
                 command.arg(path);
