@@ -316,7 +316,7 @@ pub fn find_latest_pull_request_status(
     }
 
     let gh = find_gh_cli(repo_path)?;
-    let mut command = gh_command(gh, repo_path);
+    let mut command = gh_json_command(gh, repo_path);
     let output = command
         .args(find_latest_pull_request_args(head_branch))
         .output()
@@ -354,7 +354,7 @@ pub fn find_pull_request_checks(
         "Could not load PR checks. GitHub CLI (`gh`) is not installed or not on the app PATH."
             .to_string()
     })?;
-    let mut command = gh_command(gh, repo_path);
+    let mut command = external_command(gh, repo_path);
     command.args(["pr", "checks"]);
     if let Some(pull_request_number) = pull_request_number {
         command.arg(pull_request_number.to_string());
@@ -703,7 +703,7 @@ fn create_pull_request(
             ToolbarActionError::from_message(format!("Create PR failed. {message}"))
         })?;
 
-    let mut cmd = gh_command(gh, repo_path);
+    let mut cmd = external_command(gh, repo_path);
     cmd.args(create_pull_request_args(
         &head_branch,
         draft,
@@ -1337,10 +1337,10 @@ fn external_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command
     command
 }
 
-fn gh_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command {
+fn gh_json_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command {
     let mut command = external_command(program, cwd);
     command
-        .env("GH_FORCE_TTY", "0")
+        .env_remove("GH_FORCE_TTY")
         .env("NO_COLOR", "1")
         .env("CLICOLOR", "0")
         .env("CLICOLOR_FORCE", "0")
@@ -1381,7 +1381,7 @@ fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
 mod tests {
     use super::{
         create_pull_request_args, default_commit_generation_script, default_pr_generation_script,
-        find_latest_pull_request_args, gh_command, git_stdout, indicates_missing_pull_request,
+        find_latest_pull_request_args, gh_json_command, git_stdout, indicates_missing_pull_request,
         indicates_missing_pull_request_checks, normalize_github_remote,
         normalize_pull_request_check_bucket, parse_commit_message,
         parse_pull_request_checks_output, parse_pull_request_content, push_branch,
@@ -1528,13 +1528,10 @@ mod tests {
     }
 
     #[test]
-    fn gh_command_disables_forced_color_output() {
-        let command = gh_command("gh", Path::new("."));
+    fn gh_json_command_disables_forced_color_output() {
+        let command = gh_json_command("gh", Path::new("."));
 
-        assert_eq!(
-            command_env_value(&command, "GH_FORCE_TTY").as_deref(),
-            Some("0")
-        );
+        assert!(command_env_removed(&command, "GH_FORCE_TTY"));
         assert_eq!(
             command_env_value(&command, "NO_COLOR").as_deref(),
             Some("1")
@@ -1791,6 +1788,12 @@ mod tests {
             .find(|(name, _)| *name == OsStr::new(key))
             .and_then(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
     }
+
+    fn command_env_removed(command: &Command, key: &str) -> bool {
+        command
+            .get_envs()
+            .any(|(name, value)| name == OsStr::new(key) && value.is_none())
+    }
 }
 
 pub fn find_project_pull_requests(
@@ -1814,7 +1817,7 @@ pub fn find_project_pull_requests(
         search_terms.push(query.to_string());
     }
 
-    let mut command = gh_command(gh, repo_path);
+    let mut command = gh_json_command(gh, repo_path);
     command.args([
         "pr",
         "list",
