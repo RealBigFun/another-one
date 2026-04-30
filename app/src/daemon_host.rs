@@ -972,20 +972,61 @@ fn run(
     // bind failure only warns — the desktop still runs without
     // a local MCP socket (mobile iroh path is independent).
     let mcp_socket_path = daemon::transport_mcp::default_socket_path();
-    match runtime.block_on(async {
-        daemon::transport_mcp::spawn(mcp_socket_path.clone(), mcp_orchestrator)
-    }) {
-        Ok(listener) => {
-            log::info!(
-                "mcp: daemon MCP listener started at {}",
-                mcp_socket_path.display()
-            );
-            std::mem::forget(listener);
+    // Retry the bind in the background when it loses a startup race
+    // with a still-running prior instance. The probe in
+    // `unlink_if_ours_and_dead` only sees "alive" if a listener
+    // actually answers; once that listener dies we take over on the
+    // next retry tick. Backs off from 5s → 30s after the first few
+    // misses to keep logs quiet during long overlaps.
+    let mcp_path_for_task = mcp_socket_path.clone();
+    let mcp_orch_for_task = mcp_orchestrator.clone();
+    runtime.spawn(async move {
+        let mut attempt: u32 = 0;
+        loop {
+            match daemon::transport_mcp::spawn(
+                mcp_path_for_task.clone(),
+                mcp_orch_for_task.clone(),
+            ) {
+                Ok(listener) => {
+                    if attempt > 0 {
+                        log::info!(
+                            "mcp: bound listener at {} after {} retries",
+                            mcp_path_for_task.display(),
+                            attempt
+                        );
+                    } else {
+                        log::info!(
+                            "mcp: daemon MCP listener started at {}",
+                            mcp_path_for_task.display()
+                        );
+                    }
+                    std::mem::forget(listener);
+                    return;
+                }
+                Err(err) => {
+                    if attempt == 0 {
+                        log::warn!(
+                            "mcp: initial bind at {} failed ({err}); retrying",
+                            mcp_path_for_task.display()
+                        );
+                    } else if attempt % 12 == 0 {
+                        log::warn!(
+                            "mcp: still unable to bind at {} after {} attempts ({err})",
+                            mcp_path_for_task.display(),
+                            attempt + 1
+                        );
+                    }
+                    let delay = if attempt < 6 {
+                        std::time::Duration::from_secs(5)
+                    } else {
+                        std::time::Duration::from_secs(30)
+                    };
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                }
+            }
         }
-        Err(err) => {
-            log::warn!("mcp: failed to start local listener; continuing: {err}");
-        }
-    }
+    });
 
     let endpoint_result = runtime.block_on(async {
         daemon::run_endpoint(registry, paths.secret_key, paths.paired_peers).await

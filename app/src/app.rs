@@ -13293,6 +13293,7 @@ impl Render for AnotherOneApp {
                 .child(self.sidebar_task_menu_overlay(window, cx))
                 .child(self.terminal_tab_menu_overlay(window, cx))
                 .child(self.terminal_context_menu_overlay(window, cx))
+                .child(self.terminal_search_bar_overlay(cx))
                 .child(self.new_task_modal_overlay(cx))
                 .child(self.create_branch_modal_overlay(cx))
                 .child(self.add_agent_modal_overlay(cx))

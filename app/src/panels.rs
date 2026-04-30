@@ -1064,16 +1064,6 @@ impl WorkspacePane {
                     .absolute()
                     .inset_0(),
                 )
-                .children(self.app.upgrade().and_then(|app_entity| {
-                    let active = app_entity
-                        .read(cx)
-                        .terminal_search
-                        .as_ref()
-                        .is_some_and(|state| state.key == key);
-                    active.then(|| app_entity.update(cx, |app, app_cx| {
-                        app.terminal_search_bar_overlay(app_cx).into_any_element()
-                    }))
-                }))
                 .children((bell_intensity > 0.0).then(|| {
                     div()
                         .absolute()
