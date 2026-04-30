@@ -876,7 +876,7 @@ impl WorkspacePane {
                 .child(self.project_page_branch_config_row(
                     project_id,
                     "Default Target Branch",
-                    "Used for PR creation and the compare view in the right sidebar.",
+                    "Used for PR creation.",
                     settings,
                     ProjectBranchSettingField::DefaultTargetBranch,
                     settings.configured_default_target_branch.as_deref(),
@@ -921,11 +921,10 @@ impl WorkspacePane {
                 "No branches are currently available.".to_string()
             }
             (ProjectBranchSettingField::DefaultTargetBranch, Some(branch), _) => {
-                format!("PRs and compare mode currently target {}.", branch)
+                format!("PRs currently target {}.", branch)
             }
             (ProjectBranchSettingField::DefaultTargetBranch, None, _) => {
-                "Unset keeps GitHub PR targeting on its default base and hides compare mode."
-                    .to_string()
+                "Unset keeps GitHub PR targeting on its default base.".to_string()
             }
         };
         let project_id = project_id.to_string();

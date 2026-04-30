@@ -43,9 +43,9 @@ use crate::panels::terminal_cell_width;
 use crate::platform::PlatformServices;
 use crate::project_store::{
     ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
-    ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchCompareState,
-    ProjectBranchSettingField, ProjectGitState, ProjectStore, RepoBranchRecord,
-    RepoDefaultCommitAction, Task, TaskKind, TaskWorktreeBranchMode,
+    ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchSettingField,
+    ProjectGitState, ProjectStore, RepoBranchRecord, RepoDefaultCommitAction, Task, TaskKind,
+    TaskWorktreeBranchMode,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
 use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
@@ -465,7 +465,6 @@ pub(crate) enum RightSidebarMode {
     WorkingTree,
     Commits,
     Checks,
-    Compare,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1455,8 +1454,6 @@ pub struct AnotherOneApp {
     pub(crate) branch_commit_states: HashMap<String, ProjectBranchCommitState>,
     /// Cached per-commit file-change snapshots keyed by `project_id:commit_id`.
     pub(crate) commit_file_changes_states: HashMap<String, CommitFileChangesState>,
-    /// Cached branch-vs-target compare snapshots keyed by project id.
-    pub(crate) branch_compare_states: HashMap<String, ProjectBranchCompareState>,
     /// UI font size (adjusted by Cmd+/Cmd- zoom).
     pub(crate) font_size: f32,
     /// Last observed viewport size used to detect real resize events.
@@ -2696,19 +2693,6 @@ impl AnotherOneApp {
         })
     }
 
-    pub(crate) fn active_compare_target_branch(&self, cx: &App) -> Option<String> {
-        let project_id = self
-            .workspace_pane
-            .read(cx)
-            .active_section
-            .as_ref()?
-            .project_id
-            .clone();
-        self.project_store
-            .resolved_branch_settings(&project_id)
-            .and_then(|settings| settings.effective_default_target_branch)
-    }
-
     pub(crate) fn commit_page_size_for_project(&self, project_id: &str) -> usize {
         self.commit_page_sizes
             .get(project_id)
@@ -2727,32 +2711,11 @@ impl AnotherOneApp {
         self.branch_commit_states.get(&project_id)
     }
 
-    pub(crate) fn active_branch_compare_state(
-        &self,
-        cx: &App,
-    ) -> Option<&ProjectBranchCompareState> {
-        let project_id = self
-            .workspace_pane
-            .read(cx)
-            .active_section
-            .as_ref()?
-            .project_id
-            .clone();
-        let target_branch = self.active_compare_target_branch(cx)?;
-        self.branch_compare_states
-            .get(&project_id)
-            .filter(|state| state.target_branch == target_branch)
-    }
-
-    pub(crate) fn active_right_sidebar_mode(&self, cx: &App) -> RightSidebarMode {
+    pub(crate) fn active_right_sidebar_mode(&self, _cx: &App) -> RightSidebarMode {
         match self.right_sidebar_mode {
             RightSidebarMode::WorkingTree => RightSidebarMode::WorkingTree,
             RightSidebarMode::Commits => RightSidebarMode::Commits,
             RightSidebarMode::Checks => RightSidebarMode::Checks,
-            RightSidebarMode::Compare if self.active_compare_target_branch(cx).is_some() => {
-                RightSidebarMode::Compare
-            }
-            _ => RightSidebarMode::WorkingTree,
         }
     }
 
@@ -2776,11 +2739,6 @@ impl AnotherOneApp {
                 .project(cached_project_id)
                 .is_some_and(|project| project.repo_id != repo_id)
         });
-        self.branch_compare_states.retain(|cached_project_id, _| {
-            self.project_store
-                .project(cached_project_id)
-                .is_some_and(|project| project.repo_id != repo_id)
-        });
         self.project_check_runs_states.retain(|key, _| {
             let cached_project_id = key.split(':').next().unwrap_or_default();
             self.project_store
@@ -2799,16 +2757,6 @@ impl AnotherOneApp {
                 .project(cached_project_id)
                 .is_some_and(|project| project.repo_id != repo_id)
         });
-    }
-
-    fn sync_right_sidebar_mode(&mut self, cx: &App) -> bool {
-        match self.right_sidebar_mode {
-            RightSidebarMode::Compare if self.active_compare_target_branch(cx).is_none() => {
-                self.right_sidebar_mode = RightSidebarMode::WorkingTree;
-                true
-            }
-            _ => false,
-        }
     }
 
     pub(crate) fn active_toolbar_repo_id(&self, cx: &App) -> Option<String> {
@@ -3187,7 +3135,7 @@ impl AnotherOneApp {
             ProjectBranchSettingField::DefaultTargetBranch => {
                 self.show_warning_toast(
                     format!(
-                        "Saved default target branch {} is no longer available. Compare mode is disabled until you choose a new target branch.",
+                        "Saved default target branch {} is no longer available. Choose a new target branch to use it for PRs.",
                         invalid.branch_name
                     ),
                     cx,
@@ -3207,7 +3155,7 @@ impl AnotherOneApp {
         }
 
         self.clear_branch_sidebar_states_for_project_group(project_id);
-        let mut changed = self.sync_right_sidebar_mode(cx);
+        let mut changed = false;
         for invalid in invalid_settings {
             self.show_invalid_project_branch_setting_toast(invalid, cx);
             changed = true;
@@ -3241,7 +3189,6 @@ impl AnotherOneApp {
                 }
 
                 self.clear_branch_sidebar_states_for_project_group(project_id);
-                let _ = self.sync_right_sidebar_mode(cx);
                 self.mark_git_refresh_stale();
 
                 match (field, branch_name.as_deref()) {
@@ -3280,17 +3227,6 @@ impl AnotherOneApp {
         mode: RightSidebarMode,
         cx: &mut Context<Self>,
     ) {
-        match mode {
-            RightSidebarMode::Compare if self.active_compare_target_branch(cx).is_none() => {
-                self.show_warning_toast(
-                    "Compare mode is only available when a default target branch is configured.",
-                    cx,
-                );
-                return;
-            }
-            _ => {}
-        }
-
         if mode == RightSidebarMode::Commits {
             if let Some(project_id) = self
                 .workspace_pane
@@ -3310,7 +3246,7 @@ impl AnotherOneApp {
         }
 
         self.right_sidebar_mode = mode;
-        if matches!(mode, RightSidebarMode::Commits | RightSidebarMode::Compare) {
+        if mode == RightSidebarMode::Commits {
             self.mark_git_refresh_stale();
         }
         cx.stop_propagation();
@@ -3949,7 +3885,6 @@ impl AnotherOneApp {
             commit_page_sizes: HashMap::new(),
             branch_commit_states: HashMap::new(),
             commit_file_changes_states: HashMap::new(),
-            branch_compare_states: HashMap::new(),
             marked_text: None,
             add_agent_modal: None,
             create_branch_modal: None,
@@ -6213,24 +6148,6 @@ impl AnotherOneApp {
         changed
     }
 
-    fn set_branch_compare_state(
-        &mut self,
-        project_id: &str,
-        state: Option<ProjectBranchCompareState>,
-    ) -> bool {
-        match state {
-            Some(state) => {
-                if self.branch_compare_states.get(project_id) == Some(&state) {
-                    return false;
-                }
-                self.branch_compare_states
-                    .insert(project_id.to_string(), state);
-                true
-            }
-            None => self.branch_compare_states.remove(project_id).is_some(),
-        }
-    }
-
     fn set_branch_commit_state(
         &mut self,
         project_id: &str,
@@ -6296,20 +6213,6 @@ impl AnotherOneApp {
                         changed |= self.set_branch_commit_state(&reply.project_id, None);
                     }
                 }
-                match reply.compare_state {
-                    Some(Ok(compare_state)) => {
-                        changed |=
-                            self.set_branch_compare_state(&reply.project_id, Some(compare_state));
-                    }
-                    Some(Err(error)) => {
-                        changed |= self.set_branch_compare_state(&reply.project_id, None);
-                        self.show_warning_toast(error, cx);
-                    }
-                    None => {
-                        changed |= self.set_branch_compare_state(&reply.project_id, None);
-                    }
-                }
-                changed |= self.sync_right_sidebar_mode(cx);
                 changed
             }
             Err(broadcast::error::TryRecvError::Empty) => false,
@@ -6433,20 +6336,6 @@ impl AnotherOneApp {
             None
         };
 
-        let compare_target_branch = if self.right_sidebar_mode == RightSidebarMode::Compare {
-            workspace.active_section.as_ref().and_then(|section| {
-                if section.project_id == project_id {
-                    self.project_store
-                        .resolved_branch_settings(&section.project_id)
-                        .and_then(|settings| settings.effective_default_target_branch)
-                } else {
-                    None
-                }
-            })
-        } else {
-            None
-        };
-
         let include_metadata = metadata_due;
         self.git_refresh_in_flight = true;
         self.git_refresh_receiver = Some(another_one_core::git_service::spawn_refresh(
@@ -6454,7 +6343,6 @@ impl AnotherOneApp {
             project_path,
             include_metadata,
             commit_limit,
-            compare_target_branch,
         ));
     }
 
