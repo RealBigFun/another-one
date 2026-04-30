@@ -22,9 +22,7 @@
 //!   cost — same shape the desktop crate has today.
 //!
 //! Each `*.rs` is a stub at this commit; subsequent PRs migrate the
-//! actual methods out of `desktop/src/platform/` and add
-//! [`HeadlessPlatform::terminal_engine`] for the alacritty/xterm
-//! per-platform render-engine choice.
+//! actual methods out of `desktop/src/platform/`.
 
 // Each `mod` declaration is cfg-gated to its own target so unused
 // platforms don't trigger dead-code warnings during normal builds.
@@ -36,7 +34,14 @@
 mod android;
 #[cfg(target_os = "ios")]
 mod ios;
-#[cfg(target_os = "linux")]
+// Compile the Linux module on Android too — `AndroidPlatform`
+// reuses `proc_meminfo_total_bytes` + `procfs_read_process_samples`
+// from it (Android's procfs layout matches Linux's). Keeps the
+// memory + sample helpers in a single place rather than duplicating
+// them across two `target_os` impls. The `LinuxPlatform` re-export
+// below stays gated to `target_os = "linux"`, so Android still
+// resolves `CurrentPlatform` to `AndroidPlatform`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;

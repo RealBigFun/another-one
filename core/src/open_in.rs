@@ -23,18 +23,16 @@ pub enum OpenInAppKind {
     Zed,
     VsCode,
     Ghostty,
-    WezTerm,
     FileManager,
 }
 
 impl OpenInAppKind {
-    pub const fn all() -> [Self; 6] {
+    pub const fn all() -> [Self; 5] {
         [
             Self::Cursor,
             Self::Zed,
             Self::VsCode,
             Self::Ghostty,
-            Self::WezTerm,
             Self::FileManager,
         ]
     }
@@ -45,7 +43,6 @@ impl OpenInAppKind {
             Self::Zed => "Zed",
             Self::VsCode => "VS Code",
             Self::Ghostty => "Ghostty",
-            Self::WezTerm => "WezTerm",
             Self::FileManager => file_manager_label(),
         }
     }
@@ -55,8 +52,7 @@ impl OpenInAppKind {
             Self::Cursor => "Open the project directory in Cursor.",
             Self::Zed => "Open the project directory in Zed.",
             Self::VsCode => "Open the project directory in VS Code.",
-            Self::Ghostty => "Open the project directory in a new Ghostty window.",
-            Self::WezTerm => "Open the project directory in a new WezTerm window.",
+            Self::Ghostty => "Open the project directory in Ghostty.",
             Self::FileManager => file_manager_description(),
         }
     }
@@ -67,7 +63,6 @@ impl OpenInAppKind {
             Self::Zed => "assets/icons/open_in__zed.svg",
             Self::VsCode => "assets/icons/open_in__vscode.svg",
             Self::Ghostty => "assets/icons/open_in__ghostty.svg",
-            Self::WezTerm => "assets/icons/open_in__wezterm.svg",
             Self::FileManager => "assets/icons/open_in__folder_closed.svg",
         }
     }
@@ -78,7 +73,6 @@ impl OpenInAppKind {
             Self::Zed => "zed",
             Self::VsCode => "vscode",
             Self::Ghostty => "ghostty",
-            Self::WezTerm => "wezterm",
             Self::FileManager => "file-manager",
         }
     }
@@ -202,19 +196,11 @@ mod tests {
 
     #[test]
     fn enabled_apps_default_to_all_available_apps() {
-        let available = vec![
-            OpenInAppKind::Cursor,
-            OpenInAppKind::Ghostty,
-            OpenInAppKind::FileManager,
-        ];
+        let available = vec![OpenInAppKind::Cursor, OpenInAppKind::FileManager];
 
         assert_eq!(
             effective_enabled_open_in_apps(&available, None),
-            vec![
-                OpenInAppKind::Cursor,
-                OpenInAppKind::Ghostty,
-                OpenInAppKind::FileManager
-            ]
+            vec![OpenInAppKind::Cursor, OpenInAppKind::FileManager]
         );
     }
 
@@ -222,30 +208,31 @@ mod tests {
     fn enabled_apps_follow_saved_subset_in_stable_order() {
         let available = vec![
             OpenInAppKind::FileManager,
-            OpenInAppKind::WezTerm,
             OpenInAppKind::VsCode,
+            OpenInAppKind::Ghostty,
             OpenInAppKind::Cursor,
         ];
-        let configured = HashSet::from([OpenInAppKind::WezTerm, OpenInAppKind::VsCode]);
+        let configured = HashSet::from([
+            OpenInAppKind::VsCode,
+            OpenInAppKind::Ghostty,
+            OpenInAppKind::Cursor,
+        ]);
 
         assert_eq!(
             effective_enabled_open_in_apps(&available, Some(&configured)),
-            vec![OpenInAppKind::VsCode, OpenInAppKind::WezTerm]
+            vec![
+                OpenInAppKind::Cursor,
+                OpenInAppKind::VsCode,
+                OpenInAppKind::Ghostty
+            ]
         );
     }
 
     #[test]
-    fn all_includes_terminal_apps_in_stable_order() {
+    fn ghostty_deserializes_from_saved_settings() {
         assert_eq!(
-            OpenInAppKind::all(),
-            [
-                OpenInAppKind::Cursor,
-                OpenInAppKind::Zed,
-                OpenInAppKind::VsCode,
-                OpenInAppKind::Ghostty,
-                OpenInAppKind::WezTerm,
-                OpenInAppKind::FileManager,
-            ]
+            serde_json::from_str::<OpenInAppKind>("\"ghostty\"").unwrap(),
+            OpenInAppKind::Ghostty
         );
     }
 }

@@ -97,7 +97,7 @@ fn copy_until_eof<R: Read, W: Write>(mut src: R, mut dst: W) -> io::Result<()> {
 /// Resolution order:
 ///   1. argv[1], if present.
 ///   2. `ANOTHERONE_MCP_SOCKET` env var.
-///   3. Per-user default matching `daemon_sandbox::transport_mcp::default_socket_path`.
+///   3. Per-user default matching `daemon::transport_mcp::default_socket_path`.
 fn resolve_socket_path() -> Result<PathBuf, String> {
     if let Some(arg) = std::env::args().nth(1) {
         return Ok(PathBuf::from(arg));
@@ -108,7 +108,7 @@ fn resolve_socket_path() -> Result<PathBuf, String> {
     Ok(default_socket_path())
 }
 
-// Mirror of `daemon_sandbox::transport_mcp::default_socket_path`,
+// Mirror of `daemon::transport_mcp::default_socket_path`,
 // duplicated here so the shim has no dep on daemon-sandbox (keeps
 // the shim binary tiny + cold-start-fast). Any change to the
 // default path needs to be made in both places — the daemon-side

@@ -29,7 +29,7 @@
 //!
 //! `serve(reader, writer, orchestrator)` drives exactly one MCP
 //! session. Per-connection tasks in the UDS listener
-//! (`daemon-sandbox/src/transport_mcp.rs`) and the stdio shim
+//! (`daemon/src/transport_mcp.rs`) and the stdio shim
 //! both call this. Session ends when the reader EOFs or a write
 //! fails.
 

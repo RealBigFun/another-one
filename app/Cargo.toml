@@ -1,0 +1,111 @@
+[package]
+name = "another-one"
+version = "0.1.0"
+edition = "2021"
+description = "AnotherOne app using Zed GPUI — same source compiles to a desktop binary (mac/linux) and an Android cdylib (via gpui-mobile)."
+
+# `cdylib` produces `libanother_one.so` for Android via cargo-ndk; the
+# `rlib` keeps the modules linkable from the bundled `[[bin]]` (the
+# desktop entry at `src/main.rs`) and from integration tests. Both
+# share the same `src/lib.rs`, so desktop and mobile see exactly the
+# same UI source — no GUI drift.
+[lib]
+name = "another_one"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+hotpath = ["hotpath/hotpath", "another-one-core/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "another-one-core/hotpath-alloc"]
+# Forces the 1 Hz LEAKSCOPE sampler on in release builds (VmRSS, PTY
+# bytes in-flight, drain stats, live tab count printed to stderr every
+# second). Debug builds auto-enable the sampler via `debug_assertions`
+# and don't need this feature. Counter call sites are always compiled
+# in so the sampler always has data when enabled.
+leakscope = ["another-one-core/leakscope"]
+
+# GPUI: https://github.com/zed-industries/zed/tree/main/crates/gpui
+# Pinned to the same Zed rev that gpui-mobile pins
+# (https://github.com/itsbalamurali/gpui-mobile). Mobile builds use
+# gpui-mobile's `gpui::Platform` impl on top of this exact rev, so the
+# whole workspace must agree on it. Rebump only in lockstep with gpui-mobile.
+[dependencies]
+alacritty_terminal = "0.26.0"
+another-one-core = { path = "../core" }
+anyhow = "1"
+daemon = { path = "../daemon" }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui", default-features = false, features = ["wayland", "x11", "font-kit"] }
+hotpath = "0.15"
+libc = "0.2"
+portable-pty = "0.9.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+# `sync` is used by the GPUI render tick to drain worker replies via
+# `broadcast::Receiver::try_recv` (no runtime required for that). The
+# `rt-multi-thread` feature is needed so `daemon_host` can construct a
+# dedicated `tokio::runtime::Runtime` on an OS thread for the embedded
+# iroh endpoint; GPUI itself remains tokio-free.
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
+# Iroh CLIENT: phones (and any narrow-window desktop) dial a remote
+# daemon via this. Owns its own tokio runtime + DNS shim + protocol
+# types so the GPUI layer stays a thin caller; symmetric with the
+# `daemon` crate (the iroh SERVER) which the desktop hosts.
+daemon-client = { path = "../daemon-client" }
+uuid = { version = "1", features = ["v4"] }
+log = "0.4"
+# Logging stack: `tracing-subscriber` consumes both the daemon's own
+# `tracing::info!` calls and (via `tracing-log::LogTracer`) the
+# `log::info!` calls scattered through desktop+core. Without this
+# subscriber, every diagnostic in the daemon path is a silent no-op —
+# which is how the embedded iroh endpoint hung at `online()` for an
+# unbounded amount of time before anyone noticed.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-log = "0.2"
+# Updater HTTP/crypto stack. Rustls (no OpenSSL) keeps macOS+Linux
+# portability; ed25519-dalek verifies the publisher's signature on
+# `latest.json` before the app trusts asset URLs/checksums; sha2 +
+# hex are used for per-asset SHA256 verification.
+ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }
+sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+hex = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+
+# Desktop-only: `gpui_platform::current_platform` / `application` replace
+# the old `gpui::Application::new()`. It transitively pulls in
+# `gpui_linux` (which needs Wayland/X11/fontconfig) on Linux and
+# `gpui_macos` on macOS — neither is available on Android, so this dep
+# is excluded for that target. Same Zed rev as `gpui` — they share
+# internal types and must stay in lockstep.
+#
+# `wayland` + `x11` features forward to `gpui_linux/wayland` and
+# `gpui_linux/x11`. Without them, `gpui_linux::current_platform` only
+# has the headless arm available and `guess_compositor()`'s "Wayland"
+# return value falls through to `unreachable!()`.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui_platform", features = ["wayland", "x11", "font-kit"] }
+
+# Android: NativeActivity-driven GPUI shell. `gpui-mobile` implements
+# `gpui::Platform` for android (Vulkan/wgpu) and ios (Metal/wgpu) on
+# top of the same Zed `gpui` rev pinned above. `android-activity`
+# provides the `android_main` entry called by NativeActivity once the
+# `.so` is loaded; `android_logger` routes `log::*` records to logcat.
+[target.'cfg(target_os = "android")'.dependencies]
+gpui-mobile = { git = "https://github.com/itsbalamurali/gpui-mobile", branch = "main" }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+# JNI bridge for the QR-scan flow: Rust calls a Kotlin static method to
+# launch ML Kit's barcode scanner activity, and the Kotlin side calls
+# back into a `#[no_mangle] extern "system"` fn declared in
+# `mobile.rs::Java_dev_anotherone_app_QrScanLauncher_onScanResult`.
+jni = "0.21"
+ndk-context = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

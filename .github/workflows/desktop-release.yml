@@ -5,7 +5,7 @@ name: Desktop release
 # (per arch), an AppImage for Linux x86_64, a SHA256SUMS file, a
 # signed `latest.json` manifest, and the matching `latest.json.sig`.
 # The desktop app polls the resulting GitHub Release URL on a 10
-# minute cadence (see `desktop/src/updater.rs`).
+# minute cadence (see `app/src/updater.rs`).
 
 on:
   push:
@@ -45,7 +45,7 @@ jobs:
           RELEASE_ID="${COMMIT_SHA}"
           RELEASE_TAG="desktop-${COMMIT_SHA}"
           RELEASE_NAME="AnotherOne Desktop ${SHORT_SHA}"
-          CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' desktop/Cargo.toml)"
+          CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' app/Cargo.toml)"
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           {

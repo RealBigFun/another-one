@@ -1,0 +1,8 @@
+# Defer git fetches to the system git binary so user-level
+# `~/.gitconfig` rewrites (e.g. `[url "git@github.com:"] insteadof =
+# https://github.com/`) and SSH-agent auth are honored. Without this,
+# cargo's libgit2 backend bypasses those rewrites and fails to fetch
+# the workspace's git deps (gpui pinned to a Zed rev for gpui-mobile
+# parity).
+[net]
+git-fetch-with-cli = true

@@ -451,13 +451,6 @@ fn indicates_missing_pull_request_checks(text: &str) -> bool {
         .contains("no checks reported on the")
 }
 
-fn indicates_missing_git_remote(text: &str) -> bool {
-    let lowered = text.to_ascii_lowercase();
-    lowered.contains("no git remotes found")
-        || lowered.contains("no remotes found")
-        || lowered.contains("could not find any git remotes")
-}
-
 fn github_https_url(path: &str) -> String {
     format!("https://github.com/{}", path.trim_end_matches(".git"))
 }
@@ -1378,9 +1371,9 @@ fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
 mod tests {
     use super::{
         create_pull_request_args, default_commit_generation_script, default_pr_generation_script,
-        find_latest_pull_request_args, git_stdout, indicates_missing_git_remote,
-        indicates_missing_pull_request, indicates_missing_pull_request_checks,
-        normalize_github_remote, normalize_pull_request_check_bucket, parse_commit_message,
+        find_latest_pull_request_args, git_stdout, indicates_missing_pull_request,
+        indicates_missing_pull_request_checks, normalize_github_remote,
+        normalize_pull_request_check_bucket, parse_commit_message,
         parse_pull_request_checks_output, parse_pull_request_content, push_branch,
         render_commit_generation_script, render_pull_request_generation_script,
         simple_toolbar_git_command, PullRequestCheckBucket, ToolbarGitAction,
@@ -1582,15 +1575,6 @@ mod tests {
         assert!(!indicates_missing_pull_request_checks(
             "no pull requests found for branch feature/test"
         ));
-    }
-
-    #[test]
-    fn indicates_missing_git_remote_matches_common_gh_messages() {
-        assert!(indicates_missing_git_remote("no git remotes found"));
-        assert!(indicates_missing_git_remote(
-            "Could not load pull requests. no git remotes found"
-        ));
-        assert!(!indicates_missing_git_remote("GraphQL request failed"));
     }
 
     #[test]
@@ -1808,11 +1792,7 @@ pub fn find_project_pull_requests(
         .map_err(|err| format!("Could not load pull requests: {err}"))?;
 
     if !output.status.success() {
-        let failure = command_failure("Could not load pull requests", &output);
-        if indicates_missing_git_remote(&failure) {
-            return Ok(Vec::new());
-        }
-        return Err(failure);
+        return Err(command_failure("Could not load pull requests", &output));
     }
 
     let records = serde_json::from_slice::<Vec<GitHubProjectPagePullRequestRecord>>(&output.stdout)
