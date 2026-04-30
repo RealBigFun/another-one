@@ -1370,6 +1370,18 @@ impl ProjectStore {
         Some((old_section_id, new_section_id))
     }
 
+    pub fn rename_task(&mut self, task_id: &str, name: &str) -> bool {
+        let Some(task) = self.tasks_by_id.get_mut(task_id) else {
+            return false;
+        };
+        if task.name == name {
+            return false;
+        }
+        task.name = name.to_string();
+        self.rebuild_runtime_views();
+        true
+    }
+
     pub fn set_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
         if pinned {
             self.ui.pinned_task_ids.insert(task_id.to_string())
@@ -4037,6 +4049,41 @@ mod tests {
                 command: "echo ok".to_string(),
             },
         }
+    }
+
+    #[test]
+    fn rename_task_refreshes_runtime_task_view() {
+        let mut store = sample_project_store(sample_project("root", None));
+        store.insert_task(Task {
+            id: "task-1".to_string(),
+            name: "Old task".to_string(),
+            kind: TaskKind::Direct,
+            root_project_id: "root".to_string(),
+            target_project_id: "root".to_string(),
+            branch_name: "feature/login".to_string(),
+            section_id: "root::feature/login::task-1".to_string(),
+            worktree_project_id: None,
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        });
+
+        assert!(store.rename_task("task-1", "New task"));
+        assert_eq!(
+            store.task("task-1").map(|task| task.name.as_str()),
+            Some("New task")
+        );
+        assert_eq!(
+            store
+                .tasks
+                .get("root")
+                .and_then(|tasks| tasks.iter().find(|task| task.id == "task-1"))
+                .map(|task| task.name.as_str()),
+            Some("New task")
+        );
+        assert!(!store.rename_task("task-1", "New task"));
+        assert!(!store.rename_task("missing", "Anything"));
     }
 
     #[test]

@@ -1107,8 +1107,7 @@ impl AnotherOneApp {
         };
 
         if final_name != rename.original_name {
-            if let Some(task) = self.project_store.find_task_mut(&rename.row_id) {
-                task.name = final_name;
+            if self.project_store.rename_task(&rename.row_id, &final_name) {
                 self.project_store.save();
             }
         }
@@ -1449,7 +1448,7 @@ impl AnotherOneApp {
         let meta_indent = 20.;
         let show_git_metadata = self.project_store.ui.show_sidebar_git_metadata;
         let meta = [
-            (entry.task_name != entry.branch.name).then(|| entry.branch.name.clone()),
+            (!entry.branch.name.is_empty()).then(|| entry.branch.name.clone()),
             (show_git_metadata && !entry.branch.last_commit_relative.is_empty())
                 .then(|| entry.branch.last_commit_relative.clone()),
         ]
@@ -1468,9 +1467,9 @@ impl AnotherOneApp {
             .sidebar_task_menu
             .as_ref()
             .is_some_and(|menu| menu.project_id == project_id && menu.row_id == row_id);
-        let keep_delete_visible = !is_editing && menu_open;
+        let keep_row_controls_visible = !is_editing && menu_open;
         let row_tooltip =
-            "Open this task in the terminal. Double-click to rename it or right-click for more actions.";
+            "Open this task in the terminal. Click the pencil or double-click to rename it.";
         let task_label: AnyElement = if let Some(rename) = rename_state {
             div()
                 .id(SharedString::from(format!(
@@ -1548,6 +1547,54 @@ impl AnotherOneApp {
         let has_diff =
             show_git_metadata && (entry.branch.lines_added > 0 || entry.branch.lines_removed > 0);
 
+        let rename_button_project_id = project_id.clone();
+        let rename_button_row_id = row_id.clone();
+        let rename_button_task_name = task_name.clone();
+        right_controls = right_controls.child(
+            div()
+                .id(SharedString::from(format!("task-rename-button-{}", row_id)))
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(22.))
+                .h(px(22.))
+                .rounded_sm()
+                .when(keep_row_controls_visible, |button| button.visible())
+                .when(!keep_row_controls_visible, |button| {
+                    button.invisible().when(!is_editing, |button| {
+                        button.group_hover(row_group.clone(), |button| button.visible())
+                    })
+                })
+                .when(!is_editing, |button| {
+                    button
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(gpui::white().opacity(0.08)))
+                        .tooltip(move |_window, cx| {
+                            Self::action_tooltip_view("Rename this task", cx)
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                this.focus_handle.focus(window, cx);
+                                this.sidebar_task_menu = None;
+                                this.begin_sidebar_task_rename(
+                                    &rename_button_project_id,
+                                    &rename_button_row_id,
+                                    &rename_button_task_name,
+                                    cx,
+                                );
+                            }),
+                        )
+                })
+                .child(
+                    svg()
+                        .path("assets/icons/icons__edit.svg")
+                        .size(px(13.))
+                        .text_color(muted_col),
+                ),
+        );
+
         let delete_project_id = project_id.clone();
         let delete_task_id = task_id.clone();
         let delete_task_name = task_name.clone();
@@ -1568,8 +1615,8 @@ impl AnotherOneApp {
                 .w(px(22.))
                 .h(px(22.))
                 .rounded_sm()
-                .when(keep_delete_visible, |button| button.visible())
-                .when(!keep_delete_visible, |button| {
+                .when(keep_row_controls_visible, |button| button.visible())
+                .when(!keep_row_controls_visible, |button| {
                     button.invisible().when(!is_editing, |button| {
                         button.group_hover(row_group.clone(), |button| button.visible())
                     })
