@@ -108,6 +108,11 @@ pub(crate) struct RegistryState {
     pub(crate) pending_close_tabs: Vec<PendingCloseTab>,
     /// Select-focus asks routed in from the daemon (MCP).
     pub(crate) pending_select_focus: Vec<PendingSelectFocus>,
+    /// Ring buffer of recent `ClientEvent`s. The MCP `poll_events`
+    /// tool drains the head; older entries fall off the tail when
+    /// the cap is reached. 1024 events ≈ several minutes of normal
+    /// activity, plenty for MCP harnesses polling on a 2–5 s timer.
+    pub(crate) recent_events: std::collections::VecDeque<another_one_core::clients::ClientEvent>,
     /// Keys currently mid-spawn. Populated when either path
     /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
     /// kicks off a `spawn_terminal_launch`; cleared on
@@ -130,6 +135,7 @@ impl RegistryState {
             pending_spawn_terminals: Vec::new(),
             pending_close_tabs: Vec::new(),
             pending_select_focus: Vec::new(),
+            recent_events: std::collections::VecDeque::with_capacity(1024),
             in_flight_launches: HashSet::new(),
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),

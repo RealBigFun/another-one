@@ -137,6 +137,21 @@ pub fn tool_manifest() -> Value {
             }
         },
         {
+            "name": "poll_events",
+            "description":
+                "Drain up to `max_events` recent ClientEvents from the daemon's \
+                 ring buffer — task/tab create/close, focus changes — so MCP \
+                 harnesses can observe what the user (or peer clients) just did. \
+                 Returned events are removed from the queue.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "max_events": { "type": "integer", "minimum": 1 }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "select_focus",
             "description":
                 "Move a client's focus. Without `for_client`, the calling MCP \
@@ -267,6 +282,14 @@ pub fn call(
                 .select_focus(req)
                 .map(|_| json!({ "ok": true }))
                 .map_err(ToolError::Execution)
+        }
+        "poll_events" => {
+            let max = args
+                .get("max_events")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(64);
+            Ok(json!(orchestrator.poll_events(max)))
         }
         _ => Err(ToolError::UnknownTool),
     }

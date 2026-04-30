@@ -5479,6 +5479,22 @@ impl AnotherOneApp {
         changed
     }
 
+    /// Emit a `ClientEvent`: forwarded onto the broadcast bus (for
+    /// future async subscribers) and pushed onto the
+    /// `RegistryState.recent_events` ring buffer (for MCP
+    /// `poll_events`). One helper so neither delivery channel is
+    /// silently skipped at any call site.
+    fn emit_client_event(&self, event: ClientEvent) {
+        let _ = self.client_event_bus.send(event.clone());
+        if let Ok(mut state) = self.registry_state.lock() {
+            const CAP: usize = 1024;
+            if state.recent_events.len() == CAP {
+                state.recent_events.pop_front();
+            }
+            state.recent_events.push_back(event);
+        }
+    }
+
     /// `DaemonClient::open_task` for AnotherOneApp. Single source of
     /// truth that both the GUI new-task modal and the MCP
     /// `spawn_terminal` flow go through. Resolves project/branch
@@ -5562,7 +5578,7 @@ impl AnotherOneApp {
             );
         }
 
-        let _ = self.client_event_bus.send(ClientEvent::TaskOpened {
+        self.emit_client_event(ClientEvent::TaskOpened {
             originator: req.client_id.clone(),
             task_id: task_id.clone(),
             section_id: key.section_id.clone(),
@@ -5643,7 +5659,7 @@ impl AnotherOneApp {
             }
         }
 
-        let _ = self.client_event_bus.send(ClientEvent::TabOpened {
+        self.emit_client_event(ClientEvent::TabOpened {
             originator: req.client_id,
             section_id,
             tab_id: tab_id.clone(),
@@ -5677,7 +5693,7 @@ impl AnotherOneApp {
         if removed.is_none() {
             anyhow::bail!("close_tab: workspace declined to remove tab {}", req.tab_id);
         }
-        let _ = self.client_event_bus.send(ClientEvent::TabClosed {
+        self.emit_client_event(ClientEvent::TabClosed {
             originator: req.client_id,
             tab_id: req.tab_id.clone(),
         });
@@ -5700,7 +5716,7 @@ impl AnotherOneApp {
         if req.client_id == ClientId::gui_desktop() {
             self.apply_focus_to_workspace(&req.focus, cx);
         }
-        let _ = self.client_event_bus.send(ClientEvent::FocusChanged {
+        self.emit_client_event(ClientEvent::FocusChanged {
             originator: req.client_id.clone(),
             target: req.client_id,
             focus: req.focus,
@@ -5722,7 +5738,7 @@ impl AnotherOneApp {
         if target == ClientId::gui_desktop() {
             self.apply_focus_to_workspace(&focus, cx);
         }
-        let _ = self.client_event_bus.send(ClientEvent::FocusChanged {
+        self.emit_client_event(ClientEvent::FocusChanged {
             originator: actor,
             target,
             focus,
