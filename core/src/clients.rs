@@ -161,6 +161,27 @@ pub struct AttachTabResponse {
     pub launched: bool,
 }
 
+/// Correlation token for an asynchronous open-task / open-worktree
+/// flow. Worktree creation in particular runs in a background
+/// thread (clone, branch checkout, project store insert) — the
+/// caller gets a `JobId` immediately, and downstream events
+/// (`TaskOpenStarted`, `TaskOpened`, `TaskOpenFailed`) carry the
+/// same id so subscribers can correlate.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct JobId(pub String);
+
+impl JobId {
+    pub fn fresh() -> Self {
+        Self(uuid::Uuid::new_v4().to_string())
+    }
+}
+
+impl std::fmt::Display for JobId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// State change that any client can observe. Each event tracks the
 /// `originator` so subscribers can ignore self-fired events (avoiding
 /// echo loops) and surface remote-driven changes specifically.
@@ -197,6 +218,23 @@ pub enum ClientEvent {
     Output {
         tab_id: String,
         bytes: Vec<u8>,
+    },
+    /// An asynchronous open-task flow started — typically a
+    /// worktree creation that's about to clone, branch, and load.
+    /// `TaskOpened` (success) or `TaskOpenFailed` (error) follows,
+    /// keyed by the same `job_id`.
+    TaskOpenStarted {
+        originator: ClientId,
+        job_id: JobId,
+        project_id: String,
+    },
+    /// Async open-task flow finished with an error before reaching
+    /// `TaskOpened`. Subscribers should drop any pending state
+    /// they were tracking under this `job_id`.
+    TaskOpenFailed {
+        originator: ClientId,
+        job_id: JobId,
+        error: String,
     },
 }
 

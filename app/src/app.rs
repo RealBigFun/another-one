@@ -70,7 +70,7 @@ use crate::terminal_runtime::{
 use crate::theme;
 pub use another_one_core::section::SectionId;
 use another_one_core::clients::{
-    AttachTabRequest, AttachTabResponse, ClientEvent, ClientId, CloseTabRequest, Focus,
+    AttachTabRequest, AttachTabResponse, ClientEvent, ClientId, CloseTabRequest, Focus, JobId,
     OpenTabRequest, OpenTabResponse, OpenTaskRequest, OpenTaskResponse, SelectRequest,
 };
 
@@ -1427,6 +1427,12 @@ pub struct AnotherOneApp {
     /// `FocusChanged` event flows onto the bus — closing the loop
     /// for MCP harnesses that want to observe the human.
     pub(crate) last_observed_gui_focus: Focus,
+    /// In-flight worktree-task creation, if any. The async
+    /// `project_service::spawn_task_creation` only emits a single
+    /// reply; we hold the `JobId` + originating client here so the
+    /// drain can fire `TaskOpened` / `TaskOpenFailed` correlated
+    /// with the `TaskOpenStarted` we emitted at submit time.
+    pub(crate) pending_worktree_job: Option<(JobId, ClientId, String)>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Child process ids for hidden prewarmed launches.
@@ -4095,6 +4101,7 @@ impl AnotherOneApp {
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
+            pending_worktree_job: None,
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -7846,6 +7853,15 @@ impl AnotherOneApp {
                 self.cancel_active_new_task_prewarm();
                 self.show_info_toast("Creating worktree task...", cx);
                 self.pending_task_launch = Some(PendingTaskLaunch::NewTaskModal);
+                let job_id = JobId::fresh();
+                let originator = ClientId::gui_desktop();
+                self.pending_worktree_job =
+                    Some((job_id.clone(), originator.clone(), project.id.clone()));
+                self.emit_client_event(ClientEvent::TaskOpenStarted {
+                    originator,
+                    job_id,
+                    project_id: project.id.clone(),
+                });
                 self.task_creation_receiver =
                     Some(another_one_core::project_service::spawn_task_creation(
                         project.id,
@@ -9113,6 +9129,30 @@ impl AnotherOneApp {
                             ),
                             cx,
                         );
+                        // Correlated TaskOpened against the
+                        // TaskOpenStarted that fired at submit time.
+                        if let Some((job_id, originator, _project_id)) =
+                            self.pending_worktree_job.take()
+                        {
+                            // Resolve the just-added tab id, if any.
+                            let tab_id = self
+                                .workspace_pane
+                                .read(cx)
+                                .section_states
+                                .get(&section_id)
+                                .and_then(|s| s.tabs.last().map(|t| t.id.clone()))
+                                .unwrap_or_default();
+                            self.emit_client_event(ClientEvent::TaskOpened {
+                                originator,
+                                task_id: task_id.clone(),
+                                section_id: section_id.clone(),
+                                tab_id,
+                            });
+                            // Suppress the duplicate TaskOpenStarted-
+                            // tracking job by clearing it; not needed
+                            // here since `take()` already did.
+                            let _ = job_id;
+                        }
                     }
                     Err(error) => {
                         if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
@@ -9120,7 +9160,16 @@ impl AnotherOneApp {
                                 state.submitting = false;
                             }
                         }
-                        self.show_error_toast(error.message, cx);
+                        self.show_error_toast(error.message.clone(), cx);
+                        if let Some((job_id, originator, _project_id)) =
+                            self.pending_worktree_job.take()
+                        {
+                            self.emit_client_event(ClientEvent::TaskOpenFailed {
+                                originator,
+                                job_id,
+                                error: error.message,
+                            });
+                        }
                     }
                 }
                 true
@@ -9139,6 +9188,15 @@ impl AnotherOneApp {
                     }
                 }
                 self.show_error_toast("The task creation process did not complete.", cx);
+                if let Some((job_id, originator, _project_id)) =
+                    self.pending_worktree_job.take()
+                {
+                    self.emit_client_event(ClientEvent::TaskOpenFailed {
+                        originator,
+                        job_id,
+                        error: "task creation channel closed".to_string(),
+                    });
+                }
                 true
             }
         }
