@@ -1473,15 +1473,9 @@ impl ProjectStore {
                 )
             })
             .collect();
-        self.projects_by_id = projects
-            .iter()
-            .map(|p| (p.id.clone(), p.clone()))
-            .collect();
+        self.projects_by_id = projects.iter().map(|p| (p.id.clone(), p.clone())).collect();
         self.project_order = projects.iter().map(|p| p.id.clone()).collect();
-        self.tasks_by_id = tasks
-            .iter()
-            .map(|t| (t.id.clone(), t.clone()))
-            .collect();
+        self.tasks_by_id = tasks.iter().map(|t| (t.id.clone(), t.clone())).collect();
         self.task_ids_by_root_project.clear();
         for task in &tasks {
             self.task_ids_by_root_project
@@ -3959,10 +3953,12 @@ mod tests {
     impl TestWorktreesRoot {
         fn new() -> Self {
             let temp_dir = tempfile::tempdir().expect("test worktrees root should exist");
-                super::TEST_WORKTREES_ROOT.with(|root| {
+            super::TEST_WORKTREES_ROOT.with(|root| {
                 *root.borrow_mut() = Some(temp_dir.path().join("worktrees"));
             });
-            Self { _temp_dir: temp_dir }
+            Self {
+                _temp_dir: temp_dir,
+            }
         }
     }
 
@@ -6075,8 +6071,7 @@ mod tests {
             }
         });
 
-        let store: StoreFile =
-            serde_json::from_value(json).expect("store JSON should deserialize");
+        let store: StoreFile = serde_json::from_value(json).expect("store JSON should deserialize");
         let json = serde_json::to_value(&store).expect("store JSON should serialize");
 
         assert_eq!(
@@ -6117,10 +6112,7 @@ mod tests {
             .enabled_open_in_apps
             .as_ref()
             .is_some_and(|apps| apps.contains(&OpenInAppKind::Ghostty)));
-        assert_eq!(
-            store.ui.preferred_open_in_app,
-            Some(OpenInAppKind::Ghostty)
-        );
+        assert_eq!(store.ui.preferred_open_in_app, Some(OpenInAppKind::Ghostty));
     }
 
     #[test]

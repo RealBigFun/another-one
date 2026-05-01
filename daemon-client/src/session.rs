@@ -28,8 +28,8 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey};
 use crate::frame::{read_frame, write_frame};
 use crate::pairing_url::parse_pairing_url;
 use crate::protocol::{
-    Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope, ALPN, PROTOCOL_VERSION,
-    TY_CONTROL, TY_DATA, TY_WORKER_REPLY,
+    Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope, ALPN, PROTOCOL_VERSION, TY_CONTROL,
+    TY_DATA, TY_WORKER_REPLY,
 };
 use crate::status::{push_status, DialStatus};
 

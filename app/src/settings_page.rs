@@ -14,6 +14,7 @@ use crate::layout::TITLEBAR_CHROME_H;
 use crate::shortcuts::{
     capture_shortcut, keybinding_token_label, ShortcutAction, ALL_SHORTCUT_ACTIONS,
 };
+use crate::text_edit::{CursorDirection, TextEditState};
 
 const TEXT_PRIMARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.92, 1.);
 const TEXT_SECONDARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.55, 1.);
@@ -593,8 +594,13 @@ impl AnotherOneApp {
             .or_default();
 
         if modifiers.platform && ev.keystroke.key.as_str() == "a" {
-            self.settings_agent_input.cursor = draft.len();
-            self.settings_agent_input.selection_anchor = Some(0);
+            let mut state = TextEditState::new(
+                self.settings_agent_input.cursor,
+                self.settings_agent_input.selection_anchor,
+            );
+            state.select_all(draft);
+            self.settings_agent_input.cursor = state.cursor;
+            self.settings_agent_input.selection_anchor = state.selection_anchor;
             cx.notify();
             return true;
         }
@@ -776,8 +782,10 @@ impl AnotherOneApp {
             }
             _ => {
                 if modifiers.platform && ev.keystroke.key.as_str() == "a" {
-                    input.cursor = draft.len();
-                    input.selection_anchor = Some(0);
+                    let mut state = TextEditState::new(input.cursor, input.selection_anchor);
+                    state.select_all(draft);
+                    input.cursor = state.cursor;
+                    input.selection_anchor = state.selection_anchor;
                 } else if modifiers.platform && ev.keystroke.key.as_str() == "c" {
                     if let Some(range) =
                         settings_agent_input_selected_range(input.cursor, input.selection_anchor)
@@ -2743,12 +2751,6 @@ impl AnotherOneApp {
     }
 }
 
-#[derive(Clone, Copy)]
-enum CursorDirection {
-    Left,
-    Right,
-}
-
 struct SettingsMultilineLayoutHost {
     app: Entity<AnotherOneApp>,
     kind: crate::app::SettingsGitActionScriptKind,
@@ -2856,27 +2858,18 @@ fn settings_agent_input_selected_range(
     cursor: usize,
     selection_anchor: Option<usize>,
 ) -> Option<std::ops::Range<usize>> {
-    let anchor = selection_anchor?;
-    if anchor == cursor {
-        None
-    } else if anchor < cursor {
-        Some(anchor..cursor)
-    } else {
-        Some(cursor..anchor)
-    }
+    crate::text_edit::selected_range(cursor, selection_anchor)
 }
 
-fn previous_settings_input_boundary(text: &str, cursor: usize) -> usize {
-    text.char_indices()
-        .rev()
-        .find_map(|(index, _)| (index < cursor).then_some(index))
-        .unwrap_or(0)
-}
-
-fn next_settings_input_boundary(text: &str, cursor: usize) -> usize {
-    text.char_indices()
-        .find_map(|(index, _)| (index > cursor).then_some(index))
-        .unwrap_or(text.len())
+fn with_settings_edit_state(
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    edit: impl FnOnce(&mut TextEditState),
+) {
+    let mut state = TextEditState::new(*cursor, *selection_anchor);
+    edit(&mut state);
+    *cursor = state.cursor;
+    *selection_anchor = state.selection_anchor;
 }
 
 fn replace_settings_input_range(
@@ -2886,9 +2879,9 @@ fn replace_settings_input_range(
     range: std::ops::Range<usize>,
     replacement: &str,
 ) {
-    text.replace_range(range.clone(), replacement);
-    *cursor = range.start + replacement.len();
-    *selection_anchor = None;
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.replace_range(text, range, replacement);
+    });
 }
 
 fn insert_settings_input_text(
@@ -2897,14 +2890,9 @@ fn insert_settings_input_text(
     selection_anchor: &mut Option<usize>,
     inserted: &str,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, inserted);
-        return;
-    }
-
-    text.insert_str(*cursor, inserted);
-    *cursor += inserted.len();
-    *selection_anchor = None;
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.insert_text(text, inserted)
+    });
 }
 
 fn delete_settings_input_backward(
@@ -2912,41 +2900,9 @@ fn delete_settings_input_backward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-
-    if *cursor == 0 {
-        return;
-    }
-
-    let start = previous_settings_input_boundary(text, *cursor);
-    replace_settings_input_range(text, cursor, selection_anchor, start..*cursor, "");
-}
-
-fn previous_settings_input_word_boundary(text: &str, cursor: usize) -> usize {
-    let mut idx = cursor;
-    while idx > 0 {
-        let start = previous_settings_input_boundary(text, idx);
-        let ch = text[start..idx].chars().next().unwrap_or_default();
-        if !ch.is_whitespace() {
-            break;
-        }
-        idx = start;
-    }
-
-    while idx > 0 {
-        let start = previous_settings_input_boundary(text, idx);
-        let ch = text[start..idx].chars().next().unwrap_or_default();
-        if ch.is_alphanumeric() || matches!(ch, '_' | '-') {
-            idx = start;
-        } else {
-            break;
-        }
-    }
-
-    idx
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.delete_backward(text)
+    });
 }
 
 fn delete_settings_input_word_backward(
@@ -2954,17 +2910,9 @@ fn delete_settings_input_word_backward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-
-    if *cursor == 0 {
-        return;
-    }
-
-    let start = previous_settings_input_word_boundary(text, *cursor);
-    replace_settings_input_range(text, cursor, selection_anchor, start..*cursor, "");
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.delete_word_backward(text)
+    });
 }
 
 fn delete_settings_input_to_start(
@@ -2972,16 +2920,9 @@ fn delete_settings_input_to_start(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-
-    if *cursor == 0 {
-        return;
-    }
-
-    replace_settings_input_range(text, cursor, selection_anchor, 0..*cursor, "");
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.delete_to_start(text)
+    });
 }
 
 fn delete_settings_input_forward(
@@ -2989,17 +2930,7 @@ fn delete_settings_input_forward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-
-    if *cursor >= text.len() {
-        return;
-    }
-
-    let end = next_settings_input_boundary(text, *cursor);
-    replace_settings_input_range(text, cursor, selection_anchor, *cursor..end, "");
+    with_settings_edit_state(cursor, selection_anchor, |state| state.delete_forward(text));
 }
 
 fn move_settings_input_cursor(
@@ -3009,40 +2940,9 @@ fn move_settings_input_cursor(
     direction: CursorDirection,
     extend_selection: bool,
 ) {
-    let next_cursor = match direction {
-        CursorDirection::Left => {
-            if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-                if extend_selection {
-                    previous_settings_input_boundary(text, *cursor)
-                } else {
-                    range.start
-                }
-            } else {
-                previous_settings_input_boundary(text, *cursor)
-            }
-        }
-        CursorDirection::Right => {
-            if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-                if extend_selection {
-                    next_settings_input_boundary(text, *cursor)
-                } else {
-                    range.end
-                }
-            } else {
-                next_settings_input_boundary(text, *cursor)
-            }
-        }
-    };
-
-    if extend_selection {
-        if selection_anchor.is_none() {
-            *selection_anchor = Some(*cursor);
-        }
-    } else {
-        *selection_anchor = None;
-    }
-
-    *cursor = next_cursor;
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.move_horizontal(text, direction, extend_selection);
+    });
 }
 
 fn move_settings_input_cursor_to_edge(
@@ -3052,13 +2952,9 @@ fn move_settings_input_cursor_to_edge(
     to_end: bool,
     extend_selection: bool,
 ) {
-    if extend_selection && selection_anchor.is_none() {
-        *selection_anchor = Some(*cursor);
-    }
-    if !extend_selection {
-        *selection_anchor = None;
-    }
-    *cursor = if to_end { text.len() } else { 0 };
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.move_to_edge(text, to_end, extend_selection);
+    });
 }
 
 fn intersect_byte_ranges(
@@ -3077,62 +2973,16 @@ fn visible_input_range(
     max_chars: usize,
     extra_reserved_chars: usize,
 ) -> std::ops::Range<usize> {
-    let boundaries = text
-        .char_indices()
-        .map(|(idx, _)| idx)
-        .chain(std::iter::once(text.len()))
-        .collect::<Vec<_>>();
-    let total_chars = boundaries.len().saturating_sub(1);
-    if total_chars <= max_chars.saturating_sub(extra_reserved_chars) {
-        return 0..text.len();
-    }
-
-    let cursor_char = text[..cursor.min(text.len())].chars().count();
-    let selection_chars = selection.map(|selection| {
-        (
-            text[..selection.start.min(text.len())].chars().count(),
-            text[..selection.end.min(text.len())].chars().count(),
-        )
-    });
-    let visible_chars = max_chars.saturating_sub(extra_reserved_chars).max(1);
-    let mut start_char = cursor_char.saturating_sub(visible_chars / 2);
-    let mut end_char = (start_char + visible_chars).min(total_chars);
-    start_char = end_char.saturating_sub(visible_chars);
-
-    if cursor_char >= total_chars.saturating_sub(visible_chars / 3) {
-        end_char = total_chars;
-        start_char = total_chars.saturating_sub(visible_chars);
-    }
-
-    if let Some((selection_start_char, selection_end_char)) = selection_chars {
-        if selection_start_char < start_char {
-            start_char = selection_start_char;
-            end_char = (start_char + visible_chars).min(total_chars);
-        }
-        if selection_end_char > end_char {
-            end_char = selection_end_char.min(total_chars);
-            start_char = end_char.saturating_sub(visible_chars);
-        }
-    }
-
-    boundaries[start_char]..boundaries[end_char]
+    crate::text_edit::visible_range(
+        text,
+        cursor,
+        selection,
+        max_chars.saturating_sub(extra_reserved_chars).max(1),
+    )
 }
 
 fn settings_multiline_line_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
-    if text.is_empty() {
-        return vec![0..0];
-    }
-
-    let mut ranges = Vec::new();
-    let mut start = 0usize;
-    for (idx, ch) in text.char_indices() {
-        if ch == '\n' {
-            ranges.push(start..idx);
-            start = idx + ch.len_utf8();
-        }
-    }
-    ranges.push(start..text.len());
-    ranges
+    crate::text_edit::line_ranges(text)
 }
 
 fn measure_settings_multiline_input_lines(
@@ -3299,33 +3149,6 @@ fn distance_to_vertical_bounds(y: Pixels, bounds: Bounds<Pixels>) -> f32 {
     }
 }
 
-fn settings_line_start(text: &str, cursor: usize) -> usize {
-    let cursor = cursor.min(text.len());
-    text[..cursor].rfind('\n').map_or(0, |idx| idx + 1)
-}
-
-fn settings_line_end(text: &str, cursor: usize) -> usize {
-    let cursor = cursor.min(text.len());
-    text[cursor..]
-        .find('\n')
-        .map_or(text.len(), |offset| cursor + offset)
-}
-
-fn settings_char_count(text: &str) -> usize {
-    text.chars().count()
-}
-
-fn settings_byte_index_for_char_count(text: &str, count: usize) -> usize {
-    if count == 0 {
-        return 0;
-    }
-
-    text.char_indices()
-        .nth(count)
-        .map(|(idx, _)| idx)
-        .unwrap_or(text.len())
-}
-
 fn move_settings_multiline_cursor_vertical(
     text: &str,
     cursor: &mut usize,
@@ -3333,39 +3156,9 @@ fn move_settings_multiline_cursor_vertical(
     move_down: bool,
     extend_selection: bool,
 ) {
-    let current_line_start = settings_line_start(text, *cursor);
-    let current_line_end = settings_line_end(text, *cursor);
-    let current_column = settings_char_count(&text[current_line_start..(*cursor).min(text.len())]);
-
-    let target_line = if move_down {
-        if current_line_end >= text.len() {
-            text.len()..text.len()
-        } else {
-            let next_start = next_settings_input_boundary(text, current_line_end);
-            let next_end = settings_line_end(text, next_start);
-            next_start..next_end
-        }
-    } else {
-        if current_line_start == 0 {
-            0..settings_line_end(text, 0)
-        } else {
-            let previous_end = current_line_start.saturating_sub(1);
-            let previous_start = settings_line_start(text, previous_end);
-            previous_start..previous_end
-        }
-    };
-
-    if extend_selection && selection_anchor.is_none() {
-        *selection_anchor = Some(*cursor);
-    }
-    if !extend_selection {
-        *selection_anchor = None;
-    }
-
-    let target_line_text = &text[target_line.clone()];
-    let target_column = current_column.min(settings_char_count(target_line_text));
-    *cursor =
-        target_line.start + settings_byte_index_for_char_count(target_line_text, target_column);
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.move_vertical(text, !move_down, extend_selection);
+    });
 }
 
 fn move_settings_multiline_cursor_to_line_edge(
@@ -3375,18 +3168,9 @@ fn move_settings_multiline_cursor_to_line_edge(
     to_end: bool,
     extend_selection: bool,
 ) {
-    if extend_selection && selection_anchor.is_none() {
-        *selection_anchor = Some(*cursor);
-    }
-    if !extend_selection {
-        *selection_anchor = None;
-    }
-
-    *cursor = if to_end {
-        settings_line_end(text, *cursor)
-    } else {
-        settings_line_start(text, *cursor)
-    };
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.move_to_line_edge(text, to_end, extend_selection);
+    });
 }
 
 fn render_settings_agent_input_content(

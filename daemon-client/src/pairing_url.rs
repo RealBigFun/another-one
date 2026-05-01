@@ -75,9 +75,15 @@ mod tests {
         assert_eq!(parsed.endpoint_id, "abc123");
         assert_eq!(
             parsed.direct_addrs,
-            vec!["192.168.1.42:11204".to_string(), "10.0.0.1:11204".to_string()]
+            vec![
+                "192.168.1.42:11204".to_string(),
+                "10.0.0.1:11204".to_string()
+            ]
         );
-        assert_eq!(parsed.relay_urls, vec!["https://relay.example/".to_string()]);
+        assert_eq!(
+            parsed.relay_urls,
+            vec!["https://relay.example/".to_string()]
+        );
         assert_eq!(parsed.pair_token.as_deref(), Some("deadbeef"));
     }
 

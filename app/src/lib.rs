@@ -35,6 +35,7 @@ mod right_sidebar;
 mod settings_page;
 mod shortcuts;
 mod terminal_runtime;
+mod text_edit;
 mod theme;
 mod titlebar;
 mod tokens;
@@ -96,9 +97,7 @@ fn finish_launching(cx: &mut App) {
         Cow::Borrowed(include_bytes!(
             "../assets/fonts/LilexNerdFontMono-Regular.ttf"
         )),
-        Cow::Borrowed(include_bytes!(
-            "../assets/fonts/LilexNerdFontMono-Bold.ttf"
-        )),
+        Cow::Borrowed(include_bytes!("../assets/fonts/LilexNerdFontMono-Bold.ttf")),
         Cow::Borrowed(include_bytes!(
             "../assets/fonts/LilexNerdFontMono-Italic.ttf"
         )),

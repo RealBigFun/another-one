@@ -1485,8 +1485,7 @@ pub struct AnotherOneApp {
     /// the iroh endpoint is up. Polled on every render tick until the
     /// handle arrives, then `daemon_handle` is set and the receiver
     /// is cleared.
-    pub(crate) daemon_handle_rx:
-        Option<mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>>,
+    pub(crate) daemon_handle_rx: Option<mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>>,
     /// Endpoint handle from the embedded daemon (pairing URL + QR
     /// PNG). `None` until the daemon-host thread finishes booting;
     /// after that, `pair_mobile_overlay` reads from here. Keeping the
@@ -11653,10 +11652,7 @@ impl AnotherOneApp {
                     }),
                 )
                 .into_any_element(),
-            MobileView::ChangedFiles => div()
-                .w(px(44.))
-                .h(px(PHONE_HEADER_H))
-                .into_any_element(),
+            MobileView::ChangedFiles => div().w(px(44.)).h(px(PHONE_HEADER_H)).into_any_element(),
         };
         div()
             .flex()
@@ -11811,12 +11807,7 @@ impl AnotherOneApp {
                         task_total
                     );
                     for p in &summaries {
-                        log::info!(
-                            "  project {} ({}) — {} tasks",
-                            p.id,
-                            p.name,
-                            p.tasks.len()
-                        );
+                        log::info!("  project {} ({}) — {} tasks", p.id, p.name, p.tasks.len());
                     }
                     let (projects, tasks) = convert_remote_snapshot(summaries);
                     log::info!(
@@ -11869,10 +11860,7 @@ impl AnotherOneApp {
         for ev in events {
             match ev {
                 crate::iroh_client::DialStatus::Started { endpoint_id } => {
-                    self.show_info_toast(
-                        format!("Connecting to {}…", short_id(&endpoint_id)),
-                        cx,
-                    );
+                    self.show_info_toast(format!("Connecting to {}…", short_id(&endpoint_id)), cx);
                 }
                 crate::iroh_client::DialStatus::Bound => {
                     self.show_info_toast("Endpoint bound", cx);

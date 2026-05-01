@@ -173,11 +173,7 @@ fn field_value(state: &CustomActionModalState, field: CustomActionField) -> &str
     }
 }
 
-#[derive(Clone, Copy)]
-enum CursorDirection {
-    Left,
-    Right,
-}
+use crate::text_edit::{CursorDirection, TextEditState};
 
 fn action_provider_agent(provider: AgentProviderKind) -> Option<&'static crate::agents::AgentDef> {
     AGENTS.iter().find(|agent| agent.provider == Some(provider))
@@ -199,27 +195,18 @@ fn custom_action_text_selected_range(
     cursor: usize,
     selection_anchor: Option<usize>,
 ) -> Option<std::ops::Range<usize>> {
-    let anchor = selection_anchor?;
-    if anchor == cursor {
-        None
-    } else if anchor < cursor {
-        Some(anchor..cursor)
-    } else {
-        Some(cursor..anchor)
-    }
+    crate::text_edit::selected_range(cursor, selection_anchor)
 }
 
-fn previous_custom_action_text_boundary(text: &str, cursor: usize) -> usize {
-    text.char_indices()
-        .rev()
-        .find_map(|(index, _)| (index < cursor).then_some(index))
-        .unwrap_or(0)
-}
-
-fn next_custom_action_text_boundary(text: &str, cursor: usize) -> usize {
-    text.char_indices()
-        .find_map(|(index, _)| (index > cursor).then_some(index))
-        .unwrap_or(text.len())
+fn with_custom_action_edit_state(
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    edit: impl FnOnce(&mut TextEditState),
+) {
+    let mut state = TextEditState::new(*cursor, *selection_anchor);
+    edit(&mut state);
+    *cursor = state.cursor;
+    *selection_anchor = state.selection_anchor;
 }
 
 fn replace_custom_action_text_range(
@@ -229,9 +216,9 @@ fn replace_custom_action_text_range(
     range: std::ops::Range<usize>,
     replacement: &str,
 ) {
-    text.replace_range(range.clone(), replacement);
-    *cursor = range.start + replacement.len();
-    *selection_anchor = None;
+    with_custom_action_edit_state(cursor, selection_anchor, |state| {
+        state.replace_range(text, range, replacement);
+    });
 }
 
 fn insert_custom_action_text(
@@ -240,9 +227,9 @@ fn insert_custom_action_text(
     selection_anchor: &mut Option<usize>,
     inserted: &str,
 ) {
-    let selected = custom_action_text_selected_range(*cursor, *selection_anchor);
-    let range = selected.unwrap_or(*cursor..*cursor);
-    replace_custom_action_text_range(text, cursor, selection_anchor, range, inserted);
+    with_custom_action_edit_state(cursor, selection_anchor, |state| {
+        state.insert_text(text, inserted)
+    });
 }
 
 fn delete_custom_action_text_backward(
@@ -250,39 +237,9 @@ fn delete_custom_action_text_backward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
-        replace_custom_action_text_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-    if *cursor == 0 {
-        return;
-    }
-    let start = previous_custom_action_text_boundary(text, *cursor);
-    replace_custom_action_text_range(text, cursor, selection_anchor, start..*cursor, "");
-}
-
-fn previous_custom_action_text_word_boundary(text: &str, cursor: usize) -> usize {
-    let mut idx = cursor;
-    while idx > 0 {
-        let start = previous_custom_action_text_boundary(text, idx);
-        let ch = text[start..idx].chars().next().unwrap_or_default();
-        if !ch.is_whitespace() {
-            break;
-        }
-        idx = start;
-    }
-
-    while idx > 0 {
-        let start = previous_custom_action_text_boundary(text, idx);
-        let ch = text[start..idx].chars().next().unwrap_or_default();
-        if ch.is_alphanumeric() || matches!(ch, '_' | '-') {
-            idx = start;
-        } else {
-            break;
-        }
-    }
-
-    idx
+    with_custom_action_edit_state(cursor, selection_anchor, |state| {
+        state.delete_backward(text)
+    });
 }
 
 fn delete_custom_action_text_word_backward(
@@ -290,15 +247,9 @@ fn delete_custom_action_text_word_backward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
-        replace_custom_action_text_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-    if *cursor == 0 {
-        return;
-    }
-    let start = previous_custom_action_text_word_boundary(text, *cursor);
-    replace_custom_action_text_range(text, cursor, selection_anchor, start..*cursor, "");
+    with_custom_action_edit_state(cursor, selection_anchor, |state| {
+        state.delete_word_backward(text)
+    });
 }
 
 fn delete_custom_action_text_to_start(
@@ -306,14 +257,9 @@ fn delete_custom_action_text_to_start(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
-        replace_custom_action_text_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-    if *cursor == 0 {
-        return;
-    }
-    replace_custom_action_text_range(text, cursor, selection_anchor, 0..*cursor, "");
+    with_custom_action_edit_state(cursor, selection_anchor, |state| {
+        state.delete_to_start(text)
+    });
 }
 
 fn delete_custom_action_text_forward(
@@ -321,15 +267,7 @@ fn delete_custom_action_text_forward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
-        replace_custom_action_text_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-    if *cursor >= text.len() {
-        return;
-    }
-    let end = next_custom_action_text_boundary(text, *cursor);
-    replace_custom_action_text_range(text, cursor, selection_anchor, *cursor..end, "");
+    with_custom_action_edit_state(cursor, selection_anchor, |state| state.delete_forward(text));
 }
 
 fn move_custom_action_text_cursor(
@@ -339,38 +277,9 @@ fn move_custom_action_text_cursor(
     direction: CursorDirection,
     extend_selection: bool,
 ) {
-    let next_cursor = match direction {
-        CursorDirection::Left => {
-            if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
-                if extend_selection {
-                    previous_custom_action_text_boundary(text, *cursor)
-                } else {
-                    range.start
-                }
-            } else {
-                previous_custom_action_text_boundary(text, *cursor)
-            }
-        }
-        CursorDirection::Right => {
-            if let Some(range) = custom_action_text_selected_range(*cursor, *selection_anchor) {
-                if extend_selection {
-                    next_custom_action_text_boundary(text, *cursor)
-                } else {
-                    range.end
-                }
-            } else {
-                next_custom_action_text_boundary(text, *cursor)
-            }
-        }
-    };
-
-    if extend_selection && selection_anchor.is_none() {
-        *selection_anchor = Some(*cursor);
-    }
-    if !extend_selection {
-        *selection_anchor = None;
-    }
-    *cursor = next_cursor;
+    with_custom_action_edit_state(cursor, selection_anchor, |state| {
+        state.move_horizontal(text, direction, extend_selection);
+    });
 }
 
 fn move_custom_action_text_cursor_to_edge(
@@ -380,13 +289,9 @@ fn move_custom_action_text_cursor_to_edge(
     to_end: bool,
     extend_selection: bool,
 ) {
-    if extend_selection && selection_anchor.is_none() {
-        *selection_anchor = Some(*cursor);
-    }
-    if !extend_selection {
-        *selection_anchor = None;
-    }
-    *cursor = if to_end { text.len() } else { 0 };
+    with_custom_action_edit_state(cursor, selection_anchor, |state| {
+        state.move_to_edge(text, to_end, extend_selection);
+    });
 }
 
 fn intersect_byte_ranges(
@@ -404,57 +309,11 @@ fn custom_action_text_visible_range(
     selection: Option<&std::ops::Range<usize>>,
     max_chars: usize,
 ) -> std::ops::Range<usize> {
-    let boundaries = text
-        .char_indices()
-        .map(|(idx, _)| idx)
-        .chain(std::iter::once(text.len()))
-        .collect::<Vec<_>>();
-    let total_chars = boundaries.len().saturating_sub(1);
-    if total_chars <= max_chars {
-        return 0..text.len();
-    }
-
-    let cursor_char = text[..cursor.min(text.len())].chars().count();
-    let mut start_char = cursor_char.saturating_sub(max_chars / 2);
-    let mut end_char = (start_char + max_chars).min(total_chars);
-    start_char = end_char.saturating_sub(max_chars);
-
-    if cursor_char >= total_chars.saturating_sub(max_chars / 3) {
-        end_char = total_chars;
-        start_char = total_chars.saturating_sub(max_chars);
-    }
-
-    if let Some(selection) = selection {
-        let selection_start_char = text[..selection.start.min(text.len())].chars().count();
-        let selection_end_char = text[..selection.end.min(text.len())].chars().count();
-        if selection_start_char < start_char {
-            start_char = selection_start_char;
-            end_char = (start_char + max_chars).min(total_chars);
-        }
-        if selection_end_char > end_char {
-            end_char = selection_end_char.min(total_chars);
-            start_char = end_char.saturating_sub(max_chars);
-        }
-    }
-
-    boundaries[start_char]..boundaries[end_char]
+    crate::text_edit::visible_range(text, cursor, selection, max_chars)
 }
 
 fn custom_action_text_line_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
-    if text.is_empty() {
-        return vec![0..0];
-    }
-
-    let mut ranges = Vec::new();
-    let mut start = 0usize;
-    for (idx, ch) in text.char_indices() {
-        if ch == '\n' {
-            ranges.push(start..idx);
-            start = idx + ch.len_utf8();
-        }
-    }
-    ranges.push(start..text.len());
-    ranges
+    crate::text_edit::line_ranges(text)
 }
 
 fn custom_action_text_wrapped_line_ranges(
@@ -2065,8 +1924,9 @@ impl AnotherOneApp {
                     let focused_field = state.focused_field;
                     if let Some((value, cursor, selection_anchor)) = state.focused_text_parts() {
                         if modifiers.platform && ev.keystroke.key.as_str() == "a" {
-                            *cursor = value.len();
-                            *selection_anchor = Some(0);
+                            with_custom_action_edit_state(cursor, selection_anchor, |state| {
+                                state.select_all(value);
+                            });
                             cx.notify();
                             return;
                         }
