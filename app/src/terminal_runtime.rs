@@ -10,15 +10,15 @@ use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
 use gpui::{font, px, rgb, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
-use portable_pty::{ChildKiller, MasterPty};
+use portable_pty::MasterPty;
 
 // Shared with `core/src/terminal_types.rs` — the launcher side also
 // produces `PreparedTerminalRuntime` / `TerminalGridSize` /
 // `TerminalRuntimeKey`, and both sides need the clamp constants and
 // cell/line ratios in lockstep.
 pub(crate) use another_one_core::terminal_types::{
-    PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey, TERMINAL_CELL_WIDTH_RATIO,
-    TERMINAL_LINE_HEIGHT_RATIO,
+    PreparedTerminalRuntime, TerminalChildKiller, TerminalGridSize, TerminalRuntimeKey,
+    TERMINAL_CELL_WIDTH_RATIO, TERMINAL_LINE_HEIGHT_RATIO,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -128,7 +128,7 @@ pub(crate) struct LiveTerminalRuntime {
     parser: ansi::Processor,
     master: Box<dyn MasterPty + Send>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    child_killer: Box<dyn ChildKiller + Send + Sync>,
+    child_killer: TerminalChildKiller,
     event_queue: Arc<Mutex<VecDeque<Event>>>,
     size: TerminalGridSize,
     dirty: bool,
@@ -283,6 +283,10 @@ impl LiveTerminalRuntime {
     }
 
     pub fn kill(&mut self) {
+        #[cfg(unix)]
+        if let Some(process_group_id) = self.master.process_group_leader() {
+            self.child_killer.add_process_group(process_group_id);
+        }
         let _ = self.child_killer.kill();
     }
 

@@ -9,7 +9,11 @@
 //! renderer can feed the same value to alacritty, but alacritty_terminal
 //! itself is portable.
 
-use std::io::Write;
+use std::io::{self, Write};
+#[cfg(unix)]
+use std::thread;
+#[cfg(unix)]
+use std::time::Duration;
 
 use alacritty_terminal::grid::Dimensions;
 use portable_pty::{ChildKiller, MasterPty, PtySize};
@@ -107,6 +111,132 @@ impl Dimensions for TerminalGridSize {
     }
 }
 
+/// Owning guard for a PTY child killer.
+///
+/// Dropping the guard attempts to terminate the spawned child. On Unix
+/// `portable-pty` starts the child as a fresh session leader, so we also keep
+/// the relevant process-group ids and signal them before falling back to the
+/// crate's child killer. That prevents shells/agents from leaving helper
+/// processes behind after a tab, warm launch, or whole app is torn down.
+pub struct TerminalChildKiller {
+    inner: Box<dyn ChildKiller + Send + Sync>,
+    kill_attempted: bool,
+    #[cfg(unix)]
+    process_group_ids: Vec<libc::pid_t>,
+}
+
+impl TerminalChildKiller {
+    pub fn new(inner: Box<dyn ChildKiller + Send + Sync>) -> Self {
+        Self {
+            inner,
+            kill_attempted: false,
+            #[cfg(unix)]
+            process_group_ids: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn with_process_group(
+        inner: Box<dyn ChildKiller + Send + Sync>,
+        process_group_id: Option<libc::pid_t>,
+    ) -> Self {
+        let mut this = Self::new(inner);
+        if let Some(process_group_id) = process_group_id {
+            this.add_process_group(process_group_id);
+        }
+        this
+    }
+
+    #[cfg(unix)]
+    pub fn add_process_group(&mut self, process_group_id: libc::pid_t) {
+        if process_group_id <= 1 {
+            return;
+        }
+        if !self.process_group_ids.contains(&process_group_id) {
+            self.process_group_ids.push(process_group_id);
+        }
+    }
+
+    pub fn kill(&mut self) -> io::Result<()> {
+        if self.kill_attempted {
+            return Ok(());
+        }
+        self.kill_attempted = true;
+
+        #[cfg(unix)]
+        let mut first_process_group_error = None;
+        #[cfg(unix)]
+        for process_group_id in self.process_group_ids.iter().copied() {
+            if let Err(error) = terminate_process_group(process_group_id) {
+                first_process_group_error.get_or_insert(error);
+            }
+        }
+
+        let child_result = self.inner.kill();
+
+        #[cfg(unix)]
+        if let Some(error) = first_process_group_error {
+            return child_result.and(Err(error));
+        }
+
+        child_result
+    }
+}
+
+impl Drop for TerminalChildKiller {
+    fn drop(&mut self) {
+        let _ = self.kill();
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process_group(process_group_id: libc::pid_t) -> io::Result<()> {
+    signal_process_group(process_group_id, libc::SIGHUP)?;
+    thread::sleep(Duration::from_millis(50));
+    if !process_group_is_alive(process_group_id) {
+        return Ok(());
+    }
+
+    signal_process_group(process_group_id, libc::SIGTERM)?;
+    thread::sleep(Duration::from_millis(50));
+    if !process_group_is_alive(process_group_id) {
+        return Ok(());
+    }
+
+    signal_process_group(process_group_id, libc::SIGKILL)
+}
+
+#[cfg(unix)]
+fn signal_process_group(process_group_id: libc::pid_t, signal: libc::c_int) -> io::Result<()> {
+    if process_group_id <= 1 {
+        return Ok(());
+    }
+    let result = unsafe { libc::kill(-process_group_id, signal) };
+    if result == 0 {
+        return Ok(());
+    }
+
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
+#[cfg(unix)]
+fn process_group_is_alive(process_group_id: libc::pid_t) -> bool {
+    if process_group_id <= 1 {
+        return false;
+    }
+    let result = unsafe { libc::kill(-process_group_id, 0) };
+    if result == 0 {
+        return true;
+    }
+
+    io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
 /// The launch-time result of spawning a PTY: the size the shell was
 /// started at plus owning handles to read/write/kill it. Desktop wraps
 /// this in a `LiveTerminalRuntime` that drives an alacritty `Term` +
@@ -115,7 +245,7 @@ pub struct PreparedTerminalRuntime {
     pub size: TerminalGridSize,
     pub master: Box<dyn MasterPty + Send>,
     pub writer: Box<dyn Write + Send>,
-    pub child_killer: Box<dyn ChildKiller + Send + Sync>,
+    pub child_killer: TerminalChildKiller,
     /// Broadcast tee of every byte read from the master PTY. The
     /// existing mpsc `TerminalLaunchReply::Output` path stays as-is;
     /// embedders that need remote viewers forward those output chunks
