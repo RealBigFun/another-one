@@ -1094,10 +1094,46 @@ impl WorkspacePane {
         fixed_title: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<String> {
+        self.add_tab_with_launch_config_attributed(
+            section_id,
+            launch_config,
+            fixed_title,
+            ClientId::gui_desktop(),
+            cx,
+        )
+    }
+
+    /// Same as [`add_tab_with_launch_config`] but lets the caller
+    /// stamp the originating client on the resulting `TabOpened`
+    /// event. The trait-verb path passes `mcp:<handle>` /
+    /// `mobile:<endpoint>`; sidebar / shortcut callers default to
+    /// `gui:desktop` via the wrapper above.
+    pub(crate) fn add_tab_with_launch_config_attributed(
+        &mut self,
+        section_id: &SectionId,
+        launch_config: TerminalLaunchConfig,
+        fixed_title: Option<String>,
+        originator: ClientId,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
         let added_tab_id = self
             .section_states
             .get_mut(section_id)
             .map(|state| state.add_tab_with_launch_config(launch_config.clone(), fixed_title));
+        if let Some(tab_id) = added_tab_id.as_ref() {
+            let app = self.app.clone();
+            let section_clone = section_id.clone();
+            let tab_clone = tab_id.clone();
+            cx.defer(move |cx| {
+                let _ = app.update(cx, |app, _| {
+                    app.emit_client_event(ClientEvent::TabOpened {
+                        originator,
+                        section_id: section_clone,
+                        tab_id: tab_clone,
+                    });
+                });
+            });
+        }
         if added_tab_id.is_some() {
             self.persist_section_state(section_id, cx);
             cx.notify();
@@ -5590,7 +5626,7 @@ impl AnotherOneApp {
             ),
         }
 
-        self.insert_and_open_task(
+        let (task_id, _section) = self.insert_and_open_task(
             project.id.clone(),
             project.id.clone(),
             req.kind,
@@ -5600,6 +5636,7 @@ impl AnotherOneApp {
             project_path,
             Some(req.launch_config.clone()),
             req.warm_launch_hint,
+            req.client_id.clone(),
             cx,
         );
 
@@ -5609,14 +5646,6 @@ impl AnotherOneApp {
         let key = self
             .active_terminal_key(cx)
             .ok_or_else(|| anyhow::anyhow!("task created but no active terminal key resolved"))?;
-        let task_id = self
-            .project_store
-            .tasks
-            .values()
-            .flatten()
-            .find(|t| t.section_id == key.section_id.store_key())
-            .map(|t| t.id.clone())
-            .ok_or_else(|| anyhow::anyhow!("task created but not visible in project_store"))?;
 
         if req.focus_after_open {
             self.client_focus.insert(
@@ -5630,16 +5659,8 @@ impl AnotherOneApp {
             );
         }
 
-        self.emit_client_event(ClientEvent::TaskOpened {
-            originator: req.client_id.clone(),
-            task_id: task_id.clone(),
-            section_id: key.section_id.clone(),
-            tab_id: key.tab_id.clone(),
-        });
-
-        // Push fresh project_store snapshot to the daemon so MCP
-        // read tools (`list_tasks`, `list_tabs`) see the new entries
-        // on the next call without waiting for an unrelated tick.
+        // The TaskOpened event was already emitted from
+        // `insert_and_open_task` with this client's originator.
         self.sync_registry_project_store();
 
         Ok(OpenTaskResponse {
@@ -5663,6 +5684,7 @@ impl AnotherOneApp {
             .project_store
             .project(&section_id.project_id)
             .map(|p| p.path.clone());
+        let originator_for_workspace = req.client_id.clone();
         let added_tab_id = self.workspace_pane.update(cx, |workspace, cx| {
             if req.focus_after_open {
                 workspace.activate_section(
@@ -5679,7 +5701,13 @@ impl AnotherOneApp {
                     cx,
                 );
             }
-            workspace.add_tab_with_launch_config(&section_id, req.launch_config.clone(), None, cx)
+            workspace.add_tab_with_launch_config_attributed(
+                &section_id,
+                req.launch_config.clone(),
+                None,
+                originator_for_workspace,
+                cx,
+            )
         });
         let tab_id = added_tab_id.ok_or_else(|| {
             anyhow::anyhow!("could not add tab to section {}", section_id.store_key())
@@ -5711,11 +5739,10 @@ impl AnotherOneApp {
             }
         }
 
-        self.emit_client_event(ClientEvent::TabOpened {
-            originator: req.client_id,
-            section_id,
-            tab_id: tab_id.clone(),
-        });
+        // The TabOpened event was already deferred from
+        // `add_tab_with_launch_config_attributed` with this client's
+        // originator — no manual emit needed here.
+        let _ = section_id;
 
         self.sync_registry_project_store();
         Ok(OpenTabResponse { tab_id })
@@ -7011,6 +7038,15 @@ impl AnotherOneApp {
     }
 
     fn cleanup_removed_tab(&mut self, section_id: &SectionId, tab_id: String) {
+        // GUI-driven close (Ctrl-W, click X, modal-confirm path) lands
+        // here regardless of the originating call site. Fire a
+        // ClientEvent::TabClosed attributed to the GUI so MCP
+        // observers can mirror tab-close on the bus, parity with
+        // closes initiated through the MCP `close_tab` tool.
+        self.emit_client_event(ClientEvent::TabClosed {
+            originator: ClientId::gui_desktop(),
+            tab_id: tab_id.clone(),
+        });
         let key = TerminalRuntimeKey {
             section_id: section_id.clone(),
             tab_id,
@@ -7932,6 +7968,7 @@ impl AnotherOneApp {
                         existing.path,
                         None,
                         None,
+                        ClientId::gui_desktop(),
                         cx,
                     );
                     self.show_success_toast(format!("Opened {}.", task_name), cx);
@@ -7972,8 +8009,9 @@ impl AnotherOneApp {
         project_path: std::path::PathBuf,
         launch_config: Option<TerminalLaunchConfig>,
         warm_launch_id: Option<u64>,
+        originator: ClientId,
         cx: &mut Context<Self>,
-    ) {
+    ) -> (String, SectionId) {
         let task_id = uuid::Uuid::new_v4().to_string();
         self.project_store.insert_task(Task {
             id: task_id.clone(),
@@ -8017,6 +8055,23 @@ impl AnotherOneApp {
             );
         }
         self.mark_git_refresh_stale();
+
+        // Single TaskOpened emit covers every synchronous task-create
+        // path (GUI Direct via client_open_task, GUI Review-with-
+        // existing-worktree, MCP / mobile via the trait verbs). The
+        // tab id is the active tab in the just-activated section.
+        let tab_id = self
+            .active_terminal_key(cx)
+            .map(|k| k.tab_id)
+            .unwrap_or_default();
+        self.emit_client_event(ClientEvent::TaskOpened {
+            originator,
+            task_id: task_id.clone(),
+            section_id: section_id.clone(),
+            tab_id,
+        });
+
+        (task_id, section_id)
     }
 
     pub(crate) fn submit_new_task_modal(&mut self, cx: &mut Context<Self>) {
@@ -8226,6 +8281,7 @@ impl AnotherOneApp {
             project.path.clone(),
             None,
             None,
+            ClientId::gui_desktop(),
             cx,
         );
         self.create_branch_modal = None;

@@ -734,7 +734,7 @@ impl WorkspacePane {
         section_id: &crate::app::SectionId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::Div {
+    ) -> gpui::AnyElement {
         let terminal_bg = rgb(0x1e1f22);
         let panel_bg = rgb(0x25282d);
         let border = gpui::white().opacity(0.08);
@@ -743,7 +743,7 @@ impl WorkspacePane {
         let accent_col = hsla(0.58, 0.62, 0.68, 1.);
 
         let Some(state) = self.section_states.get(section_id) else {
-            return div().flex_1().bg(terminal_bg);
+            return div().flex_1().bg(terminal_bg).into_any_element();
         };
         let Some(tab) = state.tabs.get(state.active_tab) else {
             let task_label = section_id.task_id.as_deref().unwrap_or("Not available");
@@ -812,7 +812,8 @@ impl WorkspacePane {
                                 .text_color(body_col)
                                 .child(format!("CWD: {}", cwd_label)),
                         ),
-                );
+                )
+                .into_any_element();
         };
 
         let key = TerminalRuntimeKey {
@@ -873,12 +874,44 @@ impl WorkspacePane {
                 .terminal_link_hover
                 .as_ref()
                 .is_some_and(|h| &h.section_id == section_id && h.tab_id == tab.id);
+            let pane_section_id = section_id.clone();
+            let pane_tab_id = tab.id.clone();
             let mut pane_div = div()
+                .id(SharedString::from(format!(
+                    "terminal-pane-{}-{}",
+                    section_id.store_key(),
+                    tab.id
+                )))
                 .relative()
                 .flex_1()
                 .min_h_0()
                 .overflow_hidden()
-                .bg(terminal_bg);
+                .bg(terminal_bg)
+                // Clear the per-tab hover state the moment the
+                // cursor leaves this pane so the underline +
+                // tooltip don't linger after the mouse moves
+                // somewhere else in the window.
+                .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                    if *hovered {
+                        return;
+                    }
+                    let should_clear = this
+                        .terminal_link_hover
+                        .as_ref()
+                        .is_some_and(|h| {
+                            h.section_id == pane_section_id && h.tab_id == pane_tab_id
+                        });
+                    if should_clear {
+                        this.terminal_link_hover = None;
+                        cx.notify();
+                    }
+                }))
+                // Pressing/releasing Cmd or Ctrl while the cursor is
+                // sitting still over a link must refresh the cursor
+                // swap and tooltip without requiring mouse motion.
+                .on_modifiers_changed(cx.listener(|_this, _ev, _window, cx| {
+                    cx.notify();
+                }));
             if hovering_link && modifier_held {
                 pane_div = pane_div.cursor_pointer();
             } else {
@@ -1164,7 +1197,8 @@ impl WorkspacePane {
                                     .child(url_preview),
                             ),
                     )
-                }));
+                }))
+                .into_any_element();
         }
 
         let status_title = if pending {
@@ -1258,7 +1292,8 @@ impl WorkspacePane {
                                 ),
                         )
                         .child(terminal_error_details(error, body_col)),
-                );
+                )
+                .into_any_element();
         } else {
             "This restored tab has metadata only. Opening it triggers launch or resume on demand."
         };
@@ -1334,6 +1369,7 @@ impl WorkspacePane {
                             .child(format!("CWD: {}", cwd_label)),
                     ),
             )
+            .into_any_element()
     }
 }
 
