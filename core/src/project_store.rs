@@ -3707,11 +3707,22 @@ fn worktree_parent_dir_with_root(repo_path: &Path, worktrees_root: Option<PathBu
         .unwrap_or_else(|| repo_path.parent().unwrap_or(repo_path).to_path_buf())
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_WORKTREES_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+fn configured_worktrees_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(root) = TEST_WORKTREES_ROOT.with(|root| root.borrow().clone()) {
+        return Some(root);
+    }
+
+    dirs::home_dir().map(|home| app_worktrees_root(&home))
+}
+
 fn unique_worktree_path(repo_path: &Path, slug: &str) -> PathBuf {
-    let parent = worktree_parent_dir_with_root(
-        repo_path,
-        dirs::home_dir().map(|home| app_worktrees_root(&home)),
-    );
+    let parent = worktree_parent_dir_with_root(repo_path, configured_worktrees_root());
 
     for suffix in 0..1000 {
         let directory_name = if suffix == 0 {
@@ -3940,6 +3951,28 @@ mod tests {
         ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
         RepoRecord, StoreFile, Task, TaskKind, TaskWorktreeBranchMode, UiState,
     };
+
+    struct TestWorktreesRoot {
+        _temp_dir: tempfile::TempDir,
+    }
+
+    impl TestWorktreesRoot {
+        fn new() -> Self {
+            let temp_dir = tempfile::tempdir().expect("test worktrees root should exist");
+                super::TEST_WORKTREES_ROOT.with(|root| {
+                *root.borrow_mut() = Some(temp_dir.path().join("worktrees"));
+            });
+            Self { _temp_dir: temp_dir }
+        }
+    }
+
+    impl Drop for TestWorktreesRoot {
+        fn drop(&mut self) {
+            super::TEST_WORKTREES_ROOT.with(|root| {
+                *root.borrow_mut() = None;
+            });
+        }
+    }
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
         Project {
@@ -4175,6 +4208,7 @@ mod tests {
 
     #[test]
     fn create_task_worktree_creates_unique_branch_from_selected_source_branch() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         run_git(repo.path(), &["switch", "-c", "feature/base"]);
         fs::write(repo.path().join("file.txt"), "base\nfeature\n").expect("file should write");
@@ -4208,6 +4242,7 @@ mod tests {
 
     #[test]
     fn create_task_worktree_uses_existing_branch_without_creating_new_branch() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         run_git(repo.path(), &["branch", "feature/existing"]);
 
@@ -4239,6 +4274,7 @@ mod tests {
 
     #[test]
     fn create_task_worktree_checks_out_remote_only_existing_branch() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         let origin = tempfile::tempdir().expect("origin dir should exist");
         run_git(origin.path(), &["init", "--bare"]);
@@ -4334,6 +4370,7 @@ mod tests {
 
     #[test]
     fn create_task_worktree_errors_when_existing_branch_is_checked_out_elsewhere() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
 
         let error = create_task_worktree(
@@ -4393,6 +4430,7 @@ mod tests {
 
     #[test]
     fn creates_clean_worktree_branch_without_migration() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         fs::write(repo.path().join("file.txt"), "base\nchanged\n").expect("file should write");
 
@@ -4422,6 +4460,7 @@ mod tests {
 
     #[test]
     fn migrates_staged_unstaged_and_untracked_changes_to_worktree() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         fs::write(repo.path().join("file.txt"), "base\nchanged\n").expect("file should write");
         fs::write(repo.path().join("staged.txt"), "staged\n").expect("file should write");
