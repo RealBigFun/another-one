@@ -22,9 +22,10 @@ use tokio::sync::broadcast;
 use crate::agents::TerminalLaunchConfig;
 use crate::git_operation::run_serialized_git_operation;
 use crate::project_store::{
-    create_branch_from_head, create_review_task_worktree, create_task_worktree, prepare_project,
-    CreateBranchMode, PreparedProject, Project, ProjectBranchSettings, ProjectCheckoutState,
-    ProjectKind, RepoRecord, TaskWorktreeBranchMode,
+    create_branch_from_head, create_review_task_worktree, create_task_worktree,
+    delete_local_branch, prepare_project, remove_task_worktree, CreateBranchMode, PreparedProject,
+    Project, ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoRecord,
+    TaskWorktreeBranchMode,
 };
 
 // ---- project add ----------------------------------------------------
@@ -281,4 +282,26 @@ pub fn spawn_review_task_creation(
         let _ = tx.send(TaskCreationReply { result });
     });
     rx
+}
+
+/// Delete a task worktree, optionally deleting its local branch, behind
+/// the process-wide git operation lock. Returns a branch-deletion
+/// warning if the worktree was removed but `git branch -D` failed.
+pub fn delete_task_worktree(
+    repo_path: PathBuf,
+    project_path: PathBuf,
+    branch_name: String,
+    force_delete_branch: bool,
+) -> Result<Option<String>, String> {
+    run_serialized_git_operation(|| {
+        remove_task_worktree(&repo_path, &project_path)?;
+
+        let branch_warning = if force_delete_branch {
+            delete_local_branch(&repo_path, &branch_name).err()
+        } else {
+            None
+        };
+
+        Ok(branch_warning)
+    })
 }

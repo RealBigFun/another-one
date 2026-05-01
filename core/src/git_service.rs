@@ -29,9 +29,9 @@ use crate::git_actions::{
 };
 use crate::project_store::{
     fetch_project_git_state, read_changed_file_diff, read_project_branch_commit_state,
-    read_project_git_state, stage_all_changes, stage_changed_file, unstage_all_changes,
-    unstage_changed_file, ChangedFile, GitDiff, GitDiffSelection, ProjectBranchCommitState,
-    ProjectGitState,
+    read_project_git_state, revert_changed_file, stage_all_changes, stage_changed_file,
+    unstage_all_changes, unstage_changed_file, ChangedFile, GitDiff, GitDiffSelection,
+    ProjectBranchCommitState, ProjectGitState,
 };
 
 /// Result payload from `spawn_refresh` — one message per refresh call.
@@ -152,6 +152,7 @@ pub enum ChangedFilesGitMutation {
     UnstageFile { changed: ChangedFile },
     StageAll,
     UnstageAll,
+    RevertFiles { changed_files: Vec<ChangedFile> },
 }
 
 impl ChangedFilesGitMutation {
@@ -191,7 +192,7 @@ pub fn spawn_changed_files_mutation(
     mutation: ChangedFilesGitMutation,
 ) {
     thread::spawn(move || {
-        let result = match mutation {
+        let result = crate::git_operation::run_serialized_git_operation(|| match mutation {
             ChangedFilesGitMutation::StageFile { changed } => {
                 stage_changed_file(&project_path, &changed)
                     .map(|_| read_project_git_state(&project_path, false))
@@ -204,7 +205,18 @@ pub fn spawn_changed_files_mutation(
                 .map(|_| read_project_git_state(&project_path, false)),
             ChangedFilesGitMutation::UnstageAll => unstage_all_changes(&project_path)
                 .map(|_| read_project_git_state(&project_path, false)),
-        };
+            ChangedFilesGitMutation::RevertFiles { changed_files } => {
+                let reverted_any = changed_files.iter().fold(false, |reverted_any, changed| {
+                    revert_changed_file(&project_path, changed) || reverted_any
+                });
+
+                if reverted_any {
+                    Ok(read_project_git_state(&project_path, false))
+                } else {
+                    Err("Could not discard the selected file changes.".to_string())
+                }
+            }
+        });
         let _ = sender.send(ChangedFilesGitMutationReply { project_id, result });
     });
 }
