@@ -5157,6 +5157,14 @@ impl AnotherOneApp {
                             self.update_terminal_tab(&key, cx, |tab| {
                                 apply_terminal_title_update(tab, &terminal_update);
                             });
+                            // Same Output broadcast as the cold-path
+                            // drain — warm-prewarm tabs (MCP spawn,
+                            // GUI new-task fast path) also surface
+                            // their bytes to MCP subscribers.
+                            self.emit_client_event(ClientEvent::Output {
+                                tab_id: key.tab_id.clone(),
+                                bytes: bytes.clone(),
+                            });
                             updated = true;
                         } else if self.maybe_retry_claude_restore(&key, cx) {
                             updated = true;
