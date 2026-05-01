@@ -31,7 +31,10 @@ async fn connect_with_pair_token_handshake_succeeds() {
         .expect("daemon::run_endpoint");
 
     let pairing_url = handle.pairing_url();
-    assert!(pairing_url.starts_with("iroh://"), "pairing URL shape: {pairing_url}");
+    assert!(
+        pairing_url.starts_with("iroh://"),
+        "pairing URL shape: {pairing_url}"
+    );
     assert!(
         pairing_url.contains("pair="),
         "pairing URL must include a TOFU token: {pairing_url}"

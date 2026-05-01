@@ -8,7 +8,9 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+use crate::agents::AgentProviderKind;
 
 const LEGACY_GIT_COMMIT_DIFF_PATCH_TOKEN: &str = "{{diff_patch}}";
 const GIT_PULL_REQUEST_CONTEXT_TOKEN: &str = "{{pull_request_context}}";
@@ -25,10 +27,29 @@ const GIT_PULL_REQUEST_FORMAT_CONTRACT: &str = concat!(
 const GIT_COMMIT_TIMEOUT: Duration = Duration::from_secs(30);
 const GIT_COMMIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitActionLlmSettings {
+    pub provider: Option<AgentProviderKind>,
+    pub model: Option<String>,
+    pub thinking: Option<String>,
+}
+
+impl Default for GitActionLlmSettings {
+    fn default() -> Self {
+        Self {
+            provider: Some(AgentProviderKind::Codex),
+            model: None,
+            thinking: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitActionSettings {
     pub commit_generation_script: String,
     pub pr_generation_script: String,
+    pub commit_llm: GitActionLlmSettings,
+    pub pr_llm: GitActionLlmSettings,
 }
 
 impl Default for GitActionSettings {
@@ -36,6 +57,8 @@ impl Default for GitActionSettings {
         Self {
             commit_generation_script: default_commit_generation_script().to_string(),
             pr_generation_script: default_pr_generation_script().to_string(),
+            commit_llm: GitActionLlmSettings::default(),
+            pr_llm: GitActionLlmSettings::default(),
         }
     }
 }
@@ -200,6 +223,17 @@ pub fn execute_toolbar_git_action(
     settings: GitActionSettings,
     on_progress: &mut dyn FnMut(String),
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
+    crate::git_operation::run_serialized_git_operation(|| {
+        execute_toolbar_git_action_unlocked(repo_path, action, settings, on_progress)
+    })
+}
+
+fn execute_toolbar_git_action_unlocked(
+    repo_path: &Path,
+    action: ToolbarGitAction,
+    settings: GitActionSettings,
+    on_progress: &mut dyn FnMut(String),
+) -> Result<ToolbarActionOutcome, ToolbarActionError> {
     match action {
         ToolbarGitAction::Commit => commit_with_ai(repo_path, false, &settings, on_progress),
         ToolbarGitAction::CommitAndPush => commit_with_ai(repo_path, true, &settings, on_progress),
@@ -235,7 +269,7 @@ fn simple_toolbar_git_command(action: ToolbarGitAction) -> Option<SimpleToolbarG
             args: &["reset", "--soft", "HEAD~1"],
             failure_prefix: "Undo last commit failed",
             success_toast: "Undid the last commit.",
-            warning: false,
+            warning: true,
             refresh_git_state: true,
         }),
         ToolbarGitAction::Fetch => Some(SimpleToolbarGitCommand {
@@ -316,7 +350,7 @@ pub fn find_latest_pull_request_status(
     }
 
     let gh = find_gh_cli(repo_path)?;
-    let mut command = external_command(gh, repo_path);
+    let mut command = gh_json_command(gh, repo_path);
     let output = command
         .args(find_latest_pull_request_args(head_branch))
         .output()
@@ -398,8 +432,7 @@ pub fn find_pull_request_checks(
 
 fn parse_pull_request_checks_output(output: &str) -> Vec<PullRequestCheck> {
     output
-        .split(['\n', '\r'])
-        .map(str::trim_end)
+        .lines()
         .filter(|line| !line.is_empty())
         .flat_map(|line| {
             let columns = line.split('\t').collect::<Vec<_>>();
@@ -515,8 +548,8 @@ fn commit_with_ai(
     let _staged_all_changes = ensure_staged_changes(repo_path)?;
     let diff_patch = staged_diff_patch(repo_path).map_err(ToolbarActionError::from_message)?;
     let prompt = render_commit_generation_script(settings.commit_generation_script(), &diff_patch);
-    let generated =
-        generate_commit_message(repo_path, &prompt).map_err(ToolbarActionError::from_message)?;
+    let generated = generate_commit_message(repo_path, &prompt, &settings.commit_llm)
+        .map_err(ToolbarActionError::from_message)?;
     git_commit(repo_path, &generated).map_err(ToolbarActionError::from_message)?;
 
     if push_after {
@@ -911,19 +944,9 @@ fn render_pull_request_generation_script(
 fn generate_commit_message(
     repo_path: &Path,
     prompt: &str,
+    llm: &GitActionLlmSettings,
 ) -> Result<GeneratedCommitMessage, String> {
-    let raw = match run_codex(prompt, repo_path, "codex-commit", "commit message") {
-        Ok(raw) => raw,
-        Err(codex_err) => match run_claude(prompt, repo_path, "commit message") {
-            Ok(raw) => raw,
-            Err(claude_err) => {
-                return Err(format!(
-                    "Commit message generation failed. Codex error: {codex_err} Claude error: {claude_err}"
-                ))
-            }
-        },
-    };
-
+    let raw = run_generation(prompt, repo_path, "codex-commit", "commit message", llm)?;
     parse_commit_message(&raw)
 }
 
@@ -941,17 +964,13 @@ fn generate_pull_request_content(
         &commit_list,
         &diff_patch,
     );
-    let raw = match run_codex(prompt.as_str(), repo_path, "codex-pr", "PR title/body") {
-        Ok(raw) => raw,
-        Err(codex_err) => match run_claude(prompt.as_str(), repo_path, "PR title/body") {
-            Ok(raw) => raw,
-            Err(claude_err) => {
-                return Err(format!(
-                    "PR title/body generation failed. Codex error: {codex_err} Claude error: {claude_err}"
-                ))
-            }
-        },
-    };
+    let raw = run_generation(
+        prompt.as_str(),
+        repo_path,
+        "codex-pr",
+        "PR title/body",
+        &settings.pr_llm,
+    )?;
 
     parse_pull_request_content(&raw)
 }
@@ -1042,28 +1061,64 @@ fn branch_diff_patch(repo_path: &Path, base_branch: &str) -> Result<String, Stri
     Ok(patch)
 }
 
+fn run_generation(
+    prompt: &str,
+    repo_path: &Path,
+    output_prefix: &str,
+    empty_output_label: &str,
+    llm: &GitActionLlmSettings,
+) -> Result<String, String> {
+    match llm.provider.unwrap_or(AgentProviderKind::Codex) {
+        AgentProviderKind::Codex => {
+            run_codex(prompt, repo_path, output_prefix, empty_output_label, llm)
+        }
+        AgentProviderKind::ClaudeCode => run_claude(prompt, repo_path, empty_output_label, llm),
+        provider => Err(format!(
+            "{} is not supported for Git Action generation yet.",
+            provider.label()
+        )),
+    }
+}
+
 fn run_codex(
     prompt: &str,
     repo_path: &Path,
     output_prefix: &str,
     empty_output_label: &str,
+    llm: &GitActionLlmSettings,
 ) -> Result<String, String> {
     let codex = find_codex_cli(repo_path).ok_or_else(|| "Codex CLI was not found.".to_string())?;
     let output_path = temp_output_path(output_prefix);
     let mut cmd = external_command(codex, repo_path);
-    cmd.args([
-        "exec",
-        "--model",
-        "gpt-5.4-mini",
-        "--sandbox",
-        "read-only",
-        "--output-last-message",
-    ])
-    .arg(&output_path)
-    .arg("-")
-    .stdin(Stdio::piped())
-    .stdout(Stdio::null())
-    .stderr(Stdio::piped());
+    cmd.arg("exec");
+    if let Some(model) = llm
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        cmd.args(["--model", model]);
+    } else {
+        cmd.args(["--model", "gpt-5.4-mini"]);
+    }
+    if let Some(thinking) = llm
+        .thinking
+        .as_deref()
+        .map(str::trim)
+        .filter(|thinking| !thinking.is_empty())
+    {
+        let thinking = if thinking == "off" { "none" } else { thinking };
+        cmd.args([
+            "--config".to_string(),
+            format!("model_reasoning_effort=\"{thinking}\""),
+        ]);
+    }
+    cmd.args(["--sandbox", "read-only", "--output-last-message"])
+        .arg(&output_path)
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
 
     let mut child = cmd
         .spawn()
@@ -1092,20 +1147,36 @@ fn run_codex(
     Ok(raw)
 }
 
-fn run_claude(prompt: &str, repo_path: &Path, empty_output_label: &str) -> Result<String, String> {
+fn run_claude(
+    prompt: &str,
+    repo_path: &Path,
+    empty_output_label: &str,
+    llm: &GitActionLlmSettings,
+) -> Result<String, String> {
     let claude =
         find_claude_cli(repo_path).ok_or_else(|| "Claude CLI was not found.".to_string())?;
     let mut command = external_command(claude, repo_path);
+    command.arg("-p");
+    if let Some(model) = llm
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        command.args(["--model", model]);
+    } else {
+        command.args(["--model", "haiku"]);
+    }
+    if let Some(thinking) = llm
+        .thinking
+        .as_deref()
+        .map(str::trim)
+        .filter(|thinking| !thinking.is_empty())
+    {
+        command.args(["--effort", thinking]);
+    }
     let output = command
-        .args([
-            "-p",
-            "--model",
-            "haiku",
-            "--output-format",
-            "text",
-            "--tools",
-            "",
-        ])
+        .args(["--output-format", "text", "--tools", ""])
         .arg(prompt)
         .output()
         .map_err(|err| format!("Could not start Claude CLI: {err}"))?;
@@ -1338,6 +1409,17 @@ fn external_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command
     command
 }
 
+fn gh_json_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command {
+    let mut command = external_command(program, cwd);
+    command
+        .env_remove("GH_FORCE_TTY")
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0")
+        .env("CLICOLOR_FORCE", "0")
+        .env("FORCE_COLOR", "0");
+    command
+}
+
 fn find_codex_cli(repo_path: &Path) -> Option<PathBuf> {
     crate::command_env::find_executable(
         "codex",
@@ -1371,7 +1453,7 @@ fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
 mod tests {
     use super::{
         create_pull_request_args, default_commit_generation_script, default_pr_generation_script,
-        find_latest_pull_request_args, git_stdout, indicates_missing_pull_request,
+        find_latest_pull_request_args, gh_json_command, git_stdout, indicates_missing_pull_request,
         indicates_missing_pull_request_checks, normalize_github_remote,
         normalize_pull_request_check_bucket, parse_commit_message,
         parse_pull_request_checks_output, parse_pull_request_content, push_branch,
@@ -1379,6 +1461,7 @@ mod tests {
         simple_toolbar_git_command, PullRequestCheckBucket, ToolbarGitAction,
         GIT_PULL_REQUEST_CONTEXT_TOKEN, GIT_PULL_REQUEST_FORMAT_CONTRACT,
     };
+    use std::ffi::OsStr;
     use std::path::Path;
     use std::process::Command;
     use tempfile::TempDir;
@@ -1513,6 +1596,29 @@ mod tests {
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn gh_json_command_disables_forced_color_output() {
+        let command = gh_json_command("gh", Path::new("."));
+
+        assert!(command_env_removed(&command, "GH_FORCE_TTY"));
+        assert_eq!(
+            command_env_value(&command, "NO_COLOR").as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            command_env_value(&command, "CLICOLOR").as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            command_env_value(&command, "CLICOLOR_FORCE").as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            command_env_value(&command, "FORCE_COLOR").as_deref(),
+            Some("0")
         );
     }
 
@@ -1747,6 +1853,19 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    fn command_env_value(command: &Command, key: &str) -> Option<String> {
+        command
+            .get_envs()
+            .find(|(name, _)| *name == OsStr::new(key))
+            .and_then(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+    }
+
+    fn command_env_removed(command: &Command, key: &str) -> bool {
+        command
+            .get_envs()
+            .any(|(name, value)| name == OsStr::new(key) && value.is_none())
+    }
 }
 
 pub fn find_project_pull_requests(
@@ -1754,6 +1873,10 @@ pub fn find_project_pull_requests(
     filter_index: usize,
     query: Option<&str>,
 ) -> Result<Vec<ProjectPagePullRequest>, String> {
+    if git_stdout(repo_path, &["remote"]).is_none_or(|remotes| remotes.trim().is_empty()) {
+        return Ok(Vec::new());
+    }
+
     let gh = find_gh_cli(repo_path).ok_or_else(|| {
         "Could not load pull requests. GitHub CLI (`gh`) is not installed or not on the app PATH."
             .to_string()
@@ -1770,7 +1893,7 @@ pub fn find_project_pull_requests(
         search_terms.push(query.to_string());
     }
 
-    let mut command = external_command(gh, repo_path);
+    let mut command = gh_json_command(gh, repo_path);
     command.args([
         "pr",
         "list",

@@ -420,6 +420,21 @@ async fn handle_control(
         }
     }
 
+    let ctrl = match crate::commands::agent_settings::handle(ctrl, registry.as_ref()) {
+        Ok(reply) => {
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+            return Ok(());
+        }
+        Err(ctrl) => ctrl,
+    };
+    let ctrl = match crate::commands::open_in::handle(ctrl, registry.as_ref()) {
+        Ok(reply) => {
+            send_worker_reply(outbound_tx, request_id, &reply).await?;
+            return Ok(());
+        }
+        Err(ctrl) => ctrl,
+    };
+
     match ctrl {
         Control::Resize { cols, rows } | Control::TabResize { cols, rows } => {
             if let Some(att) = attached.as_ref() {
@@ -431,26 +446,9 @@ async fn handle_control(
             let wire = WorkerReply::ProjectList { projects };
             send_worker_reply(outbound_tx, request_id, &wire).await?;
         }
-        Control::OpenInState => {
-            let reply = match registry.open_in_state() {
-                Some(state) => WorkerReply::OpenInStateAck { state },
-                None => WorkerReply::Err {
-                    message: "open_in_state: registry does not surface \
-                              Open-In on this host"
-                        .to_string(),
-                    kind: ErrKind::Unsupported,
-                },
-            };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
         Control::ListProjectActions { project_id } => {
             let actions = registry.list_project_actions(&project_id);
             let reply = WorkerReply::ProjectActionsAck { actions };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::ReadEnabledAgents => {
-            let view = registry.read_enabled_agents();
-            let reply = WorkerReply::EnabledAgentsAck { view };
             send_worker_reply(outbound_tx, request_id, &reply).await?;
         }
         Control::SubmitNewTask {
@@ -551,91 +549,6 @@ async fn handle_control(
                     };
                     send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
                         .await?;
-                }
-            }
-        }
-        Control::ReadAgentSettings => {
-            let view = registry.read_agent_settings();
-            let reply = WorkerReply::AgentSettingsAck { view };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::SetAgentEnabled { agent_id, enabled } => {
-            match registry.set_agent_enabled(&agent_id, enabled) {
-                Ok(changed) => {
-                    let reply = WorkerReply::SetAgentEnabledAck { changed };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(message) => {
-                    let kind = if message.contains("unknown agent") {
-                        ErrKind::UnknownId
-                    } else {
-                        ErrKind::Internal
-                    };
-                    send_err(outbound_tx, request_id, kind, message).await?;
-                }
-            }
-        }
-        Control::SetDefaultAgent { agent_id } => match registry.set_default_agent(&agent_id) {
-            Ok(changed) => {
-                let reply = WorkerReply::SetDefaultAgentAck { changed };
-                send_worker_reply(outbound_tx, request_id, &reply).await?;
-            }
-            Err(message) => {
-                let kind = if message.contains("unknown agent") {
-                    ErrKind::UnknownId
-                } else {
-                    ErrKind::Internal
-                };
-                send_err(outbound_tx, request_id, kind, message).await?;
-            }
-        },
-        Control::SetAgentLaunchArgs { agent_id, args } => {
-            match registry.set_agent_launch_args(&agent_id, args) {
-                Ok(changed) => {
-                    let reply = WorkerReply::SetAgentLaunchArgsAck { changed };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(message) => {
-                    let kind = if message.contains("unknown agent") {
-                        ErrKind::UnknownId
-                    } else {
-                        ErrKind::Internal
-                    };
-                    send_err(outbound_tx, request_id, kind, message).await?;
-                }
-            }
-        }
-        Control::ReadOpenInSettings => {
-            let reply = match registry.read_open_in_settings() {
-                Some(view) => WorkerReply::OpenInSettingsAck { view },
-                None => WorkerReply::Err {
-                    message: "read_open_in_settings: registry does not surface \
-                              Open-In settings on this host"
-                        .to_string(),
-                    kind: ErrKind::Unsupported,
-                },
-            };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::SetOpenInAppEnabled { app_id, enabled } => {
-            match registry.set_open_in_app_enabled(&app_id, enabled) {
-                Ok(()) => {
-                    let reply = WorkerReply::SetOpenInAppEnabledAck;
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(message) => {
-                    send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
-                }
-            }
-        }
-        Control::OpenProjectInApp { project_id, app_id } => {
-            match registry.open_project_in_app(&project_id, &app_id) {
-                Ok(()) => {
-                    let reply = WorkerReply::OpenProjectInAppAck;
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(message) => {
-                    send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
                 }
             }
         }
@@ -840,6 +753,17 @@ async fn handle_control(
                 send_worker_reply(outbound_tx, request_id, &wire).await?;
             }
         },
+        Control::ReadEnabledAgents
+        | Control::ReadAgentSettings
+        | Control::SetAgentEnabled { .. }
+        | Control::SetDefaultAgent { .. }
+        | Control::SetAgentLaunchArgs { .. }
+        | Control::OpenInState
+        | Control::ReadOpenInSettings
+        | Control::SetOpenInAppEnabled { .. }
+        | Control::OpenProjectInApp { .. } => {
+            unreachable!("domain command should be handled before transport dispatch")
+        }
         Control::Hello { .. } => {
             // Hello is only meaningful as the *first* control frame
             // from an unpaired peer — see `consume_hello`. A paired
@@ -1122,18 +1046,6 @@ async fn handle_control(
         } => match registry.read_commit_file_changes(&project_id, &commit_id) {
             Ok(files) => {
                 let reply = WorkerReply::CommitFileChangesAck { files };
-                send_worker_reply(outbound_tx, request_id, &reply).await?;
-            }
-            Err(message) => {
-                send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
-            }
-        },
-        Control::ReadBranchCompareState {
-            project_id,
-            target_branch,
-        } => match registry.read_branch_compare_state(&project_id, &target_branch) {
-            Ok(view) => {
-                let reply = WorkerReply::BranchCompareAck { view };
                 send_worker_reply(outbound_tx, request_id, &reply).await?;
             }
             Err(message) => {

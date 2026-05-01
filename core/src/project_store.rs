@@ -14,7 +14,9 @@ use crate::agents::{
     effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus,
     DEFAULT_AGENT_ID,
 };
-use crate::git_actions::{default_commit_generation_script, default_pr_generation_script};
+use crate::git_actions::{
+    default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
+};
 use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 
@@ -289,13 +291,6 @@ pub struct BranchCompareFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectBranchCompareState {
-    pub current_branch: Option<String>,
-    pub target_branch: String,
-    pub files: Vec<BranchCompareFile>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchCommit {
     pub id: String,
     pub short_id: String,
@@ -502,6 +497,13 @@ pub struct PersistedSectionState {
     pub tabs: Vec<PersistedTerminalTab>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchivedProjectActions {
+    pub project_path: PathBuf,
+    #[serde(default)]
+    pub actions: Vec<ProjectAction>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(default = "default_left_sidebar_open")]
@@ -529,9 +531,15 @@ pub struct UiState {
     #[serde(default)]
     pub git_pr_generation_script: Option<String>,
     #[serde(default)]
+    pub git_commit_generation_llm: GitActionLlmSettings,
+    #[serde(default)]
+    pub git_pr_generation_llm: GitActionLlmSettings,
+    #[serde(default)]
     pub shortcuts: ShortcutSettings,
     #[serde(default)]
     pub global_actions: Vec<ProjectAction>,
+    #[serde(default)]
+    pub archived_project_actions: Vec<ArchivedProjectActions>,
     #[serde(default)]
     pub show_sidebar_git_metadata: bool,
 }
@@ -551,8 +559,11 @@ impl Default for UiState {
             agent_launch_args: HashMap::new(),
             git_commit_generation_script: None,
             git_pr_generation_script: None,
+            git_commit_generation_llm: GitActionLlmSettings::default(),
+            git_pr_generation_llm: GitActionLlmSettings::default(),
             shortcuts: ShortcutSettings::default(),
             global_actions: Vec::new(),
+            archived_project_actions: Vec::new(),
             show_sidebar_git_metadata: false,
         }
     }
@@ -620,9 +631,14 @@ pub fn project_action_agent_launch_args(action: &ProjectAction) -> Result<Vec<St
                 }
             }
             if !trimmed_traits.is_empty() {
+                let reasoning_effort = if trimmed_traits == "off" {
+                    "none"
+                } else {
+                    trimmed_traits
+                };
                 args.extend([
                     "--config".to_string(),
-                    format!("model_reasoning_effort=\"{trimmed_traits}\""),
+                    format!("model_reasoning_effort=\"{reasoning_effort}\""),
                 ]);
             }
             if !trimmed_mode.is_empty() && trimmed_mode != "default" && trimmed_mode != "plan" {
@@ -1188,45 +1204,9 @@ impl ProjectStore {
                 (candidate.repo_id == repo_id).then(|| candidate_id.clone())
             })
             .collect::<HashSet<_>>();
-        let removed_section_prefixes = removed_project_ids
-            .iter()
-            .map(|removed_project_id| format!("{removed_project_id}::"))
-            .collect::<Vec<_>>();
 
         for removed_project_id in &removed_project_ids {
-            self.projects_by_id.remove(removed_project_id);
-        }
-        self.project_order
-            .retain(|candidate_id| !removed_project_ids.contains(candidate_id));
-
-        let removed_task_ids = self
-            .tasks_by_id
-            .values()
-            .filter(|task| {
-                removed_project_ids.contains(&task.root_project_id)
-                    || removed_project_ids.contains(&task.target_project_id)
-            })
-            .map(|task| task.id.clone())
-            .collect::<Vec<_>>();
-        for task_id in removed_task_ids {
-            let _ = self.remove_task_by_id(&task_id);
-        }
-        self.terminal_sections.retain(|section_id, _| {
-            !removed_section_prefixes
-                .iter()
-                .any(|prefix| section_id.starts_with(prefix))
-        });
-        if self
-            .ui
-            .last_active_section_id
-            .as_ref()
-            .is_some_and(|section_id| {
-                removed_section_prefixes
-                    .iter()
-                    .any(|prefix| section_id.starts_with(prefix))
-            })
-        {
-            self.ui.last_active_section_id = None;
+            let _ = self.remove_exact_project(removed_project_id);
         }
 
         if !self
@@ -1240,6 +1220,103 @@ impl ProjectStore {
         }
         self.rebuild_runtime_views();
         self.save();
+    }
+
+    pub fn remove_worktree_project(&mut self, project_id: &str) -> Option<Project> {
+        let project = self.projects_by_id.get(project_id)?;
+        if project.kind != ProjectKind::Worktree {
+            return None;
+        }
+
+        let removed_project = self.remove_exact_project(project_id)?;
+        if !self
+            .projects_by_id
+            .values()
+            .any(|candidate| candidate.repo_id == removed_project.repo_id)
+        {
+            self.repos.remove(&removed_project.repo_id);
+            self.ui.expanded_repo_ids.remove(&removed_project.repo_id);
+            self.ui
+                .repo_default_commit_actions
+                .remove(&removed_project.repo_id);
+        }
+        self.rebuild_runtime_views();
+        self.save();
+        Some(removed_project)
+    }
+
+    fn remove_exact_project(&mut self, project_id: &str) -> Option<Project> {
+        let removed_project = self.projects_by_id.remove(project_id)?;
+        self.archive_project_actions(&removed_project);
+        self.project_order
+            .retain(|candidate_id| candidate_id != project_id);
+
+        let removed_task_ids = self
+            .tasks_by_id
+            .values()
+            .filter(|task| {
+                task.root_project_id == project_id || task.target_project_id == project_id
+            })
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        for task_id in removed_task_ids {
+            let _ = self.remove_task_by_id(&task_id);
+        }
+
+        let removed_section_prefix = format!("{project_id}::");
+        self.terminal_sections
+            .retain(|section_id, _| !section_id.starts_with(&removed_section_prefix));
+        if self
+            .ui
+            .last_active_section_id
+            .as_deref()
+            .is_some_and(|section_id| section_id.starts_with(&removed_section_prefix))
+        {
+            self.ui.last_active_section_id = None;
+        }
+
+        Some(removed_project)
+    }
+
+    fn archive_project_actions(&mut self, project: &Project) {
+        if project.actions.is_empty() {
+            return;
+        }
+
+        let archived = self
+            .ui
+            .archived_project_actions
+            .iter_mut()
+            .find(|archived| archived.project_path == project.path);
+        if let Some(archived) = archived {
+            for action in project.actions.iter().cloned() {
+                upsert_action(&mut archived.actions, action);
+            }
+        } else {
+            self.ui
+                .archived_project_actions
+                .push(ArchivedProjectActions {
+                    project_path: project.path.clone(),
+                    actions: project.actions.clone(),
+                });
+        }
+    }
+
+    fn restore_archived_project_actions(&mut self, project: &mut Project) {
+        let Some(archive_index) = self
+            .ui
+            .archived_project_actions
+            .iter()
+            .position(|archived| archived.project_path == project.path)
+        else {
+            return;
+        };
+
+        let archived = self.ui.archived_project_actions.remove(archive_index);
+        for mut action in archived.actions {
+            action.scope = ProjectActionScope::Project;
+            upsert_action(&mut project.actions, action);
+        }
     }
 
     pub fn remove_task(&mut self, root_project_id: &str, task_id: &str) -> Option<Task> {
@@ -1306,6 +1383,18 @@ impl ProjectStore {
         Some((old_section_id, new_section_id))
     }
 
+    pub fn rename_task(&mut self, task_id: &str, name: &str) -> bool {
+        let Some(task) = self.tasks_by_id.get_mut(task_id) else {
+            return false;
+        };
+        if task.name == name {
+            return false;
+        }
+        task.name = name.to_string();
+        self.rebuild_runtime_views();
+        true
+    }
+
     pub fn set_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
         if pinned {
             self.ui.pinned_task_ids.insert(task_id.to_string())
@@ -1343,6 +1432,7 @@ impl ProjectStore {
         }
 
         let mut project = prepared.project;
+        self.restore_archived_project_actions(&mut project);
         project.repo_id = repo_id;
         self.project_order.push(project.id.clone());
         self.projects_by_id.insert(project.id.clone(), project);
@@ -1396,15 +1486,9 @@ impl ProjectStore {
                 )
             })
             .collect();
-        self.projects_by_id = projects
-            .iter()
-            .map(|p| (p.id.clone(), p.clone()))
-            .collect();
+        self.projects_by_id = projects.iter().map(|p| (p.id.clone(), p.clone())).collect();
         self.project_order = projects.iter().map(|p| p.id.clone()).collect();
-        self.tasks_by_id = tasks
-            .iter()
-            .map(|t| (t.id.clone(), t.clone()))
-            .collect();
+        self.tasks_by_id = tasks.iter().map(|t| (t.id.clone(), t.clone())).collect();
         self.task_ids_by_root_project.clear();
         for task in &tasks {
             self.task_ids_by_root_project
@@ -1561,6 +1645,32 @@ impl ProjectStore {
             return false;
         }
 
+        self.save();
+        true
+    }
+
+    pub fn git_commit_generation_llm(&self) -> GitActionLlmSettings {
+        self.ui.git_commit_generation_llm.clone()
+    }
+
+    pub fn set_git_commit_generation_llm(&mut self, settings: GitActionLlmSettings) -> bool {
+        if self.ui.git_commit_generation_llm == settings {
+            return false;
+        }
+        self.ui.git_commit_generation_llm = settings;
+        self.save();
+        true
+    }
+
+    pub fn git_pr_generation_llm(&self) -> GitActionLlmSettings {
+        self.ui.git_pr_generation_llm.clone()
+    }
+
+    pub fn set_git_pr_generation_llm(&mut self, settings: GitActionLlmSettings) -> bool {
+        if self.ui.git_pr_generation_llm == settings {
+            return false;
+        }
+        self.ui.git_pr_generation_llm = settings;
         self.save();
         true
     }
@@ -2059,65 +2169,6 @@ pub fn fetch_project_git_state(path: &Path) -> Result<ProjectGitState, String> {
     }
 
     Ok(read_project_git_state(path, true))
-}
-
-pub fn read_project_branch_compare_state(
-    path: &Path,
-    target_branch: &str,
-) -> Result<ProjectBranchCompareState, String> {
-    let spec = format!("{target_branch}...HEAD");
-    let name_status_output = git_command(path)
-        .args(["diff", "--name-status", "-M", "-z", &spec])
-        .output()
-        .map_err(|error| {
-            format!("Could not compare the current branch against {target_branch}: {error}")
-        })?;
-    if !name_status_output.status.success() {
-        return Err(format_git_command_failure(
-            &format!("Could not compare the current branch against {target_branch}"),
-            &name_status_output,
-        ));
-    }
-
-    let numstat_output = git_command(path)
-        .args(["diff", "--numstat", "-M", "-z", &spec])
-        .output()
-        .map_err(|error| {
-            format!("Could not inspect compare stats against {target_branch}: {error}")
-        })?;
-    if !numstat_output.status.success() {
-        return Err(format_git_command_failure(
-            &format!("Could not inspect compare stats against {target_branch}"),
-            &numstat_output,
-        ));
-    }
-
-    let mut stats_by_key = parse_branch_compare_numstat_entries(&numstat_output.stdout)
-        .into_iter()
-        .map(|entry| ((entry.path.clone(), entry.original_path.clone()), entry))
-        .collect::<HashMap<_, _>>();
-
-    let mut files = parse_branch_compare_name_status_entries(&name_status_output.stdout)
-        .into_iter()
-        .map(|entry| {
-            let stats = stats_by_key.remove(&(entry.path.clone(), entry.original_path.clone()));
-            BranchCompareFile {
-                path: entry.path,
-                original_path: entry.original_path,
-                status: entry.status,
-                additions: stats.as_ref().map_or(0, |entry| entry.additions),
-                deletions: stats.as_ref().map_or(0, |entry| entry.deletions),
-            }
-        })
-        .collect::<Vec<_>>();
-
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-
-    Ok(ProjectBranchCompareState {
-        current_branch: git_current_branch(path),
-        target_branch: target_branch.to_string(),
-        files,
-    })
 }
 
 pub fn read_project_branch_commit_state(
@@ -3689,11 +3740,22 @@ fn worktree_parent_dir_with_root(repo_path: &Path, worktrees_root: Option<PathBu
         .unwrap_or_else(|| repo_path.parent().unwrap_or(repo_path).to_path_buf())
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_WORKTREES_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+fn configured_worktrees_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(root) = TEST_WORKTREES_ROOT.with(|root| root.borrow().clone()) {
+        return Some(root);
+    }
+
+    dirs::home_dir().map(|home| app_worktrees_root(&home))
+}
+
 fn unique_worktree_path(repo_path: &Path, slug: &str) -> PathBuf {
-    let parent = worktree_parent_dir_with_root(
-        repo_path,
-        dirs::home_dir().map(|home| app_worktrees_root(&home)),
-    );
+    let parent = worktree_parent_dir_with_root(repo_path, configured_worktrees_root());
 
     for suffix in 0..1000 {
         let directory_name = if suffix == 0 {
@@ -3915,13 +3977,37 @@ mod tests {
         parse_git_diff_patch, parse_recent_branch_commit_page, project_action_agent_launch_args,
         read_changed_file_diff, read_project_git_state, remove_task_worktree, review_worktree_slug,
         slugify_branch_name, unique_branch_name_for_repo, worktree_parent_dir_with_root,
-        BranchCompareNameStatusEntry, BranchCompareNumStatEntry, CreateBranchMode, DiffRowKind,
-        GitDiffSelection, GitDiffSource, PersistedSectionState, PersistedTerminalTab, Project,
-        ProjectAction, ProjectActionAccess, ProjectActionIcon, ProjectActionKind,
-        ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings, ProjectCheckoutState,
-        ProjectKind, RepoDefaultCommitAction, RepoRecord, StoreFile, Task, TaskKind,
-        TaskWorktreeBranchMode, UiState,
+        ArchivedProjectActions, BranchCompareNameStatusEntry, BranchCompareNumStatEntry,
+        CreateBranchMode, DiffRowKind, GitDiffSelection, GitDiffSource, PersistedSectionState,
+        PersistedTerminalTab, PreparedProject, Project, ProjectAction, ProjectActionAccess,
+        ProjectActionIcon, ProjectActionKind, ProjectActionScope, ProjectBranchSettingField,
+        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
+        RepoRecord, StoreFile, Task, TaskKind, TaskWorktreeBranchMode, UiState,
     };
+
+    struct TestWorktreesRoot {
+        _temp_dir: tempfile::TempDir,
+    }
+
+    impl TestWorktreesRoot {
+        fn new() -> Self {
+            let temp_dir = tempfile::tempdir().expect("test worktrees root should exist");
+            super::TEST_WORKTREES_ROOT.with(|root| {
+                *root.borrow_mut() = Some(temp_dir.path().join("worktrees"));
+            });
+            Self {
+                _temp_dir: temp_dir,
+            }
+        }
+    }
+
+    impl Drop for TestWorktreesRoot {
+        fn drop(&mut self) {
+            super::TEST_WORKTREES_ROOT.with(|root| {
+                *root.borrow_mut() = None;
+            });
+        }
+    }
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
         Project {
@@ -4034,6 +4120,41 @@ mod tests {
     }
 
     #[test]
+    fn rename_task_refreshes_runtime_task_view() {
+        let mut store = sample_project_store(sample_project("root", None));
+        store.insert_task(Task {
+            id: "task-1".to_string(),
+            name: "Old task".to_string(),
+            kind: TaskKind::Direct,
+            root_project_id: "root".to_string(),
+            target_project_id: "root".to_string(),
+            branch_name: "feature/login".to_string(),
+            section_id: "root::feature/login::task-1".to_string(),
+            worktree_project_id: None,
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        });
+
+        assert!(store.rename_task("task-1", "New task"));
+        assert_eq!(
+            store.task("task-1").map(|task| task.name.as_str()),
+            Some("New task")
+        );
+        assert_eq!(
+            store
+                .tasks
+                .get("root")
+                .and_then(|tasks| tasks.iter().find(|task| task.id == "task-1"))
+                .map(|task| task.name.as_str()),
+            Some("New task")
+        );
+        assert!(!store.rename_task("task-1", "New task"));
+        assert!(!store.rename_task("missing", "Anything"));
+    }
+
+    #[test]
     fn formats_index_lock_error_for_toasts() {
         let message = format_git_command_error(
             "Could not unstage staged changes",
@@ -4122,6 +4243,7 @@ mod tests {
 
     #[test]
     fn create_task_worktree_creates_unique_branch_from_selected_source_branch() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         run_git(repo.path(), &["switch", "-c", "feature/base"]);
         fs::write(repo.path().join("file.txt"), "base\nfeature\n").expect("file should write");
@@ -4155,6 +4277,7 @@ mod tests {
 
     #[test]
     fn create_task_worktree_uses_existing_branch_without_creating_new_branch() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         run_git(repo.path(), &["branch", "feature/existing"]);
 
@@ -4186,6 +4309,7 @@ mod tests {
 
     #[test]
     fn create_task_worktree_checks_out_remote_only_existing_branch() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         let origin = tempfile::tempdir().expect("origin dir should exist");
         run_git(origin.path(), &["init", "--bare"]);
@@ -4281,6 +4405,7 @@ mod tests {
 
     #[test]
     fn create_task_worktree_errors_when_existing_branch_is_checked_out_elsewhere() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
 
         let error = create_task_worktree(
@@ -4340,6 +4465,7 @@ mod tests {
 
     #[test]
     fn creates_clean_worktree_branch_without_migration() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         fs::write(repo.path().join("file.txt"), "base\nchanged\n").expect("file should write");
 
@@ -4369,6 +4495,7 @@ mod tests {
 
     #[test]
     fn migrates_staged_unstaged_and_untracked_changes_to_worktree() {
+        let _worktrees_root = TestWorktreesRoot::new();
         let repo = init_repo();
         fs::write(repo.path().join("file.txt"), "base\nchanged\n").expect("file should write");
         fs::write(repo.path().join("staged.txt"), "staged\n").expect("file should write");
@@ -4452,6 +4579,7 @@ mod tests {
         assert_eq!(project.branch_settings, ProjectBranchSettings::default());
         assert!(project.actions.is_empty());
         assert!(store.ui.global_actions.is_empty());
+        assert!(store.ui.archived_project_actions.is_empty());
     }
 
     #[test]
@@ -4510,17 +4638,32 @@ mod tests {
                 access: ProjectActionAccess::WorkspaceWrite,
             },
         });
+        store
+            .ui
+            .archived_project_actions
+            .push(ArchivedProjectActions {
+                project_path: PathBuf::from("/tmp/removed-root"),
+                actions: vec![sample_shell_action(
+                    "archived-action",
+                    ProjectActionScope::Project,
+                )],
+            });
 
         let json = serde_json::to_string(&store).expect("store should serialize");
         let round_trip: StoreFile = serde_json::from_str(&json).expect("store should deserialize");
 
         assert_eq!(round_trip.projects["root"].actions.len(), 1);
         assert_eq!(round_trip.ui.global_actions.len(), 1);
+        assert_eq!(round_trip.ui.archived_project_actions.len(), 1);
         assert_eq!(
             round_trip.projects["root"].actions[0].kind,
             ProjectActionKind::Shell {
                 command: "cargo test".to_string()
             }
+        );
+        assert_eq!(
+            round_trip.ui.archived_project_actions[0].actions[0].id,
+            "archived-action"
         );
     }
 
@@ -4599,6 +4742,54 @@ mod tests {
         assert_eq!(visible_actions.len(), 1);
         assert_eq!(visible_actions[0].id, "action-ok");
         assert_eq!(visible_actions[0].scope, ProjectActionScope::Project);
+    }
+
+    #[test]
+    fn insert_prepared_project_restores_archived_actions_for_same_path() {
+        let mut project = sample_project("root", None);
+        project.actions.push(sample_shell_action(
+            "action-ok",
+            ProjectActionScope::Project,
+        ));
+        let project_path = project.path.clone();
+        let mut store = sample_project_store(project);
+
+        store.remove_project("root");
+        assert_eq!(store.ui.archived_project_actions.len(), 1);
+
+        let prepared_project = Project {
+            id: "new-root".to_string(),
+            repo_id: "new-repo".to_string(),
+            name: "Project new-root".to_string(),
+            path: project_path,
+            kind: ProjectKind::Root,
+            checkout: ProjectCheckoutState::default(),
+            branch_settings: ProjectBranchSettings::default(),
+            actions: Vec::new(),
+            worktree_name: None,
+            repo_common_dir: None,
+        };
+        let inserted = store.insert_prepared_project(PreparedProject {
+            project: prepared_project,
+            repo: RepoRecord {
+                id: "new-repo".to_string(),
+                common_dir: None,
+                branch_order: Vec::new(),
+                branches_by_name: HashMap::new(),
+            },
+        });
+
+        assert!(inserted);
+        assert!(store.ui.archived_project_actions.is_empty());
+        let restored_project = store
+            .project("new-root")
+            .expect("re-added project should exist");
+        assert_eq!(restored_project.actions.len(), 1);
+        assert_eq!(restored_project.actions[0].id, "action-ok");
+        assert_eq!(
+            restored_project.actions[0].scope,
+            ProjectActionScope::Project
+        );
     }
 
     #[test]
@@ -4796,8 +4987,11 @@ mod tests {
                 agent_launch_args: HashMap::new(),
                 git_commit_generation_script: None,
                 git_pr_generation_script: None,
+                git_commit_generation_llm: crate::git_actions::GitActionLlmSettings::default(),
+                git_pr_generation_llm: crate::git_actions::GitActionLlmSettings::default(),
                 shortcuts: ShortcutSettings::default(),
                 global_actions: Vec::new(),
+                archived_project_actions: Vec::new(),
                 show_sidebar_git_metadata: false,
             },
         };
@@ -4944,6 +5138,10 @@ mod tests {
     fn remove_project_should_remove_worktree_siblings_in_same_repo_group() {
         let mut root_project = sample_project("root", None);
         root_project.repo_id = "repo".to_string();
+        root_project.actions.push(sample_shell_action(
+            "action-ok",
+            ProjectActionScope::Project,
+        ));
         let mut worktree_project = sample_project("wt", Some("wt"));
         worktree_project.repo_id = "repo".to_string();
 
@@ -5093,6 +5291,243 @@ mod tests {
         assert!(store.repos.is_empty());
         assert!(store.ui.expanded_repo_ids.is_empty());
         assert!(store.ui.repo_default_commit_actions.is_empty());
+        assert_eq!(store.ui.archived_project_actions.len(), 1);
+        assert_eq!(
+            store.ui.archived_project_actions[0].project_path,
+            PathBuf::from("/tmp/root")
+        );
+        assert_eq!(store.ui.archived_project_actions[0].actions.len(), 1);
+        assert_eq!(
+            store.ui.archived_project_actions[0].actions[0].id,
+            "action-ok"
+        );
+        assert_eq!(store.ui.last_active_section_id, None);
+    }
+
+    #[test]
+    fn remove_worktree_project_should_preserve_root_project_state() {
+        let mut root_project = sample_project("root", None);
+        root_project.repo_id = "repo".to_string();
+        let mut worktree_project = sample_project("wt", Some("wt"));
+        worktree_project.repo_id = "repo".to_string();
+        let mut other_project = sample_project("other", None);
+        other_project.repo_id = "other-repo".to_string();
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([
+                (
+                    "repo".to_string(),
+                    RepoRecord {
+                        id: "repo".to_string(),
+                        common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                        branch_order: vec!["main".to_string(), "feature/worktree".to_string()],
+                        branches_by_name: HashMap::from([(
+                            "main".to_string(),
+                            super::RepoBranchRecord {
+                                name: "main".to_string(),
+                                last_commit_relative: "1 day ago".to_string(),
+                                is_default: true,
+                                ahead_count: 0,
+                                behind_count: 0,
+                            },
+                        )]),
+                    },
+                ),
+                (
+                    "other-repo".to_string(),
+                    RepoRecord {
+                        id: "other-repo".to_string(),
+                        common_dir: Some(PathBuf::from("/tmp/other/.git")),
+                        branch_order: vec!["main".to_string()],
+                        branches_by_name: HashMap::new(),
+                    },
+                ),
+            ]),
+            projects_by_id: HashMap::from([
+                ("root".to_string(), root_project),
+                ("wt".to_string(), worktree_project),
+                ("other".to_string(), other_project),
+            ]),
+            projects: Vec::new(),
+            project_order: vec!["root".to_string(), "wt".to_string(), "other".to_string()],
+            tasks_by_id: HashMap::from([
+                (
+                    "task-root".to_string(),
+                    Task {
+                        id: "task-root".to_string(),
+                        name: "Root task".to_string(),
+                        kind: TaskKind::Direct,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "root".to_string(),
+                        branch_name: "main".to_string(),
+                        section_id: "root::main::task-root".to_string(),
+                        worktree_project_id: None,
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                    },
+                ),
+                (
+                    "task-worktree".to_string(),
+                    Task {
+                        id: "task-worktree".to_string(),
+                        name: "Worktree task".to_string(),
+                        kind: TaskKind::Worktree,
+                        root_project_id: "root".to_string(),
+                        target_project_id: "wt".to_string(),
+                        branch_name: "feature/worktree".to_string(),
+                        section_id: "wt::feature/worktree::task-worktree".to_string(),
+                        worktree_project_id: Some("wt".to_string()),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Claude Code".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt")),
+                    },
+                ),
+            ]),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::from([(
+                "root".to_string(),
+                vec!["task-root".to_string(), "task-worktree".to_string()],
+            )]),
+            terminal_sections: HashMap::from([
+                (
+                    "root::main::task-root".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/root")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Terminal".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::NotStarted,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                    },
+                ),
+                (
+                    "wt::feature/worktree::task-worktree".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/wt")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Claude Code".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: Some(AgentProviderKind::ClaudeCode),
+                            launch_config: Some(TerminalLaunchConfig::for_provider(
+                                AgentProviderKind::ClaudeCode,
+                            )),
+                            restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                    },
+                ),
+                (
+                    "other::main::task-other".to_string(),
+                    PersistedSectionState {
+                        active_tab_id: "0".to_string(),
+                        next_tab_id: 1,
+                        cwd: Some(PathBuf::from("/tmp/other")),
+                        tabs: vec![PersistedTerminalTab {
+                            id: "0".to_string(),
+                            title: "Other".to_string(),
+                            pinned: false,
+                            fixed_title: None,
+                            provider: None,
+                            launch_config: Some(TerminalLaunchConfig::default()),
+                            restore_status: TerminalRestoreStatus::Ready,
+                            failure_message: None,
+                            failure_details: None,
+                        }],
+                    },
+                ),
+            ]),
+            ui: UiState {
+                expanded_repo_ids: HashSet::from(["repo".to_string(), "other-repo".to_string()]),
+                repo_default_commit_actions: HashMap::from([(
+                    "repo".to_string(),
+                    RepoDefaultCommitAction::CommitAndPush,
+                )]),
+                last_active_section_id: Some("wt::feature/worktree::task-worktree".to_string()),
+                ..UiState::default()
+            },
+            file_path: PathBuf::from("/tmp/projects.json"),
+        };
+        store.refresh_runtime_views();
+
+        let removed = store.remove_worktree_project("wt");
+
+        assert_eq!(removed.map(|project| project.id), Some("wt".to_string()));
+        assert!(store.project("root").is_some());
+        assert!(store.project("wt").is_none());
+        assert!(store.project("other").is_some());
+        assert_eq!(
+            store.project_order,
+            vec!["root".to_string(), "other".to_string()]
+        );
+        assert!(store.task("task-root").is_some());
+        assert!(store.task("task-worktree").is_none());
+        assert_eq!(
+            store.tasks.get("root").map(|tasks| tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>()),
+            Some(vec!["task-root"])
+        );
+        assert!(store
+            .terminal_sections
+            .contains_key("root::main::task-root"));
+        assert!(store
+            .terminal_sections
+            .contains_key("other::main::task-other"));
+        assert!(!store
+            .terminal_sections
+            .contains_key("wt::feature/worktree::task-worktree"));
+        assert!(store.repos.contains_key("repo"));
+        assert_eq!(
+            store
+                .repos
+                .get("repo")
+                .map(|repo| repo.branch_order.as_slice()),
+            Some(["main".to_string(), "feature/worktree".to_string()].as_slice())
+        );
+        assert!(store.ui.expanded_repo_ids.contains("repo"));
+        assert_eq!(
+            store.ui.repo_default_commit_actions.get("repo"),
+            Some(&RepoDefaultCommitAction::CommitAndPush)
+        );
         assert_eq!(store.ui.last_active_section_id, None);
     }
 
@@ -5677,8 +6112,7 @@ mod tests {
             }
         });
 
-        let store: StoreFile =
-            serde_json::from_value(json).expect("store JSON should deserialize");
+        let store: StoreFile = serde_json::from_value(json).expect("store JSON should deserialize");
         let json = serde_json::to_value(&store).expect("store JSON should serialize");
 
         assert_eq!(
@@ -5719,10 +6153,7 @@ mod tests {
             .enabled_open_in_apps
             .as_ref()
             .is_some_and(|apps| apps.contains(&OpenInAppKind::Ghostty)));
-        assert_eq!(
-            store.ui.preferred_open_in_app,
-            Some(OpenInAppKind::Ghostty)
-        );
+        assert_eq!(store.ui.preferred_open_in_app, Some(OpenInAppKind::Ghostty));
     }
 
     #[test]

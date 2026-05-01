@@ -14,6 +14,7 @@ use crate::app::{
 };
 use crate::mobile::MobileView;
 use crate::project_store::{Branch, Project, TaskKind};
+use crate::project_workflows;
 use crate::shortcuts::{shortcut_matches_event, ShortcutAction};
 use crate::theme;
 
@@ -211,26 +212,6 @@ impl AnotherOneApp {
             .collect()
     }
 
-    fn removed_repo_ids_without_remaining_projects(
-        projects: &[Project],
-        removed_project_ids: &std::collections::HashSet<String>,
-    ) -> std::collections::HashSet<String> {
-        let removed_repo_ids = projects
-            .iter()
-            .filter(|project| removed_project_ids.contains(&project.id))
-            .map(|project| project.repo_id.clone())
-            .collect::<std::collections::HashSet<_>>();
-
-        removed_repo_ids
-            .into_iter()
-            .filter(|repo_id| {
-                !projects.iter().any(|project| {
-                    project.repo_id == *repo_id && !removed_project_ids.contains(&project.id)
-                })
-            })
-            .collect()
-    }
-
     fn project_group_remove_confirm(
         &self,
         root_project_id: &str,
@@ -254,19 +235,10 @@ impl AnotherOneApp {
         })
     }
 
-    fn fallback_section_after_project_removal(&self) -> Option<(SectionId, PathBuf)> {
-        let project = self.project_store.projects.first()?;
-        let branch_name = self.project_store.current_branch_name(&project.id)?;
-        Some((
-            SectionId::new(&project.id, &branch_name),
-            project.path.clone(),
-        ))
-    }
-
     fn remove_project_group_ids(&mut self, project_ids: &[String], cx: &mut Context<Self>) {
         let project_id_set: std::collections::HashSet<String> =
             project_ids.iter().cloned().collect();
-        let removed_repo_ids = Self::removed_repo_ids_without_remaining_projects(
+        let removed_repo_ids = project_workflows::removed_repo_ids_without_remaining_projects(
             &self.project_store.projects,
             &project_id_set,
         );
@@ -274,6 +246,49 @@ impl AnotherOneApp {
         for project_id in project_ids {
             self.project_store.remove_project(project_id);
         }
+        self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
+        let fallback_section =
+            project_workflows::fallback_section_after_project_removal(&self.project_store);
+        self.project_store.save();
+
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.remove_project_sections(&project_id_set, cx);
+            if workspace.active_section.is_none() && workspace.active_project_page.is_none() {
+                if let Some((section_id, cwd)) = fallback_section.clone() {
+                    workspace.activate_section(section_id, Some(cwd), None, cx);
+                }
+            }
+        });
+
+        cx.notify();
+    }
+
+    fn remove_worktree_project_id(
+        &mut self,
+        project_id: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Project> {
+        let project_id_set = std::collections::HashSet::from([project_id.to_string()]);
+        let removed_repo_ids = project_workflows::removed_repo_ids_without_remaining_projects(
+            &self.project_store.projects,
+            &project_id_set,
+        );
+        let removed_project = self.project_store.remove_worktree_project(project_id)?;
+        self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
+
+        self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.remove_project_sections(&project_id_set, cx);
+        });
+
+        cx.notify();
+        Some(removed_project)
+    }
+
+    fn clear_removed_project_references(
+        &mut self,
+        project_id_set: &std::collections::HashSet<String>,
+        removed_repo_ids: &std::collections::HashSet<String>,
+    ) {
         self.changed_files
             .retain(|project_id, _| !project_id_set.contains(project_id));
         self.project_github_links
@@ -337,19 +352,6 @@ impl AnotherOneApp {
         self.project_github_link_requests
             .retain(|project_id| !project_id_set.contains(project_id));
         self.project_remove_confirm = None;
-        let fallback_section = self.fallback_section_after_project_removal();
-        self.project_store.save();
-
-        self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.remove_project_sections(&project_id_set, cx);
-            if workspace.active_section.is_none() && workspace.active_project_page.is_none() {
-                if let Some((section_id, cwd)) = fallback_section.clone() {
-                    workspace.activate_section(section_id, Some(cwd), None, cx);
-                }
-            }
-        });
-
-        cx.notify();
     }
 
     pub(crate) fn request_remove_project_group(
@@ -402,7 +404,8 @@ impl AnotherOneApp {
             .projects
             .iter()
             .any(|project| project.id == preferred_project_id);
-        let fallback = self.fallback_section_after_project_removal();
+        let fallback =
+            project_workflows::fallback_section_after_project_removal(&self.project_store);
         self.workspace_pane.update(cx, |workspace, cx| {
             workspace.restore_view(preferred_project_id, preferred_project_exists, fallback, cx);
         });
@@ -453,6 +456,21 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    fn sidebar_other_tasks_in_worktree(
+        &self,
+        worktree_project_id: &str,
+        task_id: Option<&str>,
+    ) -> usize {
+        self.project_store
+            .tasks
+            .values()
+            .flatten()
+            .filter(|task| {
+                task.target_project_id == worktree_project_id && Some(task.id.as_str()) != task_id
+            })
+            .count()
+    }
+
     fn build_sidebar_task_delete_confirm(
         &self,
         project_id: &str,
@@ -468,6 +486,14 @@ impl AnotherOneApp {
             .find(|project| project.id == project_id)?
             .clone();
         let root_project = self.sidebar_root_project_for_project(project_id)?;
+        let other_tasks_in_worktree = is_worktree
+            .then(|| self.sidebar_other_tasks_in_worktree(project_id, task_id))
+            .unwrap_or(0);
+        let removing_worktree = is_worktree && other_tasks_in_worktree == 0;
+        let has_unstaged_changes = removing_worktree
+            && crate::project_store::list_changed_files(&project.path)
+                .iter()
+                .any(|changed| changed.has_unstaged_changes());
 
         Some(SidebarTaskDeleteConfirmState {
             project_id: project_id.to_string(),
@@ -478,6 +504,9 @@ impl AnotherOneApp {
             project_path: project.path,
             repo_path: root_project.path,
             is_worktree,
+            other_tasks_in_worktree,
+            force_delete_branch: removing_worktree && !branch_name.trim().is_empty(),
+            has_unstaged_changes,
         })
     }
 
@@ -578,6 +607,27 @@ impl AnotherOneApp {
             return;
         }
 
+        if confirm.other_tasks_in_worktree > 0 {
+            self.sidebar_task_delete_confirm = None;
+            let Some(task_id) = confirm.task_id.as_deref() else {
+                self.show_error_toast("Could not find the selected task.", cx);
+                return;
+            };
+            if self.sidebar_task_rename.as_ref().is_some_and(|rename| {
+                rename.project_id == confirm.project_id && rename.row_id == task_id
+            }) {
+                self.sidebar_task_rename = None;
+            }
+            self.delete_direct_sidebar_task(
+                &confirm.root_project_id,
+                task_id,
+                &confirm.task_name,
+                &confirm.project_id,
+                cx,
+            );
+            return;
+        }
+
         let was_active_project = self
             .workspace_pane
             .read(cx)
@@ -588,11 +638,13 @@ impl AnotherOneApp {
         match crate::project_store::remove_task_worktree(&confirm.repo_path, &confirm.project_path)
         {
             Ok(()) => {
-                if let Err(error) = crate::project_store::delete_local_branch(
-                    &confirm.repo_path,
-                    &confirm.branch_name,
-                ) {
-                    self.show_warning_toast(error, cx);
+                if confirm.force_delete_branch {
+                    if let Err(error) = crate::project_store::delete_local_branch(
+                        &confirm.repo_path,
+                        &confirm.branch_name,
+                    ) {
+                        self.show_warning_toast(error, cx);
+                    }
                 }
 
                 let worktree_display_name =
@@ -638,7 +690,10 @@ impl AnotherOneApp {
         }
 
         self.sidebar_task_delete_confirm = None;
-        self.remove_project_group_ids(std::slice::from_ref(&confirm.project_id), cx);
+        let removed_worktree_project = self.remove_worktree_project_id(&confirm.project_id, cx);
+        if removed_worktree_project.is_none() {
+            self.project_store.save();
+        }
         if was_active_project
             && self
                 .project_store
@@ -1082,8 +1137,7 @@ impl AnotherOneApp {
         };
 
         if final_name != rename.original_name {
-            if let Some(task) = self.project_store.find_task_mut(&rename.row_id) {
-                task.name = final_name;
+            if self.project_store.rename_task(&rename.row_id, &final_name) {
                 self.project_store.save();
             }
         }
@@ -1424,7 +1478,7 @@ impl AnotherOneApp {
         let meta_indent = 20.;
         let show_git_metadata = self.project_store.ui.show_sidebar_git_metadata;
         let meta = [
-            (entry.task_name != entry.branch.name).then(|| entry.branch.name.clone()),
+            (!entry.branch.name.is_empty()).then(|| entry.branch.name.clone()),
             (show_git_metadata && !entry.branch.last_commit_relative.is_empty())
                 .then(|| entry.branch.last_commit_relative.clone()),
         ]
@@ -1443,9 +1497,9 @@ impl AnotherOneApp {
             .sidebar_task_menu
             .as_ref()
             .is_some_and(|menu| menu.project_id == project_id && menu.row_id == row_id);
-        let keep_delete_visible = !is_editing && menu_open;
+        let keep_row_controls_visible = !is_editing && menu_open;
         let row_tooltip =
-            "Open this task in the terminal. Double-click to rename it or right-click for more actions.";
+            "Open this task in the terminal. Click the pencil or double-click to rename it.";
         let task_label: AnyElement = if let Some(rename) = rename_state {
             div()
                 .id(SharedString::from(format!(
@@ -1523,6 +1577,54 @@ impl AnotherOneApp {
         let has_diff =
             show_git_metadata && (entry.branch.lines_added > 0 || entry.branch.lines_removed > 0);
 
+        let rename_button_project_id = project_id.clone();
+        let rename_button_row_id = row_id.clone();
+        let rename_button_task_name = task_name.clone();
+        right_controls = right_controls.child(
+            div()
+                .id(SharedString::from(format!("task-rename-button-{}", row_id)))
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(22.))
+                .h(px(22.))
+                .rounded_sm()
+                .when(keep_row_controls_visible, |button| button.visible())
+                .when(!keep_row_controls_visible, |button| {
+                    button.invisible().when(!is_editing, |button| {
+                        button.group_hover(row_group.clone(), |button| button.visible())
+                    })
+                })
+                .when(!is_editing, |button| {
+                    button
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(gpui::white().opacity(0.08)))
+                        .tooltip(move |_window, cx| {
+                            Self::action_tooltip_view("Rename this task", cx)
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                this.focus_handle.focus(window, cx);
+                                this.sidebar_task_menu = None;
+                                this.begin_sidebar_task_rename(
+                                    &rename_button_project_id,
+                                    &rename_button_row_id,
+                                    &rename_button_task_name,
+                                    cx,
+                                );
+                            }),
+                        )
+                })
+                .child(
+                    svg()
+                        .path("assets/icons/icons__edit.svg")
+                        .size(px(13.))
+                        .text_color(muted_col),
+                ),
+        );
+
         let delete_project_id = project_id.clone();
         let delete_task_id = task_id.clone();
         let delete_task_name = task_name.clone();
@@ -1543,8 +1645,8 @@ impl AnotherOneApp {
                 .w(px(22.))
                 .h(px(22.))
                 .rounded_sm()
-                .when(keep_delete_visible, |button| button.visible())
-                .when(!keep_delete_visible, |button| {
+                .when(keep_row_controls_visible, |button| button.visible())
+                .when(!keep_row_controls_visible, |button| {
                     button.invisible().when(!is_editing, |button| {
                         button.group_hover(row_group.clone(), |button| button.visible())
                     })
@@ -1994,7 +2096,7 @@ impl AnotherOneApp {
         let delete_is_worktree = menu.is_worktree;
         let delete_preferred_project_id = menu.root_project_id.clone();
         let delete_tooltip = if menu.is_worktree {
-            "Delete this worktree task and remove its local branch"
+            "Delete this worktree task"
         } else {
             "Delete this direct task from the sidebar"
         };
@@ -2148,11 +2250,56 @@ impl AnotherOneApp {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| confirm.task_name.clone());
-        let message: SharedString = format!(
-            "Delete worktree \"{}\" and remove the local branch \"{}\"?",
-            worktree_display_name, confirm.branch_name
-        )
+        let removing_worktree = confirm.is_worktree && confirm.other_tasks_in_worktree == 0;
+        let show_force_delete_branch = removing_worktree && !confirm.branch_name.trim().is_empty();
+        let title: SharedString = if removing_worktree {
+            "Confirm Worktree Deletion"
+        } else {
+            "Confirm Task Deletion"
+        }
         .into();
+        let message: SharedString = if removing_worktree {
+            format!("Delete worktree \"{}\"?", worktree_display_name)
+        } else if confirm.is_worktree {
+            let (other_task_label, other_task_verb) = if confirm.other_tasks_in_worktree == 1 {
+                ("1 other task".to_string(), "uses")
+            } else {
+                (
+                    format!("{} other tasks", confirm.other_tasks_in_worktree),
+                    "use",
+                )
+            };
+            format!(
+                "Delete task \"{}\"? {} still {} worktree \"{}\", so the worktree folder and branch \"{}\" will stay.",
+                confirm.task_name,
+                other_task_label,
+                other_task_verb,
+                worktree_display_name,
+                confirm.branch_name
+            )
+        } else {
+            format!("Delete task \"{}\"?", confirm.task_name)
+        }
+        .into();
+        let detail: SharedString = if removing_worktree {
+            "This permanently removes the worktree folder from disk. Any uncommitted changes inside it will be lost."
+        } else {
+            "This only removes the task from the sidebar. Files and worktrees stay on disk."
+        }
+        .into();
+        let force_delete_label: SharedString =
+            format!("Force delete local branch \"{}\"", confirm.branch_name).into();
+        let force_delete_checked = confirm.force_delete_branch;
+        let cancel_tooltip = if removing_worktree {
+            "Close without deleting the worktree"
+        } else {
+            "Close without deleting the task"
+        };
+        let delete_tooltip = if removing_worktree {
+            "Permanently delete this worktree task"
+        } else {
+            "Delete this task from the sidebar"
+        };
 
         div()
             .id("sidebar-task-delete-confirm-overlay")
@@ -2190,7 +2337,7 @@ impl AnotherOneApp {
             }))
             .child(
                 div()
-                    .w(px(364.))
+                    .w(px(420.))
                     .rounded_lg()
                     .bg(rgb(0x2b2d31))
                     .border_1()
@@ -2202,7 +2349,7 @@ impl AnotherOneApp {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(4.))
+                            .gap(px(8.))
                             .px(px(20.))
                             .pt(px(20.))
                             .pb(px(12.))
@@ -2211,7 +2358,7 @@ impl AnotherOneApp {
                                     .text_size(rems(14. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(title_col)
-                                    .child("Confirm Worktree Deletion"),
+                                    .child(title),
                             )
                             .child(
                                 div()
@@ -2223,8 +2370,90 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(11. / 16.))
                                     .text_color(hsla(0., 0., 0.54, 1.))
-                                    .child("This permanently removes the worktree folder from disk. Any uncommitted changes inside it will be lost."),
-                            ),
+                                    .child(detail),
+                            )
+                            .when(confirm.has_unstaged_changes && removing_worktree, |column| {
+                                column.child(
+                                    div()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(hsla(42. / 360., 0.74, 0.50, 0.36))
+                                        .bg(hsla(42. / 360., 0.74, 0.18, 0.20))
+                                        .px(px(10.))
+                                        .py(px(8.))
+                                        .text_size(rems(11. / 16.))
+                                        .text_color(hsla(42. / 360., 0.82, 0.74, 1.))
+                                        .child("There are unstaged files in this worktree. Deleting it will permanently remove those changes."),
+                                )
+                            })
+                            .when(show_force_delete_branch, |column| {
+                                column.child(
+                                    div()
+                                        .id("sidebar-task-delete-force-branch")
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.))
+                                        .rounded_md()
+                                        .px(px(8.))
+                                        .py(px(6.))
+                                        .cursor_pointer()
+                                        .hover(move |style| style.bg(gpui::white().opacity(0.06)))
+                                        .tooltip(move |_window, cx| {
+                                            Self::action_tooltip_view(
+                                                "Toggle whether deleting this worktree also runs git branch -D on the local branch",
+                                                cx,
+                                            )
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                                if let Some(confirm) =
+                                                    this.sidebar_task_delete_confirm.as_mut()
+                                                {
+                                                    confirm.force_delete_branch =
+                                                        !confirm.force_delete_branch;
+                                                }
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            }),
+                                        )
+                                        .child(
+                                            div()
+                                                .w(px(18.))
+                                                .h(px(18.))
+                                                .rounded(px(4.))
+                                                .border_1()
+                                                .border_color(if force_delete_checked {
+                                                    danger_bg
+                                                } else {
+                                                    border
+                                                })
+                                                .bg(if force_delete_checked {
+                                                    danger_bg
+                                                } else {
+                                                    gpui::transparent_black()
+                                                })
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .when(force_delete_checked, |box_el| {
+                                                    box_el.child(
+                                                        svg()
+                                                            .path("assets/icons/icons__check.svg")
+                                                            .size(px(12.))
+                                                            .text_color(gpui::white()),
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .min_w(px(0.))
+                                                .text_size(rems(12. / 16.))
+                                                .text_color(body_col)
+                                                .child(force_delete_label),
+                                        ),
+                                )
+                            }),
                     )
                     .child(
                         div()
@@ -2245,10 +2474,7 @@ impl AnotherOneApp {
                                     .bg(btn_bg)
                                     .hover(move |style| style.bg(btn_hover))
                                     .tooltip(move |_window, cx| {
-                                        Self::action_tooltip_view(
-                                            "Close without deleting the worktree",
-                                            cx,
-                                        )
+                                        Self::action_tooltip_view(cancel_tooltip, cx)
                                     })
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::MEDIUM)
@@ -2273,10 +2499,7 @@ impl AnotherOneApp {
                                     .bg(danger_bg)
                                     .hover(move |style| style.bg(danger_hover))
                                     .tooltip(move |_window, cx| {
-                                        Self::action_tooltip_view(
-                                            "Permanently delete this worktree task",
-                                            cx,
-                                        )
+                                        Self::action_tooltip_view(delete_tooltip, cx)
                                     })
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -3159,7 +3382,7 @@ mod tests {
         let removed = HashSet::from(["wt-1".to_string()]);
 
         let removed_repo_ids =
-            AnotherOneApp::removed_repo_ids_without_remaining_projects(&projects, &removed);
+            project_workflows::removed_repo_ids_without_remaining_projects(&projects, &removed);
 
         assert!(removed_repo_ids.is_empty());
     }
@@ -3175,7 +3398,7 @@ mod tests {
         let removed = HashSet::from(["root".to_string()]);
 
         let removed_repo_ids =
-            AnotherOneApp::removed_repo_ids_without_remaining_projects(&projects, &removed);
+            project_workflows::removed_repo_ids_without_remaining_projects(&projects, &removed);
 
         assert_eq!(removed_repo_ids, HashSet::from(["repo-a".to_string()]));
     }

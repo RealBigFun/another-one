@@ -11,11 +11,13 @@ mod add_agent_modal;
 mod agent_icons;
 mod app;
 mod assets;
+mod background_ops;
 mod build_info;
 mod create_branch_modal;
 mod custom_actions_modal;
 mod daemon_host;
 mod git_diff_pane;
+mod git_workspace;
 mod iroh_client;
 mod layout;
 mod leakscope;
@@ -29,12 +31,14 @@ mod pair_mobile;
 mod panels;
 mod platform;
 mod project_page;
+mod project_workflows;
 mod resource_indicator;
 mod resource_usage;
 mod right_sidebar;
 mod settings_page;
 mod shortcuts;
 mod terminal_runtime;
+mod text_edit;
 mod theme;
 mod titlebar;
 mod tokens;
@@ -98,9 +102,7 @@ fn finish_launching(cx: &mut App) {
         Cow::Borrowed(include_bytes!(
             "../assets/fonts/LilexNerdFontMono-Regular.ttf"
         )),
-        Cow::Borrowed(include_bytes!(
-            "../assets/fonts/LilexNerdFontMono-Bold.ttf"
-        )),
+        Cow::Borrowed(include_bytes!("../assets/fonts/LilexNerdFontMono-Bold.ttf")),
         Cow::Borrowed(include_bytes!(
             "../assets/fonts/LilexNerdFontMono-Italic.ttf"
         )),

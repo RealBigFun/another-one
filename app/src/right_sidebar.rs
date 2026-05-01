@@ -814,112 +814,6 @@ impl AnotherOneApp {
             )
     }
 
-    fn branch_compare_row(
-        &self,
-        project_id: &str,
-        file: &crate::project_store::BranchCompareFile,
-    ) -> AnyElement {
-        let title_col = hsla(0., 0., 0.94, 1.);
-        let path_col = hsla(0., 0., 0.58, 1.);
-        let row_hover = gpui::white().opacity(0.04);
-        let file_name = Path::new(&file.path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(file.path.as_str())
-            .to_string();
-        let parent_dir = Path::new(&file.path)
-            .parent()
-            .and_then(|parent| parent.to_str())
-            .filter(|parent| !parent.is_empty() && *parent != ".")
-            .unwrap_or_default()
-            .to_string();
-        let status_color = Self::changed_file_status_color(file.status);
-
-        let mut stats = div().flex().flex_row().items_center().gap(px(8.));
-        if file.additions > 0 {
-            stats = stats.child(Self::git_diff_badge(file.additions, true, 12.));
-        }
-        if file.deletions > 0 {
-            stats = stats.child(Self::git_diff_badge(file.deletions, false, 12.));
-        }
-
-        div()
-            .id(SharedString::from(format!(
-                "branch-compare-row-{project_id}-{}",
-                file.path
-            )))
-            .w_full()
-            .min_h(px(34.))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(12.))
-            .pl(px(18.))
-            .pr(px(14.))
-            .py(px(8.))
-            .rounded_md()
-            .mx(px(4.))
-            .hover(move |style| style.bg(row_hover))
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(12.))
-                    .min_w(px(0.))
-                    .flex_1()
-                    .child(
-                        div()
-                            .min_w(px(18.))
-                            .text_size(rems(12. / 16.))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(status_color)
-                            .child(file.status.to_string()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .min_w(px(0.))
-                            .flex_1()
-                            .child(
-                                div()
-                                    .min_w(px(0.))
-                                    .truncate()
-                                    .text_size(rems(12. / 16.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(title_col)
-                                    .child(file_name),
-                            )
-                            .when(!parent_dir.is_empty(), |entry| {
-                                entry.child(
-                                    div()
-                                        .min_w(px(0.))
-                                        .truncate()
-                                        .text_size(rems(11. / 16.))
-                                        .text_color(path_col)
-                                        .child(parent_dir.clone()),
-                                )
-                            })
-                            .when(file.original_path.is_some(), |entry| {
-                                entry.child(
-                                    div()
-                                        .min_w(px(0.))
-                                        .truncate()
-                                        .text_size(rems(11. / 16.))
-                                        .text_color(path_col)
-                                        .child(format!(
-                                            "Renamed from {}",
-                                            file.original_path.clone().unwrap_or_default()
-                                        )),
-                                )
-                            }),
-                    ),
-            )
-            .child(stats)
-            .into_any_element()
-    }
-
     fn branch_commit_file_row(
         &self,
         project_id: &str,
@@ -1419,8 +1313,6 @@ impl AnotherOneApp {
         let project_id = active_section.project_id.clone();
         let sidebar_mode = self.active_right_sidebar_mode(cx);
         let commit_state = self.active_branch_commit_state(cx).cloned();
-        let compare_target_branch = self.active_compare_target_branch(cx);
-        let compare_state = self.active_branch_compare_state(cx).cloned();
         self.request_active_project_check_runs_lookup(cx);
         let check_runs_state = self.active_project_check_runs_state(cx).cloned();
 
@@ -1727,69 +1619,6 @@ impl AnotherOneApp {
                     body = body.child(rows);
                 }
             },
-            RightSidebarMode::Compare => {
-                let target_branch = compare_target_branch.clone().unwrap_or_default();
-                let current_branch = compare_state
-                    .as_ref()
-                    .and_then(|state| state.current_branch.clone())
-                    .unwrap_or_else(|| active_section.branch_name.clone());
-
-                body = body.child(
-                    div()
-                        .px(px(14.))
-                        .py(px(10.))
-                        .border_b_1()
-                        .border_color(gpui::white().opacity(0.06))
-                        .child(
-                            div()
-                                .text_size(rems(11. / 16.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(hsla(0., 0., 0.88, 1.))
-                                .child(format!(
-                                    "Comparing {} against {}",
-                                    current_branch, target_branch
-                                )),
-                        )
-                        .child(
-                            div()
-                                .text_size(rems(11. / 16.))
-                                .text_color(muted_col)
-                                .child("Read-only branch diff. Stage, unstage, and discard actions are unavailable in compare mode."),
-                        ),
-                );
-
-                if compare_state.is_none() {
-                    body = body.child(Self::centered_sidebar_message(
-                        "Loading compare view...",
-                        muted_col,
-                    ));
-                } else if compare_state
-                    .as_ref()
-                    .is_some_and(|state| state.files.is_empty())
-                {
-                    body = body.child(Self::centered_sidebar_message(
-                        format!("No differences from {}.", target_branch),
-                        muted_col,
-                    ));
-                } else if let Some(compare_state) = compare_state {
-                    let mut rows = div()
-                        .id("right-sidebar-compare-scroll")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .flex()
-                        .flex_col()
-                        .px(px(4.))
-                        .py(px(8.))
-                        .gap(px(2.));
-
-                    for file in &compare_state.files {
-                        rows = rows.child(self.branch_compare_row(&project_id, file));
-                    }
-
-                    body = body.child(rows);
-                }
-            }
         }
 
         let commits_button = Self::git_toolbar_button(
@@ -1821,25 +1650,6 @@ impl AnotherOneApp {
             },
             cx,
         );
-
-        let compare_button = compare_target_branch.as_ref().map(|_target_branch| {
-            Self::git_toolbar_button(
-                GitToolbarButtonProps {
-                    label: "Compare",
-                    leading_icon: Some("assets/icons/icons__git-split.svg"),
-                    trailing_icon: None,
-                    enabled: true,
-                    active: sidebar_mode == RightSidebarMode::Compare,
-                    tooltip_label: Some(
-                        "Compare the current branch against the configured target branch",
-                    ),
-                },
-                move |this, _ev, _window, cx| {
-                    this.set_right_sidebar_mode(RightSidebarMode::Compare, cx);
-                },
-                cx,
-            )
-        });
 
         div()
             .relative()
@@ -1880,8 +1690,7 @@ impl AnotherOneApp {
                                 cx,
                             ))
                             .child(commits_button)
-                            .child(checks_button)
-                            .when_some(compare_button, |container, button| container.child(button)),
+                            .child(checks_button),
                     )
                     .child(
                         div()

@@ -1402,7 +1402,14 @@ fn paint_terminal_snapshot(
                 std::slice::from_ref(&run.style),
                 Some(cell_width),
             )
-            .paint(position, cell_height, gpui::TextAlign::Left, None, window, cx);
+            .paint(
+                position,
+                cell_height,
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
     }
 
     if let Some(range) = hovered_link {

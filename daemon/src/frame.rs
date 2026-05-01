@@ -382,14 +382,6 @@ pub enum Control {
         project_id: String,
         commit_id: String,
     },
-    /// Diff `project_id`'s current branch against `target_branch`
-    /// (= `target..HEAD`). Powers the right sidebar's Compare pane.
-    /// Reply is [`WorkerReply::BranchCompareAck`] with `None` for
-    /// unknown projects. Errors propagate as [`WorkerReply::Err`].
-    ReadBranchCompareState {
-        project_id: String,
-        target_branch: String,
-    },
     /// Snapshot the resolved branch settings for `project_id`'s
     /// root project — configured + effective values for default and
     /// default-target branches plus the available branch list.
@@ -829,9 +821,6 @@ pub enum WorkerReply {
     CommitFileChangesAck {
         files: Option<Vec<BranchCompareFileWire>>,
     },
-    /// Reply to [`Control::ReadBranchCompareState`]. `view == None`
-    /// when the project id is unknown.
-    BranchCompareAck { view: Option<BranchCompareWire> },
     /// Reply to [`Control::ReadBranchSettings`]. `settings == None`
     /// when the project is unknown or lacks repo metadata.
     BranchSettingsAck {
@@ -943,8 +932,8 @@ pub struct ActiveGitStateWire {
     pub behind_count: u32,
 }
 
-/// Wire mirror of one branch-compare file row.
-/// One entry per file changed inside a commit (or branch compare).
+/// Wire mirror of one commit file-change row.
+/// One entry per file changed inside a commit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchCompareFileWire {
     pub path: String,
@@ -954,15 +943,6 @@ pub struct BranchCompareFileWire {
     pub status: String,
     pub additions: i32,
     pub deletions: i32,
-}
-
-/// Wire mirror of the branch-compare view.
-/// Powers the right sidebar's Compare pane.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BranchCompareWire {
-    pub current_branch: Option<String>,
-    pub target_branch: String,
-    pub files: Vec<BranchCompareFileWire>,
 }
 
 /// Wire mirror of resolved project branch settings. Powers the project
