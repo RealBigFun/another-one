@@ -421,9 +421,16 @@ enum GitActionReply {
     Finished {
         project_id: String,
         refresh_git_state: bool,
+        git_state: Option<ProjectGitState>,
         toast_kind: ToastKind,
         toast_message: String,
     },
+}
+
+pub(crate) struct WorktreeDeletionReply {
+    pub(crate) confirm: SidebarTaskDeleteConfirmState,
+    pub(crate) was_active_project: bool,
+    pub(crate) result: Result<Option<String>, String>,
 }
 
 struct CommitFileChangesReply {
@@ -1299,6 +1306,10 @@ pub struct AnotherOneApp {
     pending_task_launch: Option<PendingTaskLaunch>,
     /// Receiver for the in-flight add-project background preparation result.
     project_add_receiver: Option<broadcast::Receiver<ProjectAddReply>>,
+    /// Sender used by background worktree deletion operations.
+    pub(crate) worktree_deletion_sender: mpsc::Sender<WorktreeDeletionReply>,
+    /// Receiver for background worktree deletion operations.
+    worktree_deletion_receiver: mpsc::Receiver<WorktreeDeletionReply>,
     /// Sender used by background commit file-change lookups.
     commit_file_changes_sender: mpsc::Sender<CommitFileChangesReply>,
     /// Receiver for background commit file-change lookups.
@@ -3642,6 +3653,7 @@ impl AnotherOneApp {
             broadcast::channel(64);
         let (project_check_runs_sender, project_check_runs_receiver) = broadcast::channel(64);
         let (commit_file_changes_sender, commit_file_changes_receiver) = mpsc::channel();
+        let (worktree_deletion_sender, worktree_deletion_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             broadcast::channel(64);
         let (terminal_launch_sender, terminal_launch_receiver) =
@@ -3764,6 +3776,8 @@ impl AnotherOneApp {
             branch_creation_receiver: None,
             pending_task_launch: None,
             project_add_receiver: None,
+            worktree_deletion_sender,
+            worktree_deletion_receiver,
             commit_file_changes_sender,
             commit_file_changes_receiver,
             project_github_link_sender,
@@ -6324,25 +6338,19 @@ impl AnotherOneApp {
     }
 
     #[hotpath::measure]
-    pub(crate) fn refresh_project_git_state(
-        &mut self,
-        project_id: &str,
-    ) -> Vec<InvalidProjectBranchSetting> {
-        let Some(project_path) = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .map(|project| project.path.clone())
-        else {
-            return Vec::new();
+    pub(crate) fn refresh_project_git_state(&mut self, project_id: &str) -> bool {
+        let Some(project_path) = self.project_path(project_id) else {
+            return false;
         };
 
-        let state = crate::project_store::read_project_git_state(&project_path, true);
-        self.apply_project_git_state(project_id, state);
-        let invalid_settings = self.project_store.clear_missing_branch_settings(project_id);
-        self.git_workspace.mark_refreshed(true);
-        invalid_settings
+        self.git_refresh_operation
+            .start(another_one_core::git_service::spawn_refresh(
+                project_id.to_string(),
+                project_path,
+                true,
+                None,
+            ));
+        true
     }
 
     fn active_project_context(&self, cx: &App) -> Option<(String, std::path::PathBuf)> {
@@ -6393,8 +6401,9 @@ impl AnotherOneApp {
                     return;
                 };
 
-                let branch_name = crate::project_store::current_branch(&project.path)
-                    .or_else(|| self.project_store.current_branch_name(&project.id))
+                let branch_name = self
+                    .project_store
+                    .current_branch_name(&project.id)
                     .unwrap_or(source_branch);
 
                 let task_name = resolved_task_name(&task_name, &generated_task_name);
@@ -6793,24 +6802,14 @@ impl AnotherOneApp {
     ) {
         let active_section = self.workspace_pane.read(cx).active_section.clone();
         let Some(section) = active_section else {
-            let invalid_settings = self.refresh_project_git_state(&success.original_project_id);
-            let _ = self.handle_invalid_project_branch_settings(
-                &success.original_project_id,
-                invalid_settings,
-                cx,
-            );
+            self.refresh_project_git_state(&success.original_project_id);
             self.create_branch_modal = None;
             self.show_success_toast(format!("Created branch {}.", success.branch_name), cx);
             return;
         };
 
         let Some(task_id) = section.task_id.clone() else {
-            let invalid_settings = self.refresh_project_git_state(&section.project_id);
-            let _ = self.handle_invalid_project_branch_settings(
-                &section.project_id,
-                invalid_settings,
-                cx,
-            );
+            self.refresh_project_git_state(&section.project_id);
             self.create_branch_modal = None;
             self.show_success_toast(format!("Created branch {}.", success.branch_name), cx);
             return;
@@ -6823,9 +6822,7 @@ impl AnotherOneApp {
             &section.project_id,
             &success.branch_name,
         );
-        let invalid_settings = self.refresh_project_git_state(&section.project_id);
-        let _ =
-            self.handle_invalid_project_branch_settings(&section.project_id, invalid_settings, cx);
+        self.refresh_project_git_state(&section.project_id);
         self.create_branch_modal = None;
         self.show_success_toast(format!("Created branch {}.", success.branch_name), cx);
     }
@@ -7014,6 +7011,17 @@ impl AnotherOneApp {
                         changed_any = true;
                     }
                 }
+            }
+            ChangedFilesGitMutation::RevertFiles {
+                changed_files: files_to_revert,
+            } => {
+                let before_len = changed_files.len();
+                changed_files.retain(|file| {
+                    !files_to_revert.iter().any(|reverted| {
+                        reverted.path == file.path && reverted.original_path == file.original_path
+                    })
+                });
+                changed_any = changed_files.len() != before_len;
             }
         }
 
@@ -7380,30 +7388,33 @@ impl AnotherOneApp {
                     toast_message: message,
                 });
             };
-            let reply = match crate::git_actions::execute_toolbar_git_action(
-                &project_path,
-                action,
-                git_action_settings,
-                &mut progress,
-            ) {
-                Ok(outcome) => GitActionReply::Finished {
-                    project_id: project_id.clone(),
-                    refresh_git_state: outcome.refresh_git_state,
-                    toast_kind: if outcome.warning {
-                        ToastKind::Warning
-                    } else {
-                        ToastKind::Success
-                    },
-                    toast_message: outcome.toast_message,
-                },
-                Err(error) => GitActionReply::Finished {
-                    project_id: project_id.clone(),
-                    refresh_git_state: error.refresh_git_state,
-                    toast_kind: ToastKind::Error,
-                    toast_message: error.message,
-                },
-            };
-            let _ = tx.send(reply);
+            let (refresh_git_state, toast_kind, toast_message) =
+                match crate::git_actions::execute_toolbar_git_action(
+                    &project_path,
+                    action,
+                    git_action_settings,
+                    &mut progress,
+                ) {
+                    Ok(outcome) => (
+                        outcome.refresh_git_state,
+                        if outcome.warning {
+                            ToastKind::Warning
+                        } else {
+                            ToastKind::Success
+                        },
+                        outcome.toast_message,
+                    ),
+                    Err(error) => (error.refresh_git_state, ToastKind::Error, error.message),
+                };
+            let git_state = refresh_git_state
+                .then(|| crate::project_store::read_project_git_state(&project_path, true));
+            let _ = tx.send(GitActionReply::Finished {
+                project_id,
+                refresh_git_state,
+                git_state,
+                toast_kind,
+                toast_message,
+            });
         });
         cx.notify();
     }
@@ -7428,6 +7439,7 @@ impl AnotherOneApp {
                     GitActionReply::Finished {
                         project_id,
                         refresh_git_state,
+                        git_state,
                         toast_kind,
                         toast_message,
                     } => {
@@ -7438,13 +7450,19 @@ impl AnotherOneApp {
                             ) && matches!(toast_kind, ToastKind::Success);
                         self.active_git_action = None;
                         self.git_action_receiver = None;
-                        if refresh_git_state {
-                            let invalid_settings = self.refresh_project_git_state(&project_id);
+                        if let Some(state) = git_state {
+                            self.apply_project_git_state(&project_id, state);
+                            let invalid_settings = self
+                                .project_store
+                                .clear_missing_branch_settings(&project_id);
                             let _ = self.handle_invalid_project_branch_settings(
                                 &project_id,
                                 invalid_settings,
                                 cx,
                             );
+                            self.git_workspace.mark_refreshed(true);
+                        } else if refresh_git_state {
+                            self.refresh_project_git_state(&project_id);
                         }
                         match toast_kind {
                             ToastKind::Success => self.show_success_toast(toast_message, cx),
@@ -7783,6 +7801,54 @@ impl AnotherOneApp {
                 true
             }
         }
+    }
+
+    fn drain_worktree_deletions(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut should_notify = false;
+
+        while let Ok(reply) = self.worktree_deletion_receiver.try_recv() {
+            should_notify = true;
+            match reply.result {
+                Ok(branch_warning) => {
+                    if let Some(warning) = branch_warning {
+                        self.show_warning_toast(warning, cx);
+                    }
+                    let worktree_display_name = self.remove_sidebar_worktree_task_from_store(
+                        &reply.confirm,
+                        reply.was_active_project,
+                        cx,
+                    );
+                    self.show_success_toast(
+                        format!("Deleted worktree {}.", worktree_display_name),
+                        cx,
+                    );
+                }
+                Err(error) => {
+                    if crate::left_sidebar::should_remove_missing_worktree_task_from_store(
+                        &error,
+                        &reply.confirm.repo_path,
+                        &reply.confirm.project_path,
+                    ) {
+                        let task_name = reply.confirm.task_name.clone();
+                        self.remove_sidebar_worktree_task_from_store(
+                            &reply.confirm,
+                            reply.was_active_project,
+                            cx,
+                        );
+                        self.show_warning_toast(
+                            format!(
+                                "The repository or worktree for {task_name} was already missing, so the task was removed from the app."
+                            ),
+                            cx,
+                        );
+                    } else {
+                        self.show_error_toast(error, cx);
+                    }
+                }
+            }
+        }
+
+        should_notify
     }
 
     pub(crate) fn drain_updater_events(&mut self, cx: &mut Context<Self>) -> bool {
@@ -8158,49 +8224,32 @@ impl AnotherOneApp {
         )
     }
 
-    pub(crate) fn revert_changed_file(&mut self, project_id: &str, changed: &ChangedFile) -> bool {
-        let Some(project_path) = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .map(|project| project.path.clone())
-        else {
-            return false;
-        };
-
-        let reverted = crate::project_store::revert_changed_file(&project_path, changed);
-        if reverted {
-            let _ = self.refresh_project_git_state(project_id);
-        }
-        reverted
+    pub(crate) fn revert_changed_file(
+        &mut self,
+        project_id: &str,
+        changed: &ChangedFile,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.revert_changed_files(project_id, std::slice::from_ref(changed), cx)
     }
 
     pub(crate) fn revert_changed_files(
         &mut self,
         project_id: &str,
         changed_files: &[ChangedFile],
+        cx: &mut Context<Self>,
     ) -> bool {
-        let Some(project_path) = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .map(|project| project.path.clone())
-        else {
+        if changed_files.is_empty() {
             return false;
-        };
-
-        let mut reverted_any = false;
-        for changed in changed_files {
-            reverted_any |= crate::project_store::revert_changed_file(&project_path, changed);
         }
 
-        if reverted_any {
-            let _ = self.refresh_project_git_state(project_id);
-        }
-
-        reverted_any
+        self.start_changed_files_git_mutation(
+            project_id,
+            ChangedFilesGitMutation::RevertFiles {
+                changed_files: changed_files.to_vec(),
+            },
+            cx,
+        )
     }
 
     // ── Sidebar toggle animations ────────────────────────────────────
@@ -11934,6 +11983,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_branch_creation(cx);
                             should_notify |= this.drain_project_add(cx);
+                            should_notify |= this.drain_worktree_deletions(cx);
                             should_notify |= this.drain_commit_file_changes(cx);
                             should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.drain_project_pull_request_lookup(cx);
