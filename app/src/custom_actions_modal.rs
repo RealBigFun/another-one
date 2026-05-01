@@ -62,6 +62,7 @@ const CARD_BG: u32 = 0x2b2d31;
 const DEFAULT_OPTION: &str = "";
 
 const CODEX_MODEL_OPTIONS: &[(&str, &str)] = &[
+    ("gpt-5.5", "GPT-5.5"),
     ("gpt-5.4", "GPT-5.4"),
     ("gpt-5.4-mini", "GPT-5.4 Mini"),
     ("gpt-5.3-codex", "GPT-5.3 Codex"),
@@ -77,6 +78,7 @@ const CLAUDE_MODEL_OPTIONS: &[(&str, &str)] = &[
 ];
 
 const CODEX_TRAITS_OPTIONS: &[(&str, &str)] = &[
+    ("none", "Off"),
     ("xhigh", "Extra high"),
     ("high", "High"),
     ("medium", "Medium"),
@@ -84,6 +86,7 @@ const CODEX_TRAITS_OPTIONS: &[(&str, &str)] = &[
 ];
 
 const CLAUDE_OPUS_47_TRAITS_OPTIONS: &[(&str, &str)] = &[
+    ("off", "Off"),
     ("low", "Low"),
     ("medium", "Medium"),
     ("high", "High"),
@@ -93,6 +96,7 @@ const CLAUDE_OPUS_47_TRAITS_OPTIONS: &[(&str, &str)] = &[
 ];
 
 const CLAUDE_OPUS_46_TRAITS_OPTIONS: &[(&str, &str)] = &[
+    ("off", "Off"),
     ("low", "Low"),
     ("medium", "Medium"),
     ("high", "High"),
@@ -101,6 +105,7 @@ const CLAUDE_OPUS_46_TRAITS_OPTIONS: &[(&str, &str)] = &[
 ];
 
 const CLAUDE_OPUS_45_TRAITS_OPTIONS: &[(&str, &str)] = &[
+    ("off", "Off"),
     ("low", "Low"),
     ("medium", "Medium"),
     ("high", "High"),
@@ -108,6 +113,7 @@ const CLAUDE_OPUS_45_TRAITS_OPTIONS: &[(&str, &str)] = &[
 ];
 
 const CLAUDE_SONNET_46_TRAITS_OPTIONS: &[(&str, &str)] = &[
+    ("off", "Off"),
     ("low", "Low"),
     ("medium", "Medium"),
     ("high", "High"),

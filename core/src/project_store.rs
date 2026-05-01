@@ -631,9 +631,14 @@ pub fn project_action_agent_launch_args(action: &ProjectAction) -> Result<Vec<St
                 }
             }
             if !trimmed_traits.is_empty() {
+                let reasoning_effort = if trimmed_traits == "off" {
+                    "none"
+                } else {
+                    trimmed_traits
+                };
                 args.extend([
                     "--config".to_string(),
-                    format!("model_reasoning_effort=\"{trimmed_traits}\""),
+                    format!("model_reasoning_effort=\"{reasoning_effort}\""),
                 ]);
             }
             if !trimmed_mode.is_empty() && trimmed_mode != "default" && trimmed_mode != "plan" {

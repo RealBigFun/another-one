@@ -1107,7 +1107,11 @@ fn run_codex(
         .map(str::trim)
         .filter(|thinking| !thinking.is_empty())
     {
-        cmd.args(["--effort", thinking]);
+        let thinking = if thinking == "off" { "none" } else { thinking };
+        cmd.args([
+            "--config".to_string(),
+            format!("model_reasoning_effort=\"{thinking}\""),
+        ]);
     }
     cmd.args(["--sandbox", "read-only", "--output-last-message"])
         .arg(&output_path)
