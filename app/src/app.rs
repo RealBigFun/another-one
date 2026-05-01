@@ -553,6 +553,16 @@ pub(crate) enum SettingsGitActionScriptKind {
     PullRequest,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsGitActionLlmDropdown {
+    CommitProvider,
+    CommitModel,
+    CommitThinking,
+    PullRequestProvider,
+    PullRequestModel,
+    PullRequestThinking,
+}
+
 #[derive(Clone)]
 pub(crate) struct SettingsGitActionScriptLineLayout {
     pub(crate) range: std::ops::Range<usize>,
@@ -1430,6 +1440,8 @@ pub struct AnotherOneApp {
     pub(crate) settings_git_commit_script_drag_anchor: Option<usize>,
     /// Selection anchor while dragging in the git PR generation script editor.
     pub(crate) settings_git_pr_script_drag_anchor: Option<usize>,
+    /// Open model-configuration dropdown on the Git Actions settings page.
+    pub(crate) settings_git_action_llm_dropdown: Option<crate::app::SettingsGitActionLlmDropdown>,
     /// Active right-sidebar mode for task views.
     pub(crate) right_sidebar_mode: RightSidebarMode,
     /// Session-scoped recent-commit page sizes keyed by project id.
@@ -3861,6 +3873,7 @@ impl AnotherOneApp {
             settings_git_pr_script_layout: Vec::new(),
             settings_git_commit_script_drag_anchor: None,
             settings_git_pr_script_drag_anchor: None,
+            settings_git_action_llm_dropdown: None,
             right_sidebar_mode: RightSidebarMode::WorkingTree,
             commit_page_sizes: HashMap::new(),
             branch_commit_states: HashMap::new(),
