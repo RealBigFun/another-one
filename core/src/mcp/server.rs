@@ -133,7 +133,20 @@ impl SessionState {
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Closed) => break,
                 Err(TryRecvError::Lagged(skipped)) => {
-                    out.push(crate::clients::ClientEvent::Lagged { skipped });
+                    // Coalesce runs of Lagged into a single entry —
+                    // a sustained-overrun consumer that's still
+                    // falling behind can otherwise produce up to
+                    // `max` consecutive Lagged variants in one
+                    // drain. One synthetic event with the summed
+                    // skip count is enough signal for the caller.
+                    if let Some(crate::clients::ClientEvent::Lagged {
+                        skipped: prev_skipped,
+                    }) = out.last_mut()
+                    {
+                        *prev_skipped = prev_skipped.saturating_add(skipped);
+                    } else {
+                        out.push(crate::clients::ClientEvent::Lagged { skipped });
+                    }
                 }
             }
         }
@@ -501,11 +514,14 @@ mod tests {
     }
 
     #[test]
-    fn two_sessions_each_get_their_own_bus_events() {
+    fn late_subscriber_misses_pre_subscription_events() {
         // Drive session A that fires the spawn, then session B
         // that subscribes after-the-fact and polls. B should see
         // ZERO events because subscription is per-session and the
-        // event fired before B connected.
+        // event fired before B connected. A genuinely concurrent
+        // two-session test (threads + barrier proving each receiver
+        // observes events independently) is a separate follow-up;
+        // this one only validates the late-subscribe contract.
         let orch = BusOrch::new(64);
 
         // Session A — emits via spawn_terminal.

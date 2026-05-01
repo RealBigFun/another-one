@@ -253,44 +253,19 @@ pub enum ClientEvent {
     },
 }
 
-/// The shared verb surface for *off-process* clients — MCP harnesses
-/// today, mobile peers via iroh tomorrow. The GUI is implicit: it's
-/// the host these methods reach into, not an implementer of the
-/// trait. GUI-side equivalents are `pub(crate) fn client_*` methods
-/// on `AnotherOneApp` that take a GPUI `Context<Self>` (which the
-/// trait's sync `&self` signature can't carry).
-///
-/// Methods take `&self` rather than `&mut self` because the impls
-/// usually mediate through interior mutability (GPUI entity
-/// update / tokio message queue) — the trait stays trivially
-/// boxable as `Arc<dyn DaemonClient>`.
-pub trait DaemonClient: Send + Sync {
-    fn id(&self) -> &ClientId;
-    fn focus(&self) -> Focus;
-
-    fn open_task(&self, req: OpenTaskRequest) -> anyhow::Result<OpenTaskResponse>;
-    fn open_tab(&self, req: OpenTabRequest) -> anyhow::Result<OpenTabResponse>;
-    fn close_tab(&self, req: CloseTabRequest) -> anyhow::Result<()>;
-    fn send_input(&self, tab_id: &str, bytes: &[u8]) -> anyhow::Result<()>;
-    fn select(&self, req: SelectRequest) -> anyhow::Result<()>;
-
-    /// Subscribe to the global event stream. Implementations that
-    /// can't surface events cheaply may return `None` — callers
-    /// should treat that as "no observability available."
-    fn subscribe(&self) -> Option<tokio::sync::broadcast::Receiver<ClientEvent>>;
-}
-
-/// Elevated surface — clients capable of driving *other* clients. MCP
-/// gets this so a connected harness can move the GUI's focus to the
-/// tab it just spawned, observe what the user is doing on a peer
-/// session, etc.
-pub trait PrivilegedClient: DaemonClient {
-    fn select_for(&self, target: ClientId, focus: Focus) -> anyhow::Result<()>;
-    fn subscribe_for(
-        &self,
-        target: ClientId,
-    ) -> Option<tokio::sync::broadcast::Receiver<ClientEvent>>;
-}
+// Note on shape: there is no `DaemonClient` trait here even though
+// the request/response/event types in this file describe the verb
+// surface clients use. Earlier drafts had one; it was deleted because
+// the GUI side can't satisfy a sync `&self` trait method (every
+// verb needs a GPUI `Context<Self>` for entity updates), so the
+// trait would be implementable only by the off-process MCP /
+// mobile drivers — which already implement
+// `crate::mcp::orchestrator::McpOrchestrator`. A second parallel
+// trait would be a nameless duplicate. The types alone are enough
+// vocabulary to keep wire-compatible across drivers; the contract
+// lives in `McpOrchestrator` for MCP and in matching method names
+// (`client_open_task` / `_open_tab` / `_close_tab` / `_attach_tab`
+// / `_select` / `_select_for`) on `AnotherOneApp` for the GUI.
 
 #[cfg(test)]
 mod tests {

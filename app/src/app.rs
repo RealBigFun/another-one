@@ -1087,6 +1087,11 @@ impl WorkspacePane {
                 &mut self.active_project_page,
                 section_id.clone(),
             );
+            // Hover state belongs to the previously-active tab; a
+            // keyboard-driven tab switch (no mouse-leave event)
+            // would otherwise leave a stale tooltip waiting to
+            // re-paint when the user toggles back.
+            self.terminal_link_hover = None;
             self.persist_section_state(section_id, cx);
             self.persist_active_section(cx);
             cx.notify();
@@ -1132,13 +1137,24 @@ impl WorkspacePane {
             let section_clone = section_id.clone();
             let tab_clone = tab_id.clone();
             cx.defer(move |cx| {
-                let _ = app.update(cx, |app, _| {
-                    app.emit_client_event(ClientEvent::TabOpened {
-                        originator,
-                        section_id: section_clone,
-                        tab_id: tab_clone,
-                    });
-                });
+                if app
+                    .update(cx, |app, _| {
+                        app.emit_client_event(ClientEvent::TabOpened {
+                            originator,
+                            section_id: section_clone,
+                            tab_id: tab_clone.clone(),
+                        });
+                    })
+                    .is_err()
+                {
+                    // The app entity dropped between deferring and
+                    // running; nothing to subscribe anymore. Log so
+                    // we don't silently lose a TabOpened event when
+                    // shutdown races a tab spawn.
+                    log::warn!(
+                        "TabOpened defer skipped — app entity gone (tab {tab_clone})"
+                    );
+                }
             });
         }
         if added_tab_id.is_some() {
@@ -1489,12 +1505,21 @@ pub struct AnotherOneApp {
     /// `FocusChanged` event flows onto the bus — closing the loop
     /// for MCP harnesses that want to observe the human.
     pub(crate) last_observed_gui_focus: Focus,
-    /// In-flight worktree-task creation, if any. The async
-    /// `project_service::spawn_task_creation` only emits a single
-    /// reply; we hold the `JobId` + originating client here so the
-    /// drain can fire `TaskOpened` / `TaskOpenFailed` correlated
-    /// with the `TaskOpenStarted` we emitted at submit time.
-    pub(crate) pending_worktree_job: Option<(JobId, ClientId, String)>,
+    /// In-flight worktree-task creations keyed by `JobId`. The async
+    /// `project_service::spawn_task_creation` runs in the
+    /// background; the GUI submit path stores a `(originator,
+    /// project_id)` against a fresh JobId here so the drain can
+    /// fire correlated `TaskOpened` / `TaskOpenFailed` events.
+    /// HashMap (rather than the original single Option) because a
+    /// future MCP `create_worktree_task` verb concurrent with a
+    /// GUI submit must not clobber the GUI's job.
+    ///
+    /// Today the underlying `task_creation_receiver` is single-slot
+    /// — concurrent creations queue at the receiver — so the map
+    /// holds at most one entry in practice. Promoting to multi-job
+    /// only requires extending `task_creation_receiver` to a
+    /// HashMap too; the event correlation is already job-keyed.
+    pub(crate) pending_worktree_jobs: HashMap<JobId, (ClientId, String)>,
     /// GUI's own `broadcast::Receiver` clone — the desktop app is
     /// itself a client and uses it to surface a toast when *another*
     /// client (MCP, mobile) drives a state change. Drained on every
@@ -3940,9 +3965,21 @@ impl AnotherOneApp {
         )));
         // The bus is owned by the app (lock-free emit path) and
         // cloned into the daemon thread for the MCP orchestrator's
-        // per-session subscriptions. 256-event capacity is the same
-        // backlog tolerance the prior `Mutex`-bound bus had.
-        let event_bus = tokio::sync::broadcast::channel(256).0;
+        // per-session subscriptions.
+        //
+        // Capacity is sized for `ClientEvent::Output`, which fires
+        // per PTY chunk and dominates throughput. A chatty TUI at
+        // ~1 MiB/s with 8 KiB chunks produces ~125 events/sec; at
+        // 4096 capacity a slow consumer can fall ~30 s behind
+        // before lagging — long enough that any reasonable consumer
+        // catches up, but bounded so the buffer doesn't grow without
+        // limit. Other events (TaskOpened/TabOpened/etc.) are
+        // sub-1 Hz under normal use and trivially fit.
+        //
+        // A future per-tab Output channel would isolate one chatty
+        // terminal from others, but that requires reshaping the
+        // subscriber API. Tracked as a follow-up.
+        let event_bus = tokio::sync::broadcast::channel(4096).0;
         // Subscribe the GUI's own client-event receiver before any
         // event can be emitted, so we don't miss bus traffic during
         // startup. Drained on each render tick by `drain_gui_events`
@@ -4127,7 +4164,7 @@ impl AnotherOneApp {
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
-            pending_worktree_job: None,
+            pending_worktree_jobs: HashMap::new(),
             gui_event_receiver,
             event_bus,
             prewarmed_terminal_launches: HashMap::new(),
@@ -5487,6 +5524,11 @@ impl AnotherOneApp {
             return false;
         };
         let gui = ClientId::gui_desktop();
+        // Only mark `changed` when we actually have a toast to push,
+        // so a chatty terminal's `Output` event stream doesn't force
+        // a `cx.notify()` on every render tick. Drains 32 events per
+        // tick; if the bus carries only Output events for that
+        // window, the function quietly returns false.
         let mut changed = false;
         let mut toasts: Vec<String> = Vec::new();
         for _ in 0..32 {
@@ -5537,8 +5579,8 @@ impl AnotherOneApp {
                     };
                     if let Some(text) = toast {
                         toasts.push(text);
+                        changed = true;
                     }
-                    changed = true;
                 }
                 Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
                 Err(TryRecvError::Lagged(skipped)) => {
@@ -7960,8 +8002,10 @@ impl AnotherOneApp {
                 self.pending_task_launch = Some(PendingTaskLaunch::NewTaskModal);
                 let job_id = JobId::fresh();
                 let originator = ClientId::gui_desktop();
-                self.pending_worktree_job =
-                    Some((job_id.clone(), originator.clone(), project.id.clone()));
+                self.pending_worktree_jobs.insert(
+                    job_id.clone(),
+                    (originator.clone(), project.id.clone()),
+                );
                 self.emit_client_event(ClientEvent::TaskOpenStarted {
                     originator,
                     job_id,
@@ -9266,9 +9310,11 @@ impl AnotherOneApp {
                         );
                         // Correlated TaskOpened against the
                         // TaskOpenStarted that fired at submit time.
-                        if let Some((job_id, originator, _project_id)) =
-                            self.pending_worktree_job.take()
-                        {
+                        // Single-slot today (one async creation at a
+                        // time), so `drain().next()` pulls whichever
+                        // job is in-flight.
+                        let drained = self.pending_worktree_jobs.drain().next();
+                        if let Some((job_id, (originator, _project_id))) = drained {
                             // Resolve the just-added tab id, if any —
                             // worktree creation may activate a section
                             // without a tab when `open_agent` was
@@ -9285,9 +9331,6 @@ impl AnotherOneApp {
                                 section_id: section_id.clone(),
                                 tab_id,
                             });
-                            // Suppress the duplicate TaskOpenStarted-
-                            // tracking job by clearing it; not needed
-                            // here since `take()` already did.
                             let _ = job_id;
                         }
                     }
@@ -9298,9 +9341,8 @@ impl AnotherOneApp {
                             }
                         }
                         self.show_error_toast(error.message.clone(), cx);
-                        if let Some((job_id, originator, _project_id)) =
-                            self.pending_worktree_job.take()
-                        {
+                        let drained = self.pending_worktree_jobs.drain().next();
+                        if let Some((job_id, (originator, _project_id))) = drained {
                             self.emit_client_event(ClientEvent::TaskOpenFailed {
                                 originator,
                                 job_id,
@@ -9325,9 +9367,8 @@ impl AnotherOneApp {
                     }
                 }
                 self.show_error_toast("The task creation process did not complete.", cx);
-                if let Some((job_id, originator, _project_id)) =
-                    self.pending_worktree_job.take()
-                {
+                let drained = self.pending_worktree_jobs.drain().next();
+                if let Some((job_id, (originator, _project_id))) = drained {
                     self.emit_client_event(ClientEvent::TaskOpenFailed {
                         originator,
                         job_id,

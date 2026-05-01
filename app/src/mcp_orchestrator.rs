@@ -61,6 +61,19 @@ impl DesktopMcpOrchestrator {
     }
 }
 
+/// Returned by `spawn_task` and `run_command` until those tools are
+/// wired through render-tick drains parallel to `spawn_terminal` /
+/// `close_tab` / `select_focus`. The daemon-side surface (request /
+/// response types in `core/src/mcp/orchestrator.rs`) is final; the
+/// pending-queue + drain pair on the desktop is what's missing.
+///
+/// `spawn_task` needs an agent harness chooser plus the warm-prewarm
+/// path the GUI's add-agent-modal uses; `run_command` needs idle
+/// detection (5-min ceiling already enforced wire-side) and PTY
+/// output capture as it streams. Both should return promptly with
+/// a `JobId`; correlated `TaskOpened` / `Output` / completion events
+/// already exist on the bus, so the verb shape is "queue, return,
+/// observe via `poll_events`."
 const NOT_YET_WIRED: &str =
     "this MCP write tool is not yet wired to the desktop's UI-thread task/terminal lifecycle \
      (tracked as a Phase C.5 follow-up to #35 — daemon-side surface is in place, app-side \
