@@ -491,9 +491,10 @@ impl AnotherOneApp {
             .unwrap_or(0);
         let removing_worktree = is_worktree && other_tasks_in_worktree == 0;
         let has_unstaged_changes = removing_worktree
-            && crate::project_store::list_changed_files(&project.path)
-                .iter()
-                .any(|changed| changed.has_unstaged_changes());
+            && self
+                .changed_files
+                .get(project_id)
+                .is_some_and(|files| files.iter().any(|changed| changed.has_unstaged_changes()));
 
         Some(SidebarTaskDeleteConfirmState {
             project_id: project_id.to_string(),
@@ -635,47 +636,27 @@ impl AnotherOneApp {
             .as_ref()
             .is_some_and(|section| section.project_id == confirm.project_id);
 
-        match crate::project_store::remove_task_worktree(&confirm.repo_path, &confirm.project_path)
-        {
-            Ok(()) => {
-                if confirm.force_delete_branch {
-                    if let Err(error) = crate::project_store::delete_local_branch(
-                        &confirm.repo_path,
-                        &confirm.branch_name,
-                    ) {
-                        self.show_warning_toast(error, cx);
-                    }
-                }
-
-                let worktree_display_name =
-                    self.remove_sidebar_worktree_task_from_store(&confirm, was_active_project, cx);
-                self.show_success_toast(format!("Deleted worktree {}.", worktree_display_name), cx);
-                cx.notify();
-            }
-            Err(error) => {
-                if should_remove_missing_worktree_task_from_store(
-                    &error,
-                    &confirm.repo_path,
-                    &confirm.project_path,
-                ) {
-                    let task_name = confirm.task_name.clone();
-                    self.remove_sidebar_worktree_task_from_store(&confirm, was_active_project, cx);
-                    self.show_warning_toast(
-                        format!(
-                            "The repository or worktree for {task_name} was already missing, so the task was removed from the app."
-                        ),
-                        cx,
-                    );
-                    cx.notify();
-                    return;
-                }
-
-                self.show_error_toast(error, cx);
-            }
-        }
+        self.sidebar_task_delete_confirm = None;
+        let tx = self.worktree_deletion_sender.clone();
+        let worker_confirm = confirm.clone();
+        self.show_info_toast(format!("Deleting worktree {}...", confirm.task_name), cx);
+        std::thread::spawn(move || {
+            let result = another_one_core::project_service::delete_task_worktree(
+                worker_confirm.repo_path.clone(),
+                worker_confirm.project_path.clone(),
+                worker_confirm.branch_name.clone(),
+                worker_confirm.force_delete_branch,
+            );
+            let _ = tx.send(crate::app::WorktreeDeletionReply {
+                confirm: worker_confirm,
+                was_active_project,
+                result,
+            });
+        });
+        cx.notify();
     }
 
-    fn remove_sidebar_worktree_task_from_store(
+    pub(crate) fn remove_sidebar_worktree_task_from_store(
         &mut self,
         confirm: &SidebarTaskDeleteConfirmState,
         was_active_project: bool,
@@ -3241,7 +3222,7 @@ fn control_key_byte(value: &str) -> Option<u8> {
     }
 }
 
-fn should_remove_missing_worktree_task_from_store(
+pub(crate) fn should_remove_missing_worktree_task_from_store(
     error: &str,
     repo_path: &Path,
     worktree_path: &Path,

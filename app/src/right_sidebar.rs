@@ -1762,9 +1762,9 @@ impl AnotherOneApp {
                     "enter" => {
                         if let Some((project_id, files)) = this.discard_confirm.take() {
                             if files.len() == 1 {
-                                this.revert_changed_file(&project_id, &files[0]);
+                                this.revert_changed_file(&project_id, &files[0], cx);
                             } else {
-                                this.revert_changed_files(&project_id, &files);
+                                this.revert_changed_files(&project_id, &files, cx);
                             }
                         }
                         cx.stop_propagation();
@@ -1880,11 +1880,13 @@ impl AnotherOneApp {
                                                     this.revert_changed_file(
                                                         &confirm_project_id,
                                                         &confirm_files[0],
+                                                        cx,
                                                     );
                                                 } else {
                                                     this.revert_changed_files(
                                                         &confirm_project_id,
                                                         &confirm_files,
+                                                        cx,
                                                     );
                                                 }
                                                 this.discard_confirm = None;
