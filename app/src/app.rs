@@ -6764,12 +6764,23 @@ impl AnotherOneApp {
             link,
             selected_text,
         };
-        self.workspace_pane.update(cx, |workspace, cx| {
-            // Mutually exclusive with the tab-pin menu — opening one
-            // implicitly dismisses the other so they never stack.
-            workspace.terminal_tab_menu = None;
-            workspace.terminal_context_menu = Some(state);
-            cx.notify();
+        // The right-click handler runs INSIDE WorkspacePane's update
+        // lock (listeners hold their entity locked for the body),
+        // and we're called via `this.app.update(cx, …)` reaching
+        // back into AnotherOneApp. A direct `workspace_pane.update`
+        // here would be a second lock on WorkspacePane and panic
+        // GPUI's `double_lease_panic`. `cx.defer` defers the inner
+        // update to after the listener's lock releases.
+        let workspace_handle = self.workspace_pane.clone();
+        cx.defer(move |cx| {
+            workspace_handle.update(cx, |workspace, cx| {
+                // Mutually exclusive with the tab-pin menu — opening
+                // one implicitly dismisses the other so they never
+                // stack.
+                workspace.terminal_tab_menu = None;
+                workspace.terminal_context_menu = Some(state);
+                cx.notify();
+            });
         });
     }
 
