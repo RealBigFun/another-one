@@ -5614,14 +5614,21 @@ impl AnotherOneApp {
             .unwrap_or_else(crate::new_task_modal::generate_task_name);
         let project_path = req.cwd.clone().unwrap_or_else(|| project.path.clone());
 
-        // Only the Direct kind goes through the synchronous
-        // `insert_and_open_task` path. Worktree creation is async
-        // (background `project_service::spawn_task_creation`) and
-        // hasn't been migrated to the trait yet.
+        // `client_open_task` is the synchronous task-create verb
+        // and only fits the `Direct` kind. Worktree creation runs
+        // a background `project_service::spawn_task_creation` and
+        // doesn't fit a sync request/response — the right verb is
+        // the (forthcoming) async `create_worktree_task` MCP tool,
+        // which returns a `JobId` and emits `TaskOpenStarted` /
+        // `TaskOpened` / `TaskOpenFailed` on the bus. Reject here
+        // so callers don't misinterpret a plain `client_open_task`
+        // call as supporting worktrees.
         match req.kind {
             another_one_core::project_store::TaskKind::Direct => {}
             other => anyhow::bail!(
-                "client_open_task: kind {:?} not yet routed through the client trait",
+                "client_open_task only supports TaskKind::Direct ({:?} requires the \
+                 async `create_worktree_task` verb — observe `TaskOpenStarted` / \
+                 `TaskOpened` events to track completion)",
                 other
             ),
         }
@@ -6032,10 +6039,24 @@ impl AnotherOneApp {
         let mut changed = false;
         for req in pending {
             let actor = ClientId::mcp(req.client_handle.as_deref().unwrap_or("anonymous"));
-            let target = req.for_client.unwrap_or_else(|| actor.clone());
-            let result = self
-                .client_select_for(actor, target, req.focus, cx)
-                .map_err(|e| e.to_string());
+            // No `for_client` (or `for_client == self`) is the
+            // non-privileged "set my own focus" — routes through
+            // `client_select`. With an explicit target it's the
+            // privileged cross-client variant.
+            let result = match req.for_client {
+                Some(ref target) if target != &actor => self
+                    .client_select_for(actor, target.clone(), req.focus, cx)
+                    .map_err(|e| e.to_string()),
+                _ => self
+                    .client_select(
+                        SelectRequest {
+                            client_id: actor,
+                            focus: req.focus,
+                        },
+                        cx,
+                    )
+                    .map_err(|e| e.to_string()),
+            };
             let _ = req.responder.send(result);
             changed = true;
         }

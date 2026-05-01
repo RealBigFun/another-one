@@ -13,6 +13,7 @@
 //! defined under cfg(target_os = "android")) writes into and the render
 //! tick drains.
 
+#[cfg(target_os = "android")]
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -53,6 +54,7 @@ fn qr_scan_queue() -> &'static Mutex<Vec<String>> {
 
 /// Push a scanned URL into the queue. Invoked by the JNI callback and
 /// (in tests) by host-side code that wants to simulate a scan.
+#[cfg(target_os = "android")]
 pub fn push_qr_scan_result(url: String) {
     if let Ok(mut q) = qr_scan_queue().lock() {
         q.push(url);

@@ -238,11 +238,17 @@ pub enum ClientEvent {
     },
 }
 
-/// The shared verb surface. Concrete impls plug in for each driver
-/// (GUI, MCP, mobile). Methods take `&self` rather than `&mut self`
-/// because the impls usually mediate through interior mutability
-/// (GPUI entity update / tokio message queue) — the trait stays
-/// trivially boxable as `Arc<dyn DaemonClient>`.
+/// The shared verb surface for *off-process* clients — MCP harnesses
+/// today, mobile peers via iroh tomorrow. The GUI is implicit: it's
+/// the host these methods reach into, not an implementer of the
+/// trait. GUI-side equivalents are `pub(crate) fn client_*` methods
+/// on `AnotherOneApp` that take a GPUI `Context<Self>` (which the
+/// trait's sync `&self` signature can't carry).
+///
+/// Methods take `&self` rather than `&mut self` because the impls
+/// usually mediate through interior mutability (GPUI entity
+/// update / tokio message queue) — the trait stays trivially
+/// boxable as `Arc<dyn DaemonClient>`.
 pub trait DaemonClient: Send + Sync {
     fn id(&self) -> &ClientId;
     fn focus(&self) -> Focus;
@@ -269,4 +275,175 @@ pub trait PrivilegedClient: DaemonClient {
         &self,
         target: ClientId,
     ) -> Option<tokio::sync::broadcast::Receiver<ClientEvent>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn client_id_helpers_format_consistently() {
+        assert_eq!(ClientId::gui_desktop().to_string(), "gui:desktop");
+        assert_eq!(ClientId::mcp("claude-code").to_string(), "mcp:claude-code");
+        // Mobile prefix truncates to a 12-char endpoint preview so
+        // the bus tag stays short on noisy harness logs.
+        assert_eq!(
+            ClientId::mobile("c7f5664133e677efa468f89b27e9fb98").to_string(),
+            "mobile:c7f5664133e6"
+        );
+    }
+
+    #[test]
+    fn focus_serde_round_trip() {
+        let cases = vec![
+            Focus::None,
+            Focus::Project { project_id: "p".into() },
+            Focus::Task {
+                project_id: "p".into(),
+                task_id: "t".into(),
+            },
+            Focus::Tab {
+                project_id: "p".into(),
+                task_id: Some("t".into()),
+                section_id: SectionId::for_task("p", "main", "t"),
+                tab_id: "tab-1".into(),
+            },
+        ];
+        for focus in cases {
+            let wire = serde_json::to_value(&focus).expect("encode");
+            let back: Focus = serde_json::from_value(wire.clone()).expect("decode");
+            assert_eq!(back, focus, "round-trip mismatch for {:?}", wire);
+        }
+    }
+
+    #[test]
+    fn client_event_serde_covers_all_variants() {
+        let variants: Vec<ClientEvent> = vec![
+            ClientEvent::TaskOpened {
+                originator: ClientId::gui_desktop(),
+                task_id: "t".into(),
+                section_id: SectionId::for_task("p", "main", "t"),
+                tab_id: "tab".into(),
+            },
+            ClientEvent::TabOpened {
+                originator: ClientId::mcp("h"),
+                section_id: SectionId::new("p", "main"),
+                tab_id: "tab".into(),
+            },
+            ClientEvent::TabClosed {
+                originator: ClientId::gui_desktop(),
+                tab_id: "tab".into(),
+            },
+            ClientEvent::FocusChanged {
+                originator: ClientId::mcp("h"),
+                target: ClientId::gui_desktop(),
+                focus: Focus::None,
+            },
+            ClientEvent::Output {
+                tab_id: "tab".into(),
+                bytes: vec![0x68, 0x69],
+            },
+            ClientEvent::TaskOpenStarted {
+                originator: ClientId::gui_desktop(),
+                job_id: JobId("j".into()),
+                project_id: "p".into(),
+            },
+            ClientEvent::TaskOpenFailed {
+                originator: ClientId::gui_desktop(),
+                job_id: JobId("j".into()),
+                error: "boom".into(),
+            },
+        ];
+        for ev in variants {
+            let wire = serde_json::to_value(&ev).expect("encode");
+            let back: ClientEvent = serde_json::from_value(wire.clone()).expect("decode");
+            // Variants are externally tagged by serde default — the
+            // top-level key matches the variant name.
+            let key = wire
+                .as_object()
+                .and_then(|o| o.keys().next())
+                .map(String::as_str)
+                .unwrap_or("");
+            assert!(!key.is_empty(), "encoded form not externally tagged: {wire}");
+            // Equality round-trips for every variant.
+            let back_wire = serde_json::to_value(&back).expect("re-encode");
+            assert_eq!(wire, back_wire);
+        }
+    }
+
+    #[test]
+    fn broadcast_bus_delivers_to_independent_subscribers() {
+        // Models the daemon-side bus: one Sender, multiple per-
+        // session Receivers. Both subscribers must observe every
+        // event independently — no cross-session draining.
+        let (tx, _) = tokio::sync::broadcast::channel(64);
+        let mut a = tx.subscribe();
+        let mut b = tx.subscribe();
+        for i in 0..3 {
+            tx.send(ClientEvent::TabClosed {
+                originator: ClientId::mcp("test"),
+                tab_id: format!("t{i}"),
+            })
+            .expect("send");
+        }
+        for rx in [&mut a, &mut b] {
+            for i in 0..3 {
+                let ev = rx.try_recv().expect("recv");
+                match ev {
+                    ClientEvent::TabClosed { tab_id, .. } => {
+                        assert_eq!(tab_id, format!("t{i}"));
+                    }
+                    other => panic!("unexpected variant: {:?}", other),
+                }
+            }
+            // After draining 3 events the receiver should be empty.
+            assert!(matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ));
+        }
+    }
+
+    #[test]
+    fn open_task_request_warm_launch_hint_skipped_in_serde() {
+        // GUI fast-path optimization — must not leak into MCP wire
+        // format because non-GUI callers can't fabricate a valid
+        // launch id.
+        let req = OpenTaskRequest {
+            client_id: ClientId::mcp("h"),
+            project_id: "p".into(),
+            task_name: None,
+            branch_name: None,
+            kind: crate::project_store::TaskKind::Direct,
+            launch_config: TerminalLaunchConfig::default(),
+            cwd: None,
+            focus_after_open: true,
+            warm_launch_hint: Some(42),
+        };
+        let wire = serde_json::to_value(&req).expect("encode");
+        assert!(
+            !wire.to_string().contains("warm_launch_hint"),
+            "warm_launch_hint must be #[serde(skip)]: {wire}"
+        );
+        let back: OpenTaskRequest = serde_json::from_value(wire).expect("decode");
+        assert_eq!(back.warm_launch_hint, None);
+    }
+
+    #[test]
+    fn job_id_fresh_yields_unique_values() {
+        // Sanity check — UUID4 collisions would corrupt the
+        // TaskOpenStarted / TaskOpened correlation.
+        let a = JobId::fresh();
+        let b = JobId::fresh();
+        assert_ne!(a, b);
+        assert_eq!(a.0.len(), 36, "uuidv4 dashed length");
+    }
+
+    // Suppress the "imported but unused if no tests run" warning
+    // for `json!` — referenced indirectly via serde_json macros.
+    #[test]
+    fn _serde_json_macro_anchor() {
+        let _ = json!({"ok": true});
+    }
 }
