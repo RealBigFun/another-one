@@ -39,11 +39,19 @@ use crate::terminal_runtime::TerminalRuntimeKey;
 
 pub(crate) struct DesktopMcpOrchestrator {
     inner: Weak<Mutex<RegistryState>>,
+    /// Direct handle on the daemon-side `ClientEvent` bus so MCP
+    /// session-subscribe doesn't have to round-trip through the
+    /// registry mutex. Cloned from `AnotherOneApp.event_bus` at
+    /// orchestrator construction.
+    event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
 }
 
 impl DesktopMcpOrchestrator {
-    pub(crate) fn new(inner: Weak<Mutex<RegistryState>>) -> Self {
-        Self { inner }
+    pub(crate) fn new(
+        inner: Weak<Mutex<RegistryState>>,
+        event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
+    ) -> Self {
+        Self { inner, event_bus }
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&RegistryState) -> R) -> Option<R> {
@@ -285,7 +293,7 @@ impl McpOrchestrator for DesktopMcpOrchestrator {
     fn subscribe_events(
         &self,
     ) -> Option<tokio::sync::broadcast::Receiver<another_one_core::clients::ClientEvent>> {
-        self.with_state(|state| state.event_bus.subscribe())
+        Some(self.event_bus.subscribe())
     }
 
     fn select_focus(
@@ -345,8 +353,11 @@ impl McpOrchestrator for DesktopMcpOrchestrator {
 
 /// Build an orchestrator handle wrapped in the trait-object
 /// `Arc` the daemon expects.
-pub(crate) fn arc(inner: Weak<Mutex<RegistryState>>) -> Arc<dyn McpOrchestrator> {
-    Arc::new(DesktopMcpOrchestrator::new(inner))
+pub(crate) fn arc(
+    inner: Weak<Mutex<RegistryState>>,
+    event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
+) -> Arc<dyn McpOrchestrator> {
+    Arc::new(DesktopMcpOrchestrator::new(inner, event_bus))
 }
 
 fn provider_str(kind: AgentProviderKind) -> String {

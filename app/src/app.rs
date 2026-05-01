@@ -1500,6 +1500,14 @@ pub struct AnotherOneApp {
     /// client (MCP, mobile) drives a state change. Drained on every
     /// render tick alongside other observability work.
     pub(crate) gui_event_receiver: Option<tokio::sync::broadcast::Receiver<ClientEvent>>,
+    /// Daemon-side `ClientEvent` broadcast bus. Owned directly by
+    /// the app (rather than tucked inside `Mutex<RegistryState>`)
+    /// so emits — which fire on every state change including the
+    /// per-PTY-chunk `Output` event — never have to take the
+    /// registry mutex. Cloned into the MCP orchestrator at startup
+    /// so per-session subscribers can `.subscribe()` without round-
+    /// tripping through the lock either.
+    pub(crate) event_bus: tokio::sync::broadcast::Sender<ClientEvent>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Child process ids for hidden prewarmed launches.
@@ -3930,14 +3938,16 @@ impl AnotherOneApp {
         let registry_state = Arc::new(Mutex::new(crate::daemon_host::RegistryState::new(
             store.clone(),
         )));
+        // The bus is owned by the app (lock-free emit path) and
+        // cloned into the daemon thread for the MCP orchestrator's
+        // per-session subscriptions. 256-event capacity is the same
+        // backlog tolerance the prior `Mutex`-bound bus had.
+        let event_bus = tokio::sync::broadcast::channel(256).0;
         // Subscribe the GUI's own client-event receiver before any
         // event can be emitted, so we don't miss bus traffic during
         // startup. Drained on each render tick by `drain_gui_events`
         // to surface peer-driven changes (MCP, mobile) as toasts.
-        let gui_event_receiver = registry_state
-            .lock()
-            .ok()
-            .map(|state| state.event_bus.subscribe());
+        let gui_event_receiver = Some(event_bus.subscribe());
         // The embedded daemon-host is a *desktop* concern — it spins up
         // an iroh endpoint that mobile clients connect into. On Android
         // we want to be the client, not the host, so the daemon-host
@@ -3946,7 +3956,10 @@ impl AnotherOneApp {
         // the `HOME is unset` startup error since `daemon-host`'s
         // config-dir lookup uses `dirs::config_dir()`.
         #[cfg(not(target_os = "android"))]
-        let daemon_handle_rx = Some(crate::daemon_host::spawn(registry_state.clone()));
+        let daemon_handle_rx = Some(crate::daemon_host::spawn(
+            registry_state.clone(),
+            event_bus.clone(),
+        ));
         #[cfg(target_os = "android")]
         let daemon_handle_rx: Option<
             mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>,
@@ -4116,6 +4129,7 @@ impl AnotherOneApp {
             last_observed_gui_focus: Focus::None,
             pending_worktree_job: None,
             gui_event_receiver,
+            event_bus,
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -5587,14 +5601,14 @@ impl AnotherOneApp {
         true
     }
 
-    /// Emit a `ClientEvent` on the daemon-side broadcast bus. Every
-    /// MCP session has its own `broadcast::Receiver` clone, so
-    /// concurrent harnesses see the same event independently —
-    /// no shared queue to race on.
+    /// Emit a `ClientEvent` on the daemon-side broadcast bus. The
+    /// sender is owned directly so emits don't take the registry
+    /// mutex — important because `ClientEvent::Output` fires per
+    /// PTY chunk and would otherwise contend with daemon tokio
+    /// tasks holding the registry lock for unrelated work. Each
+    /// MCP session subscribes its own `broadcast::Receiver`.
     fn emit_client_event(&self, event: ClientEvent) {
-        if let Ok(state) = self.registry_state.lock() {
-            let _ = state.event_bus.send(event);
-        }
+        let _ = self.event_bus.send(event);
     }
 
     /// `DaemonClient::open_task` for AnotherOneApp. Single source of
@@ -8088,11 +8102,10 @@ impl AnotherOneApp {
         // Single TaskOpened emit covers every synchronous task-create
         // path (GUI Direct via client_open_task, GUI Review-with-
         // existing-worktree, MCP / mobile via the trait verbs). The
-        // tab id is the active tab in the just-activated section.
-        let tab_id = self
-            .active_terminal_key(cx)
-            .map(|k| k.tab_id)
-            .unwrap_or_default();
+        // tab id is the active tab in the just-activated section,
+        // or `None` if the section has no tab yet (e.g. when the
+        // caller passed `launch_config: None`).
+        let tab_id = self.active_terminal_key(cx).map(|k| k.tab_id);
         self.emit_client_event(ClientEvent::TaskOpened {
             originator,
             task_id: task_id.clone(),
@@ -9256,14 +9269,16 @@ impl AnotherOneApp {
                         if let Some((job_id, originator, _project_id)) =
                             self.pending_worktree_job.take()
                         {
-                            // Resolve the just-added tab id, if any.
+                            // Resolve the just-added tab id, if any —
+                            // worktree creation may activate a section
+                            // without a tab when `open_agent` was
+                            // false on the success record.
                             let tab_id = self
                                 .workspace_pane
                                 .read(cx)
                                 .section_states
                                 .get(&section_id)
-                                .and_then(|s| s.tabs.last().map(|t| t.id.clone()))
-                                .unwrap_or_default();
+                                .and_then(|s| s.tabs.last().map(|t| t.id.clone()));
                             self.emit_client_event(ClientEvent::TaskOpened {
                                 originator,
                                 task_id: task_id.clone(),

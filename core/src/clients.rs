@@ -191,7 +191,13 @@ pub enum ClientEvent {
         originator: ClientId,
         task_id: String,
         section_id: SectionId,
-        tab_id: String,
+        /// The just-activated tab id, if a tab actually exists at
+        /// emit time. Tasks created without a `launch_config` (e.g.
+        /// "open the section, no terminal yet") emit with `None`
+        /// rather than papering over the missing tab with an empty
+        /// string — subscribers comparing against tab ids would
+        /// otherwise be bitten by `tab_id == ""`.
+        tab_id: Option<String>,
     },
     TabOpened {
         originator: ClientId,
@@ -235,6 +241,15 @@ pub enum ClientEvent {
         originator: ClientId,
         job_id: JobId,
         error: String,
+    },
+    /// The session's `broadcast::Receiver` fell behind the bus's
+    /// capacity and dropped `skipped` events before the next
+    /// successful `recv`. Surfaces honestly so subscribers can
+    /// resync (e.g. re-issue `list_tasks`/`list_tabs`) rather than
+    /// silently drift. Synthesized client-side from
+    /// `tokio::sync::broadcast::error::TryRecvError::Lagged`.
+    Lagged {
+        skipped: u64,
     },
 }
 
@@ -324,8 +339,18 @@ mod tests {
                 originator: ClientId::gui_desktop(),
                 task_id: "t".into(),
                 section_id: SectionId::for_task("p", "main", "t"),
-                tab_id: "tab".into(),
+                tab_id: Some("tab".into()),
             },
+            // Tasks created without a launch_config (e.g. an
+            // explicitly-empty section) emit with `tab_id: None`
+            // rather than papering over the missing tab.
+            ClientEvent::TaskOpened {
+                originator: ClientId::gui_desktop(),
+                task_id: "t-empty".into(),
+                section_id: SectionId::for_task("p", "main", "t-empty"),
+                tab_id: None,
+            },
+            ClientEvent::Lagged { skipped: 17 },
             ClientEvent::TabOpened {
                 originator: ClientId::mcp("h"),
                 section_id: SectionId::new("p", "main"),

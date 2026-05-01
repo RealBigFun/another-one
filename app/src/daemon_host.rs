@@ -108,15 +108,6 @@ pub(crate) struct RegistryState {
     pub(crate) pending_close_tabs: Vec<PendingCloseTab>,
     /// Select-focus asks routed in from the daemon (MCP).
     pub(crate) pending_select_focus: Vec<PendingSelectFocus>,
-    /// Daemon-side `ClientEvent` bus. Each MCP session subscribes
-    /// its own `broadcast::Receiver` from this sender at connect
-    /// time; per-session drainage means two harnesses connected at
-    /// once don't starve each other (the earlier shared ring buffer
-    /// design did). The sender's queue capacity (256) caps how many
-    /// events can backlog per slow consumer before it gets a
-    /// `Lagged` signal — beyond that, callers see a gap rather than
-    /// silent loss, and can resync with `list_tasks` etc.
-    pub(crate) event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
     /// Keys currently mid-spawn. Populated when either path
     /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
     /// kicks off a `spawn_terminal_launch`; cleared on
@@ -139,7 +130,6 @@ impl RegistryState {
             pending_spawn_terminals: Vec::new(),
             pending_close_tabs: Vec::new(),
             pending_select_focus: Vec::new(),
-            event_bus: tokio::sync::broadcast::channel(256).0,
             in_flight_launches: HashSet::new(),
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
@@ -974,17 +964,19 @@ fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Ve
 /// returns. No signalling needed on the app side.
 pub(crate) fn spawn(
     registry_state: Arc<Mutex<RegistryState>>,
+    event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
 ) -> mpsc::Receiver<anyhow::Result<EndpointHandle>> {
     let (tx, rx) = mpsc::channel();
     thread::Builder::new()
         .name("another-one-daemon".into())
-        .spawn(move || run(registry_state, tx))
+        .spawn(move || run(registry_state, event_bus, tx))
         .expect("spawn daemon-host thread");
     rx
 }
 
 fn run(
     registry_state: Arc<Mutex<RegistryState>>,
+    event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
     tx: mpsc::Sender<anyhow::Result<EndpointHandle>>,
 ) {
     // Four workers so a single stuck PTY write (child paused /
@@ -1011,7 +1003,7 @@ fn run(
     let weak = Arc::downgrade(&registry_state);
     drop(registry_state); // drop the strong ref we took for spawn; the app still holds one.
     let registry: Arc<dyn DaemonRegistry> = Arc::new(DesktopTerminalRegistry::new(weak.clone()));
-    let mcp_orchestrator = crate::mcp_orchestrator::arc(weak);
+    let mcp_orchestrator = crate::mcp_orchestrator::arc(weak, event_bus);
 
     let paths = match daemon_paths() {
         Ok(p) => p,
