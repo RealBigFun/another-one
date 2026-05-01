@@ -189,10 +189,32 @@ fi
 # startup was how this bit us). linuxdeploy's built-in blacklist
 # catches `/lib64/libxcb.so.1` but misses the user-local
 # `/usr/local/lib64/libxkbcommon*`, hence the explicit list.
-echo "==> running linuxdeploy"
+#
+# PATCHELF override: linuxdeploy bundles patchelf 0.15.0, which
+# corrupts the .text section of large Rust binaries (the produced
+# binary has ~37MB of 0x58/'X' bytes overwriting code, segfaulting
+# at _start). Force linuxdeploy to use the host patchelf if it's
+# new enough; bail out if not, since silently producing a broken
+# AppImage is worse than failing the build.
+HOST_PATCHELF="$(command -v patchelf || true)"
+if [[ -z "$HOST_PATCHELF" ]]; then
+  echo "patchelf not found on PATH. Install patchelf >= 0.16 (e.g. 'sudo dnf install patchelf')." >&2
+  exit 1
+fi
+HOST_PATCHELF_VERSION="$("$HOST_PATCHELF" --version | awk '{print $2}')"
+HOST_PATCHELF_MAJOR="${HOST_PATCHELF_VERSION%%.*}"
+HOST_PATCHELF_MINOR_RAW="${HOST_PATCHELF_VERSION#*.}"
+HOST_PATCHELF_MINOR="${HOST_PATCHELF_MINOR_RAW%%.*}"
+if (( HOST_PATCHELF_MAJOR == 0 && HOST_PATCHELF_MINOR < 16 )); then
+  echo "patchelf $HOST_PATCHELF_VERSION at $HOST_PATCHELF is too old; need >= 0.16." >&2
+  echo "linuxdeploy's bundled patchelf 0.15 corrupts large binaries." >&2
+  exit 1
+fi
+echo "==> running linuxdeploy (patchelf=$HOST_PATCHELF v$HOST_PATCHELF_VERSION)"
 (
   cd "$PACKAGE_DIR"
   NO_STRIP=1 \
+  PATCHELF="$HOST_PATCHELF" \
   OUTPUT="$(basename "$APPIMAGE_OUT")" \
   "$LINUXDEPLOY" \
     --appdir "$APPDIR" \
