@@ -955,33 +955,63 @@ impl WorkspacePane {
                 )
                 .on_mouse_move(
                     cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
-                        let _ = this.app.update(cx, |app, app_cx| {
-                            let action = if ev.dragging() {
-                                TerminalMouseAction::Drag
-                            } else {
-                                TerminalMouseAction::Motion
-                            };
-                            let button = if ev.dragging() {
-                                match ev.pressed_button {
-                                    Some(MouseButton::Left) => TerminalMouseButton::Left,
-                                    Some(MouseButton::Middle) => TerminalMouseButton::Middle,
-                                    Some(MouseButton::Right) => TerminalMouseButton::Right,
-                                    _ => TerminalMouseButton::Left,
+                        let forwarded = this
+                            .app
+                            .update(cx, |app, app_cx| {
+                                let action = if ev.dragging() {
+                                    TerminalMouseAction::Drag
+                                } else {
+                                    TerminalMouseAction::Motion
+                                };
+                                let button = if ev.dragging() {
+                                    match ev.pressed_button {
+                                        Some(MouseButton::Left) => TerminalMouseButton::Left,
+                                        Some(MouseButton::Middle) => {
+                                            TerminalMouseButton::Middle
+                                        }
+                                        Some(MouseButton::Right) => TerminalMouseButton::Right,
+                                        _ => TerminalMouseButton::Left,
+                                    }
+                                } else {
+                                    TerminalMouseButton::None
+                                };
+                                if app.forward_terminal_mouse_event(
+                                    &mouse_move_key,
+                                    button,
+                                    action,
+                                    ev.position,
+                                    ev.modifiers,
+                                    window,
+                                ) {
+                                    app_cx.stop_propagation();
+                                    return true;
                                 }
-                            } else {
-                                TerminalMouseButton::None
-                            };
-                            if app.forward_terminal_mouse_event(
-                                &mouse_move_key,
-                                button,
-                                action,
-                                ev.position,
-                                ev.modifiers,
-                                window,
-                            ) {
-                                app_cx.stop_propagation();
-                            }
-                        });
+                                false
+                            })
+                            .unwrap_or(false);
+                        if forwarded {
+                            return;
+                        }
+                        // Mouse mode is off: refresh link-hover state.
+                        // Compute via the app (read-only) and apply
+                        // directly to `this` to avoid the nested-
+                        // update panic of touching WorkspacePane
+                        // through `app.update` while WorkspacePane is
+                        // already locked by the listener.
+                        let next = this
+                            .app
+                            .update(cx, |app, _| {
+                                app.compute_terminal_link_hover(
+                                    &mouse_move_key,
+                                    ev.position,
+                                    window,
+                                )
+                            })
+                            .unwrap_or(None);
+                        if this.terminal_link_hover != next {
+                            this.terminal_link_hover = next;
+                            cx.notify();
+                        }
                     }),
                 )
                 .on_scroll_wheel(
@@ -1033,19 +1063,20 @@ impl WorkspacePane {
                     canvas(
                         move |bounds, _, _| bounds,
                         move |bounds, _, window, cx| {
-                            let modifiers = window.modifiers();
-                            let hovered_link = if modifiers.control || modifiers.platform {
-                                hovered_terminal_link_range(
-                                    bounds,
-                                    &canvas_snapshot,
-                                    window.mouse_position(),
-                                    padding,
-                                    cell_width,
-                                    line_height,
-                                )
-                            } else {
-                                None
-                            };
+                            // Underline links on plain hover so they're
+                            // discoverable without trial-and-error
+                            // modifier presses. Cmd/Ctrl is still
+                            // required to *open* (handled in
+                            // `open_terminal_link_at_click`); the hover
+                            // is just a visual affordance.
+                            let hovered_link = hovered_terminal_link_range(
+                                bounds,
+                                &canvas_snapshot,
+                                window.mouse_position(),
+                                padding,
+                                cell_width,
+                                line_height,
+                            );
                             paint_terminal_snapshot(
                                 bounds,
                                 &canvas_snapshot,
@@ -1069,6 +1100,54 @@ impl WorkspacePane {
                         .absolute()
                         .inset_0()
                         .bg(hsla(0.13, 0.95, 0.65, 0.18 * bell_intensity))
+                }))
+                .children(self.terminal_link_hover.as_ref().and_then(|hover| {
+                    if hover.section_id != key.section_id || hover.tab_id != key.tab_id {
+                        return None;
+                    }
+                    // Place the tooltip just below the cursor, clamped
+                    // to the window so it doesn't paint off-screen.
+                    let tip_left = (hover.anchor_x + 12).max(8) as f32;
+                    let tip_top = (hover.anchor_y + 18).max(8) as f32;
+                    let url_preview: String = if hover.link.len() > 80 {
+                        format!("{}…", &hover.link[..80])
+                    } else {
+                        hover.link.clone()
+                    };
+                    let modifier_label = if cfg!(target_os = "macos") {
+                        "⌘+click"
+                    } else {
+                        "Ctrl+click"
+                    };
+                    Some(
+                        div()
+                            .absolute()
+                            .left(px(tip_left))
+                            .top(px(tip_top))
+                            .max_w(px(420.))
+                            .px(px(10.))
+                            .py(px(6.))
+                            .rounded(px(6.))
+                            .border_1()
+                            .border_color(gpui::black().opacity(0.4))
+                            .bg(rgb(0x1f2024))
+                            .shadow_lg()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(hsla(0., 0., 0.92, 0.75))
+                                    .child(format!("{modifier_label} to open")),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(hsla(0., 0., 0.92, 1.0))
+                                    .child(url_preview),
+                            ),
+                    )
                 }));
         }
 

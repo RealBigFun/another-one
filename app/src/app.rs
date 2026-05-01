@@ -621,6 +621,19 @@ pub(crate) struct TerminalTabMenuState {
     pub(crate) anchor_y: f32,
 }
 
+/// Per-frame hover hint for a terminal link. Carries the link target
+/// (so the tooltip can show what's about to open) and the cursor
+/// screen position (so the tooltip renders next to the cursor without
+/// occluding the link itself).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TerminalLinkHoverState {
+    pub(crate) section_id: SectionId,
+    pub(crate) tab_id: String,
+    pub(crate) link: String,
+    pub(crate) anchor_x: i32,
+    pub(crate) anchor_y: i32,
+}
+
 /// Right-click context menu over the terminal pane. Surfaced when the
 /// running TUI is NOT consuming mouse events (`mouse_protocol() == None`),
 /// otherwise the right-click is forwarded to the application and this
@@ -804,6 +817,11 @@ pub(crate) struct WorkspacePane {
     pub(crate) section_states: HashMap<SectionId, SectionState>,
     /// Context menu for a terminal tab.
     pub(crate) terminal_tab_menu: Option<TerminalTabMenuState>,
+    /// Tooltip state for the link the cursor is currently over inside a
+    /// terminal pane. Populated on `on_mouse_move`; cleared on
+    /// mouse-leave. The tooltip itself renders alongside the canvas in
+    /// `panels.rs`.
+    pub(crate) terminal_link_hover: Option<TerminalLinkHoverState>,
     /// Right-click context menu over a terminal pane (Copy/Paste/Open Link).
     pub(crate) terminal_context_menu: Option<TerminalContextMenuState>,
     /// Confirmation state for closing a pinned terminal tab.
@@ -838,6 +856,7 @@ impl WorkspacePane {
             section_states,
             terminal_tab_menu: None,
             terminal_context_menu: None,
+            terminal_link_hover: None,
             pinned_tab_close_confirm: None,
             keyboard_focus: WorkspaceKeyboardFocus::MainPane,
         }
@@ -6235,6 +6254,32 @@ impl AnotherOneApp {
     /// Open the Cmd-F scrollback search overlay over the active
     /// terminal. No-op when no terminal is active. If a search is
     /// already open on a different terminal, replaces it.
+    /// Compute the link-hover state for a mouse position inside a
+    /// terminal pane, without touching `WorkspacePane`. The caller
+    /// (panel-side `on_mouse_move`) already holds `&mut WorkspacePane`
+    /// — they apply the result directly to `this.terminal_link_hover`
+    /// to avoid the nested-update panic that calling
+    /// `workspace_pane.read(cx)` from inside an `app.update(cx, …)`
+    /// triggers.
+    pub(crate) fn compute_terminal_link_hover(
+        &self,
+        key: &TerminalRuntimeKey,
+        mouse_position: gpui::Point<Pixels>,
+        window: &mut Window,
+    ) -> Option<TerminalLinkHoverState> {
+        let metrics = self.terminal_panel_metrics_for_key(key, window)?;
+        let cell = terminal_cell_position_from_mouse(mouse_position, &metrics)?;
+        let snapshot = self.terminal_surface_snapshots.get(key)?;
+        let link = terminal_link_at_position(snapshot, cell)?;
+        Some(TerminalLinkHoverState {
+            section_id: key.section_id.clone(),
+            tab_id: key.tab_id.clone(),
+            link,
+            anchor_x: f32::from(mouse_position.x) as i32,
+            anchor_y: f32::from(mouse_position.y) as i32,
+        })
+    }
+
     pub(crate) fn open_terminal_search(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(key) = self.active_terminal_key(cx) else {
             return false;
