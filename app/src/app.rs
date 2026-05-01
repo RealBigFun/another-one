@@ -1433,6 +1433,11 @@ pub struct AnotherOneApp {
     /// drain can fire `TaskOpened` / `TaskOpenFailed` correlated
     /// with the `TaskOpenStarted` we emitted at submit time.
     pub(crate) pending_worktree_job: Option<(JobId, ClientId, String)>,
+    /// GUI's own `broadcast::Receiver` clone — the desktop app is
+    /// itself a client and uses it to surface a toast when *another*
+    /// client (MCP, mobile) drives a state change. Drained on every
+    /// render tick alongside other observability work.
+    pub(crate) gui_event_receiver: Option<tokio::sync::broadcast::Receiver<ClientEvent>>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Child process ids for hidden prewarmed launches.
@@ -3927,6 +3932,14 @@ impl AnotherOneApp {
         let registry_state = Arc::new(Mutex::new(crate::daemon_host::RegistryState::new(
             store.clone(),
         )));
+        // Subscribe the GUI's own client-event receiver before any
+        // event can be emitted, so we don't miss bus traffic during
+        // startup. Drained on each render tick by `drain_gui_events`
+        // to surface peer-driven changes (MCP, mobile) as toasts.
+        let gui_event_receiver = registry_state
+            .lock()
+            .ok()
+            .map(|state| state.event_bus.subscribe());
         // The embedded daemon-host is a *desktop* concern — it spins up
         // an iroh endpoint that mobile clients connect into. On Android
         // we want to be the client, not the host, so the daemon-host
@@ -4102,6 +4115,7 @@ impl AnotherOneApp {
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
             pending_worktree_job: None,
+            gui_event_receiver,
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -5456,6 +5470,86 @@ impl AnotherOneApp {
         }
         if changed {
             cx.notify();
+        }
+        changed
+    }
+
+    /// Drain the GUI's own `ClientEvent` receiver and surface peer-
+    /// driven state changes (events whose `originator` is *not* the
+    /// GUI) as info toasts. Volume control: `Output` events are
+    /// skipped — bytes flow at a rate that would spam the toast
+    /// surface useless. `FocusChanged` is also skipped when the
+    /// target is the GUI: that's the daemon settling our own focus,
+    /// already visible in the workspace.
+    pub(crate) fn drain_gui_events(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(rx) = self.gui_event_receiver.as_mut() else {
+            return false;
+        };
+        let gui = ClientId::gui_desktop();
+        let mut changed = false;
+        let mut toasts: Vec<String> = Vec::new();
+        for _ in 0..32 {
+            use tokio::sync::broadcast::error::TryRecvError;
+            match rx.try_recv() {
+                Ok(ev) => {
+                    let toast = match &ev {
+                        ClientEvent::Output { .. } => None,
+                        ClientEvent::TaskOpened {
+                            originator,
+                            task_id,
+                            ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} opened a new task ({}…)",
+                            &task_id[..task_id.len().min(8)]
+                        )),
+                        ClientEvent::TabOpened {
+                            originator, tab_id, ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} opened a new tab ({}…)",
+                            &tab_id[..tab_id.len().min(8)]
+                        )),
+                        ClientEvent::TabClosed {
+                            originator, tab_id, ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} closed tab {}…",
+                            &tab_id[..tab_id.len().min(8)]
+                        )),
+                        ClientEvent::TaskOpenStarted {
+                            originator,
+                            project_id,
+                            ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} is creating a worktree task in project {}…",
+                            &project_id[..project_id.len().min(8)]
+                        )),
+                        ClientEvent::TaskOpenFailed {
+                            originator, error, ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} task creation failed: {error}"
+                        )),
+                        ClientEvent::FocusChanged {
+                            originator, target, ..
+                        } if originator != &gui && target == &gui => {
+                            Some(format!("{originator} moved your view"))
+                        }
+                        _ => None,
+                    };
+                    if let Some(text) = toast {
+                        toasts.push(text);
+                    }
+                    changed = true;
+                }
+                Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(skipped)) => {
+                    toasts.push(format!(
+                        "(missed {skipped} client events — slow-consumer buffer overflow)"
+                    ));
+                    changed = true;
+                }
+            }
+        }
+        for text in toasts {
+            self.show_info_toast(text, cx);
         }
         changed
     }
@@ -13790,6 +13884,7 @@ impl Render for AnotherOneApp {
                             // event WE just produced isn't double-
                             // emitted as if the user clicked it.
                             this.observe_gui_focus(cx);
+                            should_notify |= this.drain_gui_events(cx);
                             should_notify |= this.drain_pending_tab_launches(cx);
                             should_notify |= this.drain_pending_tab_resizes(cx);
                             should_notify |= this.drain_qr_scan_queue(cx);
