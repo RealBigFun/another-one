@@ -117,8 +117,9 @@ struct RuntimeEventProxy {
 
 impl EventListener for RuntimeEventProxy {
     fn send_event(&self, event: Event) {
-        if let Ok(mut queue) = self.queue.lock() {
-            queue.push_back(event);
+        match self.queue.lock() {
+            Ok(mut queue) => queue.push_back(event),
+            Err(error) => eprintln!("failed to queue terminal runtime event: {error}"),
         }
     }
 }

@@ -73,17 +73,13 @@ impl TerminalGridSize {
     pub fn from_panel_size(width_px: f32, height_px: f32, font_size: f32) -> Self {
         let cell_width = (font_size * TERMINAL_CELL_WIDTH_RATIO).max(7.0);
         let cell_height = (font_size * TERMINAL_LINE_HEIGHT_RATIO).max(14.0);
-        let cols = (width_px / cell_width)
-            .floor()
-            .max(MIN_TERMINAL_COLS as f32) as u16;
-        let rows = (height_px / cell_height)
-            .floor()
-            .max(MIN_TERMINAL_ROWS as f32) as u16;
+        let cols = clamped_terminal_cells(width_px / cell_width, MIN_TERMINAL_COLS);
+        let rows = clamped_terminal_cells(height_px / cell_height, MIN_TERMINAL_ROWS);
         Self {
             cols,
             rows,
-            pixel_width: width_px.max(0.0).min(u16::MAX as f32) as u16,
-            pixel_height: height_px.max(0.0).min(u16::MAX as f32) as u16,
+            pixel_width: clamped_terminal_pixels(width_px),
+            pixel_height: clamped_terminal_pixels(height_px),
         }
     }
 
@@ -95,6 +91,20 @@ impl TerminalGridSize {
             pixel_height: self.pixel_height,
         }
     }
+}
+
+fn clamped_terminal_cells(value: f32, min: u16) -> u16 {
+    if value.is_nan() {
+        return min;
+    }
+    value.floor().clamp(min as f32, u16::MAX as f32) as u16
+}
+
+fn clamped_terminal_pixels(value: f32) -> u16 {
+    if value.is_nan() {
+        return 0;
+    }
+    value.clamp(0.0, u16::MAX as f32) as u16
 }
 
 impl Dimensions for TerminalGridSize {

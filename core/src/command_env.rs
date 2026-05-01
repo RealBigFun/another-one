@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -13,12 +14,19 @@ pub(crate) fn apply_command_path(command: &mut Command, cwd: &Path) {
 }
 
 pub(crate) fn command_path_env(cwd: &Path) -> OsString {
-    std::env::join_paths(command_path_dirs(
+    let dirs = command_path_dirs_from_os(cwd);
+    std::env::join_paths(dirs).unwrap_or_else(|error| {
+        eprintln!("failed to join command PATH entries: {error}");
+        std::env::var_os("PATH").unwrap_or_else(|| OsString::from(default_path()))
+    })
+}
+
+fn command_path_dirs_from_os(cwd: &Path) -> Vec<PathBuf> {
+    command_path_dirs(
         std::env::var_os("PATH").as_deref(),
         shell_initialized_path_dirs(cwd),
         dirs::home_dir().as_deref(),
-    ))
-    .unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_else(|| OsString::from(default_path())))
+    )
 }
 
 pub(crate) fn command_path_dirs(
@@ -39,21 +47,14 @@ pub(crate) fn command_path_dirs(
 
     dirs.extend(default_path().split(':').map(PathBuf::from));
 
-    let mut unique = Vec::new();
-    for dir in dirs {
-        if !unique.iter().any(|existing| existing == &dir) {
-            unique.push(dir);
-        }
-    }
-    unique
+    let mut seen = HashSet::new();
+    dirs.into_iter()
+        .filter(|dir| seen.insert(dir.clone()))
+        .collect()
 }
 
 pub(crate) fn find_executable(command: &str, cwd: &Path, fallbacks: &[PathBuf]) -> Option<PathBuf> {
-    for dir in command_path_dirs(
-        std::env::var_os("PATH").as_deref(),
-        shell_initialized_path_dirs(cwd),
-        dirs::home_dir().as_deref(),
-    ) {
+    for dir in command_path_dirs_from_os(cwd) {
         let candidate = dir.join(command);
         if candidate.is_file() {
             return Some(candidate);

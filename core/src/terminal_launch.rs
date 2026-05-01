@@ -99,11 +99,13 @@ pub fn spawn_terminal_launch(
             agent_launch_args,
             size,
         ) {
-            let _ = sender.send(TerminalLaunchReply::Failed {
+            if let Err(send_error) = sender.send(TerminalLaunchReply::Failed {
                 key,
                 message: format_launch_error(&error),
                 details: format_launch_error_details(&error),
-            });
+            }) {
+                eprintln!("failed to send terminal launch failure reply: {send_error}");
+            }
         }
     });
 }
@@ -125,11 +127,13 @@ pub fn spawn_warm_terminal_launch(
             agent_launch_args,
             size,
         ) {
-            let _ = sender.send(WarmTerminalLaunchReply::Failed {
+            if let Err(send_error) = sender.send(WarmTerminalLaunchReply::Failed {
                 launch_id,
                 message: format_launch_error(&error),
                 details: format_launch_error_details(&error),
-            });
+            }) {
+                eprintln!("failed to send warm terminal launch failure reply: {send_error}");
+            }
         }
     });
 }
