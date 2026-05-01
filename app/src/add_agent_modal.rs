@@ -565,25 +565,26 @@ impl AnotherOneApp {
             self.show_error_toast("Could not determine which agent to launch.", cx);
             return;
         };
-        let section_id = state.section_id.clone();
-        let added_tab_id = self.workspace_pane.update(cx, |workspace, cx| {
-            workspace.add_tab_with_launch_config(&section_id, launch_config.clone(), None, cx)
-        });
-
-        let Some(tab_id) = added_tab_id else {
-            self.show_error_toast("Could not add an agent tab for this section.", cx);
-            return;
+        let warm_launch_id = self.active_add_agent_warm_launch_id.take();
+        let req = another_one_core::clients::OpenTabRequest {
+            client_id: another_one_core::clients::ClientId::gui_desktop(),
+            section_id: state.section_id.clone(),
+            launch_config,
+            focus_after_open: true,
+            warm_launch_hint: warm_launch_id,
         };
-
-        let launch_id = self.active_add_agent_warm_launch_id.take();
-        self.add_agent_modal = None;
-        if let Some(launch_id) = launch_id {
-            let key = crate::terminal_runtime::TerminalRuntimeKey { section_id, tab_id };
-            if !self.attach_prewarmed_launch_to_tab(launch_id, key, cx) {
-                self.cancel_prewarmed_launch(launch_id);
+        match self.client_open_tab(req, cx) {
+            Ok(_) => {
+                self.add_agent_modal = None;
+                cx.notify();
+            }
+            Err(err) => {
+                self.show_error_toast(format!("Could not add an agent tab: {err}"), cx);
+                if let Some(launch_id) = warm_launch_id {
+                    self.cancel_prewarmed_launch(launch_id);
+                }
             }
         }
-        cx.notify();
     }
 
     fn render_add_agent_modal_header(&self, cx: &mut Context<Self>) -> impl IntoElement {

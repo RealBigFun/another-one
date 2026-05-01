@@ -98,6 +98,16 @@ pub(crate) struct RegistryState {
     /// different path today for legacy reasons; both produce the same
     /// end state (a live entry in `broadcasts` + `writers`).
     pub(crate) pending_tab_launches: Vec<TabLaunchRequest>,
+    /// Spawn-terminal asks routed in from the daemon (MCP). Each
+    /// carries a sync channel responder that the GPUI-thread drain
+    /// uses to deliver the new tab id (or an error string) back to
+    /// the blocking MCP caller. Cleared every render tick.
+    pub(crate) pending_spawn_terminals: Vec<PendingSpawnTerminal>,
+    /// Close-tab asks routed in from the daemon (MCP). Same shape
+    /// as `pending_spawn_terminals`.
+    pub(crate) pending_close_tabs: Vec<PendingCloseTab>,
+    /// Select-focus asks routed in from the daemon (MCP).
+    pub(crate) pending_select_focus: Vec<PendingSelectFocus>,
     /// Keys currently mid-spawn. Populated when either path
     /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
     /// kicks off a `spawn_terminal_launch`; cleared on
@@ -117,6 +127,9 @@ impl RegistryState {
             writers: HashMap::new(),
             pending_resizes: Vec::new(),
             pending_tab_launches: Vec::new(),
+            pending_spawn_terminals: Vec::new(),
+            pending_close_tabs: Vec::new(),
+            pending_select_focus: Vec::new(),
             in_flight_launches: HashSet::new(),
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
@@ -172,6 +185,40 @@ pub(crate) struct TabResizeRequest {
     pub key: TerminalRuntimeKey,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// MCP `select_focus` ask — moves a client's focus, optionally on
+/// behalf of a peer (privileged surface). The drain emits the
+/// underlying `client_select_for` call on the GPUI thread.
+pub(crate) struct PendingSelectFocus {
+    pub focus: another_one_core::clients::Focus,
+    pub for_client: Option<another_one_core::clients::ClientId>,
+    pub client_handle: Option<String>,
+    pub responder: std::sync::mpsc::SyncSender<Result<(), String>>,
+}
+
+/// MCP `close_tab` ask. Same queue/drain pattern as the spawn case.
+pub(crate) struct PendingCloseTab {
+    pub tab_id: String,
+    pub client_handle: Option<String>,
+    pub responder: std::sync::mpsc::SyncSender<Result<(), String>>,
+}
+
+/// MCP `spawn_terminal` ask. Carries the request + a sync responder
+/// the GPUI-thread drain sends the resulting tab id back through.
+/// `responder` is `Option<…>` so the drain can take it; once taken
+/// the entry is consumed.
+pub(crate) struct PendingSpawnTerminal {
+    pub project_id: Option<String>,
+    pub task_id: Option<String>,
+    pub cwd: Option<String>,
+    /// Optional caller-identifying string. Lifted into a `ClientId`
+    /// of the form `mcp:<handle>` so the event bus can attribute
+    /// the resulting `TaskOpened` / `TabOpened` event to the
+    /// originating MCP client. None → "anonymous".
+    pub client_handle: Option<String>,
+    pub responder:
+        std::sync::mpsc::SyncSender<Result<another_one_core::mcp::orchestrator::SpawnTerminalResponse, String>>,
 }
 
 /// `DaemonRegistry` implementation that projects `AnotherOneApp`
@@ -917,17 +964,19 @@ fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Ve
 /// returns. No signalling needed on the app side.
 pub(crate) fn spawn(
     registry_state: Arc<Mutex<RegistryState>>,
+    event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
 ) -> mpsc::Receiver<anyhow::Result<EndpointHandle>> {
     let (tx, rx) = mpsc::channel();
     thread::Builder::new()
         .name("another-one-daemon".into())
-        .spawn(move || run(registry_state, tx))
+        .spawn(move || run(registry_state, event_bus, tx))
         .expect("spawn daemon-host thread");
     rx
 }
 
 fn run(
     registry_state: Arc<Mutex<RegistryState>>,
+    event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
     tx: mpsc::Sender<anyhow::Result<EndpointHandle>>,
 ) {
     // Four workers so a single stuck PTY write (child paused /
@@ -954,7 +1003,7 @@ fn run(
     let weak = Arc::downgrade(&registry_state);
     drop(registry_state); // drop the strong ref we took for spawn; the app still holds one.
     let registry: Arc<dyn DaemonRegistry> = Arc::new(DesktopTerminalRegistry::new(weak.clone()));
-    let mcp_orchestrator = crate::mcp_orchestrator::arc(weak);
+    let mcp_orchestrator = crate::mcp_orchestrator::arc(weak, event_bus);
 
     let paths = match daemon_paths() {
         Ok(p) => p,
@@ -972,20 +1021,68 @@ fn run(
     // bind failure only warns — the desktop still runs without
     // a local MCP socket (mobile iroh path is independent).
     let mcp_socket_path = daemon::transport_mcp::default_socket_path();
-    match runtime
-        .block_on(async { daemon::transport_mcp::spawn(mcp_socket_path.clone(), mcp_orchestrator) })
-    {
-        Ok(listener) => {
-            log::info!(
-                "mcp: daemon MCP listener started at {}",
-                mcp_socket_path.display()
-            );
-            std::mem::forget(listener);
-        }
-        Err(err) => {
-            log::warn!("mcp: failed to start local listener; continuing: {err}");
-        }
-    }
+    // Retry the bind in the background when it loses a startup race
+    // with a still-running prior instance. The probe in
+    // `unlink_if_ours_and_dead` only sees "alive" if a listener
+    // actually answers; once that listener dies we take over on the
+    // next retry tick. Backs off from 5s → 30s after the first few
+    // misses to keep logs quiet during long overlaps.
+    let mcp_path_for_task = mcp_socket_path.clone();
+    let mcp_orch_for_task = mcp_orchestrator.clone();
+    runtime.spawn(async move {
+        let mut attempt: u32 = 0;
+        let listener = loop {
+            match daemon::transport_mcp::spawn(
+                mcp_path_for_task.clone(),
+                mcp_orch_for_task.clone(),
+            ) {
+                Ok(listener) => {
+                    if attempt > 0 {
+                        log::info!(
+                            "mcp: bound listener at {} after {} retries",
+                            mcp_path_for_task.display(),
+                            attempt
+                        );
+                    } else {
+                        log::info!(
+                            "mcp: daemon MCP listener started at {}",
+                            mcp_path_for_task.display()
+                        );
+                    }
+                    break listener;
+                }
+                Err(err) => {
+                    if attempt == 0 {
+                        log::warn!(
+                            "mcp: initial bind at {} failed ({err}); retrying",
+                            mcp_path_for_task.display()
+                        );
+                    } else if attempt % 12 == 0 {
+                        log::warn!(
+                            "mcp: still unable to bind at {} after {} attempts ({err})",
+                            mcp_path_for_task.display(),
+                            attempt + 1
+                        );
+                    }
+                    let delay = if attempt < 6 {
+                        std::time::Duration::from_secs(5)
+                    } else {
+                        std::time::Duration::from_secs(30)
+                    };
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                }
+            }
+        };
+        // Park the task forever, holding the listener in scope. When
+        // the daemon's runtime shuts down (process exit) the task is
+        // aborted and the listener's `Drop` runs — which unlinks the
+        // socket file. Combined with the panic hook + SIGTERM/SIGINT
+        // handler in `transport_mcp::spawn`, every termination path
+        // cleans up the socket transparently to the user.
+        std::future::pending::<()>().await;
+        drop(listener);
+    });
 
     let endpoint_result = runtime.block_on(async {
         daemon::run_endpoint(registry, paths.secret_key, paths.paired_peers).await

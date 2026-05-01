@@ -2,15 +2,15 @@
 
 use gpui::{
     canvas, div, fill, hsla, outline, point, prelude::*, px, rems, rgb, size, svg, App,
-    BorderStyle, Bounds, ClipboardItem, Context, MouseButton, MouseDownEvent, Pixels, Render,
-    ScrollWheelEvent, SharedString, Window,
+    BorderStyle, Bounds, ClipboardItem, Context, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Render, ScrollWheelEvent, SharedString, Window,
 };
 
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
 use crate::app::{
-    terminal_link_ranges, AnotherOneApp, TerminalLinkRange, TerminalSelectionRange,
-    WorkspaceKeyboardFocus, WorkspacePane,
+    terminal_link_ranges, AnotherOneApp, TerminalLinkRange, TerminalMouseAction,
+    TerminalMouseButton, TerminalSelectionRange, WorkspaceKeyboardFocus, WorkspacePane,
 };
 use crate::layout::{TERMINAL_TAB_BAR_H, TERMINAL_VIEW_PADDING};
 use crate::terminal_runtime::{
@@ -131,6 +131,178 @@ impl AnotherOneApp {
                                     .child(label),
                             ),
                     ),
+            )
+    }
+
+    /// Top-anchored search bar shown over the active terminal pane
+    /// when `Cmd-F` is pressed. Non-IME — captures plain ASCII and
+    /// Cmd-V paste through `handle_terminal_search_key_down`.
+    pub(crate) fn terminal_search_bar_overlay(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(state) = self.terminal_search.clone() else {
+            return div().id("terminal-search-bar");
+        };
+
+        let count_label = if state.matches.is_empty() {
+            if state.query.is_empty() {
+                "".to_string()
+            } else {
+                "0/0".to_string()
+            }
+        } else {
+            format!("{}/{}", state.current_index + 1, state.matches.len())
+        };
+        let query_text = state.query.clone();
+        let placeholder = if query_text.is_empty() {
+            Some("Search scrollback…")
+        } else {
+            None
+        };
+
+        div()
+            .id("terminal-search-bar")
+            .absolute()
+            .top(px(12.))
+            .right(px(20.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .h(px(34.))
+            .px(px(10.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(gpui::black().opacity(0.35))
+            .bg(rgb(0x2b2d31))
+            .shadow_lg()
+            .child(
+                div()
+                    .min_w(px(220.))
+                    .text_sm()
+                    .text_color(if query_text.is_empty() {
+                        hsla(0., 0., 0.92, 0.45)
+                    } else {
+                        hsla(0., 0., 0.92, 1.0)
+                    })
+                    .child(if let Some(text) = placeholder {
+                        text.to_string()
+                    } else {
+                        query_text.clone()
+                    }),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(hsla(0., 0., 0.92, 0.7))
+                    .min_w(px(48.))
+                    .child(count_label),
+            )
+            .child(terminal_search_button(
+                "terminal-search-prev",
+                "↑",
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.terminal_search_advance(false, cx);
+                    cx.stop_propagation();
+                }),
+            ))
+            .child(terminal_search_button(
+                "terminal-search-next",
+                "↓",
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.terminal_search_advance(true, cx);
+                    cx.stop_propagation();
+                }),
+            ))
+            .child(terminal_search_button(
+                "terminal-search-close",
+                "×",
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.close_terminal_search(cx);
+                    cx.stop_propagation();
+                }),
+            ))
+    }
+
+    pub(crate) fn terminal_context_menu_overlay(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(menu) = self.workspace_pane.read(cx).terminal_context_menu.clone() else {
+            return div().id("terminal-context-menu-popover");
+        };
+
+        let has_link = menu.link.is_some();
+        let has_selection = menu.selected_text.is_some();
+        let item_count = if has_link { 3 } else { 2 };
+        let menu_w = 168.0;
+        let menu_h = (item_count as f32) * 32.0 + 8.0;
+        let window_w = f32::from(window.bounds().size.width);
+        let window_h = f32::from(window.bounds().size.height);
+        let left = (menu.anchor_x + 4.0).min((window_w - menu_w - 8.0).max(8.0));
+        let top = (menu.anchor_y + 4.0).min((window_h - menu_h - 8.0).max(8.0));
+
+        let mut items = div()
+            .flex()
+            .flex_col()
+            .py(px(4.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        if has_link {
+            items = items.child(terminal_context_menu_item(
+                "terminal-context-menu-open-link",
+                "Open Link",
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.terminal_context_menu_open_link(cx);
+                    cx.stop_propagation();
+                }),
+                true,
+            ));
+        }
+
+        items = items.child(terminal_context_menu_item(
+            "terminal-context-menu-copy",
+            "Copy",
+            cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                if has_selection {
+                    this.terminal_context_menu_copy(cx);
+                } else {
+                    this.dismiss_terminal_context_menu(cx);
+                }
+                cx.stop_propagation();
+            }),
+            has_selection,
+        ));
+
+        items = items.child(terminal_context_menu_item(
+            "terminal-context-menu-paste",
+            "Paste",
+            cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                this.terminal_context_menu_paste(cx);
+                cx.stop_propagation();
+            }),
+            true,
+        ));
+
+        div()
+            .id("terminal-context-menu-popover")
+            .absolute()
+            .left(px(left.max(8.0)))
+            .top(px(top.max(8.0)))
+            .on_mouse_down_out(cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                this.dismiss_terminal_context_menu(cx);
+            }))
+            .child(
+                div()
+                    .w(px(menu_w))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(gpui::black().opacity(0.35))
+                    .bg(rgb(0x2b2d31))
+                    .shadow_lg()
+                    .overflow_hidden()
+                    .child(items),
             )
     }
 
@@ -439,6 +611,7 @@ impl WorkspacePane {
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(move |this, ev: &MouseDownEvent, _window, cx| {
+                                this.terminal_context_menu = None;
                                 this.terminal_tab_menu = Some(crate::app::TerminalTabMenuState {
                                     section_id: sid_menu.clone(),
                                     tab_id: tab_id_for_menu.clone(),
@@ -561,7 +734,7 @@ impl WorkspacePane {
         section_id: &crate::app::SectionId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::Div {
+    ) -> gpui::AnyElement {
         let terminal_bg = rgb(0x1e1f22);
         let panel_bg = rgb(0x25282d);
         let border = gpui::white().opacity(0.08);
@@ -570,7 +743,7 @@ impl WorkspacePane {
         let accent_col = hsla(0.58, 0.62, 0.68, 1.);
 
         let Some(state) = self.section_states.get(section_id) else {
-            return div().flex_1().bg(terminal_bg);
+            return div().flex_1().bg(terminal_bg).into_any_element();
         };
         let Some(tab) = state.tabs.get(state.active_tab) else {
             let task_label = section_id.task_id.as_deref().unwrap_or("Not available");
@@ -639,7 +812,8 @@ impl WorkspacePane {
                                 .text_color(body_col)
                                 .child(format!("CWD: {}", cwd_label)),
                         ),
-                );
+                )
+                .into_any_element();
         };
 
         let key = TerminalRuntimeKey {
@@ -666,24 +840,101 @@ impl WorkspacePane {
             let canvas_snapshot = snapshot.clone();
             let selection_key = key.clone();
             let scroll_key = key.clone();
+            let mouse_up_key = key.clone();
+            let mouse_move_key = key.clone();
+            let mouse_right_key = key.clone();
+            let mouse_middle_key = key.clone();
             let selection = self
                 .app
                 .upgrade()
                 .and_then(|app_entity| app_entity.read(cx).terminal_selection_for(&key));
+            let search_highlights = self
+                .app
+                .upgrade()
+                .map(|app_entity| {
+                    app_entity
+                        .read(cx)
+                        .terminal_search_viewport_highlights(&key)
+                })
+                .unwrap_or_default();
+            let bell_intensity = self
+                .app
+                .upgrade()
+                .map(|app_entity| app_entity.read(cx).terminal_bell_intensity(&key))
+                .unwrap_or(0.0);
             let font_size = px(self.font_size);
-            return div()
+            // Swap cursor to a pointer when the user is hovering a
+            // link AND the open-link modifier is held — matches the
+            // visual the underline already shows. Without the
+            // modifier, the underline is just an affordance and the
+            // cursor stays on text-select.
+            let mods = window.modifiers();
+            let modifier_held = mods.platform || mods.control;
+            let hovering_link = self
+                .terminal_link_hover
+                .as_ref()
+                .is_some_and(|h| &h.section_id == section_id && h.tab_id == tab.id);
+            let pane_section_id = section_id.clone();
+            let pane_tab_id = tab.id.clone();
+            let mut pane_div = div()
+                .id(SharedString::from(format!(
+                    "terminal-pane-{}-{}",
+                    section_id.store_key(),
+                    tab.id
+                )))
                 .relative()
                 .flex_1()
                 .min_h_0()
                 .overflow_hidden()
                 .bg(terminal_bg)
-                .cursor_text()
+                // Clear the per-tab hover state the moment the
+                // cursor leaves this pane so the underline +
+                // tooltip don't linger after the mouse moves
+                // somewhere else in the window.
+                .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                    if *hovered {
+                        return;
+                    }
+                    let should_clear = this
+                        .terminal_link_hover
+                        .as_ref()
+                        .is_some_and(|h| {
+                            h.section_id == pane_section_id && h.tab_id == pane_tab_id
+                        });
+                    if should_clear {
+                        this.terminal_link_hover = None;
+                        cx.notify();
+                    }
+                }))
+                // Pressing/releasing Cmd or Ctrl while the cursor is
+                // sitting still over a link must refresh the cursor
+                // swap and tooltip without requiring mouse motion.
+                .on_modifiers_changed(cx.listener(|_this, _ev, _window, cx| {
+                    cx.notify();
+                }));
+            if hovering_link && modifier_held {
+                pane_div = pane_div.cursor_pointer();
+            } else {
+                pane_div = pane_div.cursor_text();
+            }
+            return pane_div
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                         this.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
                         this.focus_handle.focus(window, cx);
                         let _ = this.app.update(cx, |app, app_cx| {
+                            if app.forward_terminal_mouse_event(
+                                &selection_key,
+                                TerminalMouseButton::Left,
+                                TerminalMouseAction::Press,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                                return;
+                            }
                             if app.open_terminal_link_at_click(&selection_key, ev, window, app_cx) {
                                 app_cx.stop_propagation();
                                 return;
@@ -692,9 +943,165 @@ impl WorkspacePane {
                         });
                     }),
                 )
-                .on_scroll_wheel(
-                    cx.listener(move |this, ev: &ScrollWheelEvent, _window, cx| {
+                .on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                         let _ = this.app.update(cx, |app, app_cx| {
+                            if app.forward_terminal_mouse_event(
+                                &mouse_middle_key,
+                                TerminalMouseButton::Middle,
+                                TerminalMouseAction::Press,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                            }
+                        });
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            if app.forward_terminal_mouse_event(
+                                &mouse_right_key,
+                                TerminalMouseButton::Right,
+                                TerminalMouseAction::Press,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                                return;
+                            }
+                            app.open_terminal_context_menu(
+                                &mouse_right_key,
+                                ev.position,
+                                window,
+                                app_cx,
+                            );
+                            app_cx.stop_propagation();
+                        });
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(move |this, ev: &MouseUpEvent, window, cx| {
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            if app.forward_terminal_mouse_event(
+                                &mouse_up_key,
+                                TerminalMouseButton::Left,
+                                TerminalMouseAction::Release,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                            }
+                        });
+                    }),
+                )
+                .on_mouse_move(
+                    cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
+                        let forwarded = this
+                            .app
+                            .update(cx, |app, app_cx| {
+                                let action = if ev.dragging() {
+                                    TerminalMouseAction::Drag
+                                } else {
+                                    TerminalMouseAction::Motion
+                                };
+                                let button = if ev.dragging() {
+                                    match ev.pressed_button {
+                                        Some(MouseButton::Left) => TerminalMouseButton::Left,
+                                        Some(MouseButton::Middle) => {
+                                            TerminalMouseButton::Middle
+                                        }
+                                        Some(MouseButton::Right) => TerminalMouseButton::Right,
+                                        _ => TerminalMouseButton::Left,
+                                    }
+                                } else {
+                                    TerminalMouseButton::None
+                                };
+                                if app.forward_terminal_mouse_event(
+                                    &mouse_move_key,
+                                    button,
+                                    action,
+                                    ev.position,
+                                    ev.modifiers,
+                                    window,
+                                ) {
+                                    app_cx.stop_propagation();
+                                    return true;
+                                }
+                                false
+                            })
+                            .unwrap_or(false);
+                        if forwarded {
+                            return;
+                        }
+                        // Mouse mode is off: refresh link-hover state.
+                        // Compute via the app (read-only) and apply
+                        // directly to `this` to avoid the nested-
+                        // update panic of touching WorkspacePane
+                        // through `app.update` while WorkspacePane is
+                        // already locked by the listener.
+                        let next = this
+                            .app
+                            .update(cx, |app, _| {
+                                app.compute_terminal_link_hover(
+                                    &mouse_move_key,
+                                    ev.position,
+                                    window,
+                                )
+                            })
+                            .unwrap_or(None);
+                        if this.terminal_link_hover != next {
+                            this.terminal_link_hover = next;
+                            cx.notify();
+                        }
+                    }),
+                )
+                .on_scroll_wheel(
+                    cx.listener(move |this, ev: &ScrollWheelEvent, window, cx| {
+                        let _ = this.app.update(cx, |app, app_cx| {
+                            let pixel_delta = ev.delta.pixel_delta(px(1.));
+                            let dy = f32::from(pixel_delta.y);
+                            let dx = f32::from(pixel_delta.x);
+                            // Vertical wheel maps to 64 (up) / 65 (down);
+                            // horizontal to 66 (left) / 67 (right) per
+                            // xterm. Pick the dominant axis for a single
+                            // forwarded event — apps that care about both
+                            // axes get them as separate scroll ticks.
+                            let dominant_button = if dy.abs() >= dx.abs() && dy != 0.0 {
+                                Some(if dy > 0.0 {
+                                    TerminalMouseButton::WheelUp
+                                } else {
+                                    TerminalMouseButton::WheelDown
+                                })
+                            } else if dx != 0.0 {
+                                Some(if dx > 0.0 {
+                                    TerminalMouseButton::WheelRight
+                                } else {
+                                    TerminalMouseButton::WheelLeft
+                                })
+                            } else {
+                                None
+                            };
+                            if let Some(button) = dominant_button {
+                                if app.forward_terminal_mouse_event(
+                                    &scroll_key,
+                                    button,
+                                    TerminalMouseAction::Press,
+                                    ev.position,
+                                    ev.modifiers,
+                                    window,
+                                ) {
+                                    app_cx.stop_propagation();
+                                    return;
+                                }
+                            }
                             if app.scroll_terminal(&scroll_key, ev.delta, app_cx) {
                                 app_cx.stop_propagation();
                             }
@@ -705,19 +1112,20 @@ impl WorkspacePane {
                     canvas(
                         move |bounds, _, _| bounds,
                         move |bounds, _, window, cx| {
-                            let modifiers = window.modifiers();
-                            let hovered_link = if modifiers.control || modifiers.platform {
-                                hovered_terminal_link_range(
-                                    bounds,
-                                    &canvas_snapshot,
-                                    window.mouse_position(),
-                                    padding,
-                                    cell_width,
-                                    line_height,
-                                )
-                            } else {
-                                None
-                            };
+                            // Underline links on plain hover so they're
+                            // discoverable without trial-and-error
+                            // modifier presses. Cmd/Ctrl is still
+                            // required to *open* (handled in
+                            // `open_terminal_link_at_click`); the hover
+                            // is just a visual affordance.
+                            let hovered_link = hovered_terminal_link_range(
+                                bounds,
+                                &canvas_snapshot,
+                                window.mouse_position(),
+                                padding,
+                                cell_width,
+                                line_height,
+                            );
                             paint_terminal_snapshot(
                                 bounds,
                                 &canvas_snapshot,
@@ -729,12 +1137,68 @@ impl WorkspacePane {
                                 font_size,
                                 selection,
                                 hovered_link,
+                                &search_highlights,
                             );
                         },
                     )
                     .absolute()
                     .inset_0(),
-                );
+                )
+                .children((bell_intensity > 0.0).then(|| {
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(hsla(0.13, 0.95, 0.65, 0.18 * bell_intensity))
+                }))
+                .children(self.terminal_link_hover.as_ref().and_then(|hover| {
+                    if hover.section_id != key.section_id || hover.tab_id != key.tab_id {
+                        return None;
+                    }
+                    // Place the tooltip just below the cursor, clamped
+                    // to the window so it doesn't paint off-screen.
+                    let tip_left = (hover.anchor_x + 12).max(8) as f32;
+                    let tip_top = (hover.anchor_y + 18).max(8) as f32;
+                    let url_preview: String = if hover.link.len() > 80 {
+                        format!("{}…", &hover.link[..80])
+                    } else {
+                        hover.link.clone()
+                    };
+                    let modifier_label = if cfg!(target_os = "macos") {
+                        "⌘+click"
+                    } else {
+                        "Ctrl+click"
+                    };
+                    Some(
+                        div()
+                            .absolute()
+                            .left(px(tip_left))
+                            .top(px(tip_top))
+                            .max_w(px(420.))
+                            .px(px(10.))
+                            .py(px(6.))
+                            .rounded(px(6.))
+                            .border_1()
+                            .border_color(gpui::black().opacity(0.4))
+                            .bg(rgb(0x1f2024))
+                            .shadow_lg()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(hsla(0., 0., 0.92, 0.75))
+                                    .child(format!("{modifier_label} to open")),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(hsla(0., 0., 0.92, 1.0))
+                                    .child(url_preview),
+                            ),
+                    )
+                }))
+                .into_any_element();
         }
 
         let status_title = if pending {
@@ -828,7 +1292,8 @@ impl WorkspacePane {
                                 ),
                         )
                         .child(terminal_error_details(error, body_col)),
-                );
+                )
+                .into_any_element();
         } else {
             "This restored tab has metadata only. Opening it triggers launch or resume on demand."
         };
@@ -904,6 +1369,7 @@ impl WorkspacePane {
                             .child(format!("CWD: {}", cwd_label)),
                     ),
             )
+            .into_any_element()
     }
 }
 
@@ -940,6 +1406,63 @@ fn terminal_error_details(error: String, body_col: gpui::Hsla) -> impl IntoEleme
     details
 }
 
+fn terminal_search_button<F>(
+    id: &'static str,
+    label: &'static str,
+    on_click: F,
+) -> impl IntoElement
+where
+    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(px(24.))
+        .h(px(24.))
+        .rounded(px(4.))
+        .text_sm()
+        .text_color(hsla(0., 0., 0.92, 0.85))
+        .cursor_pointer()
+        .hover(|hover| hover.bg(gpui::white().opacity(0.06)))
+        .on_mouse_down(MouseButton::Left, on_click)
+        .child(label)
+}
+
+fn terminal_context_menu_item<F>(
+    id: &'static str,
+    label: &'static str,
+    on_click: F,
+    enabled: bool,
+) -> impl IntoElement
+where
+    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
+    let mut item = div()
+        .id(id)
+        .flex()
+        .items_center()
+        .h(px(30.))
+        .px(px(14.))
+        .text_sm()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .child(label);
+
+    if enabled {
+        item = item
+            .text_color(hsla(0., 0., 0.92, 1.))
+            .cursor_pointer()
+            .hover(|hover| hover.bg(gpui::white().opacity(0.06)));
+    } else {
+        item = item.text_color(hsla(0., 0., 0.92, 0.4));
+    }
+    // Always attach the listener: when disabled, the closure dismisses the
+    // menu instead of acting. Without this the outer container's
+    // `stop_propagation` would swallow the click and leave the menu open.
+    item.on_mouse_down(MouseButton::Left, on_click)
+}
+
 fn paint_terminal_snapshot(
     bounds: Bounds<Pixels>,
     snapshot: &TerminalSurfaceSnapshot,
@@ -951,6 +1474,7 @@ fn paint_terminal_snapshot(
     font_size: Pixels,
     selection: Option<TerminalSelectionRange>,
     hovered_link: Option<TerminalLinkRange>,
+    search_highlights: &[(usize, usize, usize, bool)],
 ) {
     for (line_index, line) in snapshot.lines.iter().enumerate() {
         let top = bounds.origin.y + padding + cell_height * line_index as f32;
@@ -965,6 +1489,23 @@ fn paint_terminal_snapshot(
                 span.color,
             ));
         }
+    }
+
+    // Search highlights paint above cell backgrounds (so vim/htop's
+    // colored cells don't obscure them) but underneath text glyphs.
+    for &(line, start_col, end_col, is_current) in search_highlights {
+        let top = bounds.origin.y + padding + cell_height * line as f32;
+        let left = bounds.origin.x + padding + cell_width * start_col as f32;
+        let width = cell_width * (end_col.saturating_sub(start_col)) as f32;
+        let bg = if is_current {
+            hsla(0.13, 0.85, 0.55, 0.85)
+        } else {
+            hsla(0.13, 0.5, 0.45, 0.55)
+        };
+        window.paint_quad(fill(
+            Bounds::new(point(left, top), size(width, cell_height)),
+            bg,
+        ));
     }
 
     if let Some(selection) = selection {
@@ -1015,15 +1556,23 @@ fn paint_terminal_snapshot(
     let width = cell_width * cursor.width as f32;
     let rect = Bounds::new(point(left, top), size(width, cell_height));
 
+    let color = if cursor.blinking {
+        let mut faded = cursor.color;
+        faded.a *= cursor_blink_opacity();
+        faded
+    } else {
+        cursor.color
+    };
+
     match cursor.kind {
-        TerminalCursorKind::Block => window.paint_quad(fill(rect, cursor.color)),
+        TerminalCursorKind::Block => window.paint_quad(fill(rect, color)),
         TerminalCursorKind::HollowBlock => {
-            window.paint_quad(outline(rect, cursor.color, BorderStyle::default()));
+            window.paint_quad(outline(rect, color, BorderStyle::default()));
         }
         TerminalCursorKind::Beam => {
             window.paint_quad(fill(
                 Bounds::new(point(left, top), size(px(2.), cell_height)),
-                cursor.color,
+                color,
             ));
         }
         TerminalCursorKind::Underline => {
@@ -1032,9 +1581,26 @@ fn paint_terminal_snapshot(
                     point(left, top + cell_height - px(2.)),
                     size(width.max(px(1.)), px(2.)),
                 ),
-                cursor.color,
+                color,
             ));
         }
+    }
+}
+
+/// Cursor blink phase modulator: a square wave with a 1000 ms period
+/// (500 ms on, 500 ms off) measured against process start. Returns 1.0
+/// or 0.25 — we keep a sliver of opacity even on the "off" phase so
+/// users see a clear "this cell still holds the cursor" hint.
+pub(crate) fn cursor_blink_opacity() -> f32 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    let epoch = EPOCH.get_or_init(Instant::now);
+    let phase_ms = epoch.elapsed().as_millis() % 1000;
+    if phase_ms < 500 {
+        1.0
+    } else {
+        0.25
     }
 }
 

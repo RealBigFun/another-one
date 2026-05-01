@@ -19,6 +19,16 @@ use gpui::{
 
 actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
 actions!(
+    terminal_search,
+    [
+        TerminalFind,
+        TerminalSearchClose,
+        TerminalSearchNext,
+        TerminalSearchPrev,
+        TerminalSearchBackspace
+    ]
+);
+actions!(
     navigation,
     [
         NextTab,
@@ -55,11 +65,16 @@ use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
 };
 use crate::terminal_runtime::{
-    LiveTerminalRuntime, TerminalGridSize, TerminalRuntimeKey, TerminalRuntimeUpdate,
+    LiveTerminalRuntime, TerminalGridSize, TerminalMouseEncoding, TerminalMouseLevel,
+    TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalScrollbackMatch,
     TerminalSurfaceSnapshot, TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
 pub use another_one_core::section::SectionId;
+use another_one_core::clients::{
+    AttachTabRequest, AttachTabResponse, ClientEvent, ClientId, CloseTabRequest, Focus, JobId,
+    OpenTabRequest, OpenTabResponse, OpenTaskRequest, OpenTaskResponse, SelectRequest,
+};
 
 const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 const ACTIVE_GIT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
@@ -82,6 +97,9 @@ const PENDING_CHECK_RUNS_LOOKUP_TTL: Duration = Duration::from_secs(10);
 pub(crate) const SIDEBAR_TASK_DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 const PROJECT_EXPAND_ANIMATION_DURATION: Duration = Duration::from_millis(160);
 const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
+/// How long a terminal bell flash stays visible. Short enough to feel
+/// like a glance, long enough to register.
+pub(crate) const BELL_FLASH_DURATION: Duration = Duration::from_millis(180);
 pub(crate) const RECENT_COMMITS_PAGE_SIZE: usize = 20;
 
 /// Max queued `TerminalLaunchReply`s between PTY reader threads and
@@ -590,12 +608,54 @@ pub(crate) struct SidebarTaskMenuState {
     pub(crate) anchor_y: f32,
 }
 
+/// Cmd-F scrollback search overlay for one terminal pane. Lives at the
+/// app level so the highlight set survives renders without re-running
+/// the scan on every paint. `current_index` always points at a valid
+/// entry of `matches` when non-empty.
+#[derive(Debug, Clone)]
+pub(crate) struct TerminalSearchState {
+    pub(crate) key: TerminalRuntimeKey,
+    pub(crate) query: String,
+    pub(crate) matches: Vec<TerminalScrollbackMatch>,
+    pub(crate) current_index: usize,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TerminalTabMenuState {
     pub(crate) section_id: SectionId,
     pub(crate) tab_id: String,
     pub(crate) anchor_x: f32,
     pub(crate) anchor_y: f32,
+}
+
+/// Per-frame hover hint for a terminal link. Carries the link target
+/// (so the tooltip can show what's about to open) and the cursor
+/// screen position (so the tooltip renders next to the cursor without
+/// occluding the link itself).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TerminalLinkHoverState {
+    pub(crate) section_id: SectionId,
+    pub(crate) tab_id: String,
+    pub(crate) link: String,
+    pub(crate) anchor_x: i32,
+    pub(crate) anchor_y: i32,
+}
+
+/// Right-click context menu over the terminal pane. Surfaced when the
+/// running TUI is NOT consuming mouse events (`mouse_protocol() == None`),
+/// otherwise the right-click is forwarded to the application and this
+/// state stays `None`.
+#[derive(Debug, Clone)]
+pub(crate) struct TerminalContextMenuState {
+    pub(crate) key: TerminalRuntimeKey,
+    pub(crate) anchor_x: f32,
+    pub(crate) anchor_y: f32,
+    /// If the click landed on a hyperlink, this carries the target — the
+    /// menu offers an "Open Link" item only when this is `Some`.
+    pub(crate) link: Option<String>,
+    /// Selection text captured at menu-open time, so "Copy" works even if
+    /// the menu's own click clears the visual selection state.
+    pub(crate) selected_text: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -764,6 +824,13 @@ pub(crate) struct WorkspacePane {
     pub(crate) section_states: HashMap<SectionId, SectionState>,
     /// Context menu for a terminal tab.
     pub(crate) terminal_tab_menu: Option<TerminalTabMenuState>,
+    /// Tooltip state for the link the cursor is currently over inside a
+    /// terminal pane. Populated on `on_mouse_move`; cleared on
+    /// mouse-leave. The tooltip itself renders alongside the canvas in
+    /// `panels.rs`.
+    pub(crate) terminal_link_hover: Option<TerminalLinkHoverState>,
+    /// Right-click context menu over a terminal pane (Copy/Paste/Open Link).
+    pub(crate) terminal_context_menu: Option<TerminalContextMenuState>,
     /// Confirmation state for closing a pinned terminal tab.
     pub(crate) pinned_tab_close_confirm: Option<PinnedTabCloseConfirmState>,
     /// Last workspace region that intentionally claimed bare navigation keys.
@@ -795,6 +862,8 @@ impl WorkspacePane {
             project_page_pr_query_draft: String::new(),
             section_states,
             terminal_tab_menu: None,
+            terminal_context_menu: None,
+            terminal_link_hover: None,
             pinned_tab_close_confirm: None,
             keyboard_focus: WorkspaceKeyboardFocus::MainPane,
         }
@@ -1018,6 +1087,11 @@ impl WorkspacePane {
                 &mut self.active_project_page,
                 section_id.clone(),
             );
+            // Hover state belongs to the previously-active tab; a
+            // keyboard-driven tab switch (no mouse-leave event)
+            // would otherwise leave a stale tooltip waiting to
+            // re-paint when the user toggles back.
+            self.terminal_link_hover = None;
             self.persist_section_state(section_id, cx);
             self.persist_active_section(cx);
             cx.notify();
@@ -1032,10 +1106,57 @@ impl WorkspacePane {
         fixed_title: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<String> {
+        self.add_tab_with_launch_config_attributed(
+            section_id,
+            launch_config,
+            fixed_title,
+            ClientId::gui_desktop(),
+            cx,
+        )
+    }
+
+    /// Same as [`add_tab_with_launch_config`] but lets the caller
+    /// stamp the originating client on the resulting `TabOpened`
+    /// event. The trait-verb path passes `mcp:<handle>` /
+    /// `mobile:<endpoint>`; sidebar / shortcut callers default to
+    /// `gui:desktop` via the wrapper above.
+    pub(crate) fn add_tab_with_launch_config_attributed(
+        &mut self,
+        section_id: &SectionId,
+        launch_config: TerminalLaunchConfig,
+        fixed_title: Option<String>,
+        originator: ClientId,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
         let added_tab_id = self
             .section_states
             .get_mut(section_id)
             .map(|state| state.add_tab_with_launch_config(launch_config.clone(), fixed_title));
+        if let Some(tab_id) = added_tab_id.as_ref() {
+            let app = self.app.clone();
+            let section_clone = section_id.clone();
+            let tab_clone = tab_id.clone();
+            cx.defer(move |cx| {
+                if app
+                    .update(cx, |app, _| {
+                        app.emit_client_event(ClientEvent::TabOpened {
+                            originator,
+                            section_id: section_clone,
+                            tab_id: tab_clone.clone(),
+                        });
+                    })
+                    .is_err()
+                {
+                    // The app entity dropped between deferring and
+                    // running; nothing to subscribe anymore. Log so
+                    // we don't silently lose a TabOpened event when
+                    // shutdown races a tab spawn.
+                    log::warn!(
+                        "TabOpened defer skipped — app entity gone (tab {tab_clone})"
+                    );
+                }
+            });
+        }
         if added_tab_id.is_some() {
             self.persist_section_state(section_id, cx);
             cx.notify();
@@ -1367,6 +1488,51 @@ pub struct AnotherOneApp {
     terminal_scroll_remainder_lines: HashMap<TerminalRuntimeKey, f32>,
     /// Mouse selection state for the currently selected terminal text.
     terminal_selection: Option<TerminalSelectionState>,
+    /// Active scrollback search (Cmd-F). At most one terminal at a time;
+    /// opening the search on a different terminal closes any previous.
+    pub(crate) terminal_search: Option<TerminalSearchState>,
+    /// Last time each terminal rang its bell. The renderer flashes the
+    /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
+    pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
+    /// Per-client focus tracker. Every connected client (the GUI, any
+    /// MCP harness, mobile peers) has at most one entry here. The
+    /// `select` / `select_for` verbs on the `DaemonClient` trait flow
+    /// through this map.
+    pub(crate) client_focus: HashMap<ClientId, Focus>,
+    /// Last `Focus` known for the GUI client. Compared on every drain
+    /// tick to detect mouse-driven navigation (sidebar clicks, tab
+    /// switches, project-page activations) so a corresponding
+    /// `FocusChanged` event flows onto the bus — closing the loop
+    /// for MCP harnesses that want to observe the human.
+    pub(crate) last_observed_gui_focus: Focus,
+    /// In-flight worktree-task creations keyed by `JobId`. The async
+    /// `project_service::spawn_task_creation` runs in the
+    /// background; the GUI submit path stores a `(originator,
+    /// project_id)` against a fresh JobId here so the drain can
+    /// fire correlated `TaskOpened` / `TaskOpenFailed` events.
+    /// HashMap (rather than the original single Option) because a
+    /// future MCP `create_worktree_task` verb concurrent with a
+    /// GUI submit must not clobber the GUI's job.
+    ///
+    /// Today the underlying `task_creation_receiver` is single-slot
+    /// — concurrent creations queue at the receiver — so the map
+    /// holds at most one entry in practice. Promoting to multi-job
+    /// only requires extending `task_creation_receiver` to a
+    /// HashMap too; the event correlation is already job-keyed.
+    pub(crate) pending_worktree_jobs: HashMap<JobId, (ClientId, String)>,
+    /// GUI's own `broadcast::Receiver` clone — the desktop app is
+    /// itself a client and uses it to surface a toast when *another*
+    /// client (MCP, mobile) drives a state change. Drained on every
+    /// render tick alongside other observability work.
+    pub(crate) gui_event_receiver: Option<tokio::sync::broadcast::Receiver<ClientEvent>>,
+    /// Daemon-side `ClientEvent` broadcast bus. Owned directly by
+    /// the app (rather than tucked inside `Mutex<RegistryState>`)
+    /// so emits — which fire on every state change including the
+    /// per-PTY-chunk `Output` event — never have to take the
+    /// registry mutex. Cloned into the MCP orchestrator at startup
+    /// so per-session subscribers can `.subscribe()` without round-
+    /// tripping through the lock either.
+    pub(crate) event_bus: tokio::sync::broadcast::Sender<ClientEvent>,
     /// Prewarmed launches keyed by launch id until they are canceled or exit.
     prewarmed_terminal_launches: HashMap<u64, PrewarmedTerminalLaunch>,
     /// Child process ids for hidden prewarmed launches.
@@ -2481,9 +2647,23 @@ fn terminal_text_link_byte_ranges(text: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
+const TERMINAL_LINK_SCHEMES: &[&str] = &[
+    "https://",
+    "http://",
+    "ssh://",
+    "sftp://",
+    "ftps://",
+    "ftp://",
+    "file://",
+    "git://",
+    "vscode://",
+    "mailto:",
+];
+
 fn terminal_link_prefix_after(text: &str, start: usize) -> Option<(usize, &'static str)> {
-    ["https://", "http://"]
-        .into_iter()
+    TERMINAL_LINK_SCHEMES
+        .iter()
+        .copied()
         .filter_map(|prefix| text[start..].find(prefix).map(|offset| (offset, prefix)))
         .min_by_key(|(offset, _)| *offset)
 }
@@ -2499,13 +2679,168 @@ fn trim_terminal_link_suffix(link: &str) -> &str {
 
 fn normalize_terminal_link(link: &str) -> Option<String> {
     let link = trim_terminal_link_suffix(link.trim());
-    if link.len() <= "http://".len() {
+    let scheme = TERMINAL_LINK_SCHEMES
+        .iter()
+        .copied()
+        .find(|prefix| link.starts_with(prefix))?;
+    let body = &link[scheme.len()..];
+    if body.is_empty() || body.chars().any(char::is_whitespace) {
         return None;
     }
-    if link.starts_with("https://") || link.starts_with("http://") {
-        Some(link.to_string())
+    Some(link.to_string())
+}
+
+/// Mouse buttons we report to the application. Mirrors xterm's encoding
+/// table — left/middle/right map to button bits 0/1/2; wheel up/down ride
+/// in the high "extra" range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalMouseButton {
+    Left,
+    Middle,
+    Right,
+    WheelUp,
+    WheelDown,
+    WheelLeft,
+    WheelRight,
+    /// Used for motion events while no button is held (any-motion mode).
+    None,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalMouseAction {
+    Press,
+    Release,
+    /// Pointer moved while at least one button is held — encoded with the
+    /// motion bit (32) plus the held button.
+    Drag,
+    /// Pointer moved with no buttons held (only emitted in any-motion mode).
+    Motion,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) struct TerminalMouseModifiers {
+    pub shift: bool,
+    pub alt: bool,
+    pub control: bool,
+}
+
+/// Encode a mouse event to the byte sequence the running TUI expects on
+/// stdin. `col` and `row` are 0-based cell coordinates (we add 1 here per
+/// the wire protocol). Returns `None` when the event isn't legal under the
+/// negotiated mode (e.g. a motion event in click-only mode).
+pub(crate) fn encode_terminal_mouse_event(
+    protocol: TerminalMouseProtocol,
+    button: TerminalMouseButton,
+    action: TerminalMouseAction,
+    col: usize,
+    row: usize,
+    modifiers: TerminalMouseModifiers,
+) -> Option<Vec<u8>> {
+    match action {
+        TerminalMouseAction::Press | TerminalMouseAction::Release => {}
+        TerminalMouseAction::Drag => {
+            if matches!(protocol.level, TerminalMouseLevel::ClickOnly) {
+                return None;
+            }
+        }
+        TerminalMouseAction::Motion => {
+            if !matches!(protocol.level, TerminalMouseLevel::AnyMotion) {
+                return None;
+            }
+        }
+    }
+    if matches!(action, TerminalMouseAction::Release)
+        && matches!(protocol.level, TerminalMouseLevel::ClickOnly)
+    {
+        // X10-style click-only mode never reports releases.
+        return None;
+    }
+
+    let mut button_code: u32 = match button {
+        TerminalMouseButton::Left => 0,
+        TerminalMouseButton::Middle => 1,
+        TerminalMouseButton::Right => 2,
+        TerminalMouseButton::None => 3,
+        TerminalMouseButton::WheelUp => 64,
+        TerminalMouseButton::WheelDown => 65,
+        TerminalMouseButton::WheelLeft => 66,
+        TerminalMouseButton::WheelRight => 67,
+    };
+    if matches!(action, TerminalMouseAction::Drag | TerminalMouseAction::Motion) {
+        button_code += 32;
+    }
+    if modifiers.shift {
+        button_code += 4;
+    }
+    if modifiers.alt {
+        button_code += 8;
+    }
+    if modifiers.control {
+        button_code += 16;
+    }
+
+    // Wire columns/rows are 1-based.
+    let wire_col = col.saturating_add(1);
+    let wire_row = row.saturating_add(1);
+
+    match protocol.encoding {
+        TerminalMouseEncoding::Sgr => {
+            // SGR signals release with a trailing `m`; the X10
+            // "always-button-3" release quirk does NOT apply here — the
+            // actual button code is preserved so the app knows which
+            // button was released.
+            let trailer = if matches!(action, TerminalMouseAction::Release) {
+                'm'
+            } else {
+                'M'
+            };
+            Some(
+                format!(
+                    "\u{1b}[<{};{};{}{}",
+                    button_code, wire_col, wire_row, trailer
+                )
+                .into_bytes(),
+            )
+        }
+        TerminalMouseEncoding::Default => {
+            // Legacy CSI M payload: bytes are clamped to 32..=255, columns
+            // beyond 223 are dropped per xterm.
+            let cb = (button_code as u8).saturating_add(32);
+            let cx = (wire_col.min(223) as u8).saturating_add(32);
+            let cy = (wire_row.min(223) as u8).saturating_add(32);
+            let release_cb = if matches!(action, TerminalMouseAction::Release) {
+                3u8.saturating_add(32)
+            } else {
+                cb
+            };
+            Some(vec![0x1b, b'[', b'M', release_cb, cx, cy])
+        }
+        TerminalMouseEncoding::Utf8 => {
+            // ?1005h: same shape as Default but col/row are encoded as
+            // UTF-8 codepoints, so columns up to 2015 are reachable.
+            let mut buf = Vec::with_capacity(8);
+            buf.extend_from_slice(b"\x1b[M");
+            let cb_value = if matches!(action, TerminalMouseAction::Release) {
+                3u32 + 32
+            } else {
+                button_code + 32
+            };
+            push_utf8_mouse_byte(&mut buf, cb_value);
+            push_utf8_mouse_byte(&mut buf, wire_col.min(2015) as u32 + 32);
+            push_utf8_mouse_byte(&mut buf, wire_row.min(2015) as u32 + 32);
+            Some(buf)
+        }
+    }
+}
+
+fn push_utf8_mouse_byte(buf: &mut Vec<u8>, value: u32) {
+    if value < 0x80 {
+        buf.push(value as u8);
+    } else if let Some(ch) = char::from_u32(value) {
+        let mut tmp = [0u8; 4];
+        buf.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
     } else {
-        None
+        buf.push(b'?');
     }
 }
 
@@ -3628,6 +3963,28 @@ impl AnotherOneApp {
         let registry_state = Arc::new(Mutex::new(crate::daemon_host::RegistryState::new(
             store.clone(),
         )));
+        // The bus is owned by the app (lock-free emit path) and
+        // cloned into the daemon thread for the MCP orchestrator's
+        // per-session subscriptions.
+        //
+        // Capacity is sized for `ClientEvent::Output`, which fires
+        // per PTY chunk and dominates throughput. A chatty TUI at
+        // ~1 MiB/s with 8 KiB chunks produces ~125 events/sec; at
+        // 4096 capacity a slow consumer can fall ~30 s behind
+        // before lagging — long enough that any reasonable consumer
+        // catches up, but bounded so the buffer doesn't grow without
+        // limit. Other events (TaskOpened/TabOpened/etc.) are
+        // sub-1 Hz under normal use and trivially fit.
+        //
+        // A future per-tab Output channel would isolate one chatty
+        // terminal from others, but that requires reshaping the
+        // subscriber API. Tracked as a follow-up.
+        let event_bus = tokio::sync::broadcast::channel(4096).0;
+        // Subscribe the GUI's own client-event receiver before any
+        // event can be emitted, so we don't miss bus traffic during
+        // startup. Drained on each render tick by `drain_gui_events`
+        // to surface peer-driven changes (MCP, mobile) as toasts.
+        let gui_event_receiver = Some(event_bus.subscribe());
         // The embedded daemon-host is a *desktop* concern — it spins up
         // an iroh endpoint that mobile clients connect into. On Android
         // we want to be the client, not the host, so the daemon-host
@@ -3636,7 +3993,10 @@ impl AnotherOneApp {
         // the `HOME is unset` startup error since `daemon-host`'s
         // config-dir lookup uses `dirs::config_dir()`.
         #[cfg(not(target_os = "android"))]
-        let daemon_handle_rx = Some(crate::daemon_host::spawn(registry_state.clone()));
+        let daemon_handle_rx = Some(crate::daemon_host::spawn(
+            registry_state.clone(),
+            event_bus.clone(),
+        ));
         #[cfg(target_os = "android")]
         let daemon_handle_rx: Option<
             mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>,
@@ -3800,6 +4160,13 @@ impl AnotherOneApp {
             terminal_surface_snapshots: HashMap::new(),
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
+            terminal_search: None,
+            terminal_bell_at: HashMap::new(),
+            client_focus: HashMap::new(),
+            last_observed_gui_focus: Focus::None,
+            pending_worktree_jobs: HashMap::new(),
+            gui_event_receiver,
+            event_bus,
             prewarmed_terminal_launches: HashMap::new(),
             prewarmed_terminal_processes: HashMap::new(),
             canceled_prewarmed_launch_ids: HashSet::new(),
@@ -4228,19 +4595,35 @@ impl AnotherOneApp {
         } else {
             0.0
         };
-        let width = (f32::from(viewport.width)
-            - self.sidebar_w
-            - self.right_w
-            - GUTTER * 2.0
-            - TERMINAL_VIEW_PADDING * 2.0)
-            .max(MIN_MAIN);
-        let height = (f32::from(viewport.height)
-            - FOOTER_H
-            - titlebar_height
-            - TERMINAL_TAB_BAR_H
-            - MAIN_PANE_BOTTOM_PAD
-            - TERMINAL_VIEW_PADDING * 2.0)
-            .max(120.0);
+        // Narrow (mobile) layouts give the terminal the entire viewport
+        // width minus padding — no sidebars to subtract. On rotate, the
+        // viewport flips dimensions and this recomputes against the
+        // new bounds, which then drives a `master.resize(...)` call in
+        // `drain_pending_tab_resizes` (TIOCSWINSZ → SIGWINCH).
+        let (width, height) = if self.is_narrow(window) {
+            let width = (f32::from(viewport.width) - TERMINAL_VIEW_PADDING * 2.0).max(MIN_MAIN);
+            let height = (f32::from(viewport.height)
+                - titlebar_height
+                - TERMINAL_TAB_BAR_H
+                - TERMINAL_VIEW_PADDING * 2.0)
+                .max(120.0);
+            (width, height)
+        } else {
+            let width = (f32::from(viewport.width)
+                - self.sidebar_w
+                - self.right_w
+                - GUTTER * 2.0
+                - TERMINAL_VIEW_PADDING * 2.0)
+                .max(MIN_MAIN);
+            let height = (f32::from(viewport.height)
+                - FOOTER_H
+                - titlebar_height
+                - TERMINAL_TAB_BAR_H
+                - MAIN_PANE_BOTTOM_PAD
+                - TERMINAL_VIEW_PADDING * 2.0)
+                .max(120.0);
+            (width, height)
+        };
         TerminalGridSize::from_panel_size(width, height, self.font_size)
     }
 
@@ -4614,8 +4997,19 @@ impl AnotherOneApp {
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                         let terminal_update = runtime.apply_output(&bytes);
                         output_dirty_keys.insert(key.clone());
+                        if terminal_update.bell {
+                            self.terminal_bell_at.insert(key.clone(), Instant::now());
+                        }
                         self.update_terminal_tab(&key, cx, |tab| {
                             apply_terminal_title_update(tab, &terminal_update);
+                        });
+                        // Mirror the chunk to MCP subscribers. Each
+                        // session has its own broadcast::Receiver so
+                        // a slow consumer doesn't stall the daemon's
+                        // own output processing.
+                        self.emit_client_event(ClientEvent::Output {
+                            tab_id: key.tab_id.clone(),
+                            bytes: bytes.clone(),
                         });
                         updated = true;
                     } else if self.maybe_retry_claude_restore(&key, cx) {
@@ -4809,8 +5203,19 @@ impl AnotherOneApp {
                             let terminal_update = runtime.apply_output(&bytes);
                             self.terminal_surface_snapshots
                                 .insert(key.clone(), runtime.snapshot());
+                            if terminal_update.bell {
+                                self.terminal_bell_at.insert(key.clone(), Instant::now());
+                            }
                             self.update_terminal_tab(&key, cx, |tab| {
                                 apply_terminal_title_update(tab, &terminal_update);
+                            });
+                            // Same Output broadcast as the cold-path
+                            // drain — warm-prewarm tabs (MCP spawn,
+                            // GUI new-task fast path) also surface
+                            // their bytes to MCP subscribers.
+                            self.emit_client_event(ClientEvent::Output {
+                                tab_id: key.tab_id.clone(),
+                                bytes: bytes.clone(),
                             });
                             updated = true;
                         } else if self.maybe_retry_claude_restore(&key, cx) {
@@ -5048,70 +5453,715 @@ impl AnotherOneApp {
         };
         let mut changed = false;
         for request in pending {
-            if self.live_terminal_runtimes.contains_key(&request.key)
-                || self
-                    .terminal_manager
-                    .pending_launches
-                    .contains(&request.key)
-            {
-                continue;
+            // Routed through the same client-trait verb a future
+            // privileged MCP "wake this tab" call would use. Mobile
+            // attach is just one driver of `client_attach_tab`.
+            // We don't have a stable mobile-endpoint id here yet —
+            // attribute the event to a generic mobile client until
+            // `pending_tab_launches` carries the originating peer.
+            let attach = AttachTabRequest {
+                client_id: ClientId("mobile:attach".to_string()),
+                section_id: request.key.section_id.clone(),
+                tab_id: request.key.tab_id.clone(),
+            };
+            match self.client_attach_tab(attach, cx) {
+                Ok(resp) if resp.launched => changed = true,
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(?request.key, %err, "attach_tab declined; mobile launch dropped");
+                }
             }
+        }
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
 
-            // Find the Task + PersistedTerminalTab carrying this key.
-            let section_store_key = request.key.section_id.store_key();
-            let Some((task, tab)) = self.project_store.tasks.values().flatten().find_map(|t| {
+    /// Drain `RegistryState.pending_spawn_terminals` (MCP
+    /// `spawn_terminal` asks routed through the daemon). Each entry
+    /// carries a sync responder; we resolve the project/task it
+    /// targets, ensure the section exists, add a fresh shell tab
+    /// with default `TerminalLaunchConfig`, queue the PTY launch on
+    /// the existing `pending_tab_launches` path so the next drain
+    /// pass actually starts the shell, and reply with the new tab
+    /// id. Errors are sent back as strings — bubbling up to the MCP
+    /// caller as a JSON-RPC error.
+    pub(crate) fn drain_pending_spawn_terminals(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::PendingSpawnTerminal> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_spawn_terminals.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_spawn_terminals)
+        };
+        let mut changed = false;
+        for req in pending {
+            let result = self.fulfill_spawn_terminal(&req, cx);
+            // The receiver may have hung up if the MCP caller's
+            // recv_timeout fired; treat the send failure as a
+            // benign drop, not a panic.
+            let _ = req.responder.send(result);
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// Drain the GUI's own `ClientEvent` receiver and surface peer-
+    /// driven state changes (events whose `originator` is *not* the
+    /// GUI) as info toasts. Volume control: `Output` events are
+    /// skipped — bytes flow at a rate that would spam the toast
+    /// surface useless. `FocusChanged` is also skipped when the
+    /// target is the GUI: that's the daemon settling our own focus,
+    /// already visible in the workspace.
+    pub(crate) fn drain_gui_events(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(rx) = self.gui_event_receiver.as_mut() else {
+            return false;
+        };
+        let gui = ClientId::gui_desktop();
+        // Only mark `changed` when we actually have a toast to push,
+        // so a chatty terminal's `Output` event stream doesn't force
+        // a `cx.notify()` on every render tick. Drains 32 events per
+        // tick; if the bus carries only Output events for that
+        // window, the function quietly returns false.
+        let mut changed = false;
+        let mut toasts: Vec<String> = Vec::new();
+        for _ in 0..32 {
+            use tokio::sync::broadcast::error::TryRecvError;
+            match rx.try_recv() {
+                Ok(ev) => {
+                    let toast = match &ev {
+                        ClientEvent::Output { .. } => None,
+                        ClientEvent::TaskOpened {
+                            originator,
+                            task_id,
+                            ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} opened a new task ({}…)",
+                            &task_id[..task_id.len().min(8)]
+                        )),
+                        ClientEvent::TabOpened {
+                            originator, tab_id, ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} opened a new tab ({}…)",
+                            &tab_id[..tab_id.len().min(8)]
+                        )),
+                        ClientEvent::TabClosed {
+                            originator, tab_id, ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} closed tab {}…",
+                            &tab_id[..tab_id.len().min(8)]
+                        )),
+                        ClientEvent::TaskOpenStarted {
+                            originator,
+                            project_id,
+                            ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} is creating a worktree task in project {}…",
+                            &project_id[..project_id.len().min(8)]
+                        )),
+                        ClientEvent::TaskOpenFailed {
+                            originator, error, ..
+                        } if originator != &gui => Some(format!(
+                            "{originator} task creation failed: {error}"
+                        )),
+                        ClientEvent::FocusChanged {
+                            originator, target, ..
+                        } if originator != &gui && target == &gui => {
+                            Some(format!("{originator} moved your view"))
+                        }
+                        _ => None,
+                    };
+                    if let Some(text) = toast {
+                        toasts.push(text);
+                        changed = true;
+                    }
+                }
+                Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(skipped)) => {
+                    toasts.push(format!(
+                        "(missed {skipped} client events — slow-consumer buffer overflow)"
+                    ));
+                    changed = true;
+                }
+            }
+        }
+        for text in toasts {
+            self.show_info_toast(text, cx);
+        }
+        changed
+    }
+
+    /// Probe the workspace for GUI-driven focus changes (mouse clicks
+    /// on the sidebar, tab switches, project-page activations) and
+    /// emit a `FocusChanged` event when the workspace's active
+    /// section/tab differs from `last_observed_gui_focus`. Called on
+    /// every drain tick so MCP `poll_events` sees what the human just
+    /// did, attributed to `gui:desktop`.
+    pub(crate) fn observe_gui_focus(&mut self, cx: &App) -> bool {
+        let workspace = self.workspace_pane.read(cx);
+        let current = if let Some(section_id) = workspace.active_section.clone() {
+            let active_tab = workspace
+                .section_states
+                .get(&section_id)
+                .and_then(|state| state.tabs.get(state.active_tab))
+                .map(|tab| tab.id.clone());
+            match active_tab {
+                Some(tab_id) => Focus::Tab {
+                    project_id: section_id.project_id.clone(),
+                    task_id: section_id.task_id.clone(),
+                    section_id: section_id.clone(),
+                    tab_id,
+                },
+                None => Focus::Task {
+                    project_id: section_id.project_id.clone(),
+                    task_id: section_id.task_id.clone().unwrap_or_default(),
+                },
+            }
+        } else if let Some(project_id) = workspace.active_project_page.clone() {
+            Focus::Project { project_id }
+        } else {
+            Focus::None
+        };
+        let _ = workspace;
+        if current == self.last_observed_gui_focus {
+            return false;
+        }
+        self.last_observed_gui_focus = current.clone();
+        let gui = ClientId::gui_desktop();
+        self.client_focus.insert(gui.clone(), current.clone());
+        self.emit_client_event(ClientEvent::FocusChanged {
+            originator: gui.clone(),
+            target: gui,
+            focus: current,
+        });
+        true
+    }
+
+    /// Emit a `ClientEvent` on the daemon-side broadcast bus. The
+    /// sender is owned directly so emits don't take the registry
+    /// mutex — important because `ClientEvent::Output` fires per
+    /// PTY chunk and would otherwise contend with daemon tokio
+    /// tasks holding the registry lock for unrelated work. Each
+    /// MCP session subscribes its own `broadcast::Receiver`.
+    fn emit_client_event(&self, event: ClientEvent) {
+        let _ = self.event_bus.send(event);
+    }
+
+    /// `DaemonClient::open_task` for AnotherOneApp. Single source of
+    /// truth that both the GUI new-task modal and the MCP
+    /// `spawn_terminal` flow go through. Resolves project/branch
+    /// defaults, calls `insert_and_open_task` (which adds to
+    /// `project_store.tasks`, expands the project in the sidebar,
+    /// activates the section, and starts the PTY), syncs the
+    /// daemon's project-store snapshot, and emits a `TaskOpened`
+    /// event on the bus.
+    pub(crate) fn client_open_task(
+        &mut self,
+        req: OpenTaskRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<OpenTaskResponse> {
+        let project = self
+            .project_store
+            .project(&req.project_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unknown project_id {}", req.project_id))?;
+        let branch_name = req.branch_name.clone().unwrap_or_else(|| {
+            another_one_core::project_store::current_branch(&project.path)
+                .or_else(|| self.project_store.current_branch_name(&project.id))
+                .unwrap_or_default()
+        });
+        let task_name = req
+            .task_name
+            .as_ref()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(crate::new_task_modal::generate_task_name);
+        let project_path = req.cwd.clone().unwrap_or_else(|| project.path.clone());
+
+        // `client_open_task` is the synchronous task-create verb
+        // and only fits the `Direct` kind. Worktree creation runs
+        // a background `project_service::spawn_task_creation` and
+        // doesn't fit a sync request/response — the right verb is
+        // the (forthcoming) async `create_worktree_task` MCP tool,
+        // which returns a `JobId` and emits `TaskOpenStarted` /
+        // `TaskOpened` / `TaskOpenFailed` on the bus. Reject here
+        // so callers don't misinterpret a plain `client_open_task`
+        // call as supporting worktrees.
+        match req.kind {
+            another_one_core::project_store::TaskKind::Direct => {}
+            other => anyhow::bail!(
+                "client_open_task only supports TaskKind::Direct ({:?} requires the \
+                 async `create_worktree_task` verb — observe `TaskOpenStarted` / \
+                 `TaskOpened` events to track completion)",
+                other
+            ),
+        }
+
+        let (task_id, _section) = self.insert_and_open_task(
+            project.id.clone(),
+            project.id.clone(),
+            req.kind,
+            task_name.clone(),
+            branch_name,
+            None,
+            project_path,
+            Some(req.launch_config.clone()),
+            req.warm_launch_hint,
+            req.client_id.clone(),
+            cx,
+        );
+
+        // The new task always becomes the active section by virtue of
+        // `insert_and_open_task`'s `activate_section` call, so the
+        // active terminal key is the just-added tab.
+        let key = self
+            .active_terminal_key(cx)
+            .ok_or_else(|| anyhow::anyhow!("task created but no active terminal key resolved"))?;
+
+        if req.focus_after_open {
+            self.client_focus.insert(
+                req.client_id.clone(),
+                Focus::Tab {
+                    project_id: project.id.clone(),
+                    task_id: Some(task_id.clone()),
+                    section_id: key.section_id.clone(),
+                    tab_id: key.tab_id.clone(),
+                },
+            );
+        }
+
+        // The TaskOpened event was already emitted from
+        // `insert_and_open_task` with this client's originator.
+        self.sync_registry_project_store();
+
+        Ok(OpenTaskResponse {
+            task_id,
+            section_id: key.section_id,
+            tab_id: key.tab_id,
+        })
+    }
+
+    /// `DaemonClient::open_tab` — append a tab to an existing
+    /// section. Used by MCP when the caller already supplied a
+    /// `task_id` (so they don't want a brand-new task) and by the
+    /// GUI's add-agent modal for the same case.
+    pub(crate) fn client_open_tab(
+        &mut self,
+        req: OpenTabRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<OpenTabResponse> {
+        let section_id = req.section_id.clone();
+        let project_path = self
+            .project_store
+            .project(&section_id.project_id)
+            .map(|p| p.path.clone());
+        let originator_for_workspace = req.client_id.clone();
+        let added_tab_id = self.workspace_pane.update(cx, |workspace, cx| {
+            if req.focus_after_open {
+                workspace.activate_section(
+                    section_id.clone(),
+                    project_path.clone(),
+                    Some(req.launch_config.clone()),
+                    cx,
+                );
+            } else {
+                workspace.ensure_section(
+                    section_id.clone(),
+                    project_path.clone(),
+                    Some(req.launch_config.clone()),
+                    cx,
+                );
+            }
+            workspace.add_tab_with_launch_config_attributed(
+                &section_id,
+                req.launch_config.clone(),
+                None,
+                originator_for_workspace,
+                cx,
+            )
+        });
+        let tab_id = added_tab_id.ok_or_else(|| {
+            anyhow::anyhow!("could not add tab to section {}", section_id.store_key())
+        })?;
+
+        if req.focus_after_open {
+            self.client_focus.insert(
+                req.client_id.clone(),
+                Focus::Tab {
+                    project_id: section_id.project_id.clone(),
+                    task_id: section_id.task_id.clone(),
+                    section_id: section_id.clone(),
+                    tab_id: tab_id.clone(),
+                },
+            );
+        }
+
+        // If a warm launch was prewarmed (GUI fast path), attach it
+        // to the new tab key. Cold path (no warm hint) lets the
+        // existing render-tick `ensure_active_terminal_runtime`
+        // spawn the PTY when the section becomes active.
+        if let Some(warm_id) = req.warm_launch_hint {
+            let key = TerminalRuntimeKey {
+                section_id: section_id.clone(),
+                tab_id: tab_id.clone(),
+            };
+            if !self.attach_prewarmed_launch_to_tab(warm_id, key, cx) {
+                self.cancel_prewarmed_launch(warm_id);
+            }
+        }
+
+        // The TabOpened event was already deferred from
+        // `add_tab_with_launch_config_attributed` with this client's
+        // originator — no manual emit needed here.
+        let _ = section_id;
+
+        self.sync_registry_project_store();
+        Ok(OpenTabResponse { tab_id })
+    }
+
+    /// `DaemonClient::attach_tab` — make sure the tab's PTY is
+    /// live and start broadcasting its bytes. Idempotent: a follow-
+    /// up attach for an already-running tab returns
+    /// `launched: false` without spawning a duplicate PTY. Used by
+    /// mobile clients connecting in via iroh; in principle MCP
+    /// could also call this to "wake" a persisted-but-cold tab,
+    /// though MCP today expects to drive its own tabs.
+    pub(crate) fn client_attach_tab(
+        &mut self,
+        req: AttachTabRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<AttachTabResponse> {
+        let key = TerminalRuntimeKey {
+            section_id: req.section_id.clone(),
+            tab_id: req.tab_id.clone(),
+        };
+
+        if self.live_terminal_runtimes.contains_key(&key)
+            || self.terminal_manager.pending_launches.contains(&key)
+        {
+            return Ok(AttachTabResponse { launched: false });
+        }
+
+        let section_store_key = req.section_id.store_key();
+        let (task, persisted_tab) = self
+            .project_store
+            .tasks
+            .values()
+            .flatten()
+            .find_map(|t| {
                 if t.section_id != section_store_key {
                     return None;
                 }
                 t.tabs
                     .iter()
-                    .find(|pt| pt.id == request.key.tab_id)
-                    .map(|pt| (t, pt))
-            }) else {
-                continue;
-            };
-            let Some(launch_config) = tab.launch_config.clone() else {
-                continue;
-            };
-            let agent_launch_args = self.agent_launch_args_for_launch_config(&launch_config);
+                    .find(|pt| pt.id == req.tab_id)
+                    .map(|pt| (t.clone(), pt.clone()))
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no persisted tab for section {} / tab {}",
+                    section_store_key,
+                    req.tab_id
+                )
+            })?;
+        let launch_config = persisted_tab.launch_config.clone().ok_or_else(|| {
+            anyhow::anyhow!("persisted tab {} has no launch_config", req.tab_id)
+        })?;
+        let agent_launch_args = self.agent_launch_args_for_launch_config(&launch_config);
+        let cwd = task
+            .cwd
+            .clone()
+            .or_else(|| self.project_path(&task.target_project_id));
+        // Default grid; the attaching viewer will follow up with a
+        // resize to its actual viewport. Min-across-viewers logic
+        // in `RegistryState::recompute_effective_size` drives the
+        // PTY to whatever's actually being displayed.
+        let size = TerminalGridSize {
+            cols: 100,
+            rows: 30,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
 
-            let cwd = task
-                .cwd
-                .clone()
-                .or_else(|| self.project_path(&task.target_project_id));
-            // Default grid; mobile will send TabResize after attach
-            // and the desktop's own active-tab path will refine it.
-            let size = TerminalGridSize {
-                cols: 100,
-                rows: 30,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
+        self.terminal_manager.pending_launches.insert(key.clone());
+        if let Ok(mut state) = self.registry_state.lock() {
+            state.in_flight_launches.insert(key.clone());
+        }
+        self.update_terminal_tab(&key, cx, |tab| {
+            tab.restore_status = TerminalRestoreStatus::Launching;
+        });
+        spawn_terminal_launch(
+            self.terminal_launch_sender.clone(),
+            key.clone(),
+            cwd,
+            launch_config,
+            agent_launch_args,
+            size,
+        );
+        self.last_terminal_activity = Instant::now();
+        self.emit_client_event(ClientEvent::TabOpened {
+            originator: req.client_id,
+            section_id: req.section_id,
+            tab_id: req.tab_id,
+        });
+        Ok(AttachTabResponse { launched: true })
+    }
 
-            self.terminal_manager
-                .pending_launches
-                .insert(request.key.clone());
-            // Mark in-flight in the daemon-visible registry so a
-            // mobile retry during the "spawn dispatched, Launched
-            // not yet observed" window doesn't queue a duplicate.
-            if let Ok(mut state) = self.registry_state.lock() {
-                state.in_flight_launches.insert(request.key.clone());
+    /// `DaemonClient::close_tab` — close a tab by id (any client).
+    pub(crate) fn client_close_tab(
+        &mut self,
+        req: CloseTabRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let target = self.workspace_pane.read(cx).section_states.iter().find_map(
+            |(section_id, state)| {
+                state
+                    .tabs
+                    .iter()
+                    .position(|t| t.id == req.tab_id)
+                    .map(|idx| (section_id.clone(), idx))
+            },
+        );
+        let Some((section_id, tab_index)) = target else {
+            anyhow::bail!("tab {} not found", req.tab_id);
+        };
+        let removed = self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.close_tab(&section_id, tab_index, cx)
+        });
+        if removed.is_none() {
+            anyhow::bail!("close_tab: workspace declined to remove tab {}", req.tab_id);
+        }
+        self.emit_client_event(ClientEvent::TabClosed {
+            originator: req.client_id,
+            tab_id: req.tab_id.clone(),
+        });
+        self.sync_registry_project_store();
+        Ok(())
+    }
+
+    /// `DaemonClient::select` — update the calling client's focus.
+    /// When the caller is the GUI we *also* activate the section so
+    /// the user actually sees the change. For other clients it's
+    /// just a bookkeeping update — privileged clients use
+    /// `client_select_for` to drive a peer's view.
+    pub(crate) fn client_select(
+        &mut self,
+        req: SelectRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        self.client_focus
+            .insert(req.client_id.clone(), req.focus.clone());
+        if req.client_id == ClientId::gui_desktop() {
+            self.apply_focus_to_workspace(&req.focus, cx);
+        }
+        self.emit_client_event(ClientEvent::FocusChanged {
+            originator: req.client_id.clone(),
+            target: req.client_id,
+            focus: req.focus,
+        });
+        Ok(())
+    }
+
+    /// `PrivilegedClient::select_for` — drive a peer client's focus.
+    /// Used by MCP to scroll the GUI's view to a tab the harness
+    /// just spawned.
+    pub(crate) fn client_select_for(
+        &mut self,
+        actor: ClientId,
+        target: ClientId,
+        focus: Focus,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        self.client_focus.insert(target.clone(), focus.clone());
+        if target == ClientId::gui_desktop() {
+            self.apply_focus_to_workspace(&focus, cx);
+        }
+        self.emit_client_event(ClientEvent::FocusChanged {
+            originator: actor,
+            target,
+            focus,
+        });
+        Ok(())
+    }
+
+    fn apply_focus_to_workspace(&mut self, focus: &Focus, cx: &mut Context<Self>) {
+        match focus {
+            Focus::None => {}
+            Focus::Project { project_id } => {
+                self.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.activate_project_page(project_id.clone(), cx);
+                });
             }
-            self.update_terminal_tab(&request.key, cx, |tab| {
-                tab.restore_status = TerminalRestoreStatus::Launching;
+            Focus::Task {
+                project_id: _,
+                task_id: _,
+            } => {
+                // Tasks-without-tab is rare; the GUI doesn't have a
+                // dedicated affordance, so we no-op for now. v2 can
+                // extend this once the trait stabilises.
+            }
+            Focus::Tab {
+                section_id,
+                tab_id,
+                project_id: _,
+                task_id: _,
+            } => {
+                let section_id = section_id.clone();
+                let target_tab_id = tab_id.clone();
+                self.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.activate_section(section_id.clone(), None, None, cx);
+                    if let Some(state) = workspace.section_states.get_mut(&section_id) {
+                        if let Some(idx) = state.tabs.iter().position(|t| t.id == target_tab_id) {
+                            state.active_tab = idx;
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        }
+    }
+
+    fn fulfill_spawn_terminal(
+        &mut self,
+        req: &crate::daemon_host::PendingSpawnTerminal,
+        cx: &mut Context<Self>,
+    ) -> Result<another_one_core::mcp::orchestrator::SpawnTerminalResponse, String> {
+        // MCP `spawn_terminal` is a thin wrapper: turn the
+        // wire-format request into the `OpenTask{,Tab}Request`
+        // vocabulary and delegate to the trait surface. The GUI's
+        // new-task path goes through the same surface, so this
+        // function intentionally has no domain logic of its own.
+        let client_id = ClientId::mcp(
+            req.client_handle
+                .as_deref()
+                .unwrap_or("anonymous"),
+        );
+        let launch_config = crate::agents::TerminalLaunchConfig::default();
+
+        if let Some(task_id) = req.task_id.clone() {
+            // "Add a tab to an existing task" — attach to the task's
+            // section.
+            let task = self
+                .project_store
+                .task(&task_id)
+                .cloned()
+                .ok_or_else(|| format!("unknown task_id {task_id}"))?;
+            let section_id = SectionId::from_store_key(&task.section_id)
+                .ok_or_else(|| format!("malformed section_id on task {task_id}"))?;
+            let response = self
+                .client_open_tab(
+                    OpenTabRequest {
+                        client_id,
+                        section_id,
+                        launch_config,
+                        focus_after_open: true,
+                        warm_launch_hint: None,
+                    },
+                    cx,
+                )
+                .map_err(|e| e.to_string())?;
+            return Ok(another_one_core::mcp::orchestrator::SpawnTerminalResponse {
+                tab_id: response.tab_id,
             });
-            spawn_terminal_launch(
-                self.terminal_launch_sender.clone(),
-                request.key.clone(),
-                cwd,
-                launch_config,
-                agent_launch_args,
-                size,
-            );
+        }
+
+        let project_id = req
+            .project_id
+            .clone()
+            .ok_or_else(|| "project_id required when task_id is absent".to_string())?;
+        let response = self
+            .client_open_task(
+                OpenTaskRequest {
+                    client_id,
+                    project_id,
+                    task_name: None,
+                    branch_name: None,
+                    kind: crate::project_store::TaskKind::Direct,
+                    launch_config,
+                    cwd: req.cwd.as_ref().map(std::path::PathBuf::from),
+                    focus_after_open: true,
+                    warm_launch_hint: None,
+                },
+                cx,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(another_one_core::mcp::orchestrator::SpawnTerminalResponse {
+            tab_id: response.tab_id,
+        })
+    }
+
+    pub(crate) fn drain_pending_select_focus(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::PendingSelectFocus> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_select_focus.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_select_focus)
+        };
+        let mut changed = false;
+        for req in pending {
+            let actor = ClientId::mcp(req.client_handle.as_deref().unwrap_or("anonymous"));
+            // No `for_client` (or `for_client == self`) is the
+            // non-privileged "set my own focus" — routes through
+            // `client_select`. With an explicit target it's the
+            // privileged cross-client variant.
+            let result = match req.for_client {
+                Some(ref target) if target != &actor => self
+                    .client_select_for(actor, target.clone(), req.focus, cx)
+                    .map_err(|e| e.to_string()),
+                _ => self
+                    .client_select(
+                        SelectRequest {
+                            client_id: actor,
+                            focus: req.focus,
+                        },
+                        cx,
+                    )
+                    .map_err(|e| e.to_string()),
+            };
+            let _ = req.responder.send(result);
             changed = true;
         }
         if changed {
-            self.last_terminal_activity = Instant::now();
+            cx.notify();
+        }
+        changed
+    }
+
+    pub(crate) fn drain_pending_close_tabs(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::PendingCloseTab> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_close_tabs.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_close_tabs)
+        };
+        let mut changed = false;
+        for req in pending {
+            let client_id = ClientId::mcp(req.client_handle.as_deref().unwrap_or("anonymous"));
+            let result = self
+                .client_close_tab(
+                    CloseTabRequest {
+                        client_id,
+                        tab_id: req.tab_id,
+                    },
+                    cx,
+                )
+                .map_err(|e| e.to_string());
+            let _ = req.responder.send(result);
+            changed = true;
+        }
+        if changed {
             cx.notify();
         }
         changed
@@ -5319,6 +6369,250 @@ impl AnotherOneApp {
         Ok(())
     }
 
+    /// Open the Cmd-F scrollback search overlay over the active
+    /// terminal. No-op when no terminal is active. If a search is
+    /// already open on a different terminal, replaces it.
+    /// Compute the link-hover state for a mouse position inside a
+    /// terminal pane, without touching `WorkspacePane`. The caller
+    /// (panel-side `on_mouse_move`) already holds `&mut WorkspacePane`
+    /// — they apply the result directly to `this.terminal_link_hover`
+    /// to avoid the nested-update panic that calling
+    /// `workspace_pane.read(cx)` from inside an `app.update(cx, …)`
+    /// triggers.
+    pub(crate) fn compute_terminal_link_hover(
+        &self,
+        key: &TerminalRuntimeKey,
+        mouse_position: gpui::Point<Pixels>,
+        window: &mut Window,
+    ) -> Option<TerminalLinkHoverState> {
+        let metrics = self.terminal_panel_metrics_for_key(key, window)?;
+        let cell = terminal_cell_position_from_mouse(mouse_position, &metrics)?;
+        let snapshot = self.terminal_surface_snapshots.get(key)?;
+        let link = terminal_link_at_position(snapshot, cell)?;
+        // Anchor is pane-relative because the tooltip element renders
+        // as a child of the (already absolutely-positioned) pane div.
+        // Storing window-relative coords here would compose two
+        // offsets and paint the tooltip way off to the side.
+        Some(TerminalLinkHoverState {
+            section_id: key.section_id.clone(),
+            tab_id: key.tab_id.clone(),
+            link,
+            anchor_x: (f32::from(mouse_position.x) - metrics.left) as i32,
+            anchor_y: (f32::from(mouse_position.y) - metrics.top) as i32,
+        })
+    }
+
+    pub(crate) fn open_terminal_search(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(key) = self.active_terminal_key(cx) else {
+            return false;
+        };
+        // If already open on this same terminal, just keep state.
+        if self
+            .terminal_search
+            .as_ref()
+            .is_some_and(|state| state.key == key)
+        {
+            cx.notify();
+            return true;
+        }
+        self.terminal_search = Some(TerminalSearchState {
+            key,
+            query: String::new(),
+            matches: Vec::new(),
+            current_index: 0,
+        });
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn close_terminal_search(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.terminal_search.take().is_some() {
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Re-run the scrollback search with the current `query` and reset
+    /// the selected match to the closest one to the visible viewport.
+    /// Called whenever the query changes.
+    fn refresh_terminal_search_results(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.terminal_search.as_ref() else {
+            return;
+        };
+        let key = state.key.clone();
+        let query = state.query.clone();
+        let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
+            return;
+        };
+        let mut matches = runtime.search_scrollback(&query);
+        // Sort top-to-bottom (most-negative line first), left-to-right
+        // so prev/next traversal is deterministic regardless of the
+        // scan order chosen by `search_scrollback_in_term`.
+        matches.sort_by_key(|m| (m.line, m.start_col));
+        // Now pick a starting index against the sorted list — the first
+        // match at or below the current viewport top so the initial
+        // selection feels local to where the user was looking.
+        let display_offset = runtime.display_offset() as i32;
+        let top_grid_line = -display_offset - runtime.screen_lines() as i32 + 1;
+        let mut current_index = 0;
+        for (idx, m) in matches.iter().enumerate() {
+            if m.line >= top_grid_line {
+                current_index = idx;
+                break;
+            }
+        }
+        if let Some(state) = self.terminal_search.as_mut() {
+            state.matches = matches;
+            state.current_index = current_index.min(state.matches.len().saturating_sub(1));
+        }
+        self.scroll_to_current_search_match(cx);
+        cx.notify();
+    }
+
+    fn scroll_to_current_search_match(&mut self, _cx: &mut Context<Self>) {
+        let Some(state) = self.terminal_search.as_ref() else {
+            return;
+        };
+        let Some(target) = state.matches.get(state.current_index).copied() else {
+            return;
+        };
+        let key = state.key.clone();
+        if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+            if runtime.scroll_to_match(&target) {
+                let snapshot = runtime.snapshot();
+                self.terminal_surface_snapshots.insert(key, snapshot);
+            }
+        }
+    }
+
+    pub(crate) fn terminal_search_input(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        let Some(state) = self.terminal_search.as_mut() else {
+            return false;
+        };
+        state.query.push_str(text);
+        self.refresh_terminal_search_results(cx);
+        true
+    }
+
+    pub(crate) fn terminal_search_backspace(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(state) = self.terminal_search.as_mut() else {
+            return false;
+        };
+        if state.query.pop().is_none() {
+            return false;
+        }
+        self.refresh_terminal_search_results(cx);
+        true
+    }
+
+    pub(crate) fn terminal_search_advance(
+        &mut self,
+        forward: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = self.terminal_search.as_mut() else {
+            return false;
+        };
+        if state.matches.is_empty() {
+            return false;
+        }
+        let len = state.matches.len();
+        state.current_index = if forward {
+            (state.current_index + 1) % len
+        } else {
+            (state.current_index + len - 1) % len
+        };
+        self.scroll_to_current_search_match(cx);
+        cx.notify();
+        true
+    }
+
+    /// Project grid-coordinate matches onto the visible viewport.
+    /// Returned tuples are `(viewport_line, start_col, end_col, is_current)`
+    /// — only matches that overlap the viewport are emitted.
+    pub(crate) fn terminal_search_viewport_highlights(
+        &self,
+        key: &TerminalRuntimeKey,
+    ) -> Vec<(usize, usize, usize, bool)> {
+        let Some(state) = self.terminal_search.as_ref() else {
+            return Vec::new();
+        };
+        if state.key != *key || state.matches.is_empty() {
+            return Vec::new();
+        }
+        let Some(runtime) = self.live_terminal_runtimes.get(key) else {
+            return Vec::new();
+        };
+        let display_offset = runtime.display_offset() as i32;
+        let screen_lines = runtime.screen_lines() as i32;
+        let mut out = Vec::new();
+        for (idx, m) in state.matches.iter().enumerate() {
+            let viewport_row = m.line + screen_lines - 1 + display_offset;
+            if viewport_row < 0 || viewport_row >= screen_lines {
+                continue;
+            }
+            out.push((
+                viewport_row as usize,
+                m.start_col,
+                m.end_col,
+                idx == state.current_index,
+            ));
+        }
+        out
+    }
+
+    /// Returns 0.0..=1.0: 1.0 immediately after the bell rings, fading to
+    /// 0 at `BELL_FLASH_DURATION`. Used by the renderer to draw a
+    /// translucent overlay.
+    pub(crate) fn terminal_bell_intensity(&self, key: &TerminalRuntimeKey) -> f32 {
+        let Some(at) = self.terminal_bell_at.get(key) else {
+            return 0.0;
+        };
+        let elapsed = at.elapsed();
+        if elapsed >= BELL_FLASH_DURATION {
+            return 0.0;
+        }
+        1.0 - (elapsed.as_millis() as f32 / BELL_FLASH_DURATION.as_millis() as f32)
+    }
+
+    pub(crate) fn handle_terminal_search_key_down(
+        &mut self,
+        ev: &gpui::KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal_search.is_none() {
+            return;
+        }
+        cx.stop_propagation();
+        let mods = ev.keystroke.modifiers;
+        match ev.keystroke.key.as_str() {
+            "escape" => {
+                self.close_terminal_search(cx);
+            }
+            "enter" => {
+                self.terminal_search_advance(!mods.shift, cx);
+            }
+            "backspace" => {
+                self.terminal_search_backspace(cx);
+            }
+            "tab" => {}
+            _ => {
+                if mods.platform && ev.keystroke.key.as_str() == "v" {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        self.terminal_search_input(&text, cx);
+                    }
+                } else if mods.control || mods.platform || mods.function {
+                    // Ignore other modifiers — let the global action
+                    // dispatcher handle e.g. Cmd-W.
+                } else if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+                    self.terminal_search_input(key_char, cx);
+                }
+            }
+        }
+    }
+
     pub(crate) fn paste_into_active_terminal(&mut self, cx: &App, text: &str) -> bool {
         let Some(key) = self.active_terminal_key(cx) else {
             return false;
@@ -5445,6 +6739,64 @@ impl AnotherOneApp {
         })
     }
 
+    /// Forward a mouse event to the application running in the terminal
+    /// when it has enabled xterm mouse-tracking (vim, htop, tmux, …).
+    /// Returns `true` if the event was consumed — callers should then skip
+    /// native selection / link handling and stop propagation.
+    ///
+    /// xterm convention: holding `shift` overrides the application's mouse
+    /// mode so the user can still drag to select text. We honor that here.
+    pub(crate) fn forward_terminal_mouse_event(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        button: TerminalMouseButton,
+        action: TerminalMouseAction,
+        position: gpui::Point<Pixels>,
+        modifiers: gpui::Modifiers,
+        window: &mut Window,
+    ) -> bool {
+        if modifiers.shift {
+            return false;
+        }
+        let Some(runtime) = self.live_terminal_runtimes.get(key) else {
+            return false;
+        };
+        let Some(protocol) = runtime.mouse_protocol() else {
+            return false;
+        };
+        let Some(metrics) = self.terminal_panel_metrics_for_key(key, window) else {
+            return false;
+        };
+        let Some(cell_position) = terminal_cell_position_from_mouse(position, &metrics) else {
+            return false;
+        };
+        let mods = TerminalMouseModifiers {
+            shift: modifiers.shift,
+            alt: modifiers.alt,
+            control: modifiers.control,
+        };
+        let Some(payload) = encode_terminal_mouse_event(
+            protocol,
+            button,
+            action,
+            cell_position.column,
+            cell_position.line,
+            mods,
+        ) else {
+            return false;
+        };
+        if let Err(err) = runtime.write_input(&payload) {
+            tracing::warn!(
+                target: "another_one::terminal",
+                error = %err,
+                key = ?key,
+                "failed to forward mouse event to terminal — falling back to local handling"
+            );
+            return false;
+        }
+        true
+    }
+
     pub(crate) fn start_terminal_selection(
         &mut self,
         key: TerminalRuntimeKey,
@@ -5494,6 +6846,132 @@ impl AnotherOneApp {
             })
         };
         cx.notify();
+        true
+    }
+
+    /// Open the right-click context menu over the terminal pane. Called
+    /// only when `forward_terminal_mouse_event` declined (i.e. mouse mode
+    /// off, or shift held). Captures any selection + link target at click
+    /// time so the menu items remain meaningful even if the user moves
+    /// the pointer before choosing.
+    pub(crate) fn open_terminal_context_menu(
+        &mut self,
+        key: &TerminalRuntimeKey,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let metrics = self.terminal_panel_metrics_for_key(key, window);
+        let link = metrics.as_ref().and_then(|metrics| {
+            let cell = terminal_cell_position_from_mouse(position, metrics)?;
+            self.terminal_surface_snapshots
+                .get(key)
+                .and_then(|snapshot| terminal_link_at_position(snapshot, cell))
+        });
+        let selected_text = self
+            .terminal_selection_for(key)
+            .and_then(|selection| {
+                self.terminal_surface_snapshots
+                    .get(key)
+                    .and_then(|snapshot| terminal_selected_text(snapshot, selection))
+            });
+        let state = TerminalContextMenuState {
+            key: key.clone(),
+            anchor_x: f32::from(position.x),
+            anchor_y: f32::from(position.y),
+            link,
+            selected_text,
+        };
+        // The right-click handler runs INSIDE WorkspacePane's update
+        // lock (listeners hold their entity locked for the body),
+        // and we're called via `this.app.update(cx, …)` reaching
+        // back into AnotherOneApp. A direct `workspace_pane.update`
+        // here would be a second lock on WorkspacePane and panic
+        // GPUI's `double_lease_panic`. `cx.defer` defers the inner
+        // update to after the listener's lock releases.
+        let workspace_handle = self.workspace_pane.clone();
+        cx.defer(move |cx| {
+            workspace_handle.update(cx, |workspace, cx| {
+                // Mutually exclusive with the tab-pin menu — opening
+                // one implicitly dismisses the other so they never
+                // stack.
+                workspace.terminal_tab_menu = None;
+                workspace.terminal_context_menu = Some(state);
+                cx.notify();
+            });
+        });
+    }
+
+    /// Dismiss the terminal context menu without taking action.
+    pub(crate) fn dismiss_terminal_context_menu(&mut self, cx: &mut Context<Self>) {
+        self.workspace_pane.update(cx, |workspace, cx| {
+            if workspace.terminal_context_menu.take().is_some() {
+                cx.notify();
+            }
+        });
+    }
+
+    /// Copy the captured selection text to the clipboard, then dismiss.
+    pub(crate) fn terminal_context_menu_copy(&mut self, cx: &mut Context<Self>) -> bool {
+        let text = self
+            .workspace_pane
+            .read(cx)
+            .terminal_context_menu
+            .as_ref()
+            .and_then(|menu| menu.selected_text.clone());
+        let Some(text) = text else {
+            self.dismiss_terminal_context_menu(cx);
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.dismiss_terminal_context_menu(cx);
+        true
+    }
+
+    /// Paste current clipboard text into the terminal that owned the menu.
+    pub(crate) fn terminal_context_menu_paste(&mut self, cx: &mut Context<Self>) -> bool {
+        let key = self
+            .workspace_pane
+            .read(cx)
+            .terminal_context_menu
+            .as_ref()
+            .map(|menu| menu.key.clone());
+        let Some(key) = key else {
+            return false;
+        };
+        let Some(item) = cx.read_from_clipboard() else {
+            self.dismiss_terminal_context_menu(cx);
+            return false;
+        };
+        let Some(text) = item.text() else {
+            self.dismiss_terminal_context_menu(cx);
+            return false;
+        };
+        let pasted = self
+            .live_terminal_runtimes
+            .get(&key)
+            .map(|runtime| runtime.paste_text(&text).is_ok())
+            .unwrap_or(false);
+        self.dismiss_terminal_context_menu(cx);
+        pasted
+    }
+
+    /// Open the link captured at menu-open time via the OS handler.
+    pub(crate) fn terminal_context_menu_open_link(&mut self, cx: &mut Context<Self>) -> bool {
+        let link = self
+            .workspace_pane
+            .read(cx)
+            .terminal_context_menu
+            .as_ref()
+            .and_then(|menu| menu.link.clone());
+        let Some(link) = link else {
+            self.dismiss_terminal_context_menu(cx);
+            return false;
+        };
+        if let Err(err) = crate::platform::CurrentPlatform::open_external_url(&link) {
+            self.show_error_toast(err, cx);
+        }
+        self.dismiss_terminal_context_menu(cx);
         true
     }
 
@@ -5651,6 +7129,15 @@ impl AnotherOneApp {
     }
 
     fn cleanup_removed_tab(&mut self, section_id: &SectionId, tab_id: String) {
+        // GUI-driven close (Ctrl-W, click X, modal-confirm path) lands
+        // here regardless of the originating call site. Fire a
+        // ClientEvent::TabClosed attributed to the GUI so MCP
+        // observers can mirror tab-close on the bus, parity with
+        // closes initiated through the MCP `close_tab` tool.
+        self.emit_client_event(ClientEvent::TabClosed {
+            originator: ClientId::gui_desktop(),
+            tab_id: tab_id.clone(),
+        });
         let key = TerminalRuntimeKey {
             section_id: section_id.clone(),
             tab_id,
@@ -5742,6 +7229,53 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    fn handle_terminal_find(
+        &mut self,
+        _: &TerminalFind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.open_terminal_search(cx) {
+            // Pull keyboard focus onto the search overlay so the next
+            // keystrokes feed the query input, not the underlying TUI.
+            self.focus_handle.focus(window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    fn handle_terminal_search_close(
+        &mut self,
+        _: &TerminalSearchClose,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.close_terminal_search(cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn handle_terminal_search_next(
+        &mut self,
+        _: &TerminalSearchNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal_search_advance(true, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn handle_terminal_search_prev(
+        &mut self,
+        _: &TerminalSearchPrev,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal_search_advance(false, cx) {
+            cx.stop_propagation();
+        }
+    }
+
     fn next_tab(&mut self, _: &NextTab, _: &mut Window, cx: &mut Context<Self>) {
         if self.navigate_tab_shortcut(NavigationDirection::Next, cx) {
             cx.stop_propagation();
@@ -5791,6 +7325,12 @@ impl AnotherOneApp {
             || self.sidebar_task_rename.is_some()
             || self.sidebar_task_menu.is_some()
             || self.workspace_pane.read(cx).terminal_tab_menu.is_some()
+            || self
+                .workspace_pane
+                .read(cx)
+                .terminal_context_menu
+                .is_some()
+            || self.terminal_search.is_some()
             || self
                 .workspace_pane
                 .read(cx)
@@ -6394,38 +7934,51 @@ impl AnotherOneApp {
                 launch_config,
                 warm_launch_id,
             } => {
-                let Some(project) = self.project_store.project(&project_id).cloned() else {
-                    self.show_error_toast("Could not find the selected project.", cx);
-                    self.cancel_active_new_task_prewarm();
-                    self.new_task_modal = None;
-                    return;
+                // GUI submit funnels through the same client-trait
+                // verb that MCP uses; `warm_launch_hint` carries the
+                // GUI's prewarm fast-path, MCP leaves it None.
+                let resolved_name = resolved_task_name(&task_name, &generated_task_name);
+                let req = OpenTaskRequest {
+                    client_id: ClientId::gui_desktop(),
+                    project_id: project_id.clone(),
+                    task_name: Some(resolved_name.clone()),
+                    branch_name: if source_branch.is_empty() {
+                        None
+                    } else {
+                        Some(source_branch.clone())
+                    },
+                    kind: TaskKind::Direct,
+                    launch_config,
+                    cwd: None,
+                    focus_after_open: true,
+                    warm_launch_hint: warm_launch_id,
                 };
-
-                let branch_name = self
-                    .project_store
-                    .current_branch_name(&project.id)
-                    .unwrap_or(source_branch);
-
-                let task_name = resolved_task_name(&task_name, &generated_task_name);
-                self.insert_and_open_task(
-                    project.id.clone(),
-                    project.id.clone(),
-                    TaskKind::Direct,
-                    task_name.clone(),
-                    branch_name.clone(),
-                    None,
-                    project.path.clone(),
-                    Some(launch_config.clone()),
-                    warm_launch_id,
-                    cx,
-                );
-                self.new_task_modal = None;
-                let success_message = if branch_name.is_empty() {
-                    format!("Opened direct task {}.", task_name)
-                } else {
-                    format!("Opened direct task {} on {}.", task_name, branch_name)
-                };
-                self.show_success_toast(success_message, cx);
+                match self.client_open_task(req, cx) {
+                    Ok(_) => {
+                        self.new_task_modal = None;
+                        let branch_label = self
+                            .project_store
+                            .project(&project_id)
+                            .and_then(|p| {
+                                another_one_core::project_store::current_branch(&p.path)
+                            })
+                            .or_else(|| {
+                                self.project_store.current_branch_name(&project_id)
+                            })
+                            .unwrap_or_else(|| source_branch.clone());
+                        let success_message = if branch_label.is_empty() {
+                            format!("Opened direct task {}.", resolved_name)
+                        } else {
+                            format!("Opened direct task {} on {}.", resolved_name, branch_label)
+                        };
+                        self.show_success_toast(success_message, cx);
+                    }
+                    Err(err) => {
+                        self.show_error_toast(format!("{err}"), cx);
+                        self.cancel_active_new_task_prewarm();
+                        self.new_task_modal = None;
+                    }
+                }
             }
             TaskLaunchRequest::Worktree {
                 project_id,
@@ -6447,6 +8000,17 @@ impl AnotherOneApp {
                 self.cancel_active_new_task_prewarm();
                 self.show_info_toast("Creating worktree task...", cx);
                 self.pending_task_launch = Some(PendingTaskLaunch::NewTaskModal);
+                let job_id = JobId::fresh();
+                let originator = ClientId::gui_desktop();
+                self.pending_worktree_jobs.insert(
+                    job_id.clone(),
+                    (originator.clone(), project.id.clone()),
+                );
+                self.emit_client_event(ClientEvent::TaskOpenStarted {
+                    originator,
+                    job_id,
+                    project_id: project.id.clone(),
+                });
                 self.task_creation_receiver =
                     Some(another_one_core::project_service::spawn_task_creation(
                         project.id,
@@ -6491,6 +8055,7 @@ impl AnotherOneApp {
                         existing.path,
                         None,
                         None,
+                        ClientId::gui_desktop(),
                         cx,
                     );
                     self.show_success_toast(format!("Opened {}.", task_name), cx);
@@ -6531,8 +8096,9 @@ impl AnotherOneApp {
         project_path: std::path::PathBuf,
         launch_config: Option<TerminalLaunchConfig>,
         warm_launch_id: Option<u64>,
+        originator: ClientId,
         cx: &mut Context<Self>,
-    ) {
+    ) -> (String, SectionId) {
         let task_id = uuid::Uuid::new_v4().to_string();
         self.project_store.insert_task(Task {
             id: task_id.clone(),
@@ -6576,6 +8142,22 @@ impl AnotherOneApp {
             );
         }
         self.mark_git_refresh_stale();
+
+        // Single TaskOpened emit covers every synchronous task-create
+        // path (GUI Direct via client_open_task, GUI Review-with-
+        // existing-worktree, MCP / mobile via the trait verbs). The
+        // tab id is the active tab in the just-activated section,
+        // or `None` if the section has no tab yet (e.g. when the
+        // caller passed `launch_config: None`).
+        let tab_id = self.active_terminal_key(cx).map(|k| k.tab_id);
+        self.emit_client_event(ClientEvent::TaskOpened {
+            originator,
+            task_id: task_id.clone(),
+            section_id: section_id.clone(),
+            tab_id,
+        });
+
+        (task_id, section_id)
     }
 
     pub(crate) fn submit_new_task_modal(&mut self, cx: &mut Context<Self>) {
@@ -6785,6 +8367,7 @@ impl AnotherOneApp {
             project.path.clone(),
             None,
             None,
+            ClientId::gui_desktop(),
             cx,
         );
         self.create_branch_modal = None;
@@ -7725,6 +9308,31 @@ impl AnotherOneApp {
                             ),
                             cx,
                         );
+                        // Correlated TaskOpened against the
+                        // TaskOpenStarted that fired at submit time.
+                        // Single-slot today (one async creation at a
+                        // time), so `drain().next()` pulls whichever
+                        // job is in-flight.
+                        let drained = self.pending_worktree_jobs.drain().next();
+                        if let Some((job_id, (originator, _project_id))) = drained {
+                            // Resolve the just-added tab id, if any —
+                            // worktree creation may activate a section
+                            // without a tab when `open_agent` was
+                            // false on the success record.
+                            let tab_id = self
+                                .workspace_pane
+                                .read(cx)
+                                .section_states
+                                .get(&section_id)
+                                .and_then(|s| s.tabs.last().map(|t| t.id.clone()));
+                            self.emit_client_event(ClientEvent::TaskOpened {
+                                originator,
+                                task_id: task_id.clone(),
+                                section_id: section_id.clone(),
+                                tab_id,
+                            });
+                            let _ = job_id;
+                        }
                     }
                     Err(error) => {
                         if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
@@ -7732,7 +9340,15 @@ impl AnotherOneApp {
                                 state.submitting = false;
                             }
                         }
-                        self.show_error_toast(error.message, cx);
+                        self.show_error_toast(error.message.clone(), cx);
+                        let drained = self.pending_worktree_jobs.drain().next();
+                        if let Some((job_id, (originator, _project_id))) = drained {
+                            self.emit_client_event(ClientEvent::TaskOpenFailed {
+                                originator,
+                                job_id,
+                                error: error.message,
+                            });
+                        }
                     }
                 }
                 true
@@ -7751,6 +9367,14 @@ impl AnotherOneApp {
                     }
                 }
                 self.show_error_toast("The task creation process did not complete.", cx);
+                let drained = self.pending_worktree_jobs.drain().next();
+                if let Some((job_id, (originator, _project_id))) = drained {
+                    self.emit_client_event(ClientEvent::TaskOpenFailed {
+                        originator,
+                        job_id,
+                        error: "task creation channel closed".to_string(),
+                    });
+                }
                 true
             }
         }
@@ -8737,7 +10361,24 @@ impl AnotherOneApp {
             || !self.prewarmed_terminal_launches.is_empty()
             || self.last_terminal_activity.elapsed() < TERMINAL_FAST_REFRESH_GRACE;
 
-        if terminal_fast_refresh || self.resource_indicator_open {
+        // A blinking cursor needs steady redraws to actually animate.
+        // Without bumping the cadence the terminal sits idle until the
+        // next user keystroke / output and the blink flickers irregular.
+        let any_blinking_cursor = self
+            .terminal_surface_snapshots
+            .values()
+            .any(|snapshot| snapshot.cursor.as_ref().is_some_and(|c| c.blinking));
+
+        let any_bell_active = self
+            .terminal_bell_at
+            .values()
+            .any(|at| at.elapsed() < BELL_FLASH_DURATION);
+
+        if terminal_fast_refresh
+            || self.resource_indicator_open
+            || any_blinking_cursor
+            || any_bell_active
+        {
             TOAST_ANIMATION_REFRESH_INTERVAL
         } else if self.toasts.is_empty()
             && self.copied_toast.is_none()
@@ -9632,15 +11273,17 @@ fn remove_terminal_runtime_state<T>(
 mod tests {
     use super::{
         apply_terminal_session_backfill, apply_terminal_title_update, choose_initial_section,
-        fixed_title_for_project_action, global_tab_navigation_targets, new_tab_seed_agent_id,
-        next_global_tab_navigation_target, next_project_navigation_target,
-        next_task_navigation_target, persisted_active_section_key, remove_terminal_runtime_state,
-        resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
-        sidebar_task_navigation_targets, terminal_line_selection_range, terminal_link_at_position,
-        terminal_link_ranges, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, AnotherOneApp, AppToast,
-        NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition,
-        TerminalLinkRange, TerminalSelectionRange, TerminalTab, ToastKind,
+        encode_terminal_mouse_event, fixed_title_for_project_action,
+        global_tab_navigation_targets, new_tab_seed_agent_id, next_global_tab_navigation_target,
+        next_project_navigation_target, next_task_navigation_target, persisted_active_section_key,
+        remove_terminal_runtime_state, resolve_new_task_shortcut_target,
+        root_project_navigation_targets, select_active_section, sidebar_task_navigation_targets,
+        terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
+        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
+        terminal_word_selection_range, AnotherOneApp, AppToast, NavigationDirection,
+        NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition, TerminalLinkRange,
+        TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers, TerminalSelectionRange,
+        TerminalTab, ToastKind,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -9651,8 +11294,8 @@ mod tests {
         ProjectActionKind, ProjectActionScope, ProjectCheckoutState, ProjectKind, Task, TaskKind,
     };
     use crate::terminal_runtime::{
-        TerminalCellSnapshot, TerminalLineSnapshot, TerminalRuntimeKey, TerminalRuntimeUpdate,
-        TerminalSurfaceSnapshot,
+        TerminalCellSnapshot, TerminalLineSnapshot, TerminalMouseEncoding, TerminalMouseLevel,
+        TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
     };
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, ScrollDelta};
     use std::collections::{HashMap, HashSet};
@@ -10162,6 +11805,7 @@ mod tests {
             &TerminalRuntimeUpdate {
                 title: Some("cargo test".to_string()),
                 reset_title: false,
+                bell: false,
             },
         );
         assert_eq!(tab.title, "Run tests");
@@ -10171,6 +11815,7 @@ mod tests {
             &TerminalRuntimeUpdate {
                 title: None,
                 reset_title: true,
+                bell: false,
             },
         );
         assert_eq!(tab.title, "Run tests");
@@ -10186,6 +11831,7 @@ mod tests {
             &TerminalRuntimeUpdate {
                 title: Some("cargo test".to_string()),
                 reset_title: false,
+                bell: false,
             },
         );
         assert_eq!(tab.title, "cargo test");
@@ -10195,6 +11841,7 @@ mod tests {
             &TerminalRuntimeUpdate {
                 title: None,
                 reset_title: true,
+                bell: false,
             },
         );
         assert_eq!(tab.title, "Terminal");
@@ -11455,6 +13102,316 @@ mod tests {
     }
 
     #[test]
+    fn terminal_link_ranges_include_ssh_and_git_urls() {
+        let text = "clone git://github.com/foo/bar.git from ssh://user@host:22/path";
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: text.len(),
+            lines: vec![TerminalLineSnapshot {
+                text: text.to_string(),
+                cells: text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| terminal_cell(column, ch))
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let git_start = text.find("git://").unwrap();
+        let git_end = git_start + "git://github.com/foo/bar.git".len();
+        let ssh_start = text.find("ssh://").unwrap();
+        let ssh_end = text.len();
+
+        assert_eq!(
+            terminal_link_ranges(&snapshot),
+            vec![
+                TerminalLinkRange {
+                    line: 0,
+                    start_column: git_start,
+                    end_column: git_end,
+                },
+                TerminalLinkRange {
+                    line: 0,
+                    start_column: ssh_start,
+                    end_column: ssh_end,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_link_ranges_include_file_and_mailto() {
+        let text = "see file:///etc/hosts or mailto:foo@example.com.";
+        let snapshot = TerminalSurfaceSnapshot {
+            text: String::new(),
+            columns: text.len(),
+            lines: vec![TerminalLineSnapshot {
+                text: text.to_string(),
+                cells: text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, ch)| terminal_cell(column, ch))
+                    .collect(),
+                runs: Vec::new(),
+                background_spans: Vec::new(),
+            }],
+            positioned_runs: Vec::new(),
+            cursor: None,
+        };
+
+        let file_start = text.find("file://").unwrap();
+        let file_end = file_start + "file:///etc/hosts".len();
+        let mailto_start = text.find("mailto:").unwrap();
+        let mailto_end = mailto_start + "mailto:foo@example.com".len();
+
+        assert_eq!(
+            terminal_link_ranges(&snapshot),
+            vec![
+                TerminalLinkRange {
+                    line: 0,
+                    start_column: file_start,
+                    end_column: file_end,
+                },
+                TerminalLinkRange {
+                    line: 0,
+                    start_column: mailto_start,
+                    end_column: mailto_end,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_sgr_press_and_release() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ButtonDrag,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let press = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Press,
+            10, // col
+            5,  // row
+            TerminalMouseModifiers::default(),
+        )
+        .expect("press encoded");
+        assert_eq!(press, b"\x1b[<0;11;6M".to_vec());
+
+        let release = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Release,
+            10,
+            5,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("release encoded");
+        assert_eq!(release, b"\x1b[<0;11;6m".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_sgr_drag_carries_motion_bit() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ButtonDrag,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let drag = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Drag,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("drag encoded");
+        // Left button (0) + motion bit (32) = 32.
+        assert_eq!(drag, b"\x1b[<32;1;1M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_sgr_modifiers() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ButtonDrag,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let event = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Right,
+            TerminalMouseAction::Press,
+            0,
+            0,
+            TerminalMouseModifiers {
+                shift: false,
+                alt: true,
+                control: true,
+            },
+        )
+        .expect("encoded");
+        // Right (2) + alt (8) + control (16) = 26.
+        assert_eq!(event, b"\x1b[<26;1;1M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_wheel() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let up = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::WheelUp,
+            TerminalMouseAction::Press,
+            3,
+            7,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("wheel up");
+        assert_eq!(up, b"\x1b[<64;4;8M".to_vec());
+
+        let down = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::WheelDown,
+            TerminalMouseAction::Press,
+            3,
+            7,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("wheel down");
+        assert_eq!(down, b"\x1b[<65;4;8M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_horizontal_wheel() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let left = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::WheelLeft,
+            TerminalMouseAction::Press,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("wheel left");
+        assert_eq!(left, b"\x1b[<66;1;1M".to_vec());
+
+        let right = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::WheelRight,
+            TerminalMouseAction::Press,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("wheel right");
+        assert_eq!(right, b"\x1b[<67;1;1M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_default_legacy_clamp() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Default,
+        };
+        let event = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Press,
+            5,
+            10,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("encoded");
+        // CSI M, button 0+32=32, col=5+1+32=38, row=10+1+32=43.
+        assert_eq!(event, vec![0x1b, b'[', b'M', 32, 38, 43]);
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_default_release_uses_button_3() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ButtonDrag,
+            encoding: TerminalMouseEncoding::Default,
+        };
+        let event = encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Release,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("encoded");
+        // CSI M with button=3+32=35, col=33, row=33.
+        assert_eq!(event, vec![0x1b, b'[', b'M', 35, 33, 33]);
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_motion_requires_any_motion_level() {
+        let click_only = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        assert!(encode_terminal_mouse_event(
+            click_only,
+            TerminalMouseButton::None,
+            TerminalMouseAction::Motion,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .is_none());
+        assert!(encode_terminal_mouse_event(
+            click_only,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Drag,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .is_none());
+
+        let any_motion = TerminalMouseProtocol {
+            level: TerminalMouseLevel::AnyMotion,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        let motion = encode_terminal_mouse_event(
+            any_motion,
+            TerminalMouseButton::None,
+            TerminalMouseAction::Motion,
+            1,
+            1,
+            TerminalMouseModifiers::default(),
+        )
+        .expect("any-motion accepts motion");
+        // None button (3) + motion bit (32) = 35.
+        assert_eq!(motion, b"\x1b[<35;2;2M".to_vec());
+    }
+
+    #[test]
+    fn encode_terminal_mouse_event_click_only_drops_release() {
+        let protocol = TerminalMouseProtocol {
+            level: TerminalMouseLevel::ClickOnly,
+            encoding: TerminalMouseEncoding::Sgr,
+        };
+        assert!(encode_terminal_mouse_event(
+            protocol,
+            TerminalMouseButton::Left,
+            TerminalMouseAction::Release,
+            0,
+            0,
+            TerminalMouseModifiers::default(),
+        )
+        .is_none());
+    }
+
+    #[test]
     fn terminal_word_selection_range_selects_clicked_word() {
         let snapshot = TerminalSurfaceSnapshot {
             text: String::new(),
@@ -11750,6 +13707,10 @@ impl AnotherOneApp {
                 .on_action(cx.listener(Self::next_project))
                 .on_action(cx.listener(Self::new_tab))
                 .on_action(cx.listener(Self::new_task))
+                .on_action(cx.listener(Self::handle_terminal_find))
+                .on_action(cx.listener(Self::handle_terminal_search_close))
+                .on_action(cx.listener(Self::handle_terminal_search_next))
+                .on_action(cx.listener(Self::handle_terminal_search_prev))
                 .child(header)
                 .child(body)
                 .child(self.new_task_modal_overlay(cx))
@@ -12001,6 +13962,15 @@ impl Render for AnotherOneApp {
                                 this.sync_registry_project_store();
                             }
                             should_notify |= this.drain_daemon_handle(cx);
+                            should_notify |= this.drain_pending_spawn_terminals(cx);
+                            should_notify |= this.drain_pending_close_tabs(cx);
+                            should_notify |= this.drain_pending_select_focus(cx);
+                            // Observe GUI-driven focus changes after
+                            // the spawn/close/select drains so any
+                            // event WE just produced isn't double-
+                            // emitted as if the user clicked it.
+                            this.observe_gui_focus(cx);
+                            should_notify |= this.drain_gui_events(cx);
                             should_notify |= this.drain_pending_tab_launches(cx);
                             should_notify |= this.drain_pending_tab_resizes(cx);
                             should_notify |= this.drain_qr_scan_queue(cx);
@@ -12146,6 +14116,10 @@ impl Render for AnotherOneApp {
                 .on_action(cx.listener(Self::next_project))
                 .on_action(cx.listener(Self::new_tab))
                 .on_action(cx.listener(Self::new_task))
+                .on_action(cx.listener(Self::handle_terminal_find))
+                .on_action(cx.listener(Self::handle_terminal_search_close))
+                .on_action(cx.listener(Self::handle_terminal_search_next))
+                .on_action(cx.listener(Self::handle_terminal_search_prev))
                 .when(supports_custom_chrome, |d| {
                     d.child(self.custom_title_strip(window, cx, busy))
                 })
@@ -12160,6 +14134,8 @@ impl Render for AnotherOneApp {
                 .child(self.project_menu_overlay(sw, cx))
                 .child(self.sidebar_task_menu_overlay(window, cx))
                 .child(self.terminal_tab_menu_overlay(window, cx))
+                .child(self.terminal_context_menu_overlay(window, cx))
+                .child(self.terminal_search_bar_overlay(cx))
                 .child(self.new_task_modal_overlay(cx))
                 .child(self.create_branch_modal_overlay(cx))
                 .child(self.add_agent_modal_overlay(cx))

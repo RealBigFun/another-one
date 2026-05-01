@@ -18,6 +18,7 @@
 mod command_env;
 
 pub mod agents;
+pub mod clients;
 pub mod git_actions;
 mod git_operation;
 pub mod git_service;

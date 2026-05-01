@@ -100,11 +100,66 @@ const MAX_SESSION_BYTES: u64 = 16 * 1024 * 1024;
 /// and concatenated JSON-RPC — some MCP clients pack back-to-back
 /// requests without a separator. Whitespace between messages
 /// (spaces, tabs, LF, CRLF) is consumed by the deserialiser.
+/// Per-session state held by `serve` for the lifetime of one MCP
+/// connection. Today this is just the per-session
+/// `broadcast::Receiver` used by `poll_events`; it gives sessions
+/// independent views into the daemon's `ClientEvent` stream so two
+/// connected harnesses don't drain each other.
+pub struct SessionState {
+    events_rx: Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>>,
+}
+
+impl SessionState {
+    pub fn new(events_rx: Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>>) -> Self {
+        Self { events_rx }
+    }
+
+    /// Drain up to `max` events from the session's receiver.
+    /// `tokio::sync::broadcast::error::TryRecvError::Lagged(n)` is
+    /// translated into a synthetic `ClientEvent::Lagged { skipped: n }`
+    /// so subscribers see the gap honestly and can resync via
+    /// `list_tasks` / `list_tabs`. The receiver is still positioned
+    /// at the oldest still-buffered event afterwards, so the next
+    /// drain continues normally.
+    pub fn drain_events(&mut self, max: usize) -> Vec<crate::clients::ClientEvent> {
+        let Some(rx) = self.events_rx.as_mut() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for _ in 0..max {
+            use tokio::sync::broadcast::error::TryRecvError;
+            match rx.try_recv() {
+                Ok(ev) => out.push(ev),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(skipped)) => {
+                    // Coalesce runs of Lagged into a single entry —
+                    // a sustained-overrun consumer that's still
+                    // falling behind can otherwise produce up to
+                    // `max` consecutive Lagged variants in one
+                    // drain. One synthetic event with the summed
+                    // skip count is enough signal for the caller.
+                    if let Some(crate::clients::ClientEvent::Lagged {
+                        skipped: prev_skipped,
+                    }) = out.last_mut()
+                    {
+                        *prev_skipped = prev_skipped.saturating_add(skipped);
+                    } else {
+                        out.push(crate::clients::ClientEvent::Lagged { skipped });
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
 pub fn serve<R: Read, W: Write>(
     reader: R,
     mut writer: W,
     orchestrator: Arc<dyn McpOrchestrator>,
 ) -> std::io::Result<()> {
+    let mut session = SessionState::new(orchestrator.subscribe_events());
     let capped = reader.take(MAX_SESSION_BYTES);
     let buffered = BufReader::new(capped);
     let stream = Deserializer::from_reader(buffered).into_iter::<Value>();
@@ -130,7 +185,7 @@ pub fn serve<R: Read, W: Write>(
             }
         };
 
-        let response = dispatch(&request, orchestrator.as_ref());
+        let response = dispatch(&request, orchestrator.as_ref(), &mut session);
         // Notifications (no id) don't get a response.
         let Some(response) = response else {
             continue;
@@ -142,7 +197,11 @@ pub fn serve<R: Read, W: Write>(
     Ok(())
 }
 
-fn dispatch(req: &Request, orchestrator: &dyn McpOrchestrator) -> Option<String> {
+fn dispatch(
+    req: &Request,
+    orchestrator: &dyn McpOrchestrator,
+    session: &mut SessionState,
+) -> Option<String> {
     let is_notification = req.id.is_none();
 
     match req.method.as_str() {
@@ -154,7 +213,7 @@ fn dispatch(req: &Request, orchestrator: &dyn McpOrchestrator) -> Option<String>
             if is_notification {
                 return None;
             }
-            Some(handle_tool_call(req, orchestrator))
+            Some(handle_tool_call(req, orchestrator, session))
         }
         "shutdown" => {
             if is_notification {
@@ -188,7 +247,11 @@ fn initialize_result() -> Value {
     })
 }
 
-fn handle_tool_call(req: &Request, orchestrator: &dyn McpOrchestrator) -> String {
+fn handle_tool_call(
+    req: &Request,
+    orchestrator: &dyn McpOrchestrator,
+    session: &mut SessionState,
+) -> String {
     let name = match req.params.get("name").and_then(|v| v.as_str()) {
         Some(s) => s,
         None => {
@@ -201,7 +264,7 @@ fn handle_tool_call(req: &Request, orchestrator: &dyn McpOrchestrator) -> String
     };
     let args = req.params.get("arguments").cloned().unwrap_or(json!({}));
 
-    match tools::call(name, &args, orchestrator) {
+    match tools::call(name, &args, orchestrator, session) {
         Ok(result) => {
             // MCP tools/call success shape:
             //   { content: [ { type: "text", text: "..." } ], isError?: false, structuredContent? }
@@ -356,6 +419,237 @@ mod tests {
         let orch_trait: Arc<dyn McpOrchestrator> = orch.clone();
         serve(reader, &mut writer, orch_trait).unwrap();
         (String::from_utf8(writer).unwrap(), orch)
+    }
+
+    /// Orchestrator wired to a real `broadcast::Sender` so tests can
+    /// drive end-to-end ClientEvent flow: tools/call from one
+    /// session, observe via `poll_events` from another, etc.
+    ///
+    /// Capacity is intentionally small (4) so the lag test below
+    /// can overflow it without producing thousands of events.
+    struct BusOrch {
+        bus: tokio::sync::broadcast::Sender<crate::clients::ClientEvent>,
+    }
+    impl BusOrch {
+        fn new(capacity: usize) -> Arc<Self> {
+            Arc::new(Self {
+                bus: tokio::sync::broadcast::channel(capacity).0,
+            })
+        }
+    }
+    impl McpOrchestrator for BusOrch {
+        fn list_projects(&self) -> Vec<ProjectInfo> { Vec::new() }
+        fn list_tasks(&self) -> Vec<TaskInfo> { Vec::new() }
+        fn list_tabs(&self, _: &str) -> Vec<TabInfo> { Vec::new() }
+        fn get_task_status(&self, _: &str) -> Option<TaskStatus> { None }
+        fn read_terminal_output(&self, _: &str, _: usize) -> Option<TerminalSnapshot> { None }
+        fn spawn_task(&self, _: SpawnTaskRequest) -> anyhow::Result<SpawnTaskResponse> {
+            anyhow::bail!("not used in this test")
+        }
+        fn spawn_terminal(
+            &self,
+            _: SpawnTerminalRequest,
+        ) -> anyhow::Result<SpawnTerminalResponse> {
+            // Simulate the daemon firing a TaskOpened on the bus
+            // when a tab spawns. Tests assert this reaches the
+            // peer subscriber.
+            let _ = self.bus.send(crate::clients::ClientEvent::TaskOpened {
+                originator: crate::clients::ClientId::mcp("test"),
+                task_id: "task-x".into(),
+                section_id: crate::section::SectionId::for_task("p", "main", "task-x"),
+                tab_id: Some("tab-x".into()),
+            });
+            Ok(SpawnTerminalResponse { tab_id: "tab-x".into() })
+        }
+        fn send_input(&self, _: &str, _: &[u8]) -> anyhow::Result<()> { Ok(()) }
+        fn run_command(&self, _: RunCommandRequest) -> anyhow::Result<RunCommandResponse> {
+            Ok(RunCommandResponse { output: Vec::new(), timed_out: false })
+        }
+        fn close_tab(&self, _: &str) -> anyhow::Result<()> { Ok(()) }
+        fn subscribe_events(
+            &self,
+        ) -> Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>> {
+            Some(self.bus.subscribe())
+        }
+    }
+
+    fn drive_with(
+        orch: Arc<dyn McpOrchestrator>,
+        script: &str,
+    ) -> String {
+        let reader = Cursor::new(script.to_string());
+        let mut writer = Vec::new();
+        serve(reader, &mut writer, orch).unwrap();
+        String::from_utf8(writer).unwrap()
+    }
+
+    #[test]
+    fn poll_events_returns_bus_events_to_subscribed_session() {
+        // One orchestrator, one session that initialises before the
+        // event fires, calls spawn_terminal (which pushes onto the
+        // bus), then poll_events to drain.
+        let orch = BusOrch::new(64);
+        let trait_arc: Arc<dyn McpOrchestrator> = orch.clone();
+        let script = String::new()
+            + &req(1, "initialize", json!({}))
+            + &line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+            + &req(2, "tools/call",
+                json!({"name":"spawn_terminal","arguments":{"project_id":"p"}}))
+            + &req(3, "tools/call",
+                json!({"name":"poll_events","arguments":{"max_events":10}}));
+        let out = drive_with(trait_arc, &script);
+        // Last response is poll_events. Parse the structuredContent
+        // and assert it contains a TaskOpened from the spawn we
+        // just made.
+        let last_line = out.lines().last().expect("response");
+        let parsed: Value = serde_json::from_str(last_line).expect("json");
+        let events = parsed
+            .pointer("/result/structuredContent")
+            .and_then(|v| v.as_array())
+            .expect("event list");
+        assert!(
+            events.iter().any(|e| e.get("TaskOpened").is_some()),
+            "expected TaskOpened in poll_events output: {events:?}"
+        );
+    }
+
+    #[test]
+    fn late_subscriber_misses_pre_subscription_events() {
+        // Drive session A that fires the spawn, then session B
+        // that subscribes after-the-fact and polls. B should see
+        // ZERO events because subscription is per-session and the
+        // event fired before B connected. A genuinely concurrent
+        // two-session test (threads + barrier proving each receiver
+        // observes events independently) is a separate follow-up;
+        // this one only validates the late-subscribe contract.
+        let orch = BusOrch::new(64);
+
+        // Session A — emits via spawn_terminal.
+        let trait_a: Arc<dyn McpOrchestrator> = orch.clone();
+        let script_a = String::new()
+            + &req(1, "initialize", json!({}))
+            + &line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+            + &req(2, "tools/call",
+                json!({"name":"spawn_terminal","arguments":{"project_id":"p"}}))
+            + &req(3, "tools/call",
+                json!({"name":"poll_events","arguments":{"max_events":10}}));
+        let out_a = drive_with(trait_a, &script_a);
+        let last_a: Value = serde_json::from_str(out_a.lines().last().unwrap()).unwrap();
+        let events_a = last_a
+            .pointer("/result/structuredContent")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(events_a.len(), 1, "A should see its own spawn event");
+
+        // Session B — subscribes after the spawn already fired,
+        // immediately polls.
+        let trait_b: Arc<dyn McpOrchestrator> = orch.clone();
+        let script_b = String::new()
+            + &req(1, "initialize", json!({}))
+            + &line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+            + &req(2, "tools/call",
+                json!({"name":"poll_events","arguments":{"max_events":10}}));
+        let out_b = drive_with(trait_b, &script_b);
+        let last_b: Value = serde_json::from_str(out_b.lines().last().unwrap()).unwrap();
+        let events_b = last_b
+            .pointer("/result/structuredContent")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(
+            events_b.len(),
+            0,
+            "B subscribed after the event — must not see it (per-session semantics)"
+        );
+    }
+
+    #[test]
+    fn slow_consumer_surfaces_lagged_event_with_skipped_count() {
+        // Orchestrator with capacity=4. Subscribe a session, fire
+        // 6 events, then poll. The receiver dropped 2 events; the
+        // first event we see should be `Lagged{skipped:2}`,
+        // followed by the 4 events the buffer still held.
+        let orch = BusOrch::new(4);
+        // Pre-subscribe by running an initialize-only session and
+        // capturing the bus separately. The trick: drive() consumes
+        // the orchestrator, so we run a session that subscribes,
+        // pushes events directly via the orch handle, then polls.
+        let trait_arc: Arc<dyn McpOrchestrator> = orch.clone();
+        let bus_handle = orch.bus.clone();
+        // Custom drive that lets us push events between the
+        // initialize and the poll.
+        use std::io::Read;
+        struct DualReader {
+            init: Vec<u8>,
+            poll: Vec<u8>,
+            served_init: bool,
+            push_done: Box<dyn Fn() + Send>,
+        }
+        impl Read for DualReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if !self.served_init && !self.init.is_empty() {
+                    let n = self.init.len().min(buf.len());
+                    buf[..n].copy_from_slice(&self.init[..n]);
+                    self.init.drain(..n);
+                    if self.init.is_empty() {
+                        self.served_init = true;
+                        (self.push_done)();
+                    }
+                    return Ok(n);
+                }
+                let n = self.poll.len().min(buf.len());
+                if n == 0 { return Ok(0); }
+                buf[..n].copy_from_slice(&self.poll[..n]);
+                self.poll.drain(..n);
+                Ok(n)
+            }
+        }
+        let init_script = String::new()
+            + &req(1, "initialize", json!({}))
+            + &line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
+        let poll_script = req(2, "tools/call",
+            json!({"name":"poll_events","arguments":{"max_events":20}}));
+        let bus_for_push = bus_handle.clone();
+        let push_done = Box::new(move || {
+            // Fire 6 events into a 4-cap channel; the receiver
+            // (subscribed during initialize) lags by 2.
+            for i in 0..6u64 {
+                let _ = bus_for_push.send(crate::clients::ClientEvent::TabClosed {
+                    originator: crate::clients::ClientId::mcp("test"),
+                    tab_id: format!("t{i}"),
+                });
+            }
+        });
+        let reader = DualReader {
+            init: init_script.into_bytes(),
+            poll: poll_script.into_bytes(),
+            served_init: false,
+            push_done,
+        };
+        let mut writer: Vec<u8> = Vec::new();
+        serve(reader, &mut writer, trait_arc).unwrap();
+        let out = String::from_utf8(writer).unwrap();
+        let last_line = out.lines().last().unwrap();
+        let parsed: Value = serde_json::from_str(last_line).unwrap();
+        let events = parsed
+            .pointer("/result/structuredContent")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        // First entry should be Lagged with skipped >= 1.
+        assert!(
+            matches!(
+                events.first().and_then(|e| e.get("Lagged")),
+                Some(_)
+            ),
+            "expected Lagged first; got {events:?}"
+        );
+        // The Lagged entry carries the skipped count as a u64.
+        let skipped = events[0].pointer("/Lagged/skipped").and_then(|v| v.as_u64()).unwrap();
+        assert!(skipped >= 1, "skipped should be at least 1, got {skipped}");
+        // Plus we should still see some surviving TabClosed events.
+        assert!(
+            events.iter().skip(1).any(|e| e.get("TabClosed").is_some()),
+            "expected surviving TabClosed events after lag: {events:?}"
+        );
     }
 
     fn line(s: &str) -> String {

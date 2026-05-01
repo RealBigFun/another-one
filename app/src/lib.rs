@@ -60,7 +60,9 @@ use std::borrow::Cow;
 
 use gpui::{px, size, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions};
 
-use app::{AnotherOneApp, ZoomIn, ZoomOut, ZoomReset};
+use app::{
+    AnotherOneApp, TerminalFind, TerminalSearchNext, TerminalSearchPrev, ZoomIn, ZoomOut, ZoomReset,
+};
 use assets::{asset_root, ProjectAssets};
 use platform::{CurrentPlatform, PlatformServices};
 
@@ -124,6 +126,9 @@ fn finish_launching(cx: &mut App) {
         KeyBinding::new("cmd-+", ZoomIn, None),
         KeyBinding::new("cmd--", ZoomOut, None),
         KeyBinding::new("cmd-0", ZoomReset, None),
+        KeyBinding::new("cmd-f", TerminalFind, None),
+        KeyBinding::new("cmd-g", TerminalSearchNext, None),
+        KeyBinding::new("cmd-shift-g", TerminalSearchPrev, None),
     ]);
 
     cx.open_window(

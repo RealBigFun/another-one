@@ -22,7 +22,7 @@
 //! project's AGENTS.md. Named-pipe support is a follow-up.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Context;
 use tokio::task::AbortHandle;
@@ -103,10 +103,101 @@ pub fn spawn(
     tracing::info!(path = %socket_path.display(), "mcp: listening on UDS");
     let accept_task = tokio::spawn(accept_loop(listener, orchestrator));
 
+    // Cleanup wiring so the user never sees a stale socket file:
+    // - Drop on `McpListener` (graceful shutdown) — already covered.
+    // - Panic hook (any thread panics) — installed once.
+    // - SIGINT / SIGTERM / SIGHUP — caught and handled here so a
+    //   plain `Ctrl-C` or window-manager close also unlinks before
+    //   the process exits.
+    install_cleanup_hooks(socket_path.clone());
+
     Ok(McpListener {
         socket_path,
         abort: Some(accept_task.abort_handle()),
     })
+}
+
+/// Tracks the active MCP socket path so the panic hook + signal
+/// handler know what to unlink. `OnceLock<Mutex<Option<…>>>` gives
+/// us idempotent install + late-arriving updates if the socket path
+/// ever rotates within a single process.
+static CLEANUP_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+static CLEANUP_HOOKS_INSTALLED: OnceLock<()> = OnceLock::new();
+
+#[cfg(unix)]
+fn install_cleanup_hooks(path: PathBuf) {
+    let slot = CLEANUP_PATH.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(path.clone());
+    }
+
+    // Panic hook + signal handler are installed exactly once per
+    // process. Repeat calls (e.g. socket rotation) just refresh the
+    // path stored above.
+    CLEANUP_HOOKS_INSTALLED.get_or_init(|| {
+        // Chain on top of whatever hook is currently installed
+        // (likely the default backtrace one) so panics still print
+        // their usual diagnostics — we just unlink first.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            unlink_cleanup_path();
+            prev(info);
+        }));
+
+        // Signal handler runs on the daemon's tokio runtime — that
+        // runtime is alive for the entire process lifetime.
+        tokio::spawn(async {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(?err, "mcp: SIGTERM handler unavailable");
+                    return;
+                }
+            };
+            let mut sigint = match signal(SignalKind::interrupt()) {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(?err, "mcp: SIGINT handler unavailable");
+                    return;
+                }
+            };
+            let mut sighup = match signal(SignalKind::hangup()) {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(?err, "mcp: SIGHUP handler unavailable");
+                    return;
+                }
+            };
+            let signame = tokio::select! {
+                _ = sigterm.recv() => "SIGTERM",
+                _ = sigint.recv() => "SIGINT",
+                _ = sighup.recv() => "SIGHUP",
+            };
+            tracing::info!(signal = signame, "mcp: caught termination signal — unlinking socket");
+            unlink_cleanup_path();
+            // Exit code 130 is the conventional "script terminated
+            // by Ctrl+C" code. Plain 0 would mask whether the
+            // process exited cleanly vs got signaled.
+            std::process::exit(if signame == "SIGINT" { 130 } else { 0 });
+        });
+    });
+}
+
+#[cfg(not(unix))]
+fn install_cleanup_hooks(_path: PathBuf) {}
+
+fn unlink_cleanup_path() {
+    let Some(slot) = CLEANUP_PATH.get() else {
+        return;
+    };
+    let Ok(guard) = slot.lock() else {
+        return;
+    };
+    let Some(path) = guard.as_ref() else {
+        return;
+    };
+    let _ = std::fs::remove_file(path);
 }
 
 /// Only remove `path` if it exists, is a socket, and is owned by

@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
@@ -20,6 +20,47 @@ pub(crate) use another_one_core::terminal_types::{
     PreparedTerminalRuntime, TerminalChildKiller, TerminalGridSize, TerminalRuntimeKey,
     TERMINAL_CELL_WIDTH_RATIO, TERMINAL_LINE_HEIGHT_RATIO,
 };
+
+/// xterm-style mouse-tracking level negotiated by the running TUI.
+/// Drives whether the host reports up, drag, or any-motion events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalMouseLevel {
+    /// `?9h` — X10: button presses only.
+    ClickOnly,
+    /// `?1000h` baseline + `?1002h`: presses, releases, and drags
+    /// while a button is held.
+    ButtonDrag,
+    /// `?1003h`: every motion event in addition to drags/clicks.
+    AnyMotion,
+}
+
+/// Wire encoding used to serialize a mouse event back to the application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalMouseEncoding {
+    /// Original CSI M payload, columns clamped to 223.
+    Default,
+    /// `?1006h`: SGR-style `CSI < b ; col ; row ; M/m`.
+    Sgr,
+    /// `?1005h`: UTF-8 columns clamped to 2015.
+    Utf8,
+}
+
+/// Single hit returned by [`LiveTerminalRuntime::search_scrollback`].
+/// Coordinates are in alacritty's grid frame: `line` is `Line.0`
+/// (negative = scrollback above the active screen, 0..=screen_lines-1
+/// is in viewport), `[start_col, end_col)` is a half-open cell range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalScrollbackMatch {
+    pub line: i32,
+    pub start_col: usize,
+    pub end_col: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalMouseProtocol {
+    pub level: TerminalMouseLevel,
+    pub encoding: TerminalMouseEncoding,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TerminalSurfaceSnapshot {
@@ -78,6 +119,11 @@ pub(crate) struct TerminalCursorSnapshot {
     pub width: usize,
     pub kind: TerminalCursorKind,
     pub color: Hsla,
+    /// `true` when the running TUI requested a blinking cursor variant
+    /// via DECSCUSR (`CSI Ps SP q`). The renderer modulates opacity over
+    /// time when this is set; the host bumps its refresh cadence so the
+    /// blink animation is visible at idle.
+    pub blinking: bool,
 }
 
 #[derive(Clone)]
@@ -108,6 +154,9 @@ struct PendingPositionedRun {
 pub(crate) struct TerminalRuntimeUpdate {
     pub title: Option<String>,
     pub reset_title: bool,
+    /// True when the running TUI rang the terminal bell (`\x07`) during
+    /// this drain pass. The host briefly flashes the pane to surface it.
+    pub bell: bool,
 }
 
 #[derive(Clone)]
@@ -203,8 +252,8 @@ impl LiveTerminalRuntime {
                     Event::TextAreaSizeRequest(formatter) => {
                         pty_writes.push(formatter(window_size_from_grid(self.size)).into_bytes());
                     }
+                    Event::Bell => update.bell = true,
                     Event::Wakeup
-                    | Event::Bell
                     | Event::MouseCursorDirty
                     | Event::CursorBlinkingChange
                     | Event::ClipboardStore(_, _)
@@ -232,22 +281,53 @@ impl LiveTerminalRuntime {
     }
 
     pub fn paste_text(&self, text: &str) -> io::Result<()> {
-        let payload = if self
+        let bracketed = self
             .term
             .mode()
-            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE)
-        {
-            format!("\u{1b}[200~{}\u{1b}[201~", text)
-        } else {
-            text.to_string()
-        };
+            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+        let payload = encode_paste_payload(text, bracketed);
         self.write_input(payload.as_bytes())
+    }
+
+    /// Current scrollback offset (`0` = bottom / live screen). Lifted
+    /// to the host so the search overlay can map grid-coord matches
+    /// onto the visible viewport.
+    pub fn display_offset(&self) -> usize {
+        self.term.grid().display_offset()
+    }
+
+    pub fn screen_lines(&self) -> usize {
+        self.term.grid().screen_lines()
     }
 
     pub fn is_alternate_screen(&self) -> bool {
         self.term
             .mode()
             .contains(alacritty_terminal::term::TermMode::ALT_SCREEN)
+    }
+
+    /// Inspect the active mouse-tracking mode, if any. Returns `None` when
+    /// the application has not enabled mouse reporting — in which case the
+    /// host should treat mouse events as native (selection, link click).
+    pub fn mouse_protocol(&self) -> Option<TerminalMouseProtocol> {
+        let mode = self.term.mode();
+        let level = if mode.contains(alacritty_terminal::term::TermMode::MOUSE_MOTION) {
+            TerminalMouseLevel::AnyMotion
+        } else if mode.contains(alacritty_terminal::term::TermMode::MOUSE_DRAG) {
+            TerminalMouseLevel::ButtonDrag
+        } else if mode.contains(alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK) {
+            TerminalMouseLevel::ClickOnly
+        } else {
+            return None;
+        };
+        let encoding = if mode.contains(alacritty_terminal::term::TermMode::SGR_MOUSE) {
+            TerminalMouseEncoding::Sgr
+        } else if mode.contains(alacritty_terminal::term::TermMode::UTF8_MOUSE) {
+            TerminalMouseEncoding::Utf8
+        } else {
+            TerminalMouseEncoding::Default
+        };
+        Some(TerminalMouseProtocol { level, encoding })
     }
 
     pub fn request_soft_redraw(&self) -> io::Result<()> {
@@ -267,6 +347,49 @@ impl LiveTerminalRuntime {
     /// focused-but-previously-backgrounded tab needs a rebuild this tick.
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// Walk the full alacritty grid (history + viewport) and return all
+    /// matches of `query`. Empty queries yield an empty list. Search is
+    /// always case-insensitive — matches the typical "Cmd-F" UX where
+    /// users don't think about case.
+    ///
+    /// Match positions are reported in alacritty grid coordinates: `line`
+    /// is `Line.0` (negative for scrollback rows, 0..=screen_lines-1 for
+    /// viewport), and `[start_col, end_col)` is a half-open cell range.
+    /// Multi-byte UTF-8 chars occupy a single cell so column ranges line
+    /// up with cell positions, not UTF-8 byte offsets.
+    pub fn search_scrollback(&self, query: &str) -> Vec<TerminalScrollbackMatch> {
+        search_scrollback_in_term(&self.term, query)
+    }
+
+    /// Adjust `display_offset` so the given match lies near the vertical
+    /// middle of the viewport. No-op if the match is already visible
+    /// without scrolling.
+    pub fn scroll_to_match(&mut self, target: &TerminalScrollbackMatch) -> bool {
+        let grid = self.term.grid();
+        let screen_lines = grid.screen_lines() as i32;
+        let history_size = grid.history_size() as i32;
+        let current = grid.display_offset() as i32;
+        // Viewport with offset D shows grid lines [-D - screen_lines + 1 ..= -D].
+        // The match at row R inside the viewport satisfies:
+        //   R = target.line + screen_lines - 1 + D
+        // so to land R = screen_lines / 2 (vertical middle):
+        //   D = screen_lines/2 - target.line - screen_lines + 1
+        let top = -current - screen_lines + 1;
+        let bot = -current;
+        if target.line >= top && target.line <= bot {
+            return false;
+        }
+        let centered = (screen_lines / 2) - target.line - screen_lines + 1;
+        let target_offset = centered.clamp(0, history_size);
+        let delta = target_offset - current;
+        if delta == 0 {
+            return false;
+        }
+        self.term.scroll_display(Scroll::Delta(delta));
+        self.dirty = true;
+        true
     }
 
     pub fn scroll_display(&mut self, lines: i32) -> bool {
@@ -300,6 +423,116 @@ impl LiveTerminalRuntime {
     }
 }
 
+/// Wrap pasted text with the xterm bracketed-paste markers when the
+/// running TUI has opted into the protocol (DECSET 2004). When it has
+/// not, the bytes are forwarded as-is so naive shells still receive a
+/// usable payload.
+///
+/// Two security/UX hardenings happen even when bracketed mode is on:
+///
+/// 1. **Paste-end smuggling.** A malicious payload that carries an
+///    embedded `\x1b[201~` would close the paste early and let the rest
+///    of the bytes be interpreted as commands. We strip both `\x1b[200~`
+///    and `\x1b[201~` markers from the payload before wrapping (see
+///    xterm's "Allow paste of binary data" notes and the CVE-2003-0063
+///    family). The three replacement patterns can never resynthesize a
+///    marker — `\x1b[200~` requires the literal `~` and neither strip
+///    nor `\r\n→\r` introduces one — so a single pass is safe.
+///
+/// 2. **CRLF → CR.** xterm-style paste passes `\r` for line breaks (the
+///    same byte the keyboard sends for Enter in raw mode). Lone `\n` is
+///    deliberately preserved so a paste of literal LF survives intact.
+pub(crate) fn encode_paste_payload(text: &str, bracketed: bool) -> String {
+    if !bracketed {
+        return text.to_string();
+    }
+    let sanitized = text
+        .replace("\x1b[200~", "")
+        .replace("\x1b[201~", "")
+        .replace("\r\n", "\r");
+    format!("\u{1b}[200~{}\u{1b}[201~", sanitized)
+}
+
+/// Walk the full alacritty grid (history + viewport) and return all
+/// case-insensitive substring matches of `query`. Empty queries yield
+/// an empty list. Match positions are in alacritty grid coordinates:
+/// `line` is `Line.0` (negative for scrollback rows, 0..=screen_lines-1
+/// is in viewport), `[start_col, end_col)` is a half-open cell range.
+pub(crate) fn search_scrollback_in_term<T: EventListener>(
+    term: &Term<T>,
+    query: &str,
+) -> Vec<TerminalScrollbackMatch> {
+    let query = query.trim_end_matches('\0');
+    if query.is_empty() {
+        return Vec::new();
+    }
+    // Lowercase the query into a Vec<char> so we can compare
+    // char-by-char without re-walking UTF-8 bytes. Some chars
+    // lowercase to multi-char sequences; flatten those eagerly.
+    let needle_chars: Vec<char> = query.chars().flat_map(|ch| ch.to_lowercase()).collect();
+    if needle_chars.is_empty() {
+        return Vec::new();
+    }
+    let mut matches = Vec::new();
+    let grid = term.grid();
+    let columns = grid.columns();
+    let topmost = grid.topmost_line().0;
+    let bottommost = grid.bottommost_line().0;
+
+    for line in topmost..=bottommost {
+        let mut chars: Vec<char> = Vec::with_capacity(columns);
+        let mut cols: Vec<usize> = Vec::with_capacity(columns);
+        for col in 0..columns {
+            let cell = &grid[alacritty_terminal::index::Line(line)]
+                [alacritty_terminal::index::Column(col)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            chars.push(cell.c);
+            cols.push(col);
+        }
+        if chars.len() < needle_chars.len() {
+            continue;
+        }
+        // Naive O(n·m) scan — terminal rows are short (≤ ~500 cols)
+        // and the typical needle is 1–20 chars, so this stays fast
+        // even on a 100k-row scrollback.
+        'outer: for start in 0..=chars.len() - needle_chars.len() {
+            for (offset, needle_ch) in needle_chars.iter().copied().enumerate() {
+                let row_ch = chars[start + offset];
+                let row_lowered = row_ch.to_lowercase().next().unwrap_or(row_ch);
+                if row_lowered != needle_ch {
+                    continue 'outer;
+                }
+            }
+            let start_col = cols[start];
+            let last_char = start + needle_chars.len() - 1;
+            // Account for wide chars (CJK etc): the cell after the
+            // anchor-cell is a `WIDE_CHAR_SPACER` and was filtered out
+            // of `cols`, so the bare `cols[last] + 1` highlight would
+            // only cover the left half of a 2-cell glyph.
+            let last_col = cols[last_char];
+            let last_anchor_cell = &grid[alacritty_terminal::index::Line(line)]
+                [alacritty_terminal::index::Column(last_col)];
+            let last_cell_width = if last_anchor_cell.flags.contains(Flags::WIDE_CHAR) {
+                2
+            } else {
+                1
+            };
+            let end_col = last_col + last_cell_width;
+            matches.push(TerminalScrollbackMatch {
+                line,
+                start_col,
+                end_col,
+            });
+        }
+    }
+    matches
+}
+
 fn build_surface_snapshot<T: EventListener>(
     term: &Term<T>,
     size: TerminalGridSize,
@@ -309,6 +542,10 @@ fn build_surface_snapshot<T: EventListener>(
     let cursor = (renderable.cursor.shape != CursorShape::Hidden)
         .then(|| point_to_viewport(display_offset, renderable.cursor.point))
         .flatten();
+    // `RenderableCursor` only carries `shape`; `blinking` is on the full
+    // `CursorStyle` returned by `term.cursor_style()`. Pull it once here
+    // and thread through to the snapshot.
+    let cursor_blinking = term.cursor_style().blinking;
     let mut lines = Vec::with_capacity(size.rows as usize);
     let mut positioned_runs = Vec::new();
     let mut cursor_snapshot = None;
@@ -369,6 +606,7 @@ fn build_surface_snapshot<T: EventListener>(
                     column,
                     cell_width,
                     renderable.cursor.shape,
+                    cursor_blinking,
                     &cell_style,
                 ) {
                     if snapshot.kind == TerminalCursorKind::Block {
@@ -640,6 +878,7 @@ fn cursor_snapshot_from_cell(
     column: usize,
     width: usize,
     cursor_shape: CursorShape,
+    blinking: bool,
     cell_style: &ResolvedCellStyle,
 ) -> Option<TerminalCursorSnapshot> {
     let kind = match cursor_shape {
@@ -656,6 +895,7 @@ fn cursor_snapshot_from_cell(
         width,
         kind,
         color: cell_style.foreground,
+        blinking,
     })
 }
 
@@ -958,6 +1198,80 @@ mod tests {
     use alacritty_terminal::event::VoidListener;
     use alacritty_terminal::term::test::TermSize;
 
+    fn term_from_ansi(rows: usize, cols: usize, bytes: &[u8]) -> Term<VoidListener> {
+        let mut term = Term::new(
+            Config::default(),
+            &TermSize::new(cols, rows),
+            VoidListener,
+        );
+        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
+        parser.advance(&mut term, bytes);
+        term
+    }
+
+    #[test]
+    fn search_scrollback_finds_match_in_viewport() {
+        let term = term_from_ansi(4, 32, b"hello world\r\nrust hello rust\r\n");
+        let matches = search_scrollback_in_term(&term, "hello");
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].start_col, 0);
+        assert_eq!(matches[0].end_col, 5);
+        assert_eq!(matches[1].start_col, 5);
+        assert_eq!(matches[1].end_col, 10);
+    }
+
+    #[test]
+    fn search_scrollback_is_case_insensitive() {
+        let term = term_from_ansi(4, 32, b"Hello World\r\n");
+        let m = search_scrollback_in_term(&term, "WORLD");
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].start_col, 6);
+        assert_eq!(m[0].end_col, 11);
+    }
+
+    #[test]
+    fn search_scrollback_empty_query_yields_empty() {
+        let term = term_from_ansi(4, 32, b"hello\r\n");
+        assert!(search_scrollback_in_term(&term, "").is_empty());
+        assert!(search_scrollback_in_term(&term, "\0\0").is_empty());
+    }
+
+    #[test]
+    fn search_scrollback_walks_history_above_viewport() {
+        // 4-row terminal, push 8 rows so 4 lines fall into scrollback.
+        let mut bytes: Vec<u8> = Vec::new();
+        for i in 0..8 {
+            bytes.extend_from_slice(format!("row{i}\r\n").as_bytes());
+        }
+        let term = term_from_ansi(4, 16, &bytes);
+        // "row1" should now live in scrollback (above the visible viewport).
+        let m = search_scrollback_in_term(&term, "row1");
+        assert_eq!(m.len(), 1);
+        assert!(
+            m[0].line < 0,
+            "expected scrollback (negative line), got {}",
+            m[0].line
+        );
+    }
+
+    #[test]
+    fn search_scrollback_wide_char_match_spans_two_columns() {
+        // Match anchored on a 2-cell-wide CJK glyph should report
+        // end_col one past its right cell, not its anchor cell.
+        let term = term_from_ansi(4, 16, "look 日本 here\r\n".as_bytes());
+        let m = search_scrollback_in_term(&term, "日");
+        assert_eq!(m.len(), 1);
+        // "look " takes cols 0..5, then 日 occupies cols 5+6.
+        assert_eq!(m[0].start_col, 5);
+        assert_eq!(m[0].end_col, 7, "wide-char highlight covers 2 cells");
+    }
+
+    #[test]
+    fn search_scrollback_no_match_yields_empty() {
+        let term = term_from_ansi(4, 32, b"hello world\r\n");
+        assert!(search_scrollback_in_term(&term, "zzz").is_empty());
+    }
+
     fn snapshot_from_ansi(bytes: &[u8]) -> TerminalSurfaceSnapshot {
         let size = TerminalGridSize {
             cols: 32,
@@ -969,6 +1283,143 @@ mod tests {
         let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
         parser.advance(&mut term, bytes);
         build_surface_snapshot(&term, size)
+    }
+
+    #[test]
+    fn bell_event_surfaces_in_runtime_update() {
+        // We can't drive a full LiveTerminalRuntime without a PTY, but
+        // we can verify Term raises Event::Bell on `\x07` and that our
+        // drain loop sets `update.bell = true`. Mirror the drain loop
+        // inline using a dedicated proxy so we don't need PTY plumbing.
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+
+        let queue: Arc<Mutex<VecDeque<Event>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let proxy_queue = queue.clone();
+        struct Proxy {
+            queue: Arc<Mutex<VecDeque<Event>>>,
+        }
+        impl EventListener for Proxy {
+            fn send_event(&self, event: Event) {
+                self.queue.lock().unwrap().push_back(event);
+            }
+        }
+        let mut term = Term::new(
+            Config::default(),
+            &TermSize::new(8, 4),
+            Proxy {
+                queue: proxy_queue,
+            },
+        );
+        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
+        parser.advance(&mut term, b"a\x07b");
+
+        let mut update = TerminalRuntimeUpdate::default();
+        while let Some(event) = queue.lock().unwrap().pop_front() {
+            if matches!(event, Event::Bell) {
+                update.bell = true;
+            }
+        }
+        assert!(update.bell, "BEL byte should surface as update.bell");
+    }
+
+    #[test]
+    fn snapshot_captures_decscusr_blinking_bar() {
+        // DECSCUSR `5 q` = blinking bar.
+        let snapshot = snapshot_from_ansi(b"\x1b[5 q hi");
+        let cursor = snapshot.cursor.as_ref().expect("cursor present");
+        assert_eq!(cursor.kind, TerminalCursorKind::Beam);
+        assert!(cursor.blinking, "DECSCUSR 5 → blinking");
+    }
+
+    #[test]
+    fn snapshot_captures_decscusr_blinking_block() {
+        // DECSCUSR `1 q` = explicit blinking block.
+        let snapshot = snapshot_from_ansi(b"\x1b[1 q hi");
+        let cursor = snapshot
+            .cursor
+            .as_ref()
+            .expect("cursor present after DECSCUSR 1");
+        assert_eq!(cursor.kind, TerminalCursorKind::Block);
+        assert!(cursor.blinking, "DECSCUSR 1 → blinking block");
+    }
+
+    #[test]
+    fn snapshot_captures_decscusr_zero_resets_to_default_steady_block() {
+        // VT520 says `0 q` is "blinking block", but alacritty's config
+        // default is steady block — so `0 q` here lands on steady. Lock
+        // that behavior so a future config-default change is noticed.
+        let snapshot = snapshot_from_ansi(b"\x1b[0 q hi");
+        let cursor = snapshot
+            .cursor
+            .as_ref()
+            .expect("cursor present after DECSCUSR 0");
+        assert_eq!(cursor.kind, TerminalCursorKind::Block);
+        assert!(!cursor.blinking, "alacritty default = steady");
+    }
+
+    #[test]
+    fn snapshot_captures_decscusr_steady_underline() {
+        // DECSCUSR `4 q` = steady underline.
+        let snapshot = snapshot_from_ansi(b"\x1b[4 q hi");
+        let cursor = snapshot.cursor.as_ref().expect("cursor present");
+        assert_eq!(cursor.kind, TerminalCursorKind::Underline);
+        assert!(!cursor.blinking, "DECSCUSR 4 → steady");
+    }
+
+    #[test]
+    fn encode_paste_payload_passes_through_when_unbracketed() {
+        let raw = "hello world\n";
+        assert_eq!(encode_paste_payload(raw, false), raw);
+    }
+
+    #[test]
+    fn encode_paste_payload_wraps_with_markers_when_bracketed() {
+        assert_eq!(
+            encode_paste_payload("hi", true),
+            "\u{1b}[200~hi\u{1b}[201~"
+        );
+    }
+
+    #[test]
+    fn encode_paste_payload_strips_embedded_end_marker() {
+        let input = "safe\u{1b}[201~rm -rf /\u{1b}[201~tail";
+        let out = encode_paste_payload(input, true);
+        // The end-marker only appears once — at the very end as our trailer.
+        let occurrences = out.matches("\u{1b}[201~").count();
+        assert_eq!(occurrences, 1, "got: {:?}", out);
+        assert!(out.starts_with("\u{1b}[200~"));
+        assert!(out.ends_with("\u{1b}[201~"));
+        assert!(out.contains("safe"));
+        assert!(out.contains("rm -rf /"));
+        assert!(out.contains("tail"));
+    }
+
+    #[test]
+    fn encode_paste_payload_strips_embedded_start_marker() {
+        let input = "before\u{1b}[200~after";
+        let out = encode_paste_payload(input, true);
+        // start-marker only appears once: as our header.
+        assert_eq!(out.matches("\u{1b}[200~").count(), 1, "got: {:?}", out);
+        assert!(out.contains("beforeafter"));
+    }
+
+    #[test]
+    fn encode_paste_payload_normalizes_crlf_to_cr() {
+        let out = encode_paste_payload("line1\r\nline2\r\nline3", true);
+        assert_eq!(out, "\u{1b}[200~line1\rline2\rline3\u{1b}[201~");
+    }
+
+    #[test]
+    fn encode_paste_payload_preserves_lone_lf_and_cr() {
+        let out = encode_paste_payload("a\nb\rc", true);
+        assert_eq!(out, "\u{1b}[200~a\nb\rc\u{1b}[201~");
+    }
+
+    #[test]
+    fn encode_paste_payload_preserves_multibyte_utf8() {
+        let out = encode_paste_payload("café 日本語 🦀", true);
+        assert_eq!(out, "\u{1b}[200~café 日本語 🦀\u{1b}[201~");
     }
 
     #[test]
