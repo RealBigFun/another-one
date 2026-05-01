@@ -192,31 +192,35 @@ pub fn spawn_changed_files_mutation(
     mutation: ChangedFilesGitMutation,
 ) {
     thread::spawn(move || {
-        let result = crate::git_operation::run_serialized_git_operation(|| match mutation {
-            ChangedFilesGitMutation::StageFile { changed } => {
-                stage_changed_file(&project_path, &changed)
-                    .map(|_| read_project_git_state(&project_path, false))
-            }
-            ChangedFilesGitMutation::UnstageFile { changed } => {
-                unstage_changed_file(&project_path, &changed)
-                    .map(|_| read_project_git_state(&project_path, false))
-            }
-            ChangedFilesGitMutation::StageAll => stage_all_changes(&project_path)
-                .map(|_| read_project_git_state(&project_path, false)),
-            ChangedFilesGitMutation::UnstageAll => unstage_all_changes(&project_path)
-                .map(|_| read_project_git_state(&project_path, false)),
-            ChangedFilesGitMutation::RevertFiles { changed_files } => {
-                let reverted_any = changed_files.iter().fold(false, |reverted_any, changed| {
-                    revert_changed_file(&project_path, changed) || reverted_any
-                });
+        let result =
+            crate::git_operation::run_serialized_git_operation_for_path(&project_path, || {
+                match mutation {
+                    ChangedFilesGitMutation::StageFile { changed } => {
+                        stage_changed_file(&project_path, &changed)
+                            .map(|_| read_project_git_state(&project_path, false))
+                    }
+                    ChangedFilesGitMutation::UnstageFile { changed } => {
+                        unstage_changed_file(&project_path, &changed)
+                            .map(|_| read_project_git_state(&project_path, false))
+                    }
+                    ChangedFilesGitMutation::StageAll => stage_all_changes(&project_path)
+                        .map(|_| read_project_git_state(&project_path, false)),
+                    ChangedFilesGitMutation::UnstageAll => unstage_all_changes(&project_path)
+                        .map(|_| read_project_git_state(&project_path, false)),
+                    ChangedFilesGitMutation::RevertFiles { changed_files } => {
+                        let reverted_any =
+                            changed_files.iter().fold(false, |reverted_any, changed| {
+                                revert_changed_file(&project_path, changed) || reverted_any
+                            });
 
-                if reverted_any {
-                    Ok(read_project_git_state(&project_path, false))
-                } else {
-                    Err("Could not discard the selected file changes.".to_string())
+                        if reverted_any {
+                            Ok(read_project_git_state(&project_path, false))
+                        } else {
+                            Err("Could not discard the selected file changes.".to_string())
+                        }
+                    }
                 }
-            }
-        });
+            });
         let _ = sender.send(ChangedFilesGitMutationReply { project_id, result });
     });
 }

@@ -947,11 +947,12 @@ impl AnotherOneApp {
             .cloned();
         let toggle_project_id = project_id.to_string();
         let toggle_commit_id = commit.id.clone();
+        let active_git_action = self.active_git_action_for_project(project_id);
         let undo_busy = matches!(
-            self.active_git_action.as_ref(),
+            active_git_action.map(|active| &active.action),
             Some(crate::git_actions::ToolbarGitAction::UndoLastCommit)
         );
-        let undo_enabled = show_undo_button && self.active_git_action.is_none();
+        let undo_enabled = show_undo_button && active_git_action.is_none();
 
         let mut expanded_details = div()
             .min_w(px(0.))

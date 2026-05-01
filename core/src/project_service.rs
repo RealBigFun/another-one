@@ -20,7 +20,7 @@ use std::thread;
 use tokio::sync::broadcast;
 
 use crate::agents::TerminalLaunchConfig;
-use crate::git_operation::run_serialized_git_operation;
+use crate::git_operation::run_serialized_git_operation_for_path;
 use crate::project_store::{
     create_branch_from_head, create_review_task_worktree, create_task_worktree,
     delete_local_branch, prepare_project, remove_task_worktree, CreateBranchMode, PreparedProject,
@@ -104,7 +104,7 @@ pub fn spawn_task_creation(
 ) -> broadcast::Receiver<TaskCreationReply> {
     let (tx, rx) = broadcast::channel(1);
     thread::spawn(move || {
-        let result = run_serialized_git_operation(|| {
+        let result = run_serialized_git_operation_for_path(&project_path, || {
             create_task_worktree(
                 &project_path,
                 &project_name,
@@ -168,7 +168,7 @@ pub fn spawn_branch_creation(
         } else {
             CreateBranchMode::Worktree { migrate_changes }
         };
-        let result = run_serialized_git_operation(|| {
+        let result = run_serialized_git_operation_for_path(&project_path, || {
             create_branch_from_head(&project_path, &branch_name, mode)
                 .map(|created| {
                     let project = if use_current_task {
@@ -235,7 +235,7 @@ pub fn spawn_review_task_creation(
 ) -> broadcast::Receiver<TaskCreationReply> {
     let (tx, rx) = broadcast::channel(1);
     thread::spawn(move || {
-        let result = run_serialized_git_operation(|| {
+        let result = run_serialized_git_operation_for_path(&project_path, || {
             create_review_task_worktree(
                 &project_path,
                 &task_name,
@@ -293,7 +293,7 @@ pub fn delete_task_worktree(
     branch_name: String,
     force_delete_branch: bool,
 ) -> Result<Option<String>, String> {
-    run_serialized_git_operation(|| {
+    run_serialized_git_operation_for_path(&repo_path, || {
         remove_task_worktree(&repo_path, &project_path)?;
 
         let branch_warning = if force_delete_branch {

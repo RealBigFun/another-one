@@ -223,7 +223,7 @@ pub fn execute_toolbar_git_action(
     settings: GitActionSettings,
     on_progress: &mut dyn FnMut(String),
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
-    crate::git_operation::run_serialized_git_operation(|| {
+    crate::git_operation::run_serialized_git_operation_for_path(repo_path, || {
         execute_toolbar_git_action_unlocked(repo_path, action, settings, on_progress)
     })
 }

@@ -445,6 +445,74 @@ enum GitActionReply {
     },
 }
 
+pub(crate) struct ActiveToolbarGitAction {
+    pub(crate) action: crate::git_actions::ToolbarGitAction,
+    pub(crate) branch_name_at_start: Option<String>,
+    receiver: mpsc::Receiver<GitActionReply>,
+}
+
+enum DrainedGitAction {
+    Reply {
+        active_project_id: String,
+        reply: GitActionReply,
+    },
+    Disconnected {
+        project_id: String,
+    },
+}
+
+fn active_toolbar_git_action_entry<'a>(
+    active_git_actions: &'a HashMap<String, ActiveToolbarGitAction>,
+    project_id: &str,
+) -> Option<&'a ActiveToolbarGitAction> {
+    active_git_actions.get(project_id)
+}
+
+fn has_active_toolbar_git_action(
+    active_git_actions: &HashMap<String, ActiveToolbarGitAction>,
+    project_id: &str,
+) -> bool {
+    active_toolbar_git_action_entry(active_git_actions, project_id).is_some()
+}
+
+fn collect_drained_git_action_replies(
+    active_git_actions: &HashMap<String, ActiveToolbarGitAction>,
+) -> Vec<DrainedGitAction> {
+    let mut drained = Vec::new();
+    let active_project_ids: Vec<_> = active_git_actions.keys().cloned().collect();
+    for project_id in active_project_ids {
+        loop {
+            let Some(result) = active_git_actions
+                .get(&project_id)
+                .map(|active| active.receiver.try_recv())
+            else {
+                break;
+            };
+
+            match result {
+                Ok(reply) => {
+                    let finished = matches!(reply, GitActionReply::Finished { .. });
+                    drained.push(DrainedGitAction::Reply {
+                        active_project_id: project_id.clone(),
+                        reply,
+                    });
+                    if finished {
+                        break;
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    drained.push(DrainedGitAction::Disconnected {
+                        project_id: project_id.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+    }
+    drained
+}
+
 pub(crate) struct WorktreeDeletionReply {
     pub(crate) confirm: SidebarTaskDeleteConfirmState,
     pub(crate) was_active_project: bool,
@@ -1394,16 +1462,8 @@ pub struct AnotherOneApp {
     pub(crate) titlebar_drag_pending: bool,
     /// Whether the refresh timer has been started.
     pub(crate) refresh_timer_started: bool,
-    /// The toolbar git action currently running in the background, if any.
-    pub(crate) active_git_action: Option<crate::git_actions::ToolbarGitAction>,
-    /// Receiver for the in-flight toolbar git action progress + result.
-    /// Desktop-local: `GitActionReply` here is the streaming
-    /// `Progress`/`Finished` enum defined in this file, not the
-    /// one-shot `core::git_service::GitActionReply` struct. Kept on
-    /// mpsc for the same reason the other desktop-local channels are:
-    /// no daemon/mobile client would subscribe to a toast-stream type
-    /// that's scoped to the GPUI UI.
-    git_action_receiver: Option<mpsc::Receiver<GitActionReply>>,
+    /// Toolbar git actions currently running in the background, keyed by originating project id.
+    pub(crate) active_git_actions: HashMap<String, ActiveToolbarGitAction>,
     /// Pending right-sidebar git mutations keyed by project id.
     pending_changed_files_git_mutations: HashMap<String, PendingChangedFilesGitMutations>,
     /// Sender for background right-sidebar git mutation replies.
@@ -3242,6 +3302,21 @@ impl AnotherOneApp {
         self.project_pull_requests.get(&lookup_key)
     }
 
+    fn invalidate_project_pull_request_lookup(&mut self, project_id: &str, branch_name: &str) {
+        let lookup_key = Self::project_pull_request_lookup_key(project_id, branch_name);
+        self.project_pull_request_requests.remove(&lookup_key);
+        self.project_pull_request_checked.remove(&lookup_key);
+        self.project_pull_request_checked_at.remove(&lookup_key);
+        self.project_pull_requests.remove(&lookup_key);
+    }
+
+    fn invalidate_project_check_runs_lookup(&mut self, project_id: &str, branch_name: &str) {
+        let lookup_key = Self::project_check_runs_lookup_key(project_id, branch_name);
+        self.project_check_runs_requests.remove(&lookup_key);
+        self.project_check_runs_checked_at.remove(&lookup_key);
+        self.project_check_runs_states.remove(&lookup_key);
+    }
+
     pub(crate) fn active_project_check_runs_state(
         &self,
         cx: &App,
@@ -3283,39 +3358,6 @@ impl AnotherOneApp {
         }
         let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
         self.request_project_check_runs_lookup(&lookup_key, &project_path, pull_request_number);
-    }
-
-    pub(crate) fn refresh_active_project_check_runs_lookup(&mut self, cx: &App) {
-        let Some((project_id, branch_name, project_path, pull_request_number)) =
-            self.active_project_check_runs_context(cx)
-        else {
-            return;
-        };
-        let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
-        self.request_project_check_runs_lookup(&lookup_key, &project_path, pull_request_number);
-    }
-
-    fn invalidate_active_project_pull_request_lookup(&mut self, cx: &App) {
-        let Some((project_id, branch_name, _)) = self.active_project_pull_request_context(cx)
-        else {
-            return;
-        };
-        let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
-        self.project_pull_request_requests.remove(&lookup_key);
-        self.project_pull_request_checked.remove(&lookup_key);
-        self.project_pull_request_checked_at.remove(&lookup_key);
-        self.project_pull_requests.remove(&lookup_key);
-    }
-
-    fn invalidate_active_project_check_runs_lookup(&mut self, cx: &App) {
-        let Some((project_id, branch_name, _, _)) = self.active_project_check_runs_context(cx)
-        else {
-            return;
-        };
-        let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
-        self.project_check_runs_requests.remove(&lookup_key);
-        self.project_check_runs_checked_at.remove(&lookup_key);
-        self.project_check_runs_states.remove(&lookup_key);
     }
 
     pub(crate) fn active_project_ahead_count(&self, cx: &App) -> usize {
@@ -4123,8 +4165,7 @@ impl AnotherOneApp {
             focus_handle,
             titlebar_drag_pending: false,
             refresh_timer_started: false,
-            active_git_action: None,
-            git_action_receiver: None,
+            active_git_actions: HashMap::new(),
             pending_changed_files_git_mutations: HashMap::new(),
             changed_files_git_mutation_sender,
             changed_files_git_mutation_receiver,
@@ -8633,13 +8674,14 @@ impl AnotherOneApp {
     fn spawn_changed_files_git_mutation(
         &self,
         project_id: &str,
-        project_path: std::path::PathBuf,
+        _project_path: std::path::PathBuf,
         mutation: ChangedFilesGitMutation,
     ) {
-        another_one_core::git_service::spawn_changed_files_mutation(
+        self.sync_registry_project_store();
+        crate::daemon_host::spawn_changed_files_mutation(
             self.changed_files_git_mutation_sender.clone(),
+            self.registry_state.clone(),
             project_id.to_string(),
-            project_path,
             mutation,
         );
     }
@@ -8759,8 +8801,23 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    pub(crate) fn changed_files_actions_busy(&self, _project_id: &str) -> bool {
-        self.active_git_action.is_some()
+    pub(crate) fn active_git_action_for_project(
+        &self,
+        project_id: &str,
+    ) -> Option<&ActiveToolbarGitAction> {
+        active_toolbar_git_action_entry(&self.active_git_actions, project_id)
+    }
+
+    pub(crate) fn active_git_action_for_current_project(
+        &self,
+        cx: &App,
+    ) -> Option<&ActiveToolbarGitAction> {
+        let project_id = self.active_open_in_project_id(cx)?;
+        self.active_git_action_for_project(&project_id)
+    }
+
+    pub(crate) fn changed_files_actions_busy(&self, project_id: &str) -> bool {
+        has_active_toolbar_git_action(&self.active_git_actions, project_id)
     }
 
     pub(crate) fn changed_files_stage_all_pending(&self, project_id: &str) -> bool {
@@ -8803,7 +8860,7 @@ impl AnotherOneApp {
         mutation: ChangedFilesGitMutation,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.active_git_action.is_some() {
+        if self.active_git_action_for_project(project_id).is_some() {
             return false;
         }
 
@@ -8862,15 +8919,17 @@ impl AnotherOneApp {
         action: crate::git_actions::ToolbarGitAction,
         cx: &mut Context<Self>,
     ) {
-        if self.active_git_action.is_some() {
-            self.show_info_toast("A git action is already running.", cx);
-            return;
-        }
-
         let Some((project_id, project_path)) = self.active_project_context(cx) else {
             self.show_error_toast("No active project is selected.", cx);
             return;
         };
+
+        if self.active_git_action_for_project(&project_id).is_some() {
+            self.show_info_toast("A git action is already running for this project.", cx);
+            return;
+        }
+
+        let branch_name_at_start = self.project_store.current_branch_name(&project_id);
         let action = match action {
             crate::git_actions::ToolbarGitAction::CreatePr { draft, .. } => {
                 crate::git_actions::ToolbarGitAction::CreatePr {
@@ -8951,19 +9010,19 @@ impl AnotherOneApp {
             self.show_info_toast(start_message, cx);
         }
 
-        let git_action_settings = crate::git_actions::GitActionSettings {
-            commit_generation_script: self
-                .project_store
-                .git_commit_generation_script()
-                .to_string(),
-            pr_generation_script: self.project_store.git_pr_generation_script().to_string(),
-            commit_llm: self.project_store.git_commit_generation_llm(),
-            pr_llm: self.project_store.git_pr_generation_llm(),
-        };
+        self.sync_registry_project_store();
+
+        let registry_state = self.registry_state.clone();
         let (tx, rx) = mpsc::channel();
         self.git_actions_menu_open = false;
-        self.active_git_action = Some(action.clone());
-        self.git_action_receiver = Some(rx);
+        self.active_git_actions.insert(
+            project_id.clone(),
+            ActiveToolbarGitAction {
+                action: action.clone(),
+                branch_name_at_start,
+                receiver: rx,
+            },
+        );
         std::thread::spawn(move || {
             let mut progress = |message: String| {
                 let _ = tx.send(GitActionReply::Progress {
@@ -8972,10 +9031,10 @@ impl AnotherOneApp {
                 });
             };
             let (refresh_git_state, toast_kind, toast_message) =
-                match crate::git_actions::execute_toolbar_git_action(
-                    &project_path,
+                match crate::daemon_host::run_toolbar_git_action(
+                    registry_state,
+                    &project_id,
                     action,
-                    git_action_settings,
                     &mut progress,
                 ) {
                     Ok(outcome) => (
@@ -9002,14 +9061,19 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    fn drain_git_action(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.git_action_receiver.as_ref() else {
-            return false;
-        };
+    fn drain_git_actions(&mut self, cx: &mut Context<Self>) -> bool {
+        let drained = collect_drained_git_action_replies(&self.active_git_actions);
 
-        match receiver.try_recv() {
-            Ok(reply) => {
-                match reply {
+        if drained.is_empty() {
+            return false;
+        }
+
+        for event in drained {
+            match event {
+                DrainedGitAction::Reply {
+                    active_project_id,
+                    reply,
+                } => match reply {
                     GitActionReply::Progress {
                         toast_kind,
                         toast_message,
@@ -9026,13 +9090,14 @@ impl AnotherOneApp {
                         toast_kind,
                         toast_message,
                     } => {
+                        let active = self.active_git_actions.remove(&active_project_id);
                         let refresh_pull_request_lookup =
-                            matches!(
-                                self.active_git_action,
-                                Some(crate::git_actions::ToolbarGitAction::CreatePr { .. })
-                            ) && matches!(toast_kind, ToastKind::Success);
-                        self.active_git_action = None;
-                        self.git_action_receiver = None;
+                            active.as_ref().is_some_and(|active| {
+                                matches!(
+                                    active.action,
+                                    crate::git_actions::ToolbarGitAction::CreatePr { .. }
+                                )
+                            }) && matches!(toast_kind, ToastKind::Success);
                         if let Some(state) = git_state {
                             self.apply_project_git_state(&project_id, state);
                             let invalid_settings = self
@@ -9054,23 +9119,49 @@ impl AnotherOneApp {
                             ToastKind::Info => self.show_info_toast(toast_message, cx),
                         }
                         if refresh_pull_request_lookup {
-                            self.invalidate_active_project_pull_request_lookup(cx);
-                            self.refresh_active_project_pull_request_lookup(cx);
-                            self.invalidate_active_project_check_runs_lookup(cx);
-                            self.refresh_active_project_check_runs_lookup(cx);
+                            if let Some((project_id, branch_name)) =
+                                active.as_ref().and_then(|active| {
+                                    active.branch_name_at_start.as_ref().map(|branch_name| {
+                                        (project_id.clone(), branch_name.clone())
+                                    })
+                                })
+                            {
+                                self.invalidate_project_pull_request_lookup(
+                                    &project_id,
+                                    &branch_name,
+                                );
+                                self.invalidate_project_check_runs_lookup(
+                                    &project_id,
+                                    &branch_name,
+                                );
+                                if let Some(project_path) = self.project_path(&project_id) {
+                                    self.request_project_pull_request_lookup_for(
+                                        &project_id,
+                                        &branch_name,
+                                        &project_path,
+                                    );
+                                    let lookup_key = Self::project_check_runs_lookup_key(
+                                        &project_id,
+                                        &branch_name,
+                                    );
+                                    self.request_project_check_runs_lookup(
+                                        &lookup_key,
+                                        &project_path,
+                                        None,
+                                    );
+                                }
+                            }
                         }
                     }
+                },
+                DrainedGitAction::Disconnected { project_id } => {
+                    self.active_git_actions.remove(&project_id);
+                    self.show_error_toast("The background git action did not complete.", cx);
                 }
-                true
-            }
-            Err(mpsc::TryRecvError::Empty) => false,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.active_git_action = None;
-                self.git_action_receiver = None;
-                self.show_error_toast("The background git action did not complete.", cx);
-                true
             }
         }
+
+        true
     }
 
     fn drain_changed_files_git_mutations(&mut self, cx: &mut Context<Self>) -> bool {
@@ -11272,15 +11363,17 @@ fn remove_terminal_runtime_state<T>(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_terminal_session_backfill, apply_terminal_title_update, choose_initial_section,
+        active_toolbar_git_action_entry, apply_terminal_session_backfill,
+        apply_terminal_title_update, choose_initial_section, collect_drained_git_action_replies,
         encode_terminal_mouse_event, fixed_title_for_project_action,
-        global_tab_navigation_targets, new_tab_seed_agent_id, next_global_tab_navigation_target,
-        next_project_navigation_target, next_task_navigation_target, persisted_active_section_key,
-        remove_terminal_runtime_state, resolve_new_task_shortcut_target,
-        root_project_navigation_targets, select_active_section, sidebar_task_navigation_targets,
-        terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
-        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
-        terminal_word_selection_range, AnotherOneApp, AppToast, NavigationDirection,
+        global_tab_navigation_targets, has_active_toolbar_git_action, new_tab_seed_agent_id,
+        next_global_tab_navigation_target, next_project_navigation_target,
+        next_task_navigation_target, persisted_active_section_key, remove_terminal_runtime_state,
+        resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
+        sidebar_task_navigation_targets, terminal_line_selection_range, terminal_link_at_position,
+        terminal_link_ranges, terminal_scroll_lines, terminal_selected_text,
+        terminal_selection_range, terminal_word_selection_range, ActiveToolbarGitAction,
+        AnotherOneApp, AppToast, DrainedGitAction, GitActionReply, NavigationDirection,
         NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition, TerminalLinkRange,
         TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers, TerminalSelectionRange,
         TerminalTab, ToastKind,
@@ -11289,6 +11382,7 @@ mod tests {
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
         TerminalRestoreStatus, TerminalSessionKind, TerminalSessionRef,
     };
+    use crate::git_actions::ToolbarGitAction;
     use crate::project_store::{
         PersistedSectionState, PersistedTerminalTab, Project, ProjectAction, ProjectActionIcon,
         ProjectActionKind, ProjectActionScope, ProjectCheckoutState, ProjectKind, Task, TaskKind,
@@ -11300,6 +11394,7 @@ mod tests {
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, ScrollDelta};
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     fn shell_tab(id: usize, title: &str) -> PersistedTerminalTab {
@@ -11408,6 +11503,96 @@ mod tests {
             copy_text: ch.to_string(),
             hyperlink: None,
         }
+    }
+
+    fn active_toolbar_action(
+        action: ToolbarGitAction,
+    ) -> (mpsc::Sender<GitActionReply>, ActiveToolbarGitAction) {
+        let (tx, receiver) = mpsc::channel();
+        (
+            tx,
+            ActiveToolbarGitAction {
+                action,
+                branch_name_at_start: Some("feature/test".to_string()),
+                receiver,
+            },
+        )
+    }
+
+    #[test]
+    fn active_toolbar_git_action_lookup_is_project_scoped() {
+        let (_tx, action) = active_toolbar_action(ToolbarGitAction::Fetch);
+        let mut active_git_actions = HashMap::new();
+        active_git_actions.insert("project-a".to_string(), action);
+
+        assert!(has_active_toolbar_git_action(
+            &active_git_actions,
+            "project-a"
+        ));
+        assert!(!has_active_toolbar_git_action(
+            &active_git_actions,
+            "project-b"
+        ));
+        assert!(matches!(
+            active_toolbar_git_action_entry(&active_git_actions, "project-a")
+                .map(|active| &active.action),
+            Some(ToolbarGitAction::Fetch)
+        ));
+        assert!(active_toolbar_git_action_entry(&active_git_actions, "project-b").is_none());
+    }
+
+    #[test]
+    fn collect_drained_git_action_replies_polls_all_projects() {
+        let (project_a_tx, project_a_action) = active_toolbar_action(ToolbarGitAction::Commit);
+        let (project_b_tx, project_b_action) = active_toolbar_action(ToolbarGitAction::Fetch);
+        let (project_c_tx, project_c_action) =
+            active_toolbar_action(ToolbarGitAction::UndoLastCommit);
+        let mut active_git_actions = HashMap::new();
+        active_git_actions.insert("project-a".to_string(), project_a_action);
+        active_git_actions.insert("project-b".to_string(), project_b_action);
+        active_git_actions.insert("project-c".to_string(), project_c_action);
+
+        project_a_tx
+            .send(GitActionReply::Progress {
+                toast_kind: ToastKind::Info,
+                toast_message: "project-a progress".to_string(),
+            })
+            .unwrap();
+        project_b_tx
+            .send(GitActionReply::Finished {
+                project_id: "project-b".to_string(),
+                refresh_git_state: false,
+                git_state: None,
+                toast_kind: ToastKind::Success,
+                toast_message: "project-b done".to_string(),
+            })
+            .unwrap();
+        drop(project_c_tx);
+
+        let drained = collect_drained_git_action_replies(&active_git_actions);
+
+        assert!(drained.iter().any(|event| matches!(
+            event,
+            DrainedGitAction::Reply {
+                active_project_id,
+                reply: GitActionReply::Progress { toast_message, .. },
+            } if active_project_id == "project-a" && toast_message == "project-a progress"
+        )));
+        assert!(drained.iter().any(|event| matches!(
+            event,
+            DrainedGitAction::Reply {
+                active_project_id,
+                reply: GitActionReply::Finished { project_id, .. },
+            } if active_project_id == "project-b" && project_id == "project-b"
+        )));
+        assert!(drained.iter().any(|event| matches!(
+            event,
+            DrainedGitAction::Disconnected { project_id } if project_id == "project-c"
+        )));
+        assert!(!drained.iter().any(|event| matches!(
+            event,
+            DrainedGitAction::Disconnected { project_id } if project_id == "project-a"
+        )));
     }
 
     #[test]
@@ -13936,7 +14121,7 @@ impl Render for AnotherOneApp {
                         async_cx.background_executor().timer(interval).await;
                         let next_interval = handle.update(async_cx, |this, cx| {
                             let mut should_notify = false;
-                            should_notify |= this.drain_git_action(cx);
+                            should_notify |= this.drain_git_actions(cx);
                             should_notify |= this.drain_changed_files_git_mutations(cx);
                             should_notify |= this.drain_changed_file_diff(cx);
                             should_notify |= this.drain_git_refresh(cx);

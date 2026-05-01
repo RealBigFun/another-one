@@ -938,11 +938,13 @@ impl AnotherOneApp {
         }
 
         let primary_action = self.idle_titlebar_primary_git_action(cx);
-        let active_presentation = self
-            .active_git_action
+        let active_action = self
+            .active_git_action_for_current_project(cx)
+            .map(|active| active.action.clone());
+        let active_presentation = active_action
             .clone()
             .map(resolve_active_git_action_presentation);
-        let active = self.active_git_action.is_some();
+        let active = active_action.is_some();
         let interactive = !active;
         let is_open = self.git_actions_menu_open;
         let button_bg = if is_open {
@@ -1068,7 +1070,7 @@ impl AnotherOneApp {
     }
 
     pub fn titlebar_git_actions_overlay(&self, cx: &mut Context<Self>) -> AnyElement {
-        if !self.git_actions_menu_open || self.active_git_action.is_some() {
+        if !self.git_actions_menu_open || self.active_git_action_for_current_project(cx).is_some() {
             return div().id("titlebar-git-actions-overlay").into_any_element();
         }
 
@@ -1078,7 +1080,7 @@ impl AnotherOneApp {
 
         let has_changes = !self.active_changed_files(cx).is_empty();
         let can_commit = has_changes;
-        let toolbar_enabled = self.active_git_action.is_none();
+        let toolbar_enabled = self.active_git_action_for_current_project(cx).is_none();
         let bg = rgb(0x2b2d31);
         let border = gpui::white().opacity(0.08);
         let text_col = hsla(0., 0., 0.92, 1.);

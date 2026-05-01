@@ -31,19 +31,28 @@ use std::thread;
 use tokio::sync::broadcast;
 
 use daemon::frame::{
-    AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire, AgentSummaryWire,
-    EnabledAgentsViewWire, GitActionScriptsView, McpCatalogEntryDto, McpServerDto, McpSettingsView,
-    McpSourceDto, McpTransportKindDto, OpenInAppSettingsRowWire, OpenInAppWire,
-    OpenInSettingsViewWire, OpenInStateWire, ProjectKind, ProjectSummary, ShortcutSettingsRow,
-    ShortcutSettingsView, TabSummary, TaskSummary,
+    ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
+    AgentSummaryWire, ChangedFileWire, EnabledAgentsViewWire, GitActionScriptsView,
+    McpCatalogEntryDto, McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto,
+    OpenInAppSettingsRowWire, OpenInAppWire, OpenInSettingsViewWire, OpenInStateWire, ProjectKind,
+    ProjectSummary, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
+    ToolbarActionOutcome as WireToolbarActionOutcome,
 };
 use daemon::{DaemonRegistry, EndpointHandle};
 
 use another_one_core::agents::{AgentProviderKind, AGENTS};
+use another_one_core::git_actions::{
+    execute_toolbar_git_action, GitActionSettings, ToolbarActionError, ToolbarGitAction,
+};
+use another_one_core::git_service::{ChangedFilesGitMutation, ChangedFilesGitMutationReply};
 use another_one_core::mcp::catalog;
 use another_one_core::mcp::registry::McpRegistry;
 use another_one_core::mcp::{McpServer, McpSource, McpTransport};
-use another_one_core::project_store::{ProjectKind as CoreProjectKind, ProjectStore};
+use another_one_core::project_store::{
+    read_project_git_state, revert_changed_file, stage_all_changes, stage_changed_file,
+    unstage_all_changes, unstage_changed_file, ChangedFile, ProjectGitState,
+    ProjectKind as CoreProjectKind, ProjectStore,
+};
 use another_one_core::section::SectionId;
 use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
 
@@ -217,8 +226,9 @@ pub(crate) struct PendingSpawnTerminal {
     /// the resulting `TaskOpened` / `TabOpened` event to the
     /// originating MCP client. None → "anonymous".
     pub client_handle: Option<String>,
-    pub responder:
-        std::sync::mpsc::SyncSender<Result<another_one_core::mcp::orchestrator::SpawnTerminalResponse, String>>,
+    pub responder: std::sync::mpsc::SyncSender<
+        Result<another_one_core::mcp::orchestrator::SpawnTerminalResponse, String>,
+    >,
 }
 
 /// `DaemonRegistry` implementation that projects `AnotherOneApp`
@@ -415,6 +425,137 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             }
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
+    }
+
+    fn read_active_git_state(&self, project_id: &str) -> Option<ActiveGitStateWire> {
+        let project_path = self
+            .with_state(|state| project_path(state, project_id))
+            .flatten()?;
+        let state = read_project_git_state(&project_path, true);
+        Some(active_git_state_wire(&state))
+    }
+
+    fn read_changed_files(&self, project_id: &str) -> Option<Vec<ChangedFileWire>> {
+        let project_path = self
+            .with_state(|state| project_path(state, project_id))
+            .flatten()?;
+        Some(changed_files_wire(
+            read_project_git_state(&project_path, false).changed_files,
+        ))
+    }
+
+    fn stage_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        original_path: Option<&'a str>,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let mutation = ChangedFilesGitMutation::StageFile {
+            changed: changed_file_for_mutation(path, original_path, false),
+        };
+        git_mutation_future(inner, project_id, mutation)
+    }
+
+    fn unstage_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        original_path: Option<&'a str>,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let mutation = ChangedFilesGitMutation::UnstageFile {
+            changed: changed_file_for_mutation(path, original_path, false),
+        };
+        git_mutation_future(inner, project_id, mutation)
+    }
+
+    fn stage_all_changes<'a>(
+        &'a self,
+        project_id: &'a str,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        git_mutation_future(
+            self.inner.clone(),
+            project_id.to_string(),
+            ChangedFilesGitMutation::StageAll,
+        )
+    }
+
+    fn unstage_all_changes<'a>(
+        &'a self,
+        project_id: &'a str,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        git_mutation_future(
+            self.inner.clone(),
+            project_id.to_string(),
+            ChangedFilesGitMutation::UnstageAll,
+        )
+    }
+
+    fn discard_changed_file<'a>(
+        &'a self,
+        project_id: &'a str,
+        path: &'a str,
+        untracked: bool,
+        original_path: Option<&'a str>,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let mutation = ChangedFilesGitMutation::RevertFiles {
+            changed_files: vec![changed_file_for_mutation(path, original_path, untracked)],
+        };
+        git_mutation_future(inner, project_id, mutation)
+    }
+
+    fn discard_all_changes<'a>(
+        &'a self,
+        project_id: &'a str,
+        files: Vec<ChangedFileWire>,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<(Vec<ChangedFileWire>, Vec<String>)>>
+    {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        Box::pin(async move {
+            let outcome = tokio::task::spawn_blocking(move || {
+                run_changed_files_git_mutation_for_weak(
+                    inner,
+                    &project_id,
+                    ChangedFilesGitMutation::RevertFiles {
+                        changed_files: files.into_iter().map(changed_file_from_wire).collect(),
+                    },
+                )
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("git mutation task failed: {error}"))??;
+            Ok((changed_files_wire(outcome.changed_files), Vec::new()))
+        })
+    }
+
+    fn run_toolbar_git_action<'a>(
+        &'a self,
+        project_id: &'a str,
+        action_id: &'a str,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<WireToolbarActionOutcome>> {
+        let inner = self.inner.clone();
+        let project_id = project_id.to_string();
+        let action_id = action_id.to_string();
+        Box::pin(async move {
+            let outcome = tokio::task::spawn_blocking(move || {
+                let action = toolbar_action_from_id_for_weak(&inner, &project_id, &action_id)?;
+                let mut progress = |_message: String| {};
+                run_toolbar_git_action_for_weak(inner, &project_id, action, &mut progress)
+                    .map_err(toolbar_action_error)
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("toolbar git action task failed: {error}"))??;
+            Ok(WireToolbarActionOutcome {
+                toast_message: outcome.toast_message,
+                warning: outcome.warning,
+                refresh_git_state: outcome.refresh_git_state,
+            })
+        })
     }
 
     fn open_in_state(&self) -> Option<OpenInStateWire> {
@@ -668,6 +809,243 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             Err(format!("MCP sync failed: {}", sync_errors.join("; ")))
         }
     }
+}
+
+pub(crate) fn spawn_changed_files_mutation(
+    sender: broadcast::Sender<ChangedFilesGitMutationReply>,
+    registry_state: Arc<Mutex<RegistryState>>,
+    project_id: String,
+    mutation: ChangedFilesGitMutation,
+) {
+    thread::spawn(move || {
+        let result =
+            run_changed_files_git_mutation_for_state(registry_state, &project_id, mutation)
+                .map_err(|error| format!("{error:#}"));
+        let _ = sender.send(ChangedFilesGitMutationReply { project_id, result });
+    });
+}
+
+pub(crate) fn run_toolbar_git_action(
+    registry_state: Arc<Mutex<RegistryState>>,
+    project_id: &str,
+    action: ToolbarGitAction,
+    on_progress: &mut dyn FnMut(String),
+) -> Result<another_one_core::git_actions::ToolbarActionOutcome, ToolbarActionError> {
+    let weak = Arc::downgrade(&registry_state);
+    run_toolbar_git_action_for_weak(weak, project_id, action, on_progress)
+}
+
+fn git_mutation_future<'a>(
+    inner: Weak<Mutex<RegistryState>>,
+    project_id: String,
+    mutation: ChangedFilesGitMutation,
+) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Vec<ChangedFileWire>>> {
+    Box::pin(async move {
+        let outcome = tokio::task::spawn_blocking(move || {
+            run_changed_files_git_mutation_for_weak(inner, &project_id, mutation)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("git mutation task failed: {error}"))??;
+        Ok(changed_files_wire(outcome.changed_files))
+    })
+}
+
+fn run_changed_files_git_mutation_for_state(
+    registry_state: Arc<Mutex<RegistryState>>,
+    project_id: &str,
+    mutation: ChangedFilesGitMutation,
+) -> anyhow::Result<ProjectGitState> {
+    run_changed_files_git_mutation_for_weak(Arc::downgrade(&registry_state), project_id, mutation)
+}
+
+fn run_changed_files_git_mutation_for_weak(
+    inner: Weak<Mutex<RegistryState>>,
+    project_id: &str,
+    mutation: ChangedFilesGitMutation,
+) -> anyhow::Result<ProjectGitState> {
+    let project_path = with_registry_state(&inner, |state| project_path(state, project_id))
+        .flatten()
+        .ok_or_else(|| anyhow::anyhow!("unknown project: {project_id}"))?;
+
+    another_one_core::git_operation::run_serialized_git_operation_for_path(&project_path, || {
+        match mutation {
+            ChangedFilesGitMutation::StageFile { changed } => {
+                stage_changed_file(&project_path, &changed)
+                    .map(|_| read_project_git_state(&project_path, false))
+            }
+            ChangedFilesGitMutation::UnstageFile { changed } => {
+                unstage_changed_file(&project_path, &changed)
+                    .map(|_| read_project_git_state(&project_path, false))
+            }
+            ChangedFilesGitMutation::StageAll => stage_all_changes(&project_path)
+                .map(|_| read_project_git_state(&project_path, false)),
+            ChangedFilesGitMutation::UnstageAll => unstage_all_changes(&project_path)
+                .map(|_| read_project_git_state(&project_path, false)),
+            ChangedFilesGitMutation::RevertFiles { changed_files } => {
+                let reverted_any = changed_files.iter().fold(false, |reverted_any, changed| {
+                    revert_changed_file(&project_path, changed) || reverted_any
+                });
+
+                if reverted_any {
+                    Ok(read_project_git_state(&project_path, false))
+                } else {
+                    Err("Could not discard the selected file changes.".to_string())
+                }
+            }
+        }
+    })
+    .map_err(|error| anyhow::anyhow!(error))
+}
+
+fn run_toolbar_git_action_for_weak(
+    inner: Weak<Mutex<RegistryState>>,
+    project_id: &str,
+    action: ToolbarGitAction,
+    on_progress: &mut dyn FnMut(String),
+) -> Result<another_one_core::git_actions::ToolbarActionOutcome, ToolbarActionError> {
+    let (project_path, settings) = with_registry_state(&inner, |state| {
+        let project_path = project_path(state, project_id)?;
+        Some((project_path, git_action_settings(&state.project_store)))
+    })
+    .flatten()
+    .ok_or_else(|| ToolbarActionError {
+        message: format!("unknown project: {project_id}"),
+        refresh_git_state: false,
+    })?;
+
+    execute_toolbar_git_action(&project_path, action, settings, on_progress)
+}
+
+fn toolbar_action_from_id_for_weak(
+    inner: &Weak<Mutex<RegistryState>>,
+    project_id: &str,
+    action_id: &str,
+) -> anyhow::Result<ToolbarGitAction> {
+    with_registry_state(inner, |state| {
+        toolbar_action_from_id(&state.project_store, project_id, action_id)
+    })
+    .ok_or_else(|| anyhow::anyhow!(registry_unavailable()))?
+}
+
+fn toolbar_action_from_id(
+    store: &ProjectStore,
+    project_id: &str,
+    action_id: &str,
+) -> anyhow::Result<ToolbarGitAction> {
+    let action = match action_id {
+        "commit" => ToolbarGitAction::Commit,
+        "commit-and-push" => ToolbarGitAction::CommitAndPush,
+        "undo-last-commit" => ToolbarGitAction::UndoLastCommit,
+        "fetch" => ToolbarGitAction::Fetch,
+        "pull" => ToolbarGitAction::Pull,
+        "push" => ToolbarGitAction::Push { force: false },
+        "force-push" => ToolbarGitAction::Push { force: true },
+        "create-pr" => ToolbarGitAction::CreatePr {
+            draft: false,
+            base_branch: store
+                .resolved_branch_settings(project_id)
+                .and_then(|settings| settings.effective_default_target_branch),
+        },
+        "create-draft-pr" => ToolbarGitAction::CreatePr {
+            draft: true,
+            base_branch: store
+                .resolved_branch_settings(project_id)
+                .and_then(|settings| settings.effective_default_target_branch),
+        },
+        _ => anyhow::bail!("unknown toolbar git action: {action_id}"),
+    };
+    Ok(action)
+}
+
+fn toolbar_action_error(error: ToolbarActionError) -> anyhow::Error {
+    anyhow::anyhow!(error.message)
+}
+
+fn git_action_settings(store: &ProjectStore) -> GitActionSettings {
+    GitActionSettings {
+        commit_generation_script: store.git_commit_generation_script().to_string(),
+        pr_generation_script: store.git_pr_generation_script().to_string(),
+        commit_llm: store.git_commit_generation_llm(),
+        pr_llm: store.git_pr_generation_llm(),
+    }
+}
+
+fn project_path(state: &RegistryState, project_id: &str) -> Option<PathBuf> {
+    state
+        .project_store
+        .project(project_id)
+        .map(|project| project.path.clone())
+}
+
+fn with_registry_state<R>(
+    inner: &Weak<Mutex<RegistryState>>,
+    f: impl FnOnce(&mut RegistryState) -> R,
+) -> Option<R> {
+    let arc = inner.upgrade()?;
+    let mut guard = arc.lock().ok()?;
+    Some(f(&mut guard))
+}
+
+fn changed_file_for_mutation(
+    path: &str,
+    original_path: Option<&str>,
+    untracked: bool,
+) -> ChangedFile {
+    ChangedFile {
+        path: path.to_string(),
+        original_path: original_path.map(str::to_string),
+        staged_additions: 0,
+        staged_deletions: 0,
+        unstaged_additions: 0,
+        unstaged_deletions: 0,
+        index_status: ' ',
+        worktree_status: if untracked { '?' } else { ' ' },
+        untracked,
+    }
+}
+
+fn changed_file_from_wire(file: ChangedFileWire) -> ChangedFile {
+    ChangedFile {
+        path: file.path,
+        original_path: file.original_path,
+        staged_additions: file.staged_additions,
+        staged_deletions: file.staged_deletions,
+        unstaged_additions: file.unstaged_additions,
+        unstaged_deletions: file.unstaged_deletions,
+        index_status: single_status_char(&file.index_status),
+        worktree_status: single_status_char(&file.worktree_status),
+        untracked: file.untracked,
+    }
+}
+
+fn changed_file_wire(file: ChangedFile) -> ChangedFileWire {
+    ChangedFileWire {
+        path: file.path,
+        original_path: file.original_path,
+        staged_additions: file.staged_additions,
+        staged_deletions: file.staged_deletions,
+        unstaged_additions: file.unstaged_additions,
+        unstaged_deletions: file.unstaged_deletions,
+        index_status: file.index_status.to_string(),
+        worktree_status: file.worktree_status.to_string(),
+        untracked: file.untracked,
+    }
+}
+
+fn changed_files_wire(files: Vec<ChangedFile>) -> Vec<ChangedFileWire> {
+    files.into_iter().map(changed_file_wire).collect()
+}
+
+fn active_git_state_wire(state: &ProjectGitState) -> ActiveGitStateWire {
+    ActiveGitStateWire {
+        current_branch: state.current_branch.clone(),
+        ahead_count: state.ahead_count as u32,
+        behind_count: state.behind_count as u32,
+    }
+}
+
+fn single_status_char(value: &str) -> char {
+    value.chars().next().unwrap_or(' ')
 }
 
 /// Parse a wire `section_id` (a `SectionId::store_key()`) + `tab_id`
@@ -1032,10 +1410,8 @@ fn run(
     runtime.spawn(async move {
         let mut attempt: u32 = 0;
         let listener = loop {
-            match daemon::transport_mcp::spawn(
-                mcp_path_for_task.clone(),
-                mcp_orch_for_task.clone(),
-            ) {
+            match daemon::transport_mcp::spawn(mcp_path_for_task.clone(), mcp_orch_for_task.clone())
+            {
                 Ok(listener) => {
                     if attempt > 0 {
                         log::info!(
