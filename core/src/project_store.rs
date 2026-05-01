@@ -14,7 +14,9 @@ use crate::agents::{
     effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus,
     DEFAULT_AGENT_ID,
 };
-use crate::git_actions::{default_commit_generation_script, default_pr_generation_script};
+use crate::git_actions::{
+    default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
+};
 use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 
@@ -529,6 +531,10 @@ pub struct UiState {
     #[serde(default)]
     pub git_pr_generation_script: Option<String>,
     #[serde(default)]
+    pub git_commit_generation_llm: GitActionLlmSettings,
+    #[serde(default)]
+    pub git_pr_generation_llm: GitActionLlmSettings,
+    #[serde(default)]
     pub shortcuts: ShortcutSettings,
     #[serde(default)]
     pub global_actions: Vec<ProjectAction>,
@@ -553,6 +559,8 @@ impl Default for UiState {
             agent_launch_args: HashMap::new(),
             git_commit_generation_script: None,
             git_pr_generation_script: None,
+            git_commit_generation_llm: GitActionLlmSettings::default(),
+            git_pr_generation_llm: GitActionLlmSettings::default(),
             shortcuts: ShortcutSettings::default(),
             global_actions: Vec::new(),
             archived_project_actions: Vec::new(),
@@ -623,9 +631,14 @@ pub fn project_action_agent_launch_args(action: &ProjectAction) -> Result<Vec<St
                 }
             }
             if !trimmed_traits.is_empty() {
+                let reasoning_effort = if trimmed_traits == "off" {
+                    "none"
+                } else {
+                    trimmed_traits
+                };
                 args.extend([
                     "--config".to_string(),
-                    format!("model_reasoning_effort=\"{trimmed_traits}\""),
+                    format!("model_reasoning_effort=\"{reasoning_effort}\""),
                 ]);
             }
             if !trimmed_mode.is_empty() && trimmed_mode != "default" && trimmed_mode != "plan" {
@@ -1473,15 +1486,9 @@ impl ProjectStore {
                 )
             })
             .collect();
-        self.projects_by_id = projects
-            .iter()
-            .map(|p| (p.id.clone(), p.clone()))
-            .collect();
+        self.projects_by_id = projects.iter().map(|p| (p.id.clone(), p.clone())).collect();
         self.project_order = projects.iter().map(|p| p.id.clone()).collect();
-        self.tasks_by_id = tasks
-            .iter()
-            .map(|t| (t.id.clone(), t.clone()))
-            .collect();
+        self.tasks_by_id = tasks.iter().map(|t| (t.id.clone(), t.clone())).collect();
         self.task_ids_by_root_project.clear();
         for task in &tasks {
             self.task_ids_by_root_project
@@ -1638,6 +1645,32 @@ impl ProjectStore {
             return false;
         }
 
+        self.save();
+        true
+    }
+
+    pub fn git_commit_generation_llm(&self) -> GitActionLlmSettings {
+        self.ui.git_commit_generation_llm.clone()
+    }
+
+    pub fn set_git_commit_generation_llm(&mut self, settings: GitActionLlmSettings) -> bool {
+        if self.ui.git_commit_generation_llm == settings {
+            return false;
+        }
+        self.ui.git_commit_generation_llm = settings;
+        self.save();
+        true
+    }
+
+    pub fn git_pr_generation_llm(&self) -> GitActionLlmSettings {
+        self.ui.git_pr_generation_llm.clone()
+    }
+
+    pub fn set_git_pr_generation_llm(&mut self, settings: GitActionLlmSettings) -> bool {
+        if self.ui.git_pr_generation_llm == settings {
+            return false;
+        }
+        self.ui.git_pr_generation_llm = settings;
         self.save();
         true
     }
@@ -3959,10 +3992,12 @@ mod tests {
     impl TestWorktreesRoot {
         fn new() -> Self {
             let temp_dir = tempfile::tempdir().expect("test worktrees root should exist");
-                super::TEST_WORKTREES_ROOT.with(|root| {
+            super::TEST_WORKTREES_ROOT.with(|root| {
                 *root.borrow_mut() = Some(temp_dir.path().join("worktrees"));
             });
-            Self { _temp_dir: temp_dir }
+            Self {
+                _temp_dir: temp_dir,
+            }
         }
     }
 
@@ -4952,6 +4987,8 @@ mod tests {
                 agent_launch_args: HashMap::new(),
                 git_commit_generation_script: None,
                 git_pr_generation_script: None,
+                git_commit_generation_llm: crate::git_actions::GitActionLlmSettings::default(),
+                git_pr_generation_llm: crate::git_actions::GitActionLlmSettings::default(),
                 shortcuts: ShortcutSettings::default(),
                 global_actions: Vec::new(),
                 archived_project_actions: Vec::new(),
@@ -6075,8 +6112,7 @@ mod tests {
             }
         });
 
-        let store: StoreFile =
-            serde_json::from_value(json).expect("store JSON should deserialize");
+        let store: StoreFile = serde_json::from_value(json).expect("store JSON should deserialize");
         let json = serde_json::to_value(&store).expect("store JSON should serialize");
 
         assert_eq!(
@@ -6117,10 +6153,7 @@ mod tests {
             .enabled_open_in_apps
             .as_ref()
             .is_some_and(|apps| apps.contains(&OpenInAppKind::Ghostty)));
-        assert_eq!(
-            store.ui.preferred_open_in_app,
-            Some(OpenInAppKind::Ghostty)
-        );
+        assert_eq!(store.ui.preferred_open_in_app, Some(OpenInAppKind::Ghostty));
     }
 
     #[test]

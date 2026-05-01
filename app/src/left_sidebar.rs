@@ -14,6 +14,7 @@ use crate::app::{
 };
 use crate::mobile::MobileView;
 use crate::project_store::{Branch, Project, TaskKind};
+use crate::project_workflows;
 use crate::shortcuts::{shortcut_matches_event, ShortcutAction};
 use crate::theme;
 
@@ -211,26 +212,6 @@ impl AnotherOneApp {
             .collect()
     }
 
-    fn removed_repo_ids_without_remaining_projects(
-        projects: &[Project],
-        removed_project_ids: &std::collections::HashSet<String>,
-    ) -> std::collections::HashSet<String> {
-        let removed_repo_ids = projects
-            .iter()
-            .filter(|project| removed_project_ids.contains(&project.id))
-            .map(|project| project.repo_id.clone())
-            .collect::<std::collections::HashSet<_>>();
-
-        removed_repo_ids
-            .into_iter()
-            .filter(|repo_id| {
-                !projects.iter().any(|project| {
-                    project.repo_id == *repo_id && !removed_project_ids.contains(&project.id)
-                })
-            })
-            .collect()
-    }
-
     fn project_group_remove_confirm(
         &self,
         root_project_id: &str,
@@ -254,19 +235,10 @@ impl AnotherOneApp {
         })
     }
 
-    fn fallback_section_after_project_removal(&self) -> Option<(SectionId, PathBuf)> {
-        let project = self.project_store.projects.first()?;
-        let branch_name = self.project_store.current_branch_name(&project.id)?;
-        Some((
-            SectionId::new(&project.id, &branch_name),
-            project.path.clone(),
-        ))
-    }
-
     fn remove_project_group_ids(&mut self, project_ids: &[String], cx: &mut Context<Self>) {
         let project_id_set: std::collections::HashSet<String> =
             project_ids.iter().cloned().collect();
-        let removed_repo_ids = Self::removed_repo_ids_without_remaining_projects(
+        let removed_repo_ids = project_workflows::removed_repo_ids_without_remaining_projects(
             &self.project_store.projects,
             &project_id_set,
         );
@@ -275,7 +247,8 @@ impl AnotherOneApp {
             self.project_store.remove_project(project_id);
         }
         self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
-        let fallback_section = self.fallback_section_after_project_removal();
+        let fallback_section =
+            project_workflows::fallback_section_after_project_removal(&self.project_store);
         self.project_store.save();
 
         self.workspace_pane.update(cx, |workspace, cx| {
@@ -296,7 +269,7 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> Option<Project> {
         let project_id_set = std::collections::HashSet::from([project_id.to_string()]);
-        let removed_repo_ids = Self::removed_repo_ids_without_remaining_projects(
+        let removed_repo_ids = project_workflows::removed_repo_ids_without_remaining_projects(
             &self.project_store.projects,
             &project_id_set,
         );
@@ -431,7 +404,8 @@ impl AnotherOneApp {
             .projects
             .iter()
             .any(|project| project.id == preferred_project_id);
-        let fallback = self.fallback_section_after_project_removal();
+        let fallback =
+            project_workflows::fallback_section_after_project_removal(&self.project_store);
         self.workspace_pane.update(cx, |workspace, cx| {
             workspace.restore_view(preferred_project_id, preferred_project_exists, fallback, cx);
         });
@@ -3231,7 +3205,7 @@ mod tests {
         let removed = HashSet::from(["wt-1".to_string()]);
 
         let removed_repo_ids =
-            AnotherOneApp::removed_repo_ids_without_remaining_projects(&projects, &removed);
+            project_workflows::removed_repo_ids_without_remaining_projects(&projects, &removed);
 
         assert!(removed_repo_ids.is_empty());
     }
@@ -3247,7 +3221,7 @@ mod tests {
         let removed = HashSet::from(["root".to_string()]);
 
         let removed_repo_ids =
-            AnotherOneApp::removed_repo_ids_without_remaining_projects(&projects, &removed);
+            project_workflows::removed_repo_ids_without_remaining_projects(&projects, &removed);
 
         assert_eq!(removed_repo_ids, HashSet::from(["repo-a".to_string()]));
     }

@@ -20,6 +20,7 @@ use std::thread;
 use tokio::sync::broadcast;
 
 use crate::agents::TerminalLaunchConfig;
+use crate::git_operation::run_serialized_git_operation;
 use crate::project_store::{
     create_branch_from_head, create_review_task_worktree, create_task_worktree, prepare_project,
     CreateBranchMode, PreparedProject, Project, ProjectBranchSettings, ProjectCheckoutState,
@@ -102,49 +103,51 @@ pub fn spawn_task_creation(
 ) -> broadcast::Receiver<TaskCreationReply> {
     let (tx, rx) = broadcast::channel(1);
     thread::spawn(move || {
-        let result = create_task_worktree(
-            &project_path,
-            &project_name,
-            &task_name,
-            &generated_task_name,
-            branch_mode,
-        )
-        .map(|created| TaskCreationSuccess {
-            original_project_id: project_id,
-            project: prepare_project(&created.path).unwrap_or_else(|_| PreparedProject {
-                project: Project {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    repo_id: uuid::Uuid::new_v4().to_string(),
-                    name: created
-                        .path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| created.path.display().to_string()),
-                    path: created.path.clone(),
-                    kind: ProjectKind::Worktree,
-                    checkout: ProjectCheckoutState::default(),
-                    branch_settings: ProjectBranchSettings::default(),
-                    actions: Vec::new(),
-                    worktree_name: created
-                        .path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned()),
-                    repo_common_dir: None,
-                },
-                repo: RepoRecord {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    common_dir: None,
-                    branch_order: Vec::new(),
-                    branches_by_name: HashMap::new(),
-                },
-            }),
-            branch_name: created.branch_name,
-            task_name: created.task_name,
-            launch_config,
-            run_automatic_actions: true,
-            open_agent: true,
-        })
-        .map_err(|message| TaskCreationFailure { message });
+        let result = run_serialized_git_operation(|| {
+            create_task_worktree(
+                &project_path,
+                &project_name,
+                &task_name,
+                &generated_task_name,
+                branch_mode,
+            )
+            .map(|created| TaskCreationSuccess {
+                original_project_id: project_id,
+                project: prepare_project(&created.path).unwrap_or_else(|_| PreparedProject {
+                    project: Project {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        repo_id: uuid::Uuid::new_v4().to_string(),
+                        name: created
+                            .path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| created.path.display().to_string()),
+                        path: created.path.clone(),
+                        kind: ProjectKind::Worktree,
+                        checkout: ProjectCheckoutState::default(),
+                        branch_settings: ProjectBranchSettings::default(),
+                        actions: Vec::new(),
+                        worktree_name: created
+                            .path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned()),
+                        repo_common_dir: None,
+                    },
+                    repo: RepoRecord {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        common_dir: None,
+                        branch_order: Vec::new(),
+                        branches_by_name: HashMap::new(),
+                    },
+                }),
+                branch_name: created.branch_name,
+                task_name: created.task_name,
+                launch_config,
+                run_automatic_actions: true,
+                open_agent: true,
+            })
+            .map_err(|message| TaskCreationFailure { message })
+        });
         let _ = tx.send(TaskCreationReply { result });
     });
     rx
@@ -164,54 +167,56 @@ pub fn spawn_branch_creation(
         } else {
             CreateBranchMode::Worktree { migrate_changes }
         };
-        let result = create_branch_from_head(&project_path, &branch_name, mode)
-            .map(|created| {
-                let project = if use_current_task {
-                    None
-                } else {
-                    Some(prepare_project(&created.path).unwrap_or_else(|_| {
-                        PreparedProject {
-                            project: Project {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                repo_id: uuid::Uuid::new_v4().to_string(),
-                                name: created
-                                    .path
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| created.path.display().to_string()),
-                                path: created.path.clone(),
-                                kind: ProjectKind::Worktree,
-                                checkout: ProjectCheckoutState {
-                                    current_branch: Some(created.branch_name.clone()),
-                                    ..ProjectCheckoutState::default()
+        let result = run_serialized_git_operation(|| {
+            create_branch_from_head(&project_path, &branch_name, mode)
+                .map(|created| {
+                    let project = if use_current_task {
+                        None
+                    } else {
+                        Some(prepare_project(&created.path).unwrap_or_else(|_| {
+                            PreparedProject {
+                                project: Project {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    repo_id: uuid::Uuid::new_v4().to_string(),
+                                    name: created
+                                        .path
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| created.path.display().to_string()),
+                                    path: created.path.clone(),
+                                    kind: ProjectKind::Worktree,
+                                    checkout: ProjectCheckoutState {
+                                        current_branch: Some(created.branch_name.clone()),
+                                        ..ProjectCheckoutState::default()
+                                    },
+                                    branch_settings: ProjectBranchSettings::default(),
+                                    actions: Vec::new(),
+                                    worktree_name: created
+                                        .path
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().into_owned()),
+                                    repo_common_dir: None,
                                 },
-                                branch_settings: ProjectBranchSettings::default(),
-                                actions: Vec::new(),
-                                worktree_name: created
-                                    .path
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().into_owned()),
-                                repo_common_dir: None,
-                            },
-                            repo: RepoRecord {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                common_dir: None,
-                                branch_order: Vec::new(),
-                                branches_by_name: HashMap::new(),
-                            },
-                        }
-                    }))
-                };
+                                repo: RepoRecord {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    common_dir: None,
+                                    branch_order: Vec::new(),
+                                    branches_by_name: HashMap::new(),
+                                },
+                            }
+                        }))
+                    };
 
-                BranchCreationSuccess {
-                    original_project_id: project_id,
-                    project,
-                    branch_name: created.branch_name,
-                    task_name: created.task_name,
-                    use_current_task,
-                }
-            })
-            .map_err(|message| TaskCreationFailure { message });
+                    BranchCreationSuccess {
+                        original_project_id: project_id,
+                        project,
+                        branch_name: created.branch_name,
+                        task_name: created.task_name,
+                        use_current_task,
+                    }
+                })
+                .map_err(|message| TaskCreationFailure { message })
+        });
         let _ = tx.send(BranchCreationReply { result });
     });
     rx
@@ -229,48 +234,50 @@ pub fn spawn_review_task_creation(
 ) -> broadcast::Receiver<TaskCreationReply> {
     let (tx, rx) = broadcast::channel(1);
     thread::spawn(move || {
-        let result = create_review_task_worktree(
-            &project_path,
-            &task_name,
-            pull_request_number,
-            &head_branch,
-        )
-        .map(|created| TaskCreationSuccess {
-            original_project_id: project_id,
-            project: prepare_project(&created.path).unwrap_or_else(|_| PreparedProject {
-                project: Project {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    repo_id: uuid::Uuid::new_v4().to_string(),
-                    name: created
-                        .path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| created.path.display().to_string()),
-                    path: created.path.clone(),
-                    kind: ProjectKind::Worktree,
-                    checkout: ProjectCheckoutState::default(),
-                    branch_settings: ProjectBranchSettings::default(),
-                    actions: Vec::new(),
-                    worktree_name: created
-                        .path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned()),
-                    repo_common_dir: None,
-                },
-                repo: RepoRecord {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    common_dir: None,
-                    branch_order: Vec::new(),
-                    branches_by_name: HashMap::new(),
-                },
-            }),
-            branch_name: created.branch_name,
-            task_name: created.task_name,
-            launch_config,
-            run_automatic_actions,
-            open_agent,
-        })
-        .map_err(|message| TaskCreationFailure { message });
+        let result = run_serialized_git_operation(|| {
+            create_review_task_worktree(
+                &project_path,
+                &task_name,
+                pull_request_number,
+                &head_branch,
+            )
+            .map(|created| TaskCreationSuccess {
+                original_project_id: project_id,
+                project: prepare_project(&created.path).unwrap_or_else(|_| PreparedProject {
+                    project: Project {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        repo_id: uuid::Uuid::new_v4().to_string(),
+                        name: created
+                            .path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| created.path.display().to_string()),
+                        path: created.path.clone(),
+                        kind: ProjectKind::Worktree,
+                        checkout: ProjectCheckoutState::default(),
+                        branch_settings: ProjectBranchSettings::default(),
+                        actions: Vec::new(),
+                        worktree_name: created
+                            .path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned()),
+                        repo_common_dir: None,
+                    },
+                    repo: RepoRecord {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        common_dir: None,
+                        branch_order: Vec::new(),
+                        branches_by_name: HashMap::new(),
+                    },
+                }),
+                branch_name: created.branch_name,
+                task_name: created.task_name,
+                launch_config,
+                run_automatic_actions,
+                open_agent,
+            })
+            .map_err(|message| TaskCreationFailure { message })
+        });
         let _ = tx.send(TaskCreationReply { result });
     });
     rx

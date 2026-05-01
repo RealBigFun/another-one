@@ -36,6 +36,8 @@ use crate::agents::{
     terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
     AgentDef, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
 };
+use crate::background_ops::{BroadcastOperation, BroadcastOperationEvent};
+use crate::git_workspace::GitWorkspace;
 use crate::layout::*;
 use crate::mobile::{self, MobileView};
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
@@ -80,7 +82,6 @@ const PENDING_CHECK_RUNS_LOOKUP_TTL: Duration = Duration::from_secs(10);
 pub(crate) const SIDEBAR_TASK_DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 const PROJECT_EXPAND_ANIMATION_DURATION: Duration = Duration::from_millis(160);
 const PROJECT_EXPAND_ANIMATION_STEP: Duration = Duration::from_millis(16);
-const TERMINAL_RECENT_OUTPUT_LIMIT: usize = 16 * 1024;
 pub(crate) const RECENT_COMMITS_PAGE_SIZE: usize = 20;
 
 /// Max queued `TerminalLaunchReply`s between PTY reader threads and
@@ -103,21 +104,6 @@ const TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 /// headroom for the spiky-launch case and still keeps overall
 /// in-flight memory in the tens of MiB.
 const WARM_TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
-
-fn trim_to_recent_output_limit(buffer: &mut String) {
-    if buffer.len() <= TERMINAL_RECENT_OUTPUT_LIMIT {
-        return;
-    }
-
-    let min_start = buffer.len() - TERMINAL_RECENT_OUTPUT_LIMIT;
-    let start = buffer
-        .char_indices()
-        .map(|(idx, _)| idx)
-        .find(|&idx| idx >= min_start)
-        .unwrap_or(buffer.len());
-
-    buffer.drain(..start);
-}
 
 fn new_tab_seed_agent_id(
     state: Option<&SectionState>,
@@ -565,6 +551,16 @@ impl Default for SettingsGitActionScriptInputState {
 pub(crate) enum SettingsGitActionScriptKind {
     Commit,
     PullRequest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsGitActionLlmDropdown {
+    CommitProvider,
+    CommitModel,
+    CommitThinking,
+    PullRequestProvider,
+    PullRequestModel,
+    PullRequestThinking,
 }
 
 #[derive(Clone)]
@@ -1287,12 +1283,10 @@ pub struct AnotherOneApp {
     pub(crate) git_diff_state: Option<GitDiffPaneState>,
     /// Receiver for the in-flight changed-file diff load.
     git_diff_receiver: Option<broadcast::Receiver<ChangedFileDiffReply>>,
-    /// Whether an automatic git refresh is already running.
-    pub(crate) git_refresh_in_flight: bool,
-    /// Receiver for the in-flight automatic git refresh result.
-    git_refresh_receiver: Option<broadcast::Receiver<GitRefreshReply>>,
-    /// Receiver for refreshing remote refs while the new-task modal is open.
-    new_task_branch_refresh_receiver: Option<broadcast::Receiver<RemoteBranchRefreshReply>>,
+    /// Lifecycle slot for the in-flight automatic git refresh result.
+    git_refresh_operation: BroadcastOperation<GitRefreshReply>,
+    /// Lifecycle slot for refreshing remote refs while the new-task modal is open.
+    new_task_branch_refresh_operation: BroadcastOperation<RemoteBranchRefreshReply>,
     /// Receiver for the in-flight new task worktree creation result.
     task_creation_receiver: Option<broadcast::Receiver<TaskCreationReply>>,
     /// Receiver for the in-flight create-branch operation.
@@ -1446,6 +1440,8 @@ pub struct AnotherOneApp {
     pub(crate) settings_git_commit_script_drag_anchor: Option<usize>,
     /// Selection anchor while dragging in the git PR generation script editor.
     pub(crate) settings_git_pr_script_drag_anchor: Option<usize>,
+    /// Open model-configuration dropdown on the Git Actions settings page.
+    pub(crate) settings_git_action_llm_dropdown: Option<crate::app::SettingsGitActionLlmDropdown>,
     /// Active right-sidebar mode for task views.
     pub(crate) right_sidebar_mode: RightSidebarMode,
     /// Session-scoped recent-commit page sizes keyed by project id.
@@ -1458,10 +1454,8 @@ pub struct AnotherOneApp {
     pub(crate) font_size: f32,
     /// Last observed viewport size used to detect real resize events.
     pub(crate) last_viewport_size: Size<Pixels>,
-    /// Last time changed-file state was refreshed from git.
-    pub(crate) last_git_status_refresh: Instant,
-    /// Last time branch/worktree metadata was refreshed from git.
-    pub(crate) last_git_metadata_refresh: Instant,
+    /// User-facing Git workspace refresh lifecycle for active project Git UI.
+    pub(crate) git_workspace: GitWorkspace,
     /// Whether the resource usage panel is visible.
     pub(crate) resource_indicator_open: bool,
     /// Whether the "Pair mobile" modal is open. See
@@ -1485,8 +1479,7 @@ pub struct AnotherOneApp {
     /// the iroh endpoint is up. Polled on every render tick until the
     /// handle arrives, then `daemon_handle` is set and the receiver
     /// is cleared.
-    pub(crate) daemon_handle_rx:
-        Option<mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>>,
+    pub(crate) daemon_handle_rx: Option<mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>>,
     /// Endpoint handle from the embedded daemon (pairing URL + QR
     /// PNG). `None` until the daemon-host thread finishes booting;
     /// after that, `pair_mobile_overlay` reads from here. Keeping the
@@ -3762,9 +3755,8 @@ impl AnotherOneApp {
             changed_files_git_mutation_receiver,
             git_diff_state: None,
             git_diff_receiver: None,
-            git_refresh_in_flight: false,
-            git_refresh_receiver: None,
-            new_task_branch_refresh_receiver: None,
+            git_refresh_operation: BroadcastOperation::default(),
+            new_task_branch_refresh_operation: BroadcastOperation::default(),
             task_creation_receiver: None,
             branch_creation_receiver: None,
             pending_task_launch: None,
@@ -3881,6 +3873,7 @@ impl AnotherOneApp {
             settings_git_pr_script_layout: Vec::new(),
             settings_git_commit_script_drag_anchor: None,
             settings_git_pr_script_drag_anchor: None,
+            settings_git_action_llm_dropdown: None,
             right_sidebar_mode: RightSidebarMode::WorkingTree,
             commit_page_sizes: HashMap::new(),
             branch_commit_states: HashMap::new(),
@@ -3892,8 +3885,11 @@ impl AnotherOneApp {
             sidebar_task_last_click: None,
             font_size: initial_font_size,
             last_viewport_size: window.viewport_size(),
-            last_git_status_refresh: Instant::now() - ACTIVE_GIT_STATUS_REFRESH_INTERVAL,
-            last_git_metadata_refresh: Instant::now() - ACTIVE_GIT_METADATA_REFRESH_INTERVAL,
+            git_workspace: GitWorkspace::new_stale(
+                Instant::now(),
+                ACTIVE_GIT_STATUS_REFRESH_INTERVAL,
+                ACTIVE_GIT_METADATA_REFRESH_INTERVAL,
+            ),
             resource_indicator_open: false,
             pair_mobile_modal_open: false,
             pair_mobile_reset_pending: false,
@@ -4119,18 +4115,11 @@ impl AnotherOneApp {
     }
 
     fn append_terminal_recent_output(&mut self, key: &TerminalRuntimeKey, bytes: &[u8]) {
-        let text = String::from_utf8_lossy(bytes);
-        let buffer = self
-            .terminal_manager
-            .recent_output
-            .entry(key.clone())
-            .or_default();
-        buffer.push_str(&text);
-        trim_to_recent_output_limit(buffer);
+        self.terminal_manager.append_recent_output(key, bytes);
     }
 
     fn clear_terminal_recent_output(&mut self, key: &TerminalRuntimeKey) {
-        self.terminal_manager.recent_output.remove(key);
+        self.terminal_manager.clear_recent_output(key);
     }
 
     fn terminal_failure_details(status: &str, recent_output: Option<&str>) -> String {
@@ -4174,9 +4163,7 @@ impl AnotherOneApp {
         }
 
         let launch_config = request.launch_config.with_session(None);
-        self.terminal_manager.pending_launches.insert(key.clone());
-        self.terminal_manager.errors.remove(key);
-        self.clear_terminal_recent_output(key);
+        self.terminal_manager.mark_launch_started(key.clone());
         self.update_terminal_tab(key, cx, |tab| {
             tab.launch_config = launch_config.clone();
             tab.restore_status = TerminalRestoreStatus::Launching;
@@ -4578,15 +4565,12 @@ impl AnotherOneApp {
                     launch_config,
                     process_id,
                 }) => {
-                    self.terminal_manager.pending_launches.remove(&key);
+                    let process = process_id.map(|process_id| {
+                        self.tracked_process_for_tab(&key, &launch_config, process_id)
+                    });
+                    self.terminal_manager
+                        .mark_launch_succeeded(key.clone(), process);
                     self.clear_terminal_recent_output(&key);
-                    self.terminal_manager.errors.remove(&key);
-                    if let Some(process_id) = process_id {
-                        self.terminal_manager.processes.insert(
-                            key.clone(),
-                            self.tracked_process_for_tab(&key, &launch_config, process_id),
-                        );
-                    }
 
                     let mut runtime = LiveTerminalRuntime::from_prepared(runtime);
                     // Tee the PTY into the embedded daemon's registry
@@ -4646,8 +4630,6 @@ impl AnotherOneApp {
                         updated = true;
                         continue;
                     }
-                    self.terminal_manager.pending_launches.remove(&key);
-                    self.terminal_manager.processes.remove(&key);
                     self.terminal_surface_snapshots.remove(&key);
                     let details = Self::terminal_failure_details(
                         &status,
@@ -4656,7 +4638,8 @@ impl AnotherOneApp {
                             .get(&key)
                             .map(String::as_str),
                     );
-                    self.terminal_manager.errors.insert(key.clone(), details);
+                    self.terminal_manager
+                        .mark_launch_failed(key.clone(), details);
                     self.clear_terminal_recent_output(&key);
                     self.live_terminal_runtimes.remove(&key);
                     self.unregister_tab_from_registry(&key);
@@ -4670,14 +4653,11 @@ impl AnotherOneApp {
                     message,
                     details,
                 }) => {
-                    self.terminal_manager.pending_launches.remove(&key);
-                    self.terminal_manager.processes.remove(&key);
+                    self.terminal_manager
+                        .mark_launch_failed(key.clone(), details.clone());
                     self.live_terminal_runtimes.remove(&key);
                     self.terminal_surface_snapshots.remove(&key);
                     self.unregister_tab_from_registry(&key);
-                    self.terminal_manager
-                        .errors
-                        .insert(key.clone(), details.clone());
                     self.clear_terminal_recent_output(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
                         tab.restore_status = TerminalRestoreStatus::Failed;
@@ -5704,8 +5684,10 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn mark_git_refresh_stale(&mut self) {
-        self.last_git_status_refresh = Instant::now() - ACTIVE_GIT_STATUS_REFRESH_INTERVAL;
-        self.last_git_metadata_refresh = Instant::now() - ACTIVE_GIT_METADATA_REFRESH_INTERVAL;
+        self.git_workspace.mark_stale(
+            ACTIVE_GIT_STATUS_REFRESH_INTERVAL,
+            ACTIVE_GIT_METADATA_REFRESH_INTERVAL,
+        );
     }
 
     pub(crate) fn begin_add_project(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
@@ -6167,24 +6149,18 @@ impl AnotherOneApp {
     }
 
     fn drain_git_refresh(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.git_refresh_receiver.as_mut() else {
-            return false;
-        };
-
-        match receiver.try_recv() {
-            Ok(reply) => {
-                self.git_refresh_in_flight = false;
-                self.git_refresh_receiver = None;
+        match self.git_refresh_operation.poll() {
+            BroadcastOperationEvent::Ready { id, reply } => {
+                if !self.git_refresh_operation.complete_if_current(id) {
+                    return false;
+                }
                 if self
                     .pending_changed_files_git_mutations
                     .contains_key(&reply.project_id)
                 {
                     return false;
                 }
-                self.last_git_status_refresh = Instant::now();
-                if reply.include_metadata {
-                    self.last_git_metadata_refresh = self.last_git_status_refresh;
-                }
+                self.git_workspace.mark_refreshed(reply.include_metadata);
                 let mut changed = self.apply_project_git_state(&reply.project_id, reply.state);
                 if reply.include_metadata {
                     let invalid_settings = self
@@ -6215,16 +6191,13 @@ impl AnotherOneApp {
                 }
                 changed
             }
-            Err(broadcast::error::TryRecvError::Empty) => false,
-            Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                log::warn!("git_refresh drain lagged {n} messages");
+            BroadcastOperationEvent::Lagged { skipped } => {
+                log::warn!("git_refresh drain lagged {skipped} messages");
                 false
             }
-            Err(broadcast::error::TryRecvError::Closed) => {
-                self.git_refresh_in_flight = false;
-                self.git_refresh_receiver = None;
-                false
-            }
+            BroadcastOperationEvent::Idle
+            | BroadcastOperationEvent::Empty
+            | BroadcastOperationEvent::Closed => false,
         }
     }
 
@@ -6233,19 +6206,20 @@ impl AnotherOneApp {
         project_id: String,
         project_path: std::path::PathBuf,
     ) {
-        self.new_task_branch_refresh_receiver = Some(
+        self.new_task_branch_refresh_operation.start(
             another_one_core::git_service::spawn_remote_branch_refresh(project_id, project_path),
         );
     }
 
     fn drain_new_task_branch_refresh(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.new_task_branch_refresh_receiver.as_mut() else {
-            return false;
-        };
-
-        match receiver.try_recv() {
-            Ok(reply) => {
-                self.new_task_branch_refresh_receiver = None;
+        match self.new_task_branch_refresh_operation.poll() {
+            BroadcastOperationEvent::Ready { id, reply } => {
+                if !self
+                    .new_task_branch_refresh_operation
+                    .complete_if_current(id)
+                {
+                    return false;
+                }
                 match reply.result {
                     Ok(state) => {
                         let mut changed = self.apply_project_git_state(&reply.project_id, state);
@@ -6265,27 +6239,27 @@ impl AnotherOneApp {
                     }
                 }
             }
-            Err(broadcast::error::TryRecvError::Empty) => false,
-            Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                log::warn!("new task branch refresh drain lagged {n} messages");
+            BroadcastOperationEvent::Lagged { skipped } => {
+                log::warn!("new task branch refresh drain lagged {skipped} messages");
                 false
             }
-            Err(broadcast::error::TryRecvError::Closed) => {
-                self.new_task_branch_refresh_receiver = None;
-                false
-            }
+            BroadcastOperationEvent::Idle
+            | BroadcastOperationEvent::Empty
+            | BroadcastOperationEvent::Closed => false,
         }
     }
 
     fn maybe_schedule_active_git_refresh(&mut self, cx: &App) {
-        if self.git_refresh_in_flight {
+        if self.git_refresh_operation.is_in_flight() {
             return;
         }
 
-        let status_due =
-            self.last_git_status_refresh.elapsed() >= self.git_status_refresh_interval();
-        let metadata_due =
-            self.last_git_metadata_refresh.elapsed() >= ACTIVE_GIT_METADATA_REFRESH_INTERVAL;
+        let status_due = self
+            .git_workspace
+            .status_due(self.git_status_refresh_interval());
+        let metadata_due = self
+            .git_workspace
+            .metadata_due(ACTIVE_GIT_METADATA_REFRESH_INTERVAL);
         if !status_due && !metadata_due {
             return;
         }
@@ -6337,13 +6311,13 @@ impl AnotherOneApp {
         };
 
         let include_metadata = metadata_due;
-        self.git_refresh_in_flight = true;
-        self.git_refresh_receiver = Some(another_one_core::git_service::spawn_refresh(
-            project_id,
-            project_path,
-            include_metadata,
-            commit_limit,
-        ));
+        self.git_refresh_operation
+            .start(another_one_core::git_service::spawn_refresh(
+                project_id,
+                project_path,
+                include_metadata,
+                commit_limit,
+            ));
     }
 
     #[hotpath::measure]
@@ -6364,8 +6338,7 @@ impl AnotherOneApp {
         let state = crate::project_store::read_project_git_state(&project_path, true);
         self.apply_project_git_state(project_id, state);
         let invalid_settings = self.project_store.clear_missing_branch_settings(project_id);
-        self.last_git_status_refresh = Instant::now();
-        self.last_git_metadata_refresh = self.last_git_status_refresh;
+        self.git_workspace.mark_refreshed(true);
         invalid_settings
     }
 
@@ -7390,6 +7363,8 @@ impl AnotherOneApp {
                 .git_commit_generation_script()
                 .to_string(),
             pr_generation_script: self.project_store.git_pr_generation_script().to_string(),
+            commit_llm: self.project_store.git_commit_generation_llm(),
+            pr_llm: self.project_store.git_pr_generation_llm(),
         };
         let (tx, rx) = mpsc::channel();
         self.git_actions_menu_open = false;
@@ -7525,7 +7500,7 @@ impl AnotherOneApp {
                 Ok(state) => {
                     let Some(mut pending) = pending else {
                         should_notify |= self.apply_project_git_state(&reply.project_id, state);
-                        self.last_git_status_refresh = Instant::now();
+                        self.git_workspace.mark_refreshed(false);
                         continue;
                     };
 
@@ -7556,7 +7531,7 @@ impl AnotherOneApp {
                         }
                     } else {
                         should_notify |= self.apply_project_git_state(&reply.project_id, state);
-                        self.last_git_status_refresh = Instant::now();
+                        self.git_workspace.mark_refreshed(false);
                     }
                 }
                 Err(error) => {
@@ -9611,10 +9586,9 @@ mod tests {
         resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
         sidebar_task_navigation_targets, terminal_line_selection_range, terminal_link_at_position,
         terminal_link_ranges, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, trim_to_recent_output_limit,
-        AnotherOneApp, AppToast, NavigationDirection, NewTaskShortcutTarget, SectionId,
-        SectionState, TerminalCellPosition, TerminalLinkRange, TerminalSelectionRange, TerminalTab,
-        ToastKind, TERMINAL_RECENT_OUTPUT_LIMIT,
+        terminal_selection_range, terminal_word_selection_range, AnotherOneApp, AppToast,
+        NavigationDirection, NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition,
+        TerminalLinkRange, TerminalSelectionRange, TerminalTab, ToastKind,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -11164,17 +11138,6 @@ mod tests {
     }
 
     #[test]
-    fn trim_to_recent_output_limit_preserves_utf8_boundaries() {
-        let mut buffer = format!("é{}", "a".repeat(TERMINAL_RECENT_OUTPUT_LIMIT - 1));
-
-        trim_to_recent_output_limit(&mut buffer);
-
-        assert_eq!(buffer.len(), TERMINAL_RECENT_OUTPUT_LIMIT - 1);
-        assert!(buffer.is_char_boundary(0));
-        assert_eq!(buffer.chars().next(), Some('a'));
-    }
-
-    #[test]
     fn terminal_selection_range_normalizes_reverse_drag() {
         let selection = terminal_selection_range(
             TerminalCellPosition { line: 3, column: 8 },
@@ -11653,10 +11616,7 @@ impl AnotherOneApp {
                     }),
                 )
                 .into_any_element(),
-            MobileView::ChangedFiles => div()
-                .w(px(44.))
-                .h(px(PHONE_HEADER_H))
-                .into_any_element(),
+            MobileView::ChangedFiles => div().w(px(44.)).h(px(PHONE_HEADER_H)).into_any_element(),
         };
         div()
             .flex()
@@ -11811,12 +11771,7 @@ impl AnotherOneApp {
                         task_total
                     );
                     for p in &summaries {
-                        log::info!(
-                            "  project {} ({}) — {} tasks",
-                            p.id,
-                            p.name,
-                            p.tasks.len()
-                        );
+                        log::info!("  project {} ({}) — {} tasks", p.id, p.name, p.tasks.len());
                     }
                     let (projects, tasks) = convert_remote_snapshot(summaries);
                     log::info!(
@@ -11869,10 +11824,7 @@ impl AnotherOneApp {
         for ev in events {
             match ev {
                 crate::iroh_client::DialStatus::Started { endpoint_id } => {
-                    self.show_info_toast(
-                        format!("Connecting to {}…", short_id(&endpoint_id)),
-                        cx,
-                    );
+                    self.show_info_toast(format!("Connecting to {}…", short_id(&endpoint_id)), cx);
                 }
                 crate::iroh_client::DialStatus::Bound => {
                     self.show_info_toast("Endpoint bound", cx);

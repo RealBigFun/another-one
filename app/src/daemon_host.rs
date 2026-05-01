@@ -972,9 +972,9 @@ fn run(
     // bind failure only warns — the desktop still runs without
     // a local MCP socket (mobile iroh path is independent).
     let mcp_socket_path = daemon::transport_mcp::default_socket_path();
-    match runtime.block_on(async {
-        daemon::transport_mcp::spawn(mcp_socket_path.clone(), mcp_orchestrator)
-    }) {
+    match runtime
+        .block_on(async { daemon::transport_mcp::spawn(mcp_socket_path.clone(), mcp_orchestrator) })
+    {
         Ok(listener) => {
             log::info!(
                 "mcp: daemon MCP listener started at {}",

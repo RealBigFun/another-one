@@ -3,23 +3,220 @@
 use gpui::{
     div, hsla, point, prelude::*, px, rems, rgb, size, svg, AnyElement, App, Bounds, ClipboardItem,
     Context, Element, ElementId, Entity, GlobalElementId, InspectorElementId, KeyDownEvent,
-    LayoutId, MouseButton, MouseDownEvent, Pixels, ShapedLine, TextRun, Window,
+    LayoutId, MouseButton, MouseDownEvent, Pixels, ShapedLine, SharedString, TextRun, Window,
 };
 
 use crate::agent_icons::branded_icon;
-use crate::agents::AGENTS;
-use crate::app::AnotherOneApp;
-use crate::git_actions::{default_commit_generation_script, default_pr_generation_script};
+use crate::agents::{AgentProviderKind, AGENTS};
+use crate::app::{AnotherOneApp, SettingsGitActionLlmDropdown};
+use crate::git_actions::{
+    default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
+};
 use crate::layout::TITLEBAR_CHROME_H;
 use crate::shortcuts::{
     capture_shortcut, keybinding_token_label, ShortcutAction, ALL_SHORTCUT_ACTIONS,
 };
+use crate::text_edit::{CursorDirection, TextEditState};
 
 const TEXT_PRIMARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.92, 1.);
 const TEXT_SECONDARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.55, 1.);
 const BORDER_SUBTLE: fn() -> gpui::Hsla = || gpui::white().opacity(0.08);
 
 const SETTINGS_SIDEBAR_W: f32 = 180.;
+const DEFAULT_OPTION: &str = "";
+
+const CODEX_MODEL_OPTIONS: &[(&str, &str)] = &[
+    ("gpt-5.5", "GPT-5.5"),
+    ("gpt-5.4", "GPT-5.4"),
+    ("gpt-5.4-mini", "GPT-5.4 Mini"),
+    ("gpt-5.3-codex", "GPT-5.3 Codex"),
+    ("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark"),
+];
+
+const CLAUDE_MODEL_OPTIONS: &[(&str, &str)] = &[
+    ("haiku", "Claude Haiku (default)"),
+    ("claude-opus-4-7", "Claude Opus 4.7"),
+    ("claude-opus-4-6", "Claude Opus 4.6"),
+    ("claude-opus-4-5", "Claude Opus 4.5"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+    ("claude-haiku-4-5", "Claude Haiku 4.5"),
+];
+
+const CODEX_THINKING_OPTIONS: &[(&str, &str)] = &[
+    ("none", "Off"),
+    ("xhigh", "Extra high"),
+    ("high", "High"),
+    ("medium", "Medium"),
+    ("low", "Low"),
+];
+
+const CLAUDE_OPUS_47_THINKING_OPTIONS: &[(&str, &str)] = &[
+    ("off", "Off"),
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("xhigh", "Extra high"),
+    ("max", "Max"),
+    ("ultrathink", "Ultrathink"),
+];
+
+const CLAUDE_OPUS_46_THINKING_OPTIONS: &[(&str, &str)] = &[
+    ("off", "Off"),
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("max", "Max"),
+    ("ultrathink", "Ultrathink"),
+];
+
+const CLAUDE_OPUS_45_THINKING_OPTIONS: &[(&str, &str)] = &[
+    ("off", "Off"),
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("max", "Max"),
+];
+
+const CLAUDE_SONNET_46_THINKING_OPTIONS: &[(&str, &str)] = &[
+    ("off", "Off"),
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("ultrathink", "Ultrathink"),
+];
+
+#[derive(Clone)]
+struct SettingsSelectOption {
+    value: String,
+    label: String,
+}
+
+fn git_action_provider_label(provider: AgentProviderKind) -> &'static str {
+    match provider {
+        AgentProviderKind::ClaudeCode => "Claude Code",
+        AgentProviderKind::Codex => "Codex",
+        _ => provider.label(),
+    }
+}
+
+fn trim_to_option(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+fn append_current_option(options: &mut Vec<SettingsSelectOption>, current: &str) {
+    let current = current.trim();
+    if current.is_empty() || options.iter().any(|option| option.value == current) {
+        return;
+    }
+    options.push(SettingsSelectOption {
+        value: current.to_string(),
+        label: current.to_string(),
+    });
+}
+
+fn settings_option_label(options: &[SettingsSelectOption], value: &str) -> String {
+    options
+        .iter()
+        .find(|option| option.value == value)
+        .map(|option| option.label.clone())
+        .unwrap_or_else(|| {
+            let value = value.trim();
+            if value.is_empty() {
+                "Default".to_string()
+            } else {
+                value.to_string()
+            }
+        })
+}
+
+fn settings_git_action_llm_dropdown(
+    kind: crate::app::SettingsGitActionScriptKind,
+    field: SettingsGitActionLlmDropdownField,
+) -> SettingsGitActionLlmDropdown {
+    match (kind, field) {
+        (
+            crate::app::SettingsGitActionScriptKind::Commit,
+            SettingsGitActionLlmDropdownField::Provider,
+        ) => SettingsGitActionLlmDropdown::CommitProvider,
+        (
+            crate::app::SettingsGitActionScriptKind::Commit,
+            SettingsGitActionLlmDropdownField::Model,
+        ) => SettingsGitActionLlmDropdown::CommitModel,
+        (
+            crate::app::SettingsGitActionScriptKind::Commit,
+            SettingsGitActionLlmDropdownField::Thinking,
+        ) => SettingsGitActionLlmDropdown::CommitThinking,
+        (
+            crate::app::SettingsGitActionScriptKind::PullRequest,
+            SettingsGitActionLlmDropdownField::Provider,
+        ) => SettingsGitActionLlmDropdown::PullRequestProvider,
+        (
+            crate::app::SettingsGitActionScriptKind::PullRequest,
+            SettingsGitActionLlmDropdownField::Model,
+        ) => SettingsGitActionLlmDropdown::PullRequestModel,
+        (
+            crate::app::SettingsGitActionScriptKind::PullRequest,
+            SettingsGitActionLlmDropdownField::Thinking,
+        ) => SettingsGitActionLlmDropdown::PullRequestThinking,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsGitActionLlmDropdownField {
+    Provider,
+    Model,
+    Thinking,
+}
+
+fn git_action_model_options(
+    provider: AgentProviderKind,
+    current: &str,
+) -> Vec<SettingsSelectOption> {
+    let mut options = vec![SettingsSelectOption {
+        value: DEFAULT_OPTION.to_string(),
+        label: "Default".to_string(),
+    }];
+    let source = match provider {
+        AgentProviderKind::Codex => CODEX_MODEL_OPTIONS,
+        AgentProviderKind::ClaudeCode => CLAUDE_MODEL_OPTIONS,
+        _ => &[],
+    };
+    options.extend(source.iter().map(|(value, label)| SettingsSelectOption {
+        value: (*value).to_string(),
+        label: (*label).to_string(),
+    }));
+    append_current_option(&mut options, current);
+    options
+}
+
+fn git_action_thinking_options(
+    provider: AgentProviderKind,
+    model: &str,
+    current: &str,
+) -> Vec<SettingsSelectOption> {
+    let mut options = vec![SettingsSelectOption {
+        value: DEFAULT_OPTION.to_string(),
+        label: "Default".to_string(),
+    }];
+    let source = match provider {
+        AgentProviderKind::Codex => CODEX_THINKING_OPTIONS,
+        AgentProviderKind::ClaudeCode => match model {
+            "claude-opus-4-7" => CLAUDE_OPUS_47_THINKING_OPTIONS,
+            "claude-opus-4-6" => CLAUDE_OPUS_46_THINKING_OPTIONS,
+            "claude-opus-4-5" => CLAUDE_OPUS_45_THINKING_OPTIONS,
+            "claude-sonnet-4-6" => CLAUDE_SONNET_46_THINKING_OPTIONS,
+            _ => &[],
+        },
+        _ => &[],
+    };
+    options.extend(source.iter().map(|(value, label)| SettingsSelectOption {
+        value: (*value).to_string(),
+        label: (*label).to_string(),
+    }));
+    append_current_option(&mut options, current);
+    options
+}
 
 /// Which settings section is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,6 +474,99 @@ impl AnotherOneApp {
         }
         self.show_success_toast(message, cx);
         cx.notify();
+    }
+
+    fn settings_git_action_llm(
+        &self,
+        kind: crate::app::SettingsGitActionScriptKind,
+    ) -> GitActionLlmSettings {
+        match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                self.project_store.git_commit_generation_llm()
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                self.project_store.git_pr_generation_llm()
+            }
+        }
+    }
+
+    fn set_settings_git_action_llm(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        settings: GitActionLlmSettings,
+        cx: &mut Context<Self>,
+    ) {
+        match kind {
+            crate::app::SettingsGitActionScriptKind::Commit => {
+                let _ = self.project_store.set_git_commit_generation_llm(settings);
+            }
+            crate::app::SettingsGitActionScriptKind::PullRequest => {
+                let _ = self.project_store.set_git_pr_generation_llm(settings);
+            }
+        }
+        self.settings_git_action_llm_dropdown = None;
+        cx.notify();
+    }
+
+    fn toggle_settings_git_action_llm_dropdown(
+        &mut self,
+        dropdown: SettingsGitActionLlmDropdown,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_git_action_llm_dropdown =
+            if self.settings_git_action_llm_dropdown == Some(dropdown) {
+                None
+            } else {
+                Some(dropdown)
+            };
+        cx.notify();
+    }
+
+    fn set_git_action_llm_provider(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        provider: AgentProviderKind,
+        cx: &mut Context<Self>,
+    ) {
+        let mut settings = self.settings_git_action_llm(kind);
+        if settings.provider == Some(provider) {
+            return;
+        }
+        settings.provider = Some(provider);
+        settings.model = None;
+        settings.thinking = None;
+        self.set_settings_git_action_llm(kind, settings, cx);
+    }
+
+    fn set_git_action_llm_model(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        model: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let mut settings = self.settings_git_action_llm(kind);
+        let model = trim_to_option(model);
+        if settings.model == model {
+            return;
+        }
+        settings.model = model;
+        settings.thinking = None;
+        self.set_settings_git_action_llm(kind, settings, cx);
+    }
+
+    fn set_git_action_llm_thinking(
+        &mut self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        thinking: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let mut settings = self.settings_git_action_llm(kind);
+        let thinking = trim_to_option(thinking);
+        if settings.thinking == thinking {
+            return;
+        }
+        settings.thinking = thinking;
+        self.set_settings_git_action_llm(kind, settings, cx);
     }
 
     pub(crate) fn settings_git_action_script_index_for_point(
@@ -593,8 +883,13 @@ impl AnotherOneApp {
             .or_default();
 
         if modifiers.platform && ev.keystroke.key.as_str() == "a" {
-            self.settings_agent_input.cursor = draft.len();
-            self.settings_agent_input.selection_anchor = Some(0);
+            let mut state = TextEditState::new(
+                self.settings_agent_input.cursor,
+                self.settings_agent_input.selection_anchor,
+            );
+            state.select_all(draft);
+            self.settings_agent_input.cursor = state.cursor;
+            self.settings_agent_input.selection_anchor = state.selection_anchor;
             cx.notify();
             return true;
         }
@@ -776,8 +1071,10 @@ impl AnotherOneApp {
             }
             _ => {
                 if modifiers.platform && ev.keystroke.key.as_str() == "a" {
-                    input.cursor = draft.len();
-                    input.selection_anchor = Some(0);
+                    let mut state = TextEditState::new(input.cursor, input.selection_anchor);
+                    state.select_all(draft);
+                    input.cursor = state.cursor;
+                    input.selection_anchor = state.selection_anchor;
                 } else if modifiers.platform && ev.keystroke.key.as_str() == "c" {
                     if let Some(range) =
                         settings_agent_input_selected_range(input.cursor, input.selection_anchor)
@@ -2227,6 +2524,311 @@ impl AnotherOneApp {
             ))
     }
 
+    fn render_git_action_llm_config(
+        &self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        element_id_prefix: &'static str,
+        active_button_bg: gpui::Hsla,
+        button_bg: gpui::Hsla,
+        button_hover: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let settings = self.settings_git_action_llm(kind);
+        let provider = settings.provider.unwrap_or(AgentProviderKind::Codex);
+        let model = settings.model.as_deref().unwrap_or_default();
+        let thinking = settings.thinking.as_deref().unwrap_or_default();
+        let model_options = git_action_model_options(provider, model);
+        let thinking_options = git_action_thinking_options(provider, model, thinking);
+
+        let provider_dropdown =
+            settings_git_action_llm_dropdown(kind, SettingsGitActionLlmDropdownField::Provider);
+        let model_dropdown =
+            settings_git_action_llm_dropdown(kind, SettingsGitActionLlmDropdownField::Model);
+        let thinking_dropdown =
+            settings_git_action_llm_dropdown(kind, SettingsGitActionLlmDropdownField::Thinking);
+
+        div()
+            .px(px(18.))
+            .py(px(14.))
+            .border_b_1()
+            .border_color(BORDER_SUBTLE())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(12.))
+                    .child(
+                        self.render_git_action_llm_dropdown_field(
+                            "Provider",
+                            self.render_git_action_llm_dropdown(
+                                provider_dropdown,
+                                (element_id_prefix, 10usize),
+                                self.settings_git_action_llm_dropdown == Some(provider_dropdown),
+                                SharedString::from(git_action_provider_label(provider)),
+                                self.git_action_provider_option_elements(
+                                    kind,
+                                    provider,
+                                    active_button_bg,
+                                    button_hover,
+                                    cx,
+                                ),
+                                button_bg,
+                                button_hover,
+                                active_button_bg,
+                                cx,
+                            ),
+                        )
+                        .flex_1(),
+                    )
+                    .child(
+                        self.render_git_action_llm_dropdown_field(
+                            "Model",
+                            self.render_git_action_llm_dropdown(
+                                model_dropdown,
+                                (element_id_prefix, 20usize),
+                                self.settings_git_action_llm_dropdown == Some(model_dropdown),
+                                SharedString::from(settings_option_label(&model_options, model)),
+                                self.git_action_string_option_elements(
+                                    kind,
+                                    SettingsGitActionLlmDropdownField::Model,
+                                    model,
+                                    model_options,
+                                    active_button_bg,
+                                    button_hover,
+                                    cx,
+                                ),
+                                button_bg,
+                                button_hover,
+                                active_button_bg,
+                                cx,
+                            ),
+                        )
+                        .flex_1(),
+                    )
+                    .child(
+                        self.render_git_action_llm_dropdown_field(
+                            "Thinking",
+                            self.render_git_action_llm_dropdown(
+                                thinking_dropdown,
+                                (element_id_prefix, 30usize),
+                                self.settings_git_action_llm_dropdown == Some(thinking_dropdown),
+                                SharedString::from(settings_option_label(
+                                    &thinking_options,
+                                    thinking,
+                                )),
+                                self.git_action_string_option_elements(
+                                    kind,
+                                    SettingsGitActionLlmDropdownField::Thinking,
+                                    thinking,
+                                    thinking_options,
+                                    active_button_bg,
+                                    button_hover,
+                                    cx,
+                                ),
+                                button_bg,
+                                button_hover,
+                                active_button_bg,
+                                cx,
+                            ),
+                        )
+                        .flex_1(),
+                    ),
+            )
+    }
+
+    fn render_git_action_llm_dropdown_field(
+        &self,
+        label: &'static str,
+        dropdown: gpui::Div,
+    ) -> gpui::Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(
+                div()
+                    .text_size(rems(11. / 16.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(TEXT_SECONDARY())
+                    .child(label),
+            )
+            .child(dropdown)
+    }
+
+    fn render_git_action_llm_dropdown(
+        &self,
+        dropdown: SettingsGitActionLlmDropdown,
+        id: (&'static str, usize),
+        open: bool,
+        selected_label: SharedString,
+        option_elements: Vec<AnyElement>,
+        button_bg: gpui::Hsla,
+        button_hover: gpui::Hsla,
+        active_button_bg: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let mut container = div().flex().flex_col().gap(px(4.)).child(
+            div()
+                .id(id)
+                .h(px(32.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(if open {
+                    active_button_bg.opacity(0.85)
+                } else {
+                    BORDER_SUBTLE()
+                })
+                .bg(button_bg)
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(8.))
+                .px(px(10.))
+                .cursor_pointer()
+                .hover(move |s| s.bg(button_hover))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                        this.toggle_settings_git_action_llm_dropdown(dropdown, cx);
+                        cx.stop_propagation();
+                    }),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_size(rems(12. / 16.))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(TEXT_PRIMARY())
+                        .truncate()
+                        .child(selected_label),
+                )
+                .child(
+                    svg()
+                        .path("assets/icons/icons__chevron-down.svg")
+                        .size(px(14.))
+                        .text_color(TEXT_SECONDARY()),
+                ),
+        );
+
+        if open {
+            let mut list = div()
+                .rounded(px(8.))
+                .border_1()
+                .border_color(BORDER_SUBTLE())
+                .bg(rgb(0x2b2d31))
+                .shadow_md()
+                .overflow_hidden();
+            for option in option_elements {
+                list = list.child(option);
+            }
+            container = container.child(list);
+        }
+
+        container
+    }
+
+    fn git_action_provider_option_elements(
+        &self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        selected_provider: AgentProviderKind,
+        active_button_bg: gpui::Hsla,
+        button_hover: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        [AgentProviderKind::Codex, AgentProviderKind::ClaudeCode]
+            .into_iter()
+            .map(|provider| {
+                let selected = selected_provider == provider;
+                let icon_path = AGENTS
+                    .iter()
+                    .find(|agent| agent.provider == Some(provider))
+                    .map(|agent| agent.icon)
+                    .unwrap_or("assets/icons/action__agent.svg");
+                div()
+                    .h(px(34.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .cursor_pointer()
+                    .bg(if selected {
+                        active_button_bg.opacity(0.22)
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .hover(move |s| s.bg(button_hover))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                            this.set_git_action_llm_provider(kind, provider, cx);
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(branded_icon(icon_path, 16., Some(TEXT_PRIMARY())))
+                    .child(
+                        div()
+                            .text_size(rems(12. / 16.))
+                            .text_color(TEXT_PRIMARY())
+                            .child(git_action_provider_label(provider)),
+                    )
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    fn git_action_string_option_elements(
+        &self,
+        kind: crate::app::SettingsGitActionScriptKind,
+        field: SettingsGitActionLlmDropdownField,
+        selected_value: &str,
+        options: Vec<SettingsSelectOption>,
+        active_button_bg: gpui::Hsla,
+        button_hover: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        options
+            .into_iter()
+            .map(|option| {
+                let selected = selected_value == option.value;
+                let value = option.value.clone();
+                div()
+                    .h(px(32.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .bg(if selected {
+                        active_button_bg.opacity(0.22)
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .hover(move |s| s.bg(button_hover))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                            match field {
+                                SettingsGitActionLlmDropdownField::Provider => {}
+                                SettingsGitActionLlmDropdownField::Model => {
+                                    this.set_git_action_llm_model(kind, &value, cx);
+                                }
+                                SettingsGitActionLlmDropdownField::Thinking => {
+                                    this.set_git_action_llm_thinking(kind, &value, cx);
+                                }
+                            }
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(12. / 16.))
+                            .text_color(TEXT_PRIMARY())
+                            .child(option.label),
+                    )
+                    .into_any_element()
+            })
+            .collect()
+    }
+
     fn render_git_action_script_panel(
         &self,
         kind: crate::app::SettingsGitActionScriptKind,
@@ -2345,6 +2947,14 @@ impl AnotherOneApp {
                             ),
                     ),
             )
+            .child(self.render_git_action_llm_config(
+                kind,
+                element_id_prefix,
+                active_button_bg,
+                button_bg,
+                button_hover,
+                cx,
+            ))
             .child(
                 div().px(px(18.)).py(px(18.)).child(
                     div()
@@ -2743,12 +3353,6 @@ impl AnotherOneApp {
     }
 }
 
-#[derive(Clone, Copy)]
-enum CursorDirection {
-    Left,
-    Right,
-}
-
 struct SettingsMultilineLayoutHost {
     app: Entity<AnotherOneApp>,
     kind: crate::app::SettingsGitActionScriptKind,
@@ -2856,27 +3460,18 @@ fn settings_agent_input_selected_range(
     cursor: usize,
     selection_anchor: Option<usize>,
 ) -> Option<std::ops::Range<usize>> {
-    let anchor = selection_anchor?;
-    if anchor == cursor {
-        None
-    } else if anchor < cursor {
-        Some(anchor..cursor)
-    } else {
-        Some(cursor..anchor)
-    }
+    crate::text_edit::selected_range(cursor, selection_anchor)
 }
 
-fn previous_settings_input_boundary(text: &str, cursor: usize) -> usize {
-    text.char_indices()
-        .rev()
-        .find_map(|(index, _)| (index < cursor).then_some(index))
-        .unwrap_or(0)
-}
-
-fn next_settings_input_boundary(text: &str, cursor: usize) -> usize {
-    text.char_indices()
-        .find_map(|(index, _)| (index > cursor).then_some(index))
-        .unwrap_or(text.len())
+fn with_settings_edit_state(
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    edit: impl FnOnce(&mut TextEditState),
+) {
+    let mut state = TextEditState::new(*cursor, *selection_anchor);
+    edit(&mut state);
+    *cursor = state.cursor;
+    *selection_anchor = state.selection_anchor;
 }
 
 fn replace_settings_input_range(
@@ -2886,9 +3481,9 @@ fn replace_settings_input_range(
     range: std::ops::Range<usize>,
     replacement: &str,
 ) {
-    text.replace_range(range.clone(), replacement);
-    *cursor = range.start + replacement.len();
-    *selection_anchor = None;
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.replace_range(text, range, replacement);
+    });
 }
 
 fn insert_settings_input_text(
@@ -2897,14 +3492,9 @@ fn insert_settings_input_text(
     selection_anchor: &mut Option<usize>,
     inserted: &str,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, inserted);
-        return;
-    }
-
-    text.insert_str(*cursor, inserted);
-    *cursor += inserted.len();
-    *selection_anchor = None;
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.insert_text(text, inserted)
+    });
 }
 
 fn delete_settings_input_backward(
@@ -2912,41 +3502,9 @@ fn delete_settings_input_backward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-
-    if *cursor == 0 {
-        return;
-    }
-
-    let start = previous_settings_input_boundary(text, *cursor);
-    replace_settings_input_range(text, cursor, selection_anchor, start..*cursor, "");
-}
-
-fn previous_settings_input_word_boundary(text: &str, cursor: usize) -> usize {
-    let mut idx = cursor;
-    while idx > 0 {
-        let start = previous_settings_input_boundary(text, idx);
-        let ch = text[start..idx].chars().next().unwrap_or_default();
-        if !ch.is_whitespace() {
-            break;
-        }
-        idx = start;
-    }
-
-    while idx > 0 {
-        let start = previous_settings_input_boundary(text, idx);
-        let ch = text[start..idx].chars().next().unwrap_or_default();
-        if ch.is_alphanumeric() || matches!(ch, '_' | '-') {
-            idx = start;
-        } else {
-            break;
-        }
-    }
-
-    idx
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.delete_backward(text)
+    });
 }
 
 fn delete_settings_input_word_backward(
@@ -2954,17 +3512,9 @@ fn delete_settings_input_word_backward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-
-    if *cursor == 0 {
-        return;
-    }
-
-    let start = previous_settings_input_word_boundary(text, *cursor);
-    replace_settings_input_range(text, cursor, selection_anchor, start..*cursor, "");
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.delete_word_backward(text)
+    });
 }
 
 fn delete_settings_input_to_start(
@@ -2972,16 +3522,9 @@ fn delete_settings_input_to_start(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-
-    if *cursor == 0 {
-        return;
-    }
-
-    replace_settings_input_range(text, cursor, selection_anchor, 0..*cursor, "");
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.delete_to_start(text)
+    });
 }
 
 fn delete_settings_input_forward(
@@ -2989,17 +3532,7 @@ fn delete_settings_input_forward(
     cursor: &mut usize,
     selection_anchor: &mut Option<usize>,
 ) {
-    if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-        replace_settings_input_range(text, cursor, selection_anchor, range, "");
-        return;
-    }
-
-    if *cursor >= text.len() {
-        return;
-    }
-
-    let end = next_settings_input_boundary(text, *cursor);
-    replace_settings_input_range(text, cursor, selection_anchor, *cursor..end, "");
+    with_settings_edit_state(cursor, selection_anchor, |state| state.delete_forward(text));
 }
 
 fn move_settings_input_cursor(
@@ -3009,40 +3542,9 @@ fn move_settings_input_cursor(
     direction: CursorDirection,
     extend_selection: bool,
 ) {
-    let next_cursor = match direction {
-        CursorDirection::Left => {
-            if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-                if extend_selection {
-                    previous_settings_input_boundary(text, *cursor)
-                } else {
-                    range.start
-                }
-            } else {
-                previous_settings_input_boundary(text, *cursor)
-            }
-        }
-        CursorDirection::Right => {
-            if let Some(range) = settings_agent_input_selected_range(*cursor, *selection_anchor) {
-                if extend_selection {
-                    next_settings_input_boundary(text, *cursor)
-                } else {
-                    range.end
-                }
-            } else {
-                next_settings_input_boundary(text, *cursor)
-            }
-        }
-    };
-
-    if extend_selection {
-        if selection_anchor.is_none() {
-            *selection_anchor = Some(*cursor);
-        }
-    } else {
-        *selection_anchor = None;
-    }
-
-    *cursor = next_cursor;
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.move_horizontal(text, direction, extend_selection);
+    });
 }
 
 fn move_settings_input_cursor_to_edge(
@@ -3052,13 +3554,9 @@ fn move_settings_input_cursor_to_edge(
     to_end: bool,
     extend_selection: bool,
 ) {
-    if extend_selection && selection_anchor.is_none() {
-        *selection_anchor = Some(*cursor);
-    }
-    if !extend_selection {
-        *selection_anchor = None;
-    }
-    *cursor = if to_end { text.len() } else { 0 };
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.move_to_edge(text, to_end, extend_selection);
+    });
 }
 
 fn intersect_byte_ranges(
@@ -3077,62 +3575,16 @@ fn visible_input_range(
     max_chars: usize,
     extra_reserved_chars: usize,
 ) -> std::ops::Range<usize> {
-    let boundaries = text
-        .char_indices()
-        .map(|(idx, _)| idx)
-        .chain(std::iter::once(text.len()))
-        .collect::<Vec<_>>();
-    let total_chars = boundaries.len().saturating_sub(1);
-    if total_chars <= max_chars.saturating_sub(extra_reserved_chars) {
-        return 0..text.len();
-    }
-
-    let cursor_char = text[..cursor.min(text.len())].chars().count();
-    let selection_chars = selection.map(|selection| {
-        (
-            text[..selection.start.min(text.len())].chars().count(),
-            text[..selection.end.min(text.len())].chars().count(),
-        )
-    });
-    let visible_chars = max_chars.saturating_sub(extra_reserved_chars).max(1);
-    let mut start_char = cursor_char.saturating_sub(visible_chars / 2);
-    let mut end_char = (start_char + visible_chars).min(total_chars);
-    start_char = end_char.saturating_sub(visible_chars);
-
-    if cursor_char >= total_chars.saturating_sub(visible_chars / 3) {
-        end_char = total_chars;
-        start_char = total_chars.saturating_sub(visible_chars);
-    }
-
-    if let Some((selection_start_char, selection_end_char)) = selection_chars {
-        if selection_start_char < start_char {
-            start_char = selection_start_char;
-            end_char = (start_char + visible_chars).min(total_chars);
-        }
-        if selection_end_char > end_char {
-            end_char = selection_end_char.min(total_chars);
-            start_char = end_char.saturating_sub(visible_chars);
-        }
-    }
-
-    boundaries[start_char]..boundaries[end_char]
+    crate::text_edit::visible_range(
+        text,
+        cursor,
+        selection,
+        max_chars.saturating_sub(extra_reserved_chars).max(1),
+    )
 }
 
 fn settings_multiline_line_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
-    if text.is_empty() {
-        return vec![0..0];
-    }
-
-    let mut ranges = Vec::new();
-    let mut start = 0usize;
-    for (idx, ch) in text.char_indices() {
-        if ch == '\n' {
-            ranges.push(start..idx);
-            start = idx + ch.len_utf8();
-        }
-    }
-    ranges.push(start..text.len());
-    ranges
+    crate::text_edit::line_ranges(text)
 }
 
 fn measure_settings_multiline_input_lines(
@@ -3299,33 +3751,6 @@ fn distance_to_vertical_bounds(y: Pixels, bounds: Bounds<Pixels>) -> f32 {
     }
 }
 
-fn settings_line_start(text: &str, cursor: usize) -> usize {
-    let cursor = cursor.min(text.len());
-    text[..cursor].rfind('\n').map_or(0, |idx| idx + 1)
-}
-
-fn settings_line_end(text: &str, cursor: usize) -> usize {
-    let cursor = cursor.min(text.len());
-    text[cursor..]
-        .find('\n')
-        .map_or(text.len(), |offset| cursor + offset)
-}
-
-fn settings_char_count(text: &str) -> usize {
-    text.chars().count()
-}
-
-fn settings_byte_index_for_char_count(text: &str, count: usize) -> usize {
-    if count == 0 {
-        return 0;
-    }
-
-    text.char_indices()
-        .nth(count)
-        .map(|(idx, _)| idx)
-        .unwrap_or(text.len())
-}
-
 fn move_settings_multiline_cursor_vertical(
     text: &str,
     cursor: &mut usize,
@@ -3333,39 +3758,9 @@ fn move_settings_multiline_cursor_vertical(
     move_down: bool,
     extend_selection: bool,
 ) {
-    let current_line_start = settings_line_start(text, *cursor);
-    let current_line_end = settings_line_end(text, *cursor);
-    let current_column = settings_char_count(&text[current_line_start..(*cursor).min(text.len())]);
-
-    let target_line = if move_down {
-        if current_line_end >= text.len() {
-            text.len()..text.len()
-        } else {
-            let next_start = next_settings_input_boundary(text, current_line_end);
-            let next_end = settings_line_end(text, next_start);
-            next_start..next_end
-        }
-    } else {
-        if current_line_start == 0 {
-            0..settings_line_end(text, 0)
-        } else {
-            let previous_end = current_line_start.saturating_sub(1);
-            let previous_start = settings_line_start(text, previous_end);
-            previous_start..previous_end
-        }
-    };
-
-    if extend_selection && selection_anchor.is_none() {
-        *selection_anchor = Some(*cursor);
-    }
-    if !extend_selection {
-        *selection_anchor = None;
-    }
-
-    let target_line_text = &text[target_line.clone()];
-    let target_column = current_column.min(settings_char_count(target_line_text));
-    *cursor =
-        target_line.start + settings_byte_index_for_char_count(target_line_text, target_column);
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.move_vertical(text, !move_down, extend_selection);
+    });
 }
 
 fn move_settings_multiline_cursor_to_line_edge(
@@ -3375,18 +3770,9 @@ fn move_settings_multiline_cursor_to_line_edge(
     to_end: bool,
     extend_selection: bool,
 ) {
-    if extend_selection && selection_anchor.is_none() {
-        *selection_anchor = Some(*cursor);
-    }
-    if !extend_selection {
-        *selection_anchor = None;
-    }
-
-    *cursor = if to_end {
-        settings_line_end(text, *cursor)
-    } else {
-        settings_line_start(text, *cursor)
-    };
+    with_settings_edit_state(cursor, selection_anchor, |state| {
+        state.move_to_line_edge(text, to_end, extend_selection);
+    });
 }
 
 fn render_settings_agent_input_content(
