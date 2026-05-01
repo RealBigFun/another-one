@@ -6271,12 +6271,16 @@ impl AnotherOneApp {
         let cell = terminal_cell_position_from_mouse(mouse_position, &metrics)?;
         let snapshot = self.terminal_surface_snapshots.get(key)?;
         let link = terminal_link_at_position(snapshot, cell)?;
+        // Anchor is pane-relative because the tooltip element renders
+        // as a child of the (already absolutely-positioned) pane div.
+        // Storing window-relative coords here would compose two
+        // offsets and paint the tooltip way off to the side.
         Some(TerminalLinkHoverState {
             section_id: key.section_id.clone(),
             tab_id: key.tab_id.clone(),
             link,
-            anchor_x: f32::from(mouse_position.x) as i32,
-            anchor_y: f32::from(mouse_position.y) as i32,
+            anchor_x: (f32::from(mouse_position.x) - metrics.left) as i32,
+            anchor_y: (f32::from(mouse_position.y) - metrics.top) as i32,
         })
     }
 

@@ -862,13 +862,29 @@ impl WorkspacePane {
                 .map(|app_entity| app_entity.read(cx).terminal_bell_intensity(&key))
                 .unwrap_or(0.0);
             let font_size = px(self.font_size);
-            return div()
+            // Swap cursor to a pointer when the user is hovering a
+            // link AND the open-link modifier is held — matches the
+            // visual the underline already shows. Without the
+            // modifier, the underline is just an affordance and the
+            // cursor stays on text-select.
+            let mods = window.modifiers();
+            let modifier_held = mods.platform || mods.control;
+            let hovering_link = self
+                .terminal_link_hover
+                .as_ref()
+                .is_some_and(|h| &h.section_id == section_id && h.tab_id == tab.id);
+            let mut pane_div = div()
                 .relative()
                 .flex_1()
                 .min_h_0()
                 .overflow_hidden()
-                .bg(terminal_bg)
-                .cursor_text()
+                .bg(terminal_bg);
+            if hovering_link && modifier_held {
+                pane_div = pane_div.cursor_pointer();
+            } else {
+                pane_div = pane_div.cursor_text();
+            }
+            return pane_div
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
