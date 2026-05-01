@@ -15,7 +15,9 @@ use crate::agents::{
     harness, AgentProviderKind, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode,
     TerminalSessionKind, TerminalSessionRef,
 };
-use crate::terminal_types::{PreparedTerminalRuntime, TerminalGridSize, TerminalRuntimeKey};
+use crate::terminal_types::{
+    PreparedTerminalRuntime, TerminalChildKiller, TerminalGridSize, TerminalRuntimeKey,
+};
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const CODEX_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60 * 60);
@@ -97,11 +99,13 @@ pub fn spawn_terminal_launch(
             agent_launch_args,
             size,
         ) {
-            let _ = sender.send(TerminalLaunchReply::Failed {
+            if let Err(send_error) = sender.send(TerminalLaunchReply::Failed {
                 key,
                 message: format_launch_error(&error),
                 details: format_launch_error_details(&error),
-            });
+            }) {
+                eprintln!("failed to send terminal launch failure reply: {send_error}");
+            }
         }
     });
 }
@@ -123,11 +127,13 @@ pub fn spawn_warm_terminal_launch(
             agent_launch_args,
             size,
         ) {
-            let _ = sender.send(WarmTerminalLaunchReply::Failed {
+            if let Err(send_error) = sender.send(WarmTerminalLaunchReply::Failed {
                 launch_id,
                 message: format_launch_error(&error),
                 details: format_launch_error_details(&error),
-            });
+            }) {
+                eprintln!("failed to send warm terminal launch failure reply: {send_error}");
+            }
         }
     });
 }
@@ -138,6 +144,16 @@ fn format_launch_error(error: &anyhow::Error) -> String {
 
 fn format_launch_error_details(error: &anyhow::Error) -> String {
     format!("{error:?}")
+}
+
+#[cfg(unix)]
+fn terminal_process_group(
+    master: &dyn portable_pty::MasterPty,
+    process_id: Option<u32>,
+) -> Option<libc::pid_t> {
+    master
+        .process_group_leader()
+        .or_else(|| process_id.and_then(|pid| libc::pid_t::try_from(pid).ok()))
 }
 
 fn launch_terminal(
@@ -166,7 +182,13 @@ fn launch_terminal(
         .spawn_command(builder)
         .with_context(|| format!("failed to launch terminal in {}", cwd.display()))?;
     let process_id = child.process_id();
-    let child_killer = child.clone_killer();
+    #[cfg(unix)]
+    let child_killer = TerminalChildKiller::with_process_group(
+        child.clone_killer(),
+        terminal_process_group(pair.master.as_ref(), process_id),
+    );
+    #[cfg(not(unix))]
+    let child_killer = TerminalChildKiller::new(child.clone_killer());
 
     // Live-output sender owned by the embedder's PTY drain. The
     // reader thread emits `TerminalLaunchReply::Output`; the drain
@@ -174,6 +196,7 @@ fn launch_terminal(
     // one registry lock so attach replay cannot race live delivery.
     // Capacity 512 absorbs a burst of ~4 MB (8 KiB reads × 512).
     let (output_broadcast, _initial_rx) = tokio::sync::broadcast::channel::<Vec<u8>>(512);
+    let broadcast_for_reader = output_broadcast.clone();
 
     // Snapshot the provider before the launch_config moves into the
     // `Launched` reply — the Claude session watcher below needs it
@@ -206,6 +229,7 @@ fn launch_terminal(
                 Ok(count) => {
                     crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
+                    let _ = broadcast_for_reader.send(bytes.clone());
                     let _ = output_sender.send(TerminalLaunchReply::Output {
                         key: output_key.clone(),
                         bytes,
@@ -294,7 +318,13 @@ fn launch_warm_terminal(
         .spawn_command(builder)
         .with_context(|| format!("failed to launch terminal in {}", cwd.display()))?;
     let process_id = child.process_id();
-    let child_killer = child.clone_killer();
+    #[cfg(unix)]
+    let child_killer = TerminalChildKiller::with_process_group(
+        child.clone_killer(),
+        terminal_process_group(pair.master.as_ref(), process_id),
+    );
+    #[cfg(not(unix))]
+    let child_killer = TerminalChildKiller::new(child.clone_killer());
 
     // Warm launches get a broadcast tee too. Today the warm-launch
     // flow is desktop-only (it never reaches mobile because warm

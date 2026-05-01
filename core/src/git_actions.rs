@@ -1801,6 +1801,10 @@ pub fn find_project_pull_requests(
     filter_index: usize,
     query: Option<&str>,
 ) -> Result<Vec<ProjectPagePullRequest>, String> {
+    if git_stdout(repo_path, &["remote"]).is_none_or(|remotes| remotes.trim().is_empty()) {
+        return Ok(Vec::new());
+    }
+
     let gh = find_gh_cli(repo_path).ok_or_else(|| {
         "Could not load pull requests. GitHub CLI (`gh`) is not installed or not on the app PATH."
             .to_string()
