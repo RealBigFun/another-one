@@ -608,6 +608,9 @@ pub(crate) struct SidebarTaskDeleteConfirmState {
     pub(crate) project_path: std::path::PathBuf,
     pub(crate) repo_path: std::path::PathBuf,
     pub(crate) is_worktree: bool,
+    pub(crate) other_tasks_in_worktree: usize,
+    pub(crate) force_delete_branch: bool,
+    pub(crate) has_unstaged_changes: bool,
 }
 
 #[derive(Clone)]

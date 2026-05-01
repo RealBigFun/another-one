@@ -456,6 +456,21 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    fn sidebar_other_tasks_in_worktree(
+        &self,
+        worktree_project_id: &str,
+        task_id: Option<&str>,
+    ) -> usize {
+        self.project_store
+            .tasks
+            .values()
+            .flatten()
+            .filter(|task| {
+                task.target_project_id == worktree_project_id && Some(task.id.as_str()) != task_id
+            })
+            .count()
+    }
+
     fn build_sidebar_task_delete_confirm(
         &self,
         project_id: &str,
@@ -471,6 +486,14 @@ impl AnotherOneApp {
             .find(|project| project.id == project_id)?
             .clone();
         let root_project = self.sidebar_root_project_for_project(project_id)?;
+        let other_tasks_in_worktree = is_worktree
+            .then(|| self.sidebar_other_tasks_in_worktree(project_id, task_id))
+            .unwrap_or(0);
+        let removing_worktree = is_worktree && other_tasks_in_worktree == 0;
+        let has_unstaged_changes = removing_worktree
+            && crate::project_store::list_changed_files(&project.path)
+                .iter()
+                .any(|changed| changed.has_unstaged_changes());
 
         Some(SidebarTaskDeleteConfirmState {
             project_id: project_id.to_string(),
@@ -481,6 +504,9 @@ impl AnotherOneApp {
             project_path: project.path,
             repo_path: root_project.path,
             is_worktree,
+            other_tasks_in_worktree,
+            force_delete_branch: removing_worktree && !branch_name.trim().is_empty(),
+            has_unstaged_changes,
         })
     }
 
@@ -581,6 +607,27 @@ impl AnotherOneApp {
             return;
         }
 
+        if confirm.other_tasks_in_worktree > 0 {
+            self.sidebar_task_delete_confirm = None;
+            let Some(task_id) = confirm.task_id.as_deref() else {
+                self.show_error_toast("Could not find the selected task.", cx);
+                return;
+            };
+            if self.sidebar_task_rename.as_ref().is_some_and(|rename| {
+                rename.project_id == confirm.project_id && rename.row_id == task_id
+            }) {
+                self.sidebar_task_rename = None;
+            }
+            self.delete_direct_sidebar_task(
+                &confirm.root_project_id,
+                task_id,
+                &confirm.task_name,
+                &confirm.project_id,
+                cx,
+            );
+            return;
+        }
+
         let was_active_project = self
             .workspace_pane
             .read(cx)
@@ -591,11 +638,13 @@ impl AnotherOneApp {
         match crate::project_store::remove_task_worktree(&confirm.repo_path, &confirm.project_path)
         {
             Ok(()) => {
-                if let Err(error) = crate::project_store::delete_local_branch(
-                    &confirm.repo_path,
-                    &confirm.branch_name,
-                ) {
-                    self.show_warning_toast(error, cx);
+                if confirm.force_delete_branch {
+                    if let Err(error) = crate::project_store::delete_local_branch(
+                        &confirm.repo_path,
+                        &confirm.branch_name,
+                    ) {
+                        self.show_warning_toast(error, cx);
+                    }
                 }
 
                 let worktree_display_name =
@@ -2040,7 +2089,7 @@ impl AnotherOneApp {
         let delete_is_worktree = menu.is_worktree;
         let delete_preferred_project_id = menu.root_project_id.clone();
         let delete_tooltip = if menu.is_worktree {
-            "Delete this worktree task and remove its local branch"
+            "Delete this worktree task"
         } else {
             "Delete this direct task from the sidebar"
         };
@@ -2194,11 +2243,56 @@ impl AnotherOneApp {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| confirm.task_name.clone());
-        let message: SharedString = format!(
-            "Delete worktree \"{}\" and remove the local branch \"{}\"?",
-            worktree_display_name, confirm.branch_name
-        )
+        let removing_worktree = confirm.is_worktree && confirm.other_tasks_in_worktree == 0;
+        let show_force_delete_branch = removing_worktree && !confirm.branch_name.trim().is_empty();
+        let title: SharedString = if removing_worktree {
+            "Confirm Worktree Deletion"
+        } else {
+            "Confirm Task Deletion"
+        }
         .into();
+        let message: SharedString = if removing_worktree {
+            format!("Delete worktree \"{}\"?", worktree_display_name)
+        } else if confirm.is_worktree {
+            let (other_task_label, other_task_verb) = if confirm.other_tasks_in_worktree == 1 {
+                ("1 other task".to_string(), "uses")
+            } else {
+                (
+                    format!("{} other tasks", confirm.other_tasks_in_worktree),
+                    "use",
+                )
+            };
+            format!(
+                "Delete task \"{}\"? {} still {} worktree \"{}\", so the worktree folder and branch \"{}\" will stay.",
+                confirm.task_name,
+                other_task_label,
+                other_task_verb,
+                worktree_display_name,
+                confirm.branch_name
+            )
+        } else {
+            format!("Delete task \"{}\"?", confirm.task_name)
+        }
+        .into();
+        let detail: SharedString = if removing_worktree {
+            "This permanently removes the worktree folder from disk. Any uncommitted changes inside it will be lost."
+        } else {
+            "This only removes the task from the sidebar. Files and worktrees stay on disk."
+        }
+        .into();
+        let force_delete_label: SharedString =
+            format!("Force delete local branch \"{}\"", confirm.branch_name).into();
+        let force_delete_checked = confirm.force_delete_branch;
+        let cancel_tooltip = if removing_worktree {
+            "Close without deleting the worktree"
+        } else {
+            "Close without deleting the task"
+        };
+        let delete_tooltip = if removing_worktree {
+            "Permanently delete this worktree task"
+        } else {
+            "Delete this task from the sidebar"
+        };
 
         div()
             .id("sidebar-task-delete-confirm-overlay")
@@ -2236,7 +2330,7 @@ impl AnotherOneApp {
             }))
             .child(
                 div()
-                    .w(px(364.))
+                    .w(px(420.))
                     .rounded_lg()
                     .bg(rgb(0x2b2d31))
                     .border_1()
@@ -2248,7 +2342,7 @@ impl AnotherOneApp {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(4.))
+                            .gap(px(8.))
                             .px(px(20.))
                             .pt(px(20.))
                             .pb(px(12.))
@@ -2257,7 +2351,7 @@ impl AnotherOneApp {
                                     .text_size(rems(14. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(title_col)
-                                    .child("Confirm Worktree Deletion"),
+                                    .child(title),
                             )
                             .child(
                                 div()
@@ -2269,8 +2363,90 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(11. / 16.))
                                     .text_color(hsla(0., 0., 0.54, 1.))
-                                    .child("This permanently removes the worktree folder from disk. Any uncommitted changes inside it will be lost."),
-                            ),
+                                    .child(detail),
+                            )
+                            .when(confirm.has_unstaged_changes && removing_worktree, |column| {
+                                column.child(
+                                    div()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(hsla(42. / 360., 0.74, 0.50, 0.36))
+                                        .bg(hsla(42. / 360., 0.74, 0.18, 0.20))
+                                        .px(px(10.))
+                                        .py(px(8.))
+                                        .text_size(rems(11. / 16.))
+                                        .text_color(hsla(42. / 360., 0.82, 0.74, 1.))
+                                        .child("There are unstaged files in this worktree. Deleting it will permanently remove those changes."),
+                                )
+                            })
+                            .when(show_force_delete_branch, |column| {
+                                column.child(
+                                    div()
+                                        .id("sidebar-task-delete-force-branch")
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.))
+                                        .rounded_md()
+                                        .px(px(8.))
+                                        .py(px(6.))
+                                        .cursor_pointer()
+                                        .hover(move |style| style.bg(gpui::white().opacity(0.06)))
+                                        .tooltip(move |_window, cx| {
+                                            Self::action_tooltip_view(
+                                                "Toggle whether deleting this worktree also runs git branch -D on the local branch",
+                                                cx,
+                                            )
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                                if let Some(confirm) =
+                                                    this.sidebar_task_delete_confirm.as_mut()
+                                                {
+                                                    confirm.force_delete_branch =
+                                                        !confirm.force_delete_branch;
+                                                }
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            }),
+                                        )
+                                        .child(
+                                            div()
+                                                .w(px(18.))
+                                                .h(px(18.))
+                                                .rounded(px(4.))
+                                                .border_1()
+                                                .border_color(if force_delete_checked {
+                                                    danger_bg
+                                                } else {
+                                                    border
+                                                })
+                                                .bg(if force_delete_checked {
+                                                    danger_bg
+                                                } else {
+                                                    gpui::transparent_black()
+                                                })
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .when(force_delete_checked, |box_el| {
+                                                    box_el.child(
+                                                        svg()
+                                                            .path("assets/icons/icons__check.svg")
+                                                            .size(px(12.))
+                                                            .text_color(gpui::white()),
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .min_w(px(0.))
+                                                .text_size(rems(12. / 16.))
+                                                .text_color(body_col)
+                                                .child(force_delete_label),
+                                        ),
+                                )
+                            }),
                     )
                     .child(
                         div()
@@ -2291,10 +2467,7 @@ impl AnotherOneApp {
                                     .bg(btn_bg)
                                     .hover(move |style| style.bg(btn_hover))
                                     .tooltip(move |_window, cx| {
-                                        Self::action_tooltip_view(
-                                            "Close without deleting the worktree",
-                                            cx,
-                                        )
+                                        Self::action_tooltip_view(cancel_tooltip, cx)
                                     })
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::MEDIUM)
@@ -2319,10 +2492,7 @@ impl AnotherOneApp {
                                     .bg(danger_bg)
                                     .hover(move |style| style.bg(danger_hover))
                                     .tooltip(move |_window, cx| {
-                                        Self::action_tooltip_view(
-                                            "Permanently delete this worktree task",
-                                            cx,
-                                        )
+                                        Self::action_tooltip_view(delete_tooltip, cx)
                                     })
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
