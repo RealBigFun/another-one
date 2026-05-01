@@ -14,7 +14,9 @@ use crate::agents::{
     effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus,
     DEFAULT_AGENT_ID,
 };
-use crate::git_actions::{default_commit_generation_script, default_pr_generation_script};
+use crate::git_actions::{
+    default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
+};
 use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 
@@ -529,6 +531,10 @@ pub struct UiState {
     #[serde(default)]
     pub git_pr_generation_script: Option<String>,
     #[serde(default)]
+    pub git_commit_generation_llm: GitActionLlmSettings,
+    #[serde(default)]
+    pub git_pr_generation_llm: GitActionLlmSettings,
+    #[serde(default)]
     pub shortcuts: ShortcutSettings,
     #[serde(default)]
     pub global_actions: Vec<ProjectAction>,
@@ -553,6 +559,8 @@ impl Default for UiState {
             agent_launch_args: HashMap::new(),
             git_commit_generation_script: None,
             git_pr_generation_script: None,
+            git_commit_generation_llm: GitActionLlmSettings::default(),
+            git_pr_generation_llm: GitActionLlmSettings::default(),
             shortcuts: ShortcutSettings::default(),
             global_actions: Vec::new(),
             archived_project_actions: Vec::new(),
@@ -1632,6 +1640,32 @@ impl ProjectStore {
             return false;
         }
 
+        self.save();
+        true
+    }
+
+    pub fn git_commit_generation_llm(&self) -> GitActionLlmSettings {
+        self.ui.git_commit_generation_llm.clone()
+    }
+
+    pub fn set_git_commit_generation_llm(&mut self, settings: GitActionLlmSettings) -> bool {
+        if self.ui.git_commit_generation_llm == settings {
+            return false;
+        }
+        self.ui.git_commit_generation_llm = settings;
+        self.save();
+        true
+    }
+
+    pub fn git_pr_generation_llm(&self) -> GitActionLlmSettings {
+        self.ui.git_pr_generation_llm.clone()
+    }
+
+    pub fn set_git_pr_generation_llm(&mut self, settings: GitActionLlmSettings) -> bool {
+        if self.ui.git_pr_generation_llm == settings {
+            return false;
+        }
+        self.ui.git_pr_generation_llm = settings;
         self.save();
         true
     }
@@ -4948,6 +4982,8 @@ mod tests {
                 agent_launch_args: HashMap::new(),
                 git_commit_generation_script: None,
                 git_pr_generation_script: None,
+                git_commit_generation_llm: crate::git_actions::GitActionLlmSettings::default(),
+                git_pr_generation_llm: crate::git_actions::GitActionLlmSettings::default(),
                 shortcuts: ShortcutSettings::default(),
                 global_actions: Vec::new(),
                 archived_project_actions: Vec::new(),
