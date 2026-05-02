@@ -9,7 +9,7 @@ use gpui::{
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
 use crate::app::{
-    terminal_link_ranges, AnotherOneApp, TerminalLinkRange, TerminalMouseAction,
+    terminal_link_ranges, AnotherOneApp, TabCloseScope, TerminalLinkRange, TerminalMouseAction,
     TerminalMouseButton, TerminalSelectionRange, WorkspaceKeyboardFocus, WorkspacePane,
 };
 use crate::layout::{TERMINAL_TAB_BAR_H, TERMINAL_VIEW_PADDING};
@@ -48,27 +48,129 @@ impl AnotherOneApp {
             return div().id("terminal-tab-menu-popover");
         };
 
-        let menu_w = 156.0;
-        let menu_h = 46.0;
+        let menu_w = 206.0;
+        let menu_h = 144.0;
         let window_w = f32::from(window.bounds().size.width);
         let window_h = f32::from(window.bounds().size.height);
         let left = (menu.anchor_x + 4.0).min((window_w - menu_w - 8.0).max(8.0));
         let top = (menu.anchor_y + 4.0).min((window_h - menu_h - 8.0).max(8.0));
-        let is_pinned = self
-            .workspace_pane
-            .read(cx)
-            .section_states
-            .get(&menu.section_id)
-            .and_then(|state| state.tabs.iter().find(|tab| tab.id == menu.tab_id))
-            .is_some_and(|tab| tab.pinned);
-        let label = if is_pinned { "Unpin" } else { "Pin" };
-        let tooltip = if is_pinned {
-            "Move this tab back with unpinned tabs"
-        } else {
-            "Keep this tab at the left of the tab strip"
+        let (is_pinned, tab_index, tab_count) = {
+            let workspace = self.workspace_pane.read(cx);
+            let state = workspace.section_states.get(&menu.section_id);
+            let tab_index = state
+                .and_then(|state| state.tabs.iter().position(|tab| tab.id == menu.tab_id));
+            let is_pinned = state
+                .and_then(|state| tab_index.and_then(|index| state.tabs.get(index)))
+                .is_some_and(|tab| tab.pinned);
+            let tab_count = state.map_or(0, |state| state.tabs.len());
+            (is_pinned, tab_index, tab_count)
         };
+        let label: SharedString = if is_pinned { "Unpin Tab" } else { "Pin Tab" }.into();
+        let close_other_enabled = tab_index.is_some() && tab_count > 1;
+        let close_left_enabled = tab_index.is_some_and(|index| index > 0);
+        let close_right_enabled = tab_index.is_some_and(|index| index + 1 < tab_count);
         let section_id = menu.section_id.clone();
         let tab_id = menu.tab_id.clone();
+
+        let mut items = div()
+            .flex()
+            .flex_col()
+            .py(px(4.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        let pin_section_id = section_id.clone();
+        let pin_tab_id = tab_id.clone();
+        items = items.child(terminal_context_menu_item(
+            "terminal-tab-menu-pin",
+            label,
+            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                this.focus_handle.focus(window, cx);
+                let section_id = pin_section_id.clone();
+                let tab_id = pin_tab_id.clone();
+                this.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.terminal_tab_menu = None;
+                    workspace.toggle_tab_pinned(&section_id, &tab_id, cx);
+                });
+                cx.stop_propagation();
+            }),
+            tab_index.is_some(),
+        ));
+        items = items.child(
+            div()
+                .h(px(1.))
+                .mx(px(8.))
+                .my(px(3.))
+                .bg(gpui::white().opacity(0.08)),
+        );
+
+        let close_other_section_id = section_id.clone();
+        let close_other_tab_id = tab_id.clone();
+        items = items.child(terminal_context_menu_item(
+            "terminal-tab-menu-close-others",
+            "Clear Other Tabs",
+            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                this.focus_handle.focus(window, cx);
+                let section_id = close_other_section_id.clone();
+                let tab_id = close_other_tab_id.clone();
+                this.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.terminal_tab_menu = None;
+                    workspace.request_close_tabs_for_scope(
+                        &section_id,
+                        &tab_id,
+                        TabCloseScope::Other,
+                        cx,
+                    );
+                });
+                cx.stop_propagation();
+            }),
+            close_other_enabled,
+        ));
+
+        let close_right_section_id = section_id.clone();
+        let close_right_tab_id = tab_id.clone();
+        items = items.child(terminal_context_menu_item(
+            "terminal-tab-menu-close-right",
+            "Close Tabs to the Right",
+            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                this.focus_handle.focus(window, cx);
+                let section_id = close_right_section_id.clone();
+                let tab_id = close_right_tab_id.clone();
+                this.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.terminal_tab_menu = None;
+                    workspace.request_close_tabs_for_scope(
+                        &section_id,
+                        &tab_id,
+                        TabCloseScope::Right,
+                        cx,
+                    );
+                });
+                cx.stop_propagation();
+            }),
+            close_right_enabled,
+        ));
+
+        let close_left_section_id = section_id.clone();
+        let close_left_tab_id = tab_id.clone();
+        items = items.child(terminal_context_menu_item(
+            "terminal-tab-menu-close-left",
+            "Close Tabs to the Left",
+            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                this.focus_handle.focus(window, cx);
+                let section_id = close_left_section_id.clone();
+                let tab_id = close_left_tab_id.clone();
+                this.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.terminal_tab_menu = None;
+                    workspace.request_close_tabs_for_scope(
+                        &section_id,
+                        &tab_id,
+                        TabCloseScope::Left,
+                        cx,
+                    );
+                });
+                cx.stop_propagation();
+            }),
+            close_left_enabled,
+        ));
 
         div()
             .id("terminal-tab-menu-popover")
@@ -90,47 +192,7 @@ impl AnotherOneApp {
                     .bg(rgb(0x2b2d31))
                     .shadow_lg()
                     .overflow_hidden()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .id("terminal-tab-menu-pin")
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .h(px(38.))
-                            .px(px(14.))
-                            .cursor_pointer()
-                            .hover(|hover| hover.bg(gpui::white().opacity(0.06)))
-                            .tooltip(move |_window, cx| {
-                                AnotherOneApp::action_tooltip_view(tooltip, cx)
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
-                                    this.focus_handle.focus(window, cx);
-                                    let section_id = section_id.clone();
-                                    let tab_id = tab_id.clone();
-                                    this.workspace_pane.update(cx, |workspace, cx| {
-                                        workspace.terminal_tab_menu = None;
-                                        workspace.toggle_tab_pinned(&section_id, &tab_id, cx);
-                                    });
-                                    cx.stop_propagation();
-                                }),
-                            )
-                            .child(
-                                svg()
-                                    .path("assets/icons/icons__pin-off.svg")
-                                    .size(px(15.))
-                                    .text_color(hsla(0., 0., 0.92, 1.)),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(hsla(0., 0., 0.92, 1.))
-                                    .child(label),
-                            ),
-                    ),
+                    .child(items),
             )
     }
 
@@ -318,11 +380,36 @@ impl AnotherOneApp {
         else {
             return div().id("pinned-tab-close-confirm-overlay");
         };
-        let message: SharedString = format!(
-            "Close pinned tab \"{}\"? It will be removed from this task.",
-            confirm.title
-        )
-        .into();
+        let total_count = confirm.tab_ids.len().max(1);
+        let pinned_count = confirm.pinned_tab_count.max(1);
+        let title: SharedString = if total_count == 1 {
+            "Close pinned tab?".into()
+        } else {
+            "Close tabs?".into()
+        };
+        let message: SharedString = if total_count == 1 {
+            format!(
+                "Close pinned tab \"{}\"? It will be removed from this task.",
+                confirm.title
+            )
+            .into()
+        } else if pinned_count == 1 {
+            format!(
+                "Close {total_count} tabs? This includes pinned tab \"{}\". They will be removed from this task.",
+                confirm.title
+            )
+            .into()
+        } else {
+            format!(
+                "Close {total_count} tabs? This includes {pinned_count} pinned tabs. They will be removed from this task."
+            )
+            .into()
+        };
+        let confirm_label: SharedString = if total_count == 1 {
+            "Close".into()
+        } else {
+            "Close Tabs".into()
+        };
 
         div()
             .id("pinned-tab-close-confirm-overlay")
@@ -374,7 +461,7 @@ impl AnotherOneApp {
                                     .text_lg()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(hsla(0., 0., 0.92, 1.))
-                                    .child("Close pinned tab?"),
+                                    .child(title),
                             )
                             .child(
                                 div()
@@ -428,7 +515,7 @@ impl AnotherOneApp {
                                     .hover(|s| s.bg(hsla(0., 0.62, 0.58, 1.)))
                                     .text_sm()
                                     .text_color(hsla(0., 0., 1., 1.))
-                                    .child("Close")
+                                    .child(confirm_label)
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
@@ -1432,7 +1519,7 @@ where
 
 fn terminal_context_menu_item<F>(
     id: &'static str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     on_click: F,
     enabled: bool,
 ) -> impl IntoElement
@@ -1447,7 +1534,7 @@ where
         .px(px(14.))
         .text_sm()
         .font_weight(gpui::FontWeight::MEDIUM)
-        .child(label);
+        .child(label.into());
 
     if enabled {
         item = item

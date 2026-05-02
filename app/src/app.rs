@@ -198,6 +198,13 @@ struct PrewarmedTerminalLaunch {
     runtime: Option<LiveTerminalRuntime>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TabCloseScope {
+    Other,
+    Left,
+    Right,
+}
+
 /// Per-section state: which terminal tabs are open and which is active.
 pub struct SectionState {
     pub tabs: Vec<TerminalTab>,
@@ -254,6 +261,48 @@ impl SectionState {
             }
         }
         Some(removed.id)
+    }
+
+    pub(crate) fn close_tabs_by_ids(
+        &mut self,
+        tab_ids: impl IntoIterator<Item = String>,
+    ) -> Vec<String> {
+        let tab_ids = tab_ids.into_iter().collect::<HashSet<_>>();
+        if tab_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let mut removed = Vec::new();
+        for index in (0..self.tabs.len()).rev() {
+            if tab_ids.contains(&self.tabs[index].id) {
+                if let Some(tab_id) = self.close_tab(index) {
+                    removed.push(tab_id);
+                }
+            }
+        }
+        removed.reverse();
+        removed
+    }
+
+    pub(crate) fn tab_ids_for_close_scope(
+        &self,
+        anchor_tab_id: &str,
+        scope: TabCloseScope,
+    ) -> Vec<String> {
+        let Some(anchor_index) = self.tabs.iter().position(|tab| tab.id == anchor_tab_id) else {
+            return Vec::new();
+        };
+
+        self.tabs
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| match scope {
+                TabCloseScope::Other => *index != anchor_index,
+                TabCloseScope::Left => *index < anchor_index,
+                TabCloseScope::Right => *index > anchor_index,
+            })
+            .map(|(_, tab)| tab.id.clone())
+            .collect()
     }
 
     #[cfg(test)]
@@ -731,6 +780,8 @@ pub(crate) struct PinnedTabCloseConfirmState {
     pub(crate) section_id: SectionId,
     pub(crate) tab_id: String,
     pub(crate) title: String,
+    pub(crate) tab_ids: Vec<String>,
+    pub(crate) pinned_tab_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1252,40 +1303,108 @@ impl WorkspacePane {
         removed_tab_id
     }
 
+    pub(crate) fn close_tab_ids(
+        &mut self,
+        section_id: &SectionId,
+        tab_ids: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Vec<String> {
+        let removed_tab_ids = self
+            .section_states
+            .get_mut(section_id)
+            .map(|state| state.close_tabs_by_ids(tab_ids))
+            .unwrap_or_default();
+        if !removed_tab_ids.is_empty() {
+            for tab_id in &removed_tab_ids {
+                self.cleanup_removed_tab(section_id, tab_id.clone(), cx);
+            }
+            self.persist_section_state(section_id, cx);
+            cx.notify();
+        }
+        removed_tab_ids
+    }
+
     pub(crate) fn request_close_tab(
         &mut self,
         section_id: &SectionId,
         tab_index: usize,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let confirm = self.section_states.get(section_id).and_then(|state| {
-            state.tabs.get(tab_index).and_then(|tab| {
-                tab.pinned.then(|| PinnedTabCloseConfirmState {
-                    section_id: section_id.clone(),
-                    tab_id: tab.id.clone(),
-                    title: tab.title.clone(),
-                })
-            })
-        });
+        let tab_id = self
+            .section_states
+            .get(section_id)
+            .and_then(|state| state.tabs.get(tab_index))
+            .map(|tab| tab.id.clone())?;
 
-        if let Some(confirm) = confirm {
-            self.pinned_tab_close_confirm = Some(confirm);
-            cx.notify();
-            return None;
+        self.request_close_tab_ids(section_id, vec![tab_id], cx)
+            .into_iter()
+            .next()
+    }
+
+    pub(crate) fn request_close_tabs_for_scope(
+        &mut self,
+        section_id: &SectionId,
+        anchor_tab_id: &str,
+        scope: TabCloseScope,
+        cx: &mut Context<Self>,
+    ) -> Vec<String> {
+        let tab_ids = self
+            .section_states
+            .get(section_id)
+            .map(|state| state.tab_ids_for_close_scope(anchor_tab_id, scope))
+            .unwrap_or_default();
+        self.request_close_tab_ids(section_id, tab_ids, cx)
+    }
+
+    pub(crate) fn request_close_tab_ids(
+        &mut self,
+        section_id: &SectionId,
+        tab_ids: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Vec<String> {
+        if tab_ids.is_empty() {
+            return Vec::new();
         }
 
-        self.close_tab(section_id, tab_index, cx)
+        let requested_tab_ids = tab_ids.iter().collect::<HashSet<_>>();
+        let pinned_tabs = self
+            .section_states
+            .get(section_id)
+            .map(|state| {
+                state
+                    .tabs
+                    .iter()
+                    .filter(|tab| requested_tab_ids.contains(&tab.id) && tab.pinned)
+                    .map(|tab| (tab.id.clone(), tab.title.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if let Some((first_pinned_tab_id, first_pinned_title)) = pinned_tabs.first() {
+            self.pinned_tab_close_confirm = Some(PinnedTabCloseConfirmState {
+                section_id: section_id.clone(),
+                tab_id: first_pinned_tab_id.clone(),
+                title: first_pinned_title.clone(),
+                tab_ids,
+                pinned_tab_count: pinned_tabs.len(),
+            });
+            cx.notify();
+            return Vec::new();
+        }
+
+        self.close_tab_ids(section_id, tab_ids, cx)
     }
 
     pub(crate) fn confirm_close_pinned_tab(&mut self, cx: &mut Context<Self>) -> Option<String> {
         let confirm = self.pinned_tab_close_confirm.take()?;
-        let tab_index = self
-            .section_states
-            .get(&confirm.section_id)
-            .and_then(|state| state.tabs.iter().position(|tab| tab.id == confirm.tab_id));
-        let removed = tab_index.and_then(|index| self.close_tab(&confirm.section_id, index, cx));
+        let tab_ids = if confirm.tab_ids.is_empty() {
+            vec![confirm.tab_id]
+        } else {
+            confirm.tab_ids
+        };
+        let removed = self.close_tab_ids(&confirm.section_id, tab_ids, cx);
         cx.notify();
-        removed
+        removed.into_iter().next()
     }
 
     pub(crate) fn toggle_tab_pinned(
@@ -11374,9 +11493,9 @@ mod tests {
         terminal_link_ranges, terminal_scroll_lines, terminal_selected_text,
         terminal_selection_range, terminal_word_selection_range, ActiveToolbarGitAction,
         AnotherOneApp, AppToast, DrainedGitAction, GitActionReply, NavigationDirection,
-        NewTaskShortcutTarget, SectionId, SectionState, TerminalCellPosition, TerminalLinkRange,
-        TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers, TerminalSelectionRange,
-        TerminalTab, ToastKind,
+        NewTaskShortcutTarget, SectionId, SectionState, TabCloseScope, TerminalCellPosition,
+        TerminalLinkRange, TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers,
+        TerminalSelectionRange, TerminalTab, ToastKind,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -11737,6 +11856,72 @@ mod tests {
         assert_eq!(removed, Some(only_tab_id));
         assert!(state.tabs.is_empty());
         assert_eq!(state.active_tab, 0);
+    }
+
+    #[test]
+    fn section_state_finds_tabs_to_close_relative_to_anchor() {
+        let state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "b".to_string(),
+                next_tab_id: 4,
+                cwd: None,
+                tabs: vec![
+                    shell_tab(0, "A"),
+                    agent_tab("b", "B", AgentProviderKind::Codex),
+                    agent_tab("c", "C", AgentProviderKind::ClaudeCode),
+                    agent_tab("d", "D", AgentProviderKind::Pi),
+                ],
+            },
+            None,
+        );
+
+        assert_eq!(
+            state.tab_ids_for_close_scope("c", TabCloseScope::Other),
+            vec!["0", "b", "d"]
+        );
+        assert_eq!(
+            state.tab_ids_for_close_scope("c", TabCloseScope::Left),
+            vec!["0", "b"]
+        );
+        assert_eq!(
+            state.tab_ids_for_close_scope("c", TabCloseScope::Right),
+            vec!["d"]
+        );
+        assert!(state
+            .tab_ids_for_close_scope("missing", TabCloseScope::Other)
+            .is_empty());
+    }
+
+    #[test]
+    fn section_state_closes_multiple_tabs_by_id_and_keeps_anchor_when_active_is_removed() {
+        let mut state = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "d".to_string(),
+                next_tab_id: 4,
+                cwd: None,
+                tabs: vec![
+                    shell_tab(0, "A"),
+                    agent_tab("b", "B", AgentProviderKind::Codex),
+                    agent_tab("c", "C", AgentProviderKind::ClaudeCode),
+                    agent_tab("d", "D", AgentProviderKind::Pi),
+                ],
+            },
+            None,
+        );
+        let to_close = state.tab_ids_for_close_scope("b", TabCloseScope::Right);
+
+        let removed = state.close_tabs_by_ids(to_close);
+
+        assert_eq!(removed, vec!["c", "d"]);
+        assert_eq!(
+            state
+                .tabs
+                .iter()
+                .map(|tab| tab.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["0", "b"]
+        );
+        assert_eq!(state.active_tab_id(), "b");
     }
 
     #[test]
