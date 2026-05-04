@@ -77,6 +77,8 @@ use std::pin::Pin;
 use daemon_proto::{Control, WorkerReply};
 use futures_core::Stream;
 
+pub mod in_memory;
+
 // ──────────────────────────────────────────────────────────────────
 // Shared types
 // ──────────────────────────────────────────────────────────────────
