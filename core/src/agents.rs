@@ -77,15 +77,11 @@ pub enum TerminalSessionKind {
     PiSession,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[serde(rename_all = "kebab-case")]
-pub enum TerminalRestoreStatus {
-    #[default]
-    NotStarted,
-    Launching,
-    Ready,
-    Failed,
-}
+// Wire enum lives in `daemon-proto`. Re-exported here so the
+// extraction PR could land without touching every importer.
+// TODO(another-one-eha): drop this re-export — have core callers
+// reach directly for `daemon_proto::TerminalRestoreStatus`.
+pub use daemon_proto::TerminalRestoreStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct TerminalSessionRef {

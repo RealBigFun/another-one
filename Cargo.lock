@@ -218,6 +218,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "daemon-proto",
  "dirs 5.0.1",
  "hotpath",
  "libc",
@@ -1800,6 +1801,7 @@ dependencies = [
  "another-one-core",
  "anyhow",
  "axum",
+ "daemon-proto",
  "futures-util",
  "image",
  "iroh",
@@ -1822,6 +1824,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "daemon",
+ "daemon-proto",
  "iroh",
  "serde",
  "serde_json",
@@ -1830,6 +1833,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
+]
+
+[[package]]
+name = "daemon-proto"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -14188,6 +14188,11 @@ impl AnotherOneApp {
                     }
                     changed = true;
                 }
+                // The daemon may push WorkerReply variants the
+                // desktop GUI doesn't consume (it sources most of
+                // its state in-process). Ignore them — MCP clients
+                // and mobile pick up the same variants directly.
+                _ => {}
             }
         }
         if changed {
