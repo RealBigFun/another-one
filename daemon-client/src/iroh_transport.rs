@@ -1,34 +1,35 @@
 //! Iroh-backed concrete impl of the abstract `daemon_transport`
-//! traits. Wraps the legacy fire-and-forget [`crate::session::Session`]
-//! so callers programmed against the abstract API see a network-stack-
-//! agnostic surface.
+//! traits. Wraps the legacy [`crate::session::Session`] so callers
+//! programmed against the abstract API see a network-stack-agnostic
+//! surface.
 //!
 //! ### Scope
 //!
-//! This impl satisfies the trait contract for the dial / call /
-//! push-data / events / close paths against today's iroh wire. It is
-//! intentionally **sequential at the call level** — one
-//! [`Session::call`] at a time per session. The trait permits that
-//! today; per-call request-id routing (so concurrent calls from
-//! separate tasks work) is the next layer's job (tracked under the
-//! typed-client API issue `another-one-f4r`).
+//! Concurrent calls are correlated by `request_id` (via the legacy
+//! session's call-routing); per-PTY-attach bytes flow through the
+//! [`Session::events`] stream tagged with the most-recently-attached
+//! `(section_id, tab_id)`.
 //!
 //! ### What's missing vs. the trait contract
 //!
-//! * **Concurrent calls**: serialized via an internal mutex. Two
-//!   tasks racing to `call` produces two sequential round-trips, not
-//!   two parallel ones. Acceptable until the typed-client work adds
-//!   a request-id router.
 //! * **Per-channel push streams**: today's wire only carries a single
 //!   PTY data fan — every attached tab's bytes arrive on the same
-//!   `TY_DATA` frame type. We tag emitted [`SessionEvent::PtyBytes`]
-//!   with the most-recently-attached `(section_id, tab_id)` so a
-//!   single-attach session demultiplexes correctly. Multi-attach is
-//!   future work.
+//!   `TY_DATA` frame type. The events stream tags bytes with the
+//!   most-recently-attached `(section_id, tab_id)`, which is correct
+//!   for single-attach sessions (the only shape the daemon supports
+//!   today). Multi-attach demuxing is future work.
+//! * **Push WorkerReply broadcasts**: `WorkerReply` frames at
+//!   `request_id == 0` (future broadcast verbs like
+//!   `ProjectListChanged`) aren't surfaced through `events()` because
+//!   the legacy session's `next_worker_reply` mpsc is consumed
+//!   elsewhere (`app/src/iroh_client.rs`). Wiring those into events
+//!   waits on the typed-client refactor that retires the polling
+//!   path entirely.
 
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::task::{Context as TaskContext, Poll};
 
 use daemon_proto::{Control, WorkerReply};
 use daemon_transport::{
@@ -36,7 +37,7 @@ use daemon_transport::{
     TransportError, TransportFactory,
 };
 use futures_core::Stream;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 use crate::session::{connect, Session as LegacySession};
 
@@ -75,9 +76,50 @@ impl TransportFactory for IrohTransportFactory {
             let legacy = connect(&pairing_url)
                 .await
                 .map_err(|e| TransportError::Connect(format!("{e:#}")))?;
+            let inner = Arc::new(legacy);
+            let attached = Arc::new(AsyncMutex::new(None::<(String, String)>));
+
+            // Bridge: drain the legacy session's PTY-bytes channel
+            // into a SessionEvent mpsc tagged with the current attach
+            // key. The bridge task ends when next_incoming_bytes
+            // returns None (session closed). Worker-reply push
+            // frames are NOT bridged — `app/src/iroh_client.rs` still
+            // owns that channel; rerouting waits on the typed-client
+            // refactor that retires the polling path.
+            let (events_tx, events_rx) = mpsc::unbounded_channel::<SessionEvent>();
+            let bridge_session = Arc::clone(&inner);
+            let bridge_attached = Arc::clone(&attached);
+            tokio::spawn(async move {
+                while let Some(bytes) = bridge_session.next_incoming_bytes().await {
+                    let (section_id, tab_id) = match &*bridge_attached.lock().await {
+                        Some(pair) => pair.clone(),
+                        // PTY bytes arriving while no tab is attached
+                        // is a wire-level race — the daemon may keep
+                        // pushing for a few frames after a DetachTab.
+                        // Drop on the floor; consumers don't have
+                        // anywhere to render them anyway.
+                        None => continue,
+                    };
+                    if events_tx
+                        .send(SessionEvent::PtyBytes {
+                            section_id,
+                            tab_id,
+                            bytes,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                // Closing notification so any held event stream
+                // terminates cleanly per the trait contract.
+                let _ = events_tx.send(SessionEvent::Closed { reason: None });
+            });
+
             let session = IrohSession {
-                inner: Arc::new(legacy),
-                attached: Arc::new(AsyncMutex::new(None)),
+                inner,
+                attached,
+                events_rx: StdMutex::new(Some(events_rx)),
             };
             Ok(Box::new(session) as Box<dyn AbstractSession>)
         })
@@ -92,10 +134,16 @@ struct IrohSession {
     inner: Arc<LegacySession>,
     /// Most recently attached `(section_id, tab_id)`. Used to tag
     /// `SessionEvent::PtyBytes`; see file-level docs on the
-    /// single-attach limitation. `Arc` so [`Self::events`] can hand
-    /// the same handle to its stream without taking the Mutex by
-    /// value.
+    /// single-attach limitation. `Arc` so the bridge task spawned in
+    /// `dial` can read it without owning the session.
     attached: Arc<AsyncMutex<Option<(String, String)>>>,
+    /// Single-consumer events stream. Consumed (`take()`) by the
+    /// first call to [`Self::events`]; subsequent calls get a
+    /// terminated stream. Std `Mutex` rather than tokio's because
+    /// the take is brief, sync, and `events()` is called from
+    /// `Stream::poll_next` contexts where async locking would be
+    /// awkward.
+    events_rx: StdMutex<Option<mpsc::UnboundedReceiver<SessionEvent>>>,
 }
 
 impl AbstractSession for IrohSession {
@@ -152,9 +200,14 @@ impl AbstractSession for IrohSession {
     }
 
     fn events(&self) -> EventStream {
+        let rx = self
+            .events_rx
+            .lock()
+            .expect("events_rx poisoned")
+            .take();
         Box::pin(IrohEventStream {
-            inner: self.inner.clone(),
-            attached: Arc::clone(&self.attached),
+            rx,
+            terminated: false,
         })
     }
 
@@ -175,38 +228,44 @@ impl AbstractSession for IrohSession {
 // uniformly — keeping a separate routing table here would only
 // duplicate the verb match.
 
-/// Stream impl that drains the legacy `Session`'s incoming-bytes /
-/// worker-reply channels and translates them into [`SessionEvent`]s.
-/// PTY bytes get tagged with the latest known attach key so consumers
-/// see a single demultiplexed stream.
+/// Stream impl that drains the events mpsc fed by the bridge task
+/// `dial` spawned. Yields `SessionEvent::PtyBytes` tagged with the
+/// current attach key, then `SessionEvent::Closed` when the bridge
+/// shuts down. After yielding `Closed` the stream terminates per the
+/// trait contract.
 struct IrohEventStream {
-    inner: Arc<LegacySession>,
-    attached: Arc<AsyncMutex<Option<(String, String)>>>,
+    /// `None` means a previous `events()` call already took the
+    /// receiver — second consumers get an immediately-terminated
+    /// stream. Documented on the trait method.
+    rx: Option<mpsc::UnboundedReceiver<SessionEvent>>,
+    terminated: bool,
 }
 
 impl Stream for IrohEventStream {
     type Item = SessionEvent;
 
-    fn poll_next(
-        self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        // The legacy session exposes async drain methods, not a
-        // pollable channel. Wiring those into a Stream-shaped poll
-        // requires either holding an in-flight Future across polls
-        // or hopping through a tokio::sync::mpsc. The simpler shape
-        // is to spawn a task that owns the legacy receivers and feeds
-        // an mpsc — but that needs a runtime, which this stream
-        // can't assume. Defer the live impl to f4r where the typed
-        // client API restructures Session around tokio anyway.
-        //
-        // Until then, this stream returns Pending forever (consumers
-        // that want events fall back to the legacy
-        // next_incoming_bytes / next_worker_reply pollers). The trait
-        // contract permits this — events() may legitimately yield
-        // nothing — and concrete consumers don't exist yet.
-        let _ = (&self.inner, &self.attached);
-        std::task::Poll::Pending
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        if self.terminated {
+            return Poll::Ready(None);
+        }
+        let Some(rx) = self.rx.as_mut() else {
+            // Second consumer; nothing to yield ever.
+            self.terminated = true;
+            return Poll::Ready(None);
+        };
+        match rx.poll_recv(cx) {
+            Poll::Ready(Some(event)) => {
+                if matches!(event, SessionEvent::Closed { .. }) {
+                    self.terminated = true;
+                }
+                Poll::Ready(Some(event))
+            }
+            Poll::Ready(None) => {
+                self.terminated = true;
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
