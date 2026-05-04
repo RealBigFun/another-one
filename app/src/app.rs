@@ -46,7 +46,6 @@ use crate::agents::{
     terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
     AgentDef, TerminalLaunchConfig, TerminalSessionRef, AGENTS,
 };
-use daemon_proto::TerminalRestoreStatus;
 use crate::background_ops::{BroadcastOperation, BroadcastOperationEvent};
 use crate::git_workspace::GitWorkspace;
 use crate::layout::*;
@@ -71,11 +70,12 @@ use crate::terminal_runtime::{
     TerminalSurfaceSnapshot, TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
-pub use another_one_core::section::SectionId;
 use another_one_core::clients::{
     AttachTabRequest, AttachTabResponse, ClientEvent, ClientId, CloseTabRequest, Focus, JobId,
     OpenTabRequest, OpenTabResponse, OpenTaskRequest, OpenTaskResponse, SelectRequest,
 };
+pub use another_one_core::section::SectionId;
+use daemon_proto::TerminalRestoreStatus;
 
 const ACTIVE_GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 const ACTIVE_GIT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
@@ -1278,9 +1278,7 @@ impl WorkspacePane {
                     // running; nothing to subscribe anymore. Log so
                     // we don't silently lose a TabOpened event when
                     // shutdown races a tab spawn.
-                    log::warn!(
-                        "TabOpened defer skipped — app entity gone (tab {tab_clone})"
-                    );
+                    log::warn!("TabOpened defer skipped — app entity gone (tab {tab_clone})");
                 }
             });
         }
@@ -2670,6 +2668,17 @@ fn terminal_line_selection_range(
     })
 }
 
+pub(crate) fn terminal_open_link_modifier_held(modifiers: gpui::Modifiers) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        modifiers.platform
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        modifiers.control && !modifiers.platform
+    }
+}
+
 fn terminal_link_at_position(
     snapshot: &TerminalSurfaceSnapshot,
     position: TerminalCellPosition,
@@ -2964,7 +2973,10 @@ pub(crate) fn encode_terminal_mouse_event(
         TerminalMouseButton::WheelLeft => 66,
         TerminalMouseButton::WheelRight => 67,
     };
-    if matches!(action, TerminalMouseAction::Drag | TerminalMouseAction::Motion) {
+    if matches!(
+        action,
+        TerminalMouseAction::Drag | TerminalMouseAction::Motion
+    ) {
         button_code += 32;
     }
     if modifiers.shift {
@@ -5748,9 +5760,9 @@ impl AnotherOneApp {
                         )),
                         ClientEvent::TaskOpenFailed {
                             originator, error, ..
-                        } if originator != &gui => Some(format!(
-                            "{originator} task creation failed: {error}"
-                        )),
+                        } if originator != &gui => {
+                            Some(format!("{originator} task creation failed: {error}"))
+                        }
                         ClientEvent::FocusChanged {
                             originator, target, ..
                         } if originator != &gui && target == &gui => {
@@ -6051,9 +6063,10 @@ impl AnotherOneApp {
                     req.tab_id
                 )
             })?;
-        let launch_config = persisted_tab.launch_config.clone().ok_or_else(|| {
-            anyhow::anyhow!("persisted tab {} has no launch_config", req.tab_id)
-        })?;
+        let launch_config = persisted_tab
+            .launch_config
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("persisted tab {} has no launch_config", req.tab_id))?;
         let agent_launch_args = self.agent_launch_args_for_launch_config(&launch_config);
         let cwd = task
             .cwd
@@ -6100,15 +6113,18 @@ impl AnotherOneApp {
         req: CloseTabRequest,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        let target = self.workspace_pane.read(cx).section_states.iter().find_map(
-            |(section_id, state)| {
-                state
-                    .tabs
-                    .iter()
-                    .position(|t| t.id == req.tab_id)
-                    .map(|idx| (section_id.clone(), idx))
-            },
-        );
+        let target =
+            self.workspace_pane
+                .read(cx)
+                .section_states
+                .iter()
+                .find_map(|(section_id, state)| {
+                    state
+                        .tabs
+                        .iter()
+                        .position(|t| t.id == req.tab_id)
+                        .map(|idx| (section_id.clone(), idx))
+                });
         let Some((section_id, tab_index)) = target else {
             anyhow::bail!("tab {} not found", req.tab_id);
         };
@@ -6218,11 +6234,7 @@ impl AnotherOneApp {
         // vocabulary and delegate to the trait surface. The GUI's
         // new-task path goes through the same surface, so this
         // function intentionally has no domain logic of its own.
-        let client_id = ClientId::mcp(
-            req.client_handle
-                .as_deref()
-                .unwrap_or("anonymous"),
-        );
+        let client_id = ClientId::mcp(req.client_handle.as_deref().unwrap_or("anonymous"));
         let launch_config = crate::agents::TerminalLaunchConfig::default();
 
         if let Some(task_id) = req.task_id.clone() {
@@ -6951,6 +6963,15 @@ impl AnotherOneApp {
         let Some(cell_position) = terminal_cell_position_from_mouse(position, &metrics) else {
             return false;
         };
+        if terminal_open_link_modifier_held(modifiers)
+            && self
+                .terminal_surface_snapshots
+                .get(key)
+                .and_then(|snapshot| terminal_link_at_position(snapshot, cell_position))
+                .is_some()
+        {
+            return false;
+        }
         let mods = TerminalMouseModifiers {
             shift: modifiers.shift,
             alt: modifiers.alt,
@@ -7051,13 +7072,11 @@ impl AnotherOneApp {
                 .get(key)
                 .and_then(|snapshot| terminal_link_at_position(snapshot, cell))
         });
-        let selected_text = self
-            .terminal_selection_for(key)
-            .and_then(|selection| {
-                self.terminal_surface_snapshots
-                    .get(key)
-                    .and_then(|snapshot| terminal_selected_text(snapshot, selection))
-            });
+        let selected_text = self.terminal_selection_for(key).and_then(|selection| {
+            self.terminal_surface_snapshots
+                .get(key)
+                .and_then(|snapshot| terminal_selected_text(snapshot, selection))
+        });
         let state = TerminalContextMenuState {
             key: key.clone(),
             anchor_x: f32::from(position.x),
@@ -7165,7 +7184,7 @@ impl AnotherOneApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !(ev.modifiers.control || ev.modifiers.platform) {
+        if !terminal_open_link_modifier_held(ev.modifiers) {
             return false;
         }
 
@@ -7299,7 +7318,8 @@ impl AnotherOneApp {
             return false;
         }
         let snapshot = runtime.snapshot();
-        self.terminal_surface_snapshots.insert(key.clone(), snapshot);
+        self.terminal_surface_snapshots
+            .insert(key.clone(), snapshot);
 
         if let Some(selection) = self.terminal_selection.as_mut() {
             // Same content shifts +1 viewport row when we scroll up
@@ -7601,11 +7621,7 @@ impl AnotherOneApp {
             || self.sidebar_task_rename.is_some()
             || self.sidebar_task_menu.is_some()
             || self.workspace_pane.read(cx).terminal_tab_menu.is_some()
-            || self
-                .workspace_pane
-                .read(cx)
-                .terminal_context_menu
-                .is_some()
+            || self.workspace_pane.read(cx).terminal_context_menu.is_some()
             || self.terminal_search.is_some()
             || self
                 .workspace_pane
@@ -8235,12 +8251,8 @@ impl AnotherOneApp {
                         let branch_label = self
                             .project_store
                             .project(&project_id)
-                            .and_then(|p| {
-                                another_one_core::project_store::current_branch(&p.path)
-                            })
-                            .or_else(|| {
-                                self.project_store.current_branch_name(&project_id)
-                            })
+                            .and_then(|p| another_one_core::project_store::current_branch(&p.path))
+                            .or_else(|| self.project_store.current_branch_name(&project_id))
                             .unwrap_or_else(|| source_branch.clone());
                         let success_message = if branch_label.is_empty() {
                             format!("Opened direct task {}.", resolved_name)
@@ -8278,10 +8290,8 @@ impl AnotherOneApp {
                 self.pending_task_launch = Some(PendingTaskLaunch::NewTaskModal);
                 let job_id = JobId::fresh();
                 let originator = ClientId::gui_desktop();
-                self.pending_worktree_jobs.insert(
-                    job_id.clone(),
-                    (originator.clone(), project.id.clone()),
-                );
+                self.pending_worktree_jobs
+                    .insert(job_id.clone(), (originator.clone(), project.id.clone()));
                 self.emit_client_event(ClientEvent::TaskOpenStarted {
                     originator,
                     job_id,
@@ -11610,24 +11620,24 @@ mod tests {
     use super::{
         active_toolbar_git_action_entry, apply_terminal_session_backfill,
         apply_terminal_title_update, choose_initial_section, collect_drained_git_action_replies,
-        encode_terminal_mouse_event, fixed_title_for_project_action,
-        global_tab_navigation_targets, has_active_toolbar_git_action, new_tab_seed_agent_id,
-        next_global_tab_navigation_target, next_project_navigation_target,
-        next_task_navigation_target, open_in_target_path_for_project,
-        persisted_active_section_key, remove_terminal_runtime_state, resolve_new_task_shortcut_target,
+        encode_terminal_mouse_event, fixed_title_for_project_action, global_tab_navigation_targets,
+        has_active_toolbar_git_action, new_tab_seed_agent_id, next_global_tab_navigation_target,
+        next_project_navigation_target, next_task_navigation_target,
+        open_in_target_path_for_project, persisted_active_section_key,
+        remove_terminal_runtime_state, resolve_new_task_shortcut_target,
         root_project_navigation_targets, select_active_section, sidebar_task_navigation_targets,
         terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
-        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
-        terminal_word_selection_range, ActiveToolbarGitAction, AnotherOneApp, AppToast,
-        DrainedGitAction, GitActionReply, NavigationDirection, NewTaskShortcutTarget, SectionId,
-        SectionState, TabCloseScope, TerminalCellPosition, TerminalLinkRange, TerminalMouseAction,
-        TerminalMouseButton, TerminalMouseModifiers, TerminalSelectionRange, TerminalTab, ToastKind,
+        terminal_open_link_modifier_held, terminal_scroll_lines, terminal_selected_text,
+        terminal_selection_range, terminal_word_selection_range, ActiveToolbarGitAction,
+        AnotherOneApp, AppToast, DrainedGitAction, GitActionReply, NavigationDirection,
+        NewTaskShortcutTarget, SectionId, SectionState, TabCloseScope, TerminalCellPosition,
+        TerminalLinkRange, TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers,
+        TerminalSelectionRange, TerminalTab, ToastKind,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
         TerminalSessionKind, TerminalSessionRef,
     };
-    use daemon_proto::TerminalRestoreStatus;
     use crate::git_actions::ToolbarGitAction;
     use crate::project_store::{
         GitDiffSelection, GitDiffSource, PersistedSectionState, PersistedTerminalTab, Project,
@@ -11638,7 +11648,8 @@ mod tests {
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalMouseEncoding, TerminalMouseLevel,
         TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
     };
-    use gpui::{point, px, ClipboardItem, Image, ImageFormat, ScrollDelta};
+    use daemon_proto::TerminalRestoreStatus;
+    use gpui::{point, px, ClipboardItem, Image, ImageFormat, Modifiers, ScrollDelta};
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use std::sync::mpsc;
@@ -13520,6 +13531,32 @@ mod tests {
         );
 
         assert_eq!(copied.as_deref(), Some("llo\nworl"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_open_link_modifier_uses_command_on_macos() {
+        assert!(terminal_open_link_modifier_held(Modifiers {
+            platform: true,
+            ..Modifiers::default()
+        }));
+        assert!(!terminal_open_link_modifier_held(Modifiers {
+            control: true,
+            ..Modifiers::default()
+        }));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn terminal_open_link_modifier_uses_control_off_macos() {
+        assert!(terminal_open_link_modifier_held(Modifiers {
+            control: true,
+            ..Modifiers::default()
+        }));
+        assert!(!terminal_open_link_modifier_held(Modifiers {
+            platform: true,
+            ..Modifiers::default()
+        }));
     }
 
     #[test]

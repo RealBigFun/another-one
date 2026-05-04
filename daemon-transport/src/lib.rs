@@ -202,10 +202,7 @@ pub trait Session: Send + Sync {
     /// timeout, encoding). Most callers want to flatten both into
     /// one error type; the daemon-client typed API does that
     /// per-verb.
-    fn call<'a>(
-        &'a self,
-        verb: Control,
-    ) -> SessionFuture<'a, Result<WorkerReply, TransportError>>;
+    fn call<'a>(&'a self, verb: Control) -> SessionFuture<'a, Result<WorkerReply, TransportError>>;
 
     /// Push raw payload bytes for an already-attached channel — used
     /// for PTY input on tabs the session has called

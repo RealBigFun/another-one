@@ -232,10 +232,7 @@ struct InMemorySession {
 }
 
 impl Session for InMemorySession {
-    fn call<'a>(
-        &'a self,
-        verb: Control,
-    ) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
+    fn call<'a>(&'a self, verb: Control) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
         Box::pin(async move {
             let request_id = RequestId(
                 self.next_request_id
@@ -607,10 +604,7 @@ impl TransportFactory for InMemoryTransportFactory {
             // Kept on the factory because an upcoming step (timed
             // pairing, peer-id allocation) will key off it.
             let _ = &self.directory;
-            let client = transport
-                .lock()
-                .expect("transport poisoned")
-                .enqueue_pair();
+            let client = transport.lock().expect("transport poisoned").enqueue_pair();
             Ok(client)
         })
     }

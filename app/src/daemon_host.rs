@@ -30,6 +30,7 @@ use std::thread;
 
 use tokio::sync::broadcast;
 
+use daemon::{DaemonRegistry, EndpointHandle};
 use daemon_proto::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
     AgentSummaryWire, ChangedFileWire, EnabledAgentsViewWire, GitActionScriptsView,
@@ -38,7 +39,6 @@ use daemon_proto::{
     ProjectSummary, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
     ToolbarActionOutcome as WireToolbarActionOutcome,
 };
-use daemon::{DaemonRegistry, EndpointHandle};
 
 use another_one_core::agents::{AgentProviderKind, AGENTS};
 use another_one_core::git_actions::{

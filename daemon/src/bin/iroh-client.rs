@@ -140,13 +140,9 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("[client] no project path available; skipping watch_project");
     }
 
-    frame::write_frame(
-        &mut send,
-        TY_DATA,
-        b"echo HELLO_FROM_IROH_$((7*6))\n",
-    )
-    .await
-    .context("write input")?;
+    frame::write_frame(&mut send, TY_DATA, b"echo HELLO_FROM_IROH_$((7*6))\n")
+        .await
+        .context("write input")?;
     eprintln!("[client] sent input");
 
     // Read for ~2s.

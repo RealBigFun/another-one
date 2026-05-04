@@ -147,18 +147,12 @@ struct IrohSession {
 }
 
 impl AbstractSession for IrohSession {
-    fn call<'a>(
-        &'a self,
-        verb: Control,
-    ) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
+    fn call<'a>(&'a self, verb: Control) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
         Box::pin(async move {
             // Track attach state so events() can tag PTY bytes
             // correctly. Single-attach only; matches today's daemon.
             match &verb {
-                Control::AttachTab {
-                    section_id,
-                    tab_id,
-                } => {
+                Control::AttachTab { section_id, tab_id } => {
                     *self.attached.lock().await = Some((section_id.clone(), tab_id.clone()));
                 }
                 Control::DetachTab => {
@@ -200,11 +194,7 @@ impl AbstractSession for IrohSession {
     }
 
     fn events(&self) -> EventStream {
-        let rx = self
-            .events_rx
-            .lock()
-            .expect("events_rx poisoned")
-            .take();
+        let rx = self.events_rx.lock().expect("events_rx poisoned").take();
         Box::pin(IrohEventStream {
             rx,
             terminated: false,

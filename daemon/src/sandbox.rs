@@ -15,9 +15,9 @@ use portable_pty::MasterPty;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use daemon_proto::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
 use crate::pty::PtySession;
 use crate::registry::{DaemonRegistry, RegistryFuture};
+use daemon_proto::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
 
 const SANDBOX_PROJECT_ID: &str = "sandbox";
 const SANDBOX_TASK_ID: &str = "sandbox-task";

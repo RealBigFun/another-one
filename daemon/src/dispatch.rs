@@ -304,31 +304,33 @@ async fn dispatch_call(
         Control::AddAgentToSection {
             section_id,
             agent_id,
-        } => Some(match registry.add_agent_to_section(&section_id, &agent_id) {
-            Ok(tab_id) => WorkerReply::AddAgentToSectionAck { tab_id },
-            Err(message) => WorkerReply::Err {
-                kind: classify_unknown_id(&message),
-                message,
+        } => Some(
+            match registry.add_agent_to_section(&section_id, &agent_id) {
+                Ok(tab_id) => WorkerReply::AddAgentToSectionAck { tab_id },
+                Err(message) => WorkerReply::Err {
+                    kind: classify_unknown_id(&message),
+                    message,
+                },
             },
-        }),
-        Control::ActivateSectionTab { section_id, tab_id } => Some(
-            match registry.activate_section_tab(&section_id, &tab_id) {
+        ),
+        Control::ActivateSectionTab { section_id, tab_id } => {
+            Some(match registry.activate_section_tab(&section_id, &tab_id) {
                 Ok(()) => WorkerReply::ActivateSectionTabAck,
                 Err(message) => WorkerReply::Err {
                     kind: classify_unknown_id(&message),
                     message,
                 },
-            },
-        ),
-        Control::CloseSectionTab { section_id, tab_id } => Some(
-            match registry.close_section_tab(&section_id, &tab_id) {
+            })
+        }
+        Control::CloseSectionTab { section_id, tab_id } => {
+            Some(match registry.close_section_tab(&section_id, &tab_id) {
                 Ok(active_tab_id) => WorkerReply::CloseSectionTabAck { active_tab_id },
                 Err(message) => WorkerReply::Err {
                     kind: classify_unknown_id(&message),
                     message,
                 },
-            },
-        ),
+            })
+        }
         Control::ToggleSectionTabPinned { section_id, tab_id } => Some(
             match registry.toggle_section_tab_pinned(&section_id, &tab_id) {
                 Ok(pinned) => WorkerReply::ToggleSectionTabPinnedAck { pinned },
@@ -511,24 +513,24 @@ async fn dispatch_call(
                 },
             },
         ),
-        Control::StageAllChanges { project_id } => Some(
-            match registry.stage_all_changes(&project_id).await {
+        Control::StageAllChanges { project_id } => {
+            Some(match registry.stage_all_changes(&project_id).await {
                 Ok(changed_files) => WorkerReply::StageAllChangesAck { changed_files },
                 Err(e) => WorkerReply::Err {
                     message: format!("{e:#}"),
                     kind: ErrKind::Internal,
                 },
-            },
-        ),
-        Control::UnstageAllChanges { project_id } => Some(
-            match registry.unstage_all_changes(&project_id).await {
+            })
+        }
+        Control::UnstageAllChanges { project_id } => {
+            Some(match registry.unstage_all_changes(&project_id).await {
                 Ok(changed_files) => WorkerReply::UnstageAllChangesAck { changed_files },
                 Err(e) => WorkerReply::Err {
                     message: format!("{e:#}"),
                     kind: ErrKind::Internal,
                 },
-            },
-        ),
+            })
+        }
         Control::DiscardChangedFile {
             project_id,
             path,
@@ -618,24 +620,24 @@ async fn dispatch_call(
                 },
             },
         ),
-        Control::FindPullRequestStatus { project_id } => Some(
-            match registry.find_pull_request_status(&project_id) {
+        Control::FindPullRequestStatus { project_id } => {
+            Some(match registry.find_pull_request_status(&project_id) {
                 Ok(status) => WorkerReply::PullRequestStatusAck { status },
                 Err(message) => WorkerReply::Err {
                     message,
                     kind: ErrKind::Internal,
                 },
-            },
-        ),
-        Control::ReadPullRequestChecks { project_id } => Some(
-            match registry.read_pull_request_checks(&project_id) {
+            })
+        }
+        Control::ReadPullRequestChecks { project_id } => {
+            Some(match registry.read_pull_request_checks(&project_id) {
                 Ok(checks) => WorkerReply::PullRequestChecksAck { checks },
                 Err(message) => WorkerReply::Err {
                     message,
                     kind: ErrKind::Internal,
                 },
-            },
-        ),
+            })
+        }
         Control::FindProjectPullRequests {
             project_id,
             filter_index,
@@ -689,15 +691,15 @@ async fn dispatch_call(
         Control::ReadShortcutSettings => Some(WorkerReply::ShortcutSettingsAck {
             view: registry.read_shortcut_settings(),
         }),
-        Control::SetShortcutBinding { action_id, binding } => Some(
-            match registry.set_shortcut_binding(&action_id, &binding) {
+        Control::SetShortcutBinding { action_id, binding } => {
+            Some(match registry.set_shortcut_binding(&action_id, &binding) {
                 Ok(()) => WorkerReply::SetShortcutBindingAck,
                 Err(message) => WorkerReply::Err {
                     kind: classify_shortcut_action(&message),
                     message,
                 },
-            },
-        ),
+            })
+        }
         Control::ResetShortcutBinding { action_id } => {
             Some(match registry.reset_shortcut_binding(&action_id) {
                 Ok(()) => WorkerReply::ResetShortcutBindingAck,
@@ -1003,8 +1005,7 @@ mod tests {
     async fn serve_session_round_trips_list_projects() {
         let (server, client) = pair("test-peer");
         let registry: Arc<dyn DaemonRegistry> = Arc::new(StubRegistry::new());
-        let server_task =
-            tokio::spawn(serve_session(server_arc(server), Arc::clone(&registry)));
+        let server_task = tokio::spawn(serve_session(server_arc(server), Arc::clone(&registry)));
 
         let reply = client.call(Control::ListProjects).await.expect("call");
         match reply {
@@ -1026,8 +1027,7 @@ mod tests {
     async fn serve_session_dispatches_slugify_branch_name() {
         let (server, client) = pair("test-peer");
         let registry: Arc<dyn DaemonRegistry> = Arc::new(StubRegistry::new());
-        let _server_task =
-            tokio::spawn(serve_session(server_arc(server), Arc::clone(&registry)));
+        let _server_task = tokio::spawn(serve_session(server_arc(server), Arc::clone(&registry)));
 
         let reply = client
             .call(Control::SlugifyBranchName {
@@ -1047,8 +1047,7 @@ mod tests {
     async fn serve_session_dispatches_read_project_branches() {
         let (server, client) = pair("test-peer");
         let registry: Arc<dyn DaemonRegistry> = Arc::new(StubRegistry::new());
-        let _server_task =
-            tokio::spawn(serve_session(server_arc(server), Arc::clone(&registry)));
+        let _server_task = tokio::spawn(serve_session(server_arc(server), Arc::clone(&registry)));
 
         let reply = client
             .call(Control::ReadProjectBranches {

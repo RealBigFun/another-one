@@ -9,8 +9,9 @@ use gpui::{
 use crate::agent_icons::branded_icon;
 use crate::agents::AGENTS;
 use crate::app::{
-    terminal_link_ranges, AnotherOneApp, TabCloseScope, TerminalLinkRange, TerminalMouseAction,
-    TerminalMouseButton, TerminalSelectionRange, WorkspaceKeyboardFocus, WorkspacePane,
+    terminal_link_ranges, terminal_open_link_modifier_held, AnotherOneApp, TabCloseScope,
+    TerminalLinkRange, TerminalMouseAction, TerminalMouseButton, TerminalSelectionRange,
+    WorkspaceKeyboardFocus, WorkspacePane,
 };
 use crate::layout::{TERMINAL_TAB_BAR_H, TERMINAL_VIEW_PADDING};
 use crate::terminal_runtime::{
@@ -953,7 +954,7 @@ impl WorkspacePane {
             // modifier, the underline is just an affordance and the
             // cursor stays on text-select.
             let mods = window.modifiers();
-            let modifier_held = mods.platform || mods.control;
+            let modifier_held = terminal_open_link_modifier_held(mods);
             let hovering_link = self
                 .terminal_link_hover
                 .as_ref()
@@ -1005,6 +1006,10 @@ impl WorkspacePane {
                         this.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
                         this.focus_handle.focus(window, cx);
                         let _ = this.app.update(cx, |app, app_cx| {
+                            if app.open_terminal_link_at_click(&selection_key, ev, window, app_cx) {
+                                app_cx.stop_propagation();
+                                return;
+                            }
                             if app.forward_terminal_mouse_event(
                                 &selection_key,
                                 TerminalMouseButton::Left,
@@ -1013,10 +1018,6 @@ impl WorkspacePane {
                                 ev.modifiers,
                                 window,
                             ) {
-                                app_cx.stop_propagation();
-                                return;
-                            }
-                            if app.open_terminal_link_at_click(&selection_key, ev, window, app_cx) {
                                 app_cx.stop_propagation();
                                 return;
                             }

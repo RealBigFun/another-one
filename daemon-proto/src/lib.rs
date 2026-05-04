@@ -1492,7 +1492,6 @@ pub struct McpSettingsView {
     pub sync_error_provider_ids: Vec<String>,
 }
 
-
 /// Lifecycle of a terminal restore attempt at desktop boot — emitted
 /// to the wire so mobile clients can render the same "starting / ready
 /// / failed" pip the desktop sidebar shows. Re-exported from

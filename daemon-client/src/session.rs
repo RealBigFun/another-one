@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use anyhow::Context;
+use std::sync::Mutex as StdMutex;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
-use std::sync::Mutex as StdMutex;
 
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
@@ -29,11 +29,11 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey};
 
 use crate::frame::{read_frame, write_frame};
 use crate::pairing_url::parse_pairing_url;
+use crate::status::{push_status, DialStatus};
 use daemon_proto::{
     Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope, ALPN, PROTOCOL_VERSION, TY_CONTROL,
     TY_DATA, TY_WORKER_REPLY,
 };
-use crate::status::{push_status, DialStatus};
 
 /// Dedicated tokio runtime for all iroh work. Callers may live on any
 /// executor (or none at all — the GPUI desktop app drives this from
@@ -515,10 +515,7 @@ impl Session {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel::<WorkerReply>();
         {
-            let mut pending = self
-                .pending_calls
-                .lock()
-                .expect("pending_calls poisoned");
+            let mut pending = self.pending_calls.lock().expect("pending_calls poisoned");
             pending.insert(request_id, tx);
         }
         let envelope = daemon_proto::ControlEnvelope {
@@ -529,10 +526,7 @@ impl Session {
         if let Err(e) = self.send_frame(TY_CONTROL, payload).await {
             // Best-effort cleanup: drop the registration so the recv
             // loop's lookup doesn't waste time on an abandoned id.
-            let mut pending = self
-                .pending_calls
-                .lock()
-                .expect("pending_calls poisoned");
+            let mut pending = self.pending_calls.lock().expect("pending_calls poisoned");
             pending.remove(&request_id);
             return Err(e);
         }

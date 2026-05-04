@@ -27,14 +27,12 @@ use tracing::{debug, info, warn};
 
 use crate::dispatch::{serve_session_with_attach, AttachState};
 use crate::frame::{read_frame, write_frame};
+use crate::registry::{DaemonRegistry, EndpointHandle, PairState};
 use daemon_proto::{
     Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope, PUSH_REQUEST_ID, TY_CONTROL,
     TY_DATA, TY_WORKER_REPLY,
 };
-use crate::registry::{DaemonRegistry, EndpointHandle, PairState};
-use daemon_transport::{
-    RequestId, ServerSession, SessionFuture, TransportError,
-};
+use daemon_transport::{RequestId, ServerSession, SessionFuture, TransportError};
 
 use daemon_proto::{ALPN, PROTOCOL_VERSION};
 
@@ -390,9 +388,7 @@ impl ServerSession for IrohServerSession {
                         // type during the AttachTab → first-reply
                         // race).
                         if let Some((section_id, tab_id)) = incoming.attach.snapshot_target() {
-                            incoming
-                                .registry
-                                .tab_input(&section_id, &tab_id, &payload);
+                            incoming.registry.tab_input(&section_id, &tab_id, &payload);
                         }
                     }
                     Ok(Some((TY_CONTROL, payload))) => {
@@ -403,10 +399,7 @@ impl ServerSession for IrohServerSession {
                                 continue;
                             }
                         };
-                        return Ok(Some((
-                            RequestId(envelope.request_id),
-                            envelope.control,
-                        )));
+                        return Ok(Some((RequestId(envelope.request_id), envelope.control)));
                     }
                     Ok(Some((ty, _))) => {
                         warn!(frame_type = ty, "unknown iroh frame type");
@@ -521,7 +514,6 @@ impl Drop for IrohServerSession {
         }
     }
 }
-
 
 /// Validate a `Control::Hello` from an unpaired peer. On match, consume
 /// the nonce (so a second reader of the same QR can't re-pair) and
@@ -763,10 +755,7 @@ fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
 // daemon's framing logic.
 
 impl crate::frame::ReadExactish for iroh::endpoint::RecvStream {
-    async fn read_exactish(
-        &mut self,
-        buf: &mut [u8],
-    ) -> anyhow::Result<crate::frame::ReadOutcome> {
+    async fn read_exactish(&mut self, buf: &mut [u8]) -> anyhow::Result<crate::frame::ReadOutcome> {
         let mut read = 0;
         while read < buf.len() {
             match self.read(&mut buf[read..]).await {

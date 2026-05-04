@@ -66,9 +66,7 @@ async fn write_frame(
     Ok(())
 }
 
-async fn read_frame(
-    stream: &mut UnixStream,
-) -> Result<Option<(u8, Vec<u8>)>, TransportError> {
+async fn read_frame(stream: &mut UnixStream) -> Result<Option<(u8, Vec<u8>)>, TransportError> {
     let mut header = [0u8; 5];
     match stream.read_exact(&mut header).await {
         Ok(_) => {}
@@ -270,10 +268,7 @@ struct UdsSession {
 }
 
 impl Session for UdsSession {
-    fn call<'a>(
-        &'a self,
-        verb: Control,
-    ) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
+    fn call<'a>(&'a self, verb: Control) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
         Box::pin(async move {
             let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
             let (tx, rx) = oneshot::channel();
@@ -431,9 +426,7 @@ impl Transport for UdsTransport {
             // a per-connection counter for now — concrete consumers
             // that need real identity wire it up via libc::getsockopt
             // in a follow-up.
-            let connection_id = self
-                .next_call_id
-                .fetch_add(1, Ordering::Relaxed);
+            let connection_id = self.next_call_id.fetch_add(1, Ordering::Relaxed);
             let peer_id = format!("uds:conn-{connection_id}");
 
             tokio::spawn(server_reader_loop(read_half, call_tx));
@@ -660,7 +653,10 @@ mod tests {
         let factory = UdsTransportFactory::new();
         let dial_path = path.clone();
         let client_task = tokio::spawn(async move {
-            factory.dial(DialTarget::SocketPath(dial_path)).await.expect("dial")
+            factory
+                .dial(DialTarget::SocketPath(dial_path))
+                .await
+                .expect("dial")
         });
         let server_session = transport.accept().await.unwrap().unwrap();
         let client = Arc::new(client_task.await.unwrap());

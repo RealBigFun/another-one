@@ -13,12 +13,12 @@ use std::process::{Command, Output};
 use crate::agents::{
     effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, DEFAULT_AGENT_ID,
 };
-use daemon_proto::TerminalRestoreStatus;
 use crate::git_actions::{
     default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
 };
 use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
+use daemon_proto::TerminalRestoreStatus;
 
 const STORE_VERSION: u8 = 3;
 
@@ -3966,9 +3966,9 @@ mod tests {
         AgentProviderKind, TerminalLaunchConfig, TerminalSessionKind, TerminalSessionRef,
         DEFAULT_AGENT_ID,
     };
-    use daemon_proto::TerminalRestoreStatus;
     use crate::open_in::OpenInAppKind;
     use crate::shortcuts::ShortcutSettings;
+    use daemon_proto::TerminalRestoreStatus;
 
     use super::{
         app_worktrees_root, combine_commit_file_changes, create_branch_from_head,

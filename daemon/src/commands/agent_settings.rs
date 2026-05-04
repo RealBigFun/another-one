@@ -1,5 +1,5 @@
-use daemon_proto::{Control, ErrKind, WorkerReply};
 use crate::registry::DaemonRegistry;
+use daemon_proto::{Control, ErrKind, WorkerReply};
 
 pub(crate) fn handle(ctrl: Control, registry: &dyn DaemonRegistry) -> Result<WorkerReply, Control> {
     match ctrl {
