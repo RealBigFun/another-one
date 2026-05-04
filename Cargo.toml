@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["app", "daemon", "daemon-client", "daemon-proto", "mcp-shim", "core"]
+members = ["app", "daemon", "daemon-client", "daemon-proto", "daemon-transport", "mcp-shim", "core"]
 
 # Vendored noq-udp with a local fix for quinn-rs/quinn#2399: Android (and some
 # Linux NIC drivers) accept UDP_SEGMENT at setsockopt time but then fail the
