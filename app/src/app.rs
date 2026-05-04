@@ -5369,6 +5369,28 @@ impl AnotherOneApp {
                         tab.launch_config = launch_config.clone();
                         tab.restore_status = TerminalRestoreStatus::Ready;
                     });
+                    // Now that the broadcast is registered, ask the
+                    // session to attach so PTY bytes start flowing
+                    // through `SessionEvent::PtyBytes` into
+                    // `drain_session_events`. Desktop and mobile take
+                    // the same byte-input path — desktop's
+                    // in-memory pair just routes the forwarder
+                    // locally instead of over iroh.
+                    let session = self.session_handle();
+                    let attach_section_id = key.section_id.store_key();
+                    let attach_tab_id = key.tab_id.clone();
+                    crate::session_host::dispatch_fire_and_forget(
+                        session,
+                        daemon_proto::Control::AttachTab {
+                            section_id: attach_section_id,
+                            tab_id: attach_tab_id,
+                        },
+                        |result| {
+                            if let Err(err) = result {
+                                log::warn!("post-launch AttachTab failed: {err}");
+                            }
+                        },
+                    );
                     updated = true;
                 }
                 Ok(TerminalLaunchReply::Output { .. }) => {
