@@ -177,6 +177,13 @@ struct TerminalSelectionState {
     anchor: TerminalCellPosition,
     head: TerminalCellPosition,
     dragging: bool,
+    /// While dragging past the top/bottom of the viewport, the
+    /// refresh tick auto-scrolls by this many lines per tick. Sign
+    /// = direction (+ = scroll up / older, - = scroll down / newer);
+    /// magnitude scales with how far past the edge the pointer is
+    /// so a small overshoot inches and a far overshoot races. Zero
+    /// means the pointer is inside the viewport or drag ended.
+    autoscroll_dir: i32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -7009,6 +7016,7 @@ impl AnotherOneApp {
                     column: selection.end_column,
                 },
                 dragging: false,
+                autoscroll_dir: 0,
             })
         } else {
             Some(TerminalSelectionState {
@@ -7016,6 +7024,7 @@ impl AnotherOneApp {
                 anchor: position,
                 head: position,
                 dragging: true,
+                autoscroll_dir: 0,
             })
         };
         cx.notify();
@@ -7204,21 +7213,113 @@ impl AnotherOneApp {
         if selection.key != metrics.key {
             if let Some(selection) = self.terminal_selection.as_mut() {
                 selection.dragging = false;
+                selection.autoscroll_dir = 0;
             }
             return false;
         }
 
-        let Some(position) = terminal_cell_position_from_mouse(ev.position, &metrics) else {
-            return false;
+        // Edge auto-scroll: if the pointer is above or below the
+        // viewport content area, mark the direction so the refresh
+        // tick keeps scrolling while the drag continues — even if
+        // the pointer stays still. Inside the viewport we cancel.
+        let content_top = metrics.top + metrics.padding;
+        let content_bottom = content_top + metrics.cell_height * (metrics.rows as f32);
+        let mouse_y = f32::from(ev.position.y);
+        // Velocity in lines-per-tick scales with overshoot distance
+        // measured in cell heights. 0 cells past = 1 line/tick (just
+        // entered the edge), grows roughly linearly, capped so a
+        // user dragging way off-screen doesn't fly through 1000
+        // lines in a single frame.
+        let autoscroll_dir = if mouse_y < content_top {
+            let cells_past = ((content_top - mouse_y) / metrics.cell_height.max(1.0)).ceil();
+            (cells_past as i32).clamp(1, 16)
+        } else if mouse_y > content_bottom {
+            let cells_past = ((mouse_y - content_bottom) / metrics.cell_height.max(1.0)).ceil();
+            -(cells_past as i32).clamp(1, 16)
+        } else {
+            0
         };
+
+        let position = terminal_cell_position_from_mouse(ev.position, &metrics);
         let Some(selection) = self.terminal_selection.as_mut() else {
             return false;
         };
-        if selection.head == position {
+        selection.autoscroll_dir = autoscroll_dir;
+
+        // Inside the viewport: track the cursor cell normally.
+        // Outside (autoscroll engaged): pin the head to the boundary
+        // row using the cursor's clamped column so the highlighted
+        // band reaches the edge while the tick scrolls more in.
+        let new_head = if autoscroll_dir == 0 {
+            match position {
+                Some(p) => p,
+                None => return true,
+            }
+        } else {
+            let column = position.map(|p| p.column).unwrap_or(0);
+            let line = if autoscroll_dir > 0 {
+                0
+            } else {
+                metrics.rows.saturating_sub(1)
+            };
+            TerminalCellPosition { line, column }
+        };
+        if selection.head == new_head {
             return true;
         }
+        selection.head = new_head;
+        cx.notify();
+        true
+    }
 
-        selection.head = position;
+    /// Tick the auto-scroll while the user holds a drag past the
+    /// viewport edge. Called from the refresh timer. Scrolls the
+    /// terminal one line in the marked direction and shifts the
+    /// anchor row by the same amount so the selection keeps tracking
+    /// the original grid content. Returns true if anything changed.
+    pub(crate) fn drain_terminal_drag_autoscroll(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(selection) = self.terminal_selection.as_ref() else {
+            return false;
+        };
+        if !selection.dragging || selection.autoscroll_dir == 0 {
+            return false;
+        }
+        let key = selection.key.clone();
+        let velocity = selection.autoscroll_dir;
+        let dir = velocity.signum();
+
+        let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) else {
+            return false;
+        };
+        if !runtime.scroll_display(velocity) {
+            // Hit the top/bottom of scrollback; nothing more to do
+            // this tick. Selection state is unchanged so the next
+            // tick will retry — cheap and harmless.
+            return false;
+        }
+        let snapshot = runtime.snapshot();
+        self.terminal_surface_snapshots.insert(key.clone(), snapshot);
+
+        if let Some(selection) = self.terminal_selection.as_mut() {
+            // Same content shifts +1 viewport row when we scroll up
+            // by 1, and -1 when scrolling down. Track the anchor by
+            // the same delta so the highlighted region keeps the
+            // original grid content under it. Clamp to the viewport
+            // so off-screen anchors degrade to "selection from the
+            // visible edge" rather than panicking.
+            let rows = self
+                .terminal_surface_snapshots
+                .get(&key)
+                .map(|snap| snap.lines.len())
+                .unwrap_or(0);
+            let max_line = rows.saturating_sub(1);
+            let shifted = (selection.anchor.line as i32) + velocity;
+            selection.anchor.line = shifted.clamp(0, max_line as i32) as usize;
+            // Pin head to the leading edge so the band keeps reaching
+            // the boundary the user is dragging past.
+            selection.head.line = if dir > 0 { 0 } else { max_line };
+        }
+
         cx.notify();
         true
     }
@@ -7232,6 +7333,7 @@ impl AnotherOneApp {
         }
 
         selection.dragging = false;
+        selection.autoscroll_dir = 0;
         if selection.anchor == selection.head {
             self.terminal_selection = None;
         }
@@ -10597,10 +10699,20 @@ impl AnotherOneApp {
             .values()
             .any(|at| at.elapsed() < BELL_FLASH_DURATION);
 
+        // While the user is dragging past the viewport edge we tick
+        // the auto-scroll on each refresh — keep the cadence at the
+        // animation rate so it actually feels like scrolling and not
+        // a slideshow.
+        let drag_autoscroll_active = self
+            .terminal_selection
+            .as_ref()
+            .is_some_and(|s| s.dragging && s.autoscroll_dir != 0);
+
         if terminal_fast_refresh
             || self.resource_indicator_open
             || any_blinking_cursor
             || any_bell_active
+            || drag_autoscroll_active
         {
             TOAST_ANIMATION_REFRESH_INTERVAL
         } else if self.toasts.is_empty()
@@ -14409,6 +14521,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_iroh_dial_status(cx);
                             should_notify |= this.drain_remote_worker_replies(cx);
                             should_notify |= this.drain_updater_events(cx);
+                            should_notify |= this.drain_terminal_drag_autoscroll(cx);
                             should_notify |= this.tick_toasts();
                             should_notify |= this.tick_resource_usage();
                             should_notify |= this.tick_pasted_image_preview(cx);
