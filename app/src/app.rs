@@ -5158,12 +5158,14 @@ impl AnotherOneApp {
             // a smaller viewport, the PTY + local grid both follow
             // the phone's size so lines wrap consistently.
             use crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID;
+            let mut focus_changed = false;
             if let Ok(mut state) = self.registry_state.lock() {
                 // Switching focused tabs on desktop: drop the prior
                 // tab's desktop-local entry (same semantics as a
                 // mobile detach/reattach).
                 if let Some(old_key) = state.viewer_focus.get(DESKTOP_LOCAL_VIEWER_ID).cloned() {
                     if old_key != request.key {
+                        focus_changed = true;
                         if let Some(map) = state.active_viewers.get_mut(&old_key) {
                             map.remove(DESKTOP_LOCAL_VIEWER_ID);
                             if map.is_empty() {
@@ -5173,6 +5175,8 @@ impl AnotherOneApp {
                         }
                         state.recompute_effective_size(&old_key);
                     }
+                } else {
+                    focus_changed = true;
                 }
                 state
                     .active_viewers
@@ -5186,6 +5190,26 @@ impl AnotherOneApp {
                     .viewer_focus
                     .insert(DESKTOP_LOCAL_VIEWER_ID.to_string(), request.key.clone());
                 state.recompute_effective_size(&request.key);
+            }
+            if focus_changed {
+                // Re-key the session attach to the new tab so the
+                // forwarder pushes bytes for the focused tab into
+                // `SessionEvent::PtyBytes`.
+                let session = self.session_handle();
+                let attach_section_id = request.key.section_id.store_key();
+                let attach_tab_id = request.key.tab_id.clone();
+                crate::session_host::dispatch_fire_and_forget(
+                    session,
+                    daemon_proto::Control::AttachTab {
+                        section_id: attach_section_id,
+                        tab_id: attach_tab_id,
+                    },
+                    |result| {
+                        if let Err(err) = result {
+                            log::warn!("focus-change AttachTab failed: {err}");
+                        }
+                    },
+                );
             }
             return;
         }
@@ -5369,28 +5393,14 @@ impl AnotherOneApp {
                         tab.launch_config = launch_config.clone();
                         tab.restore_status = TerminalRestoreStatus::Ready;
                     });
-                    // Now that the broadcast is registered, ask the
-                    // session to attach so PTY bytes start flowing
-                    // through `SessionEvent::PtyBytes` into
-                    // `drain_session_events`. Desktop and mobile take
-                    // the same byte-input path — desktop's
-                    // in-memory pair just routes the forwarder
-                    // locally instead of over iroh.
-                    let session = self.session_handle();
-                    let attach_section_id = key.section_id.store_key();
-                    let attach_tab_id = key.tab_id.clone();
-                    crate::session_host::dispatch_fire_and_forget(
-                        session,
-                        daemon_proto::Control::AttachTab {
-                            section_id: attach_section_id,
-                            tab_id: attach_tab_id,
-                        },
-                        |result| {
-                            if let Err(err) = result {
-                                log::warn!("post-launch AttachTab failed: {err}");
-                            }
-                        },
-                    );
+                    // Don't fire AttachTab here — the next render
+                    // tick's `ensure_active_terminal_runtime` sees
+                    // the runtime is live, registers the desktop
+                    // viewer focus, and (since this is the first
+                    // focus on the new key) fires AttachTab through
+                    // the same code path that handles tab-switching.
+                    // Single AttachTab per focus change, no replay
+                    // double-buffer.
                     updated = true;
                 }
                 Ok(TerminalLaunchReply::Output { .. }) => {
