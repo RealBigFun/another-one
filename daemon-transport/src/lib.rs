@@ -78,6 +78,8 @@ use daemon_proto::{Control, WorkerReply};
 use futures_core::Stream;
 
 pub mod in_memory;
+#[cfg(unix)]
+pub mod uds;
 
 // ──────────────────────────────────────────────────────────────────
 // Shared types
