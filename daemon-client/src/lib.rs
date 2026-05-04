@@ -14,11 +14,13 @@
 //! live behind the API and are tuned in-crate.
 
 pub mod frame;
+pub mod iroh_transport;
 pub mod pairing_url;
 pub mod protocol;
 pub mod session;
 pub mod status;
 
+pub use iroh_transport::{iroh_factory, pairing_target, socket_target, IrohTransportFactory};
 pub use pairing_url::{parse_pairing_url, PairingUrl};
 pub use protocol::{
     AgentProvider, Control, ControlEnvelope, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
