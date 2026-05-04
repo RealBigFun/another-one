@@ -1583,6 +1583,47 @@ fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
     Ok(out)
 }
 
+// ── iroh stream → frame trait adapters ────────────────────────────
+//
+// Live here so `daemon::frame` stays transport-agnostic. New
+// transports add their own `ReadExactish` / `WriteAllAsync` impls
+// next to their stream types; no changes here are needed for the
+// daemon's framing logic.
+
+impl crate::frame::ReadExactish for iroh::endpoint::RecvStream {
+    async fn read_exactish(
+        &mut self,
+        buf: &mut [u8],
+    ) -> anyhow::Result<crate::frame::ReadOutcome> {
+        let mut read = 0;
+        while read < buf.len() {
+            match self.read(&mut buf[read..]).await {
+                Ok(Some(0)) | Ok(None) => {
+                    return if read == 0 {
+                        Ok(crate::frame::ReadOutcome::Closed)
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "stream closed mid-read after {read} of {} bytes",
+                            buf.len()
+                        ))
+                    };
+                }
+                Ok(Some(n)) => {
+                    read += n;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(crate::frame::ReadOutcome::Got)
+    }
+}
+
+impl crate::frame::WriteAllAsync for iroh::endpoint::SendStream {
+    async fn write_all_async(&mut self, data: &[u8]) -> anyhow::Result<()> {
+        self.write_all(data).await.map_err(Into::into)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

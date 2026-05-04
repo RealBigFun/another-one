@@ -91,33 +91,5 @@ pub trait WriteAllAsync {
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
 }
 
-impl ReadExactish for iroh::endpoint::RecvStream {
-    async fn read_exactish(&mut self, buf: &mut [u8]) -> anyhow::Result<ReadOutcome> {
-        let mut read = 0;
-        while read < buf.len() {
-            match self.read(&mut buf[read..]).await {
-                Ok(Some(0)) | Ok(None) => {
-                    return if read == 0 {
-                        Ok(ReadOutcome::Closed)
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "stream closed mid-read after {read} of {} bytes",
-                            buf.len()
-                        ))
-                    };
-                }
-                Ok(Some(n)) => {
-                    read += n;
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-        Ok(ReadOutcome::Got)
-    }
-}
-
-impl WriteAllAsync for iroh::endpoint::SendStream {
-    async fn write_all_async(&mut self, data: &[u8]) -> anyhow::Result<()> {
-        self.write_all(data).await.map_err(Into::into)
-    }
-}
+// `ReadExactish` / `WriteAllAsync` impls for iroh streams live in
+// `transport_iroh` so this module stays transport-agnostic.
