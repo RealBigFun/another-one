@@ -1999,6 +1999,7 @@ impl AnotherOneApp {
     /// a brief mutex lock) so call sites can call this on every
     /// dispatch without worrying about contention; the lock is only
     /// held for the duration of the clone.
+    #[allow(dead_code)] // wired up by the per-call-site migrations (see another-one-oja sub-issues)
     pub(crate) fn session_handle(&self) -> Arc<dyn daemon_transport::Session> {
         self.session
             .lock()

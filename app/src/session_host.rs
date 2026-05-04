@@ -74,6 +74,7 @@ pub(crate) fn runtime_handle() -> Handle {
 /// Use for GUI handlers that don't need to await inline (the GPUI
 /// render thread can't anyway). Replies land back on the GUI by the
 /// callback queueing onto a channel the render tick drains.
+#[allow(dead_code)] // wired up by the per-call-site migrations (see another-one-oja sub-issues)
 pub(crate) fn dispatch_fire_and_forget<F>(session: Arc<dyn Session>, verb: Control, on_reply: F)
 where
     F: FnOnce(Result<WorkerReply, TransportError>) + Send + 'static,
