@@ -15,11 +15,15 @@ use anyhow::Context;
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, EndpointId};
 
-#[path = "../frame.rs"]
-mod frame;
-
-// Wire types live in `daemon-proto` post-extraction; the included
-// `frame` module is IO helpers + transport adapters only.
+// Wire types live in `daemon-proto`; framing helpers in
+// `daemon::frame`; iroh stream adapters in `daemon::transport_iroh`
+// (linked here so the `ReadExactish` / `WriteAllAsync` impls for
+// `iroh::endpoint::{RecvStream, SendStream}` are in scope for
+// `daemon::frame::{read_frame, write_frame}`). Importing the lib
+// directly replaces the legacy `#[path]` include hack.
+use daemon::frame;
+#[allow(unused_imports)]
+use daemon::transport_iroh;
 use daemon_proto::{
     Control, ControlEnvelope, WorkerReplyEnvelope, TY_CONTROL, TY_DATA, TY_WORKER_REPLY,
 };
