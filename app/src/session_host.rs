@@ -106,11 +106,17 @@ where
 /// pre-QR-scan). Every call returns `TransportError::Closed`. Replaced
 /// with the real `IrohSession` once `iroh_client::dial` succeeds and
 /// the QR pair flow stores it on `AnotherOneApp::session`.
+///
+/// `dead_code` is annotated because the constructor is reachable only
+/// from the `cfg(target_os = "android")` branch of `AnotherOneApp::new`;
+/// host-target `cargo check` doesn't see that arm.
+#[allow(dead_code)]
 pub(crate) struct NoSession {
     reason: String,
 }
 
 impl NoSession {
+    #[allow(dead_code)]
     pub(crate) fn new(reason: impl Into<String>) -> Self {
         Self {
             reason: reason.into(),
