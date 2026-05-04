@@ -15,7 +15,7 @@ use portable_pty::MasterPty;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use crate::frame::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
+use daemon_proto::{AgentProvider, ProjectKind, ProjectSummary, TabSummary, TaskSummary};
 use crate::pty::PtySession;
 use crate::registry::{DaemonRegistry, RegistryFuture};
 
@@ -96,7 +96,7 @@ impl DaemonRegistry for SandboxRegistry {
                     running: true,
                     pinned: false,
                     fixed_title: None,
-                    restore_status: another_one_core::agents::TerminalRestoreStatus::Ready,
+                    restore_status: daemon_proto::TerminalRestoreStatus::Ready,
                     failure_message: None,
                     failure_details: None,
                 }],

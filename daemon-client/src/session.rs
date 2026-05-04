@@ -27,7 +27,7 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey};
 
 use crate::frame::{read_frame, write_frame};
 use crate::pairing_url::parse_pairing_url;
-use crate::protocol::{
+use daemon_proto::{
     Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope, ALPN, PROTOCOL_VERSION, TY_CONTROL,
     TY_DATA, TY_WORKER_REPLY,
 };
@@ -471,7 +471,7 @@ impl Session {
     /// through here so they all stay envelope-compliant.
     async fn send_control(&self, control: Control) -> anyhow::Result<()> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        let envelope = crate::protocol::ControlEnvelope {
+        let envelope = daemon_proto::ControlEnvelope {
             request_id,
             control,
         };

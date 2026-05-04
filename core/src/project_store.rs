@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crate::agents::{
-    effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus,
-    DEFAULT_AGENT_ID,
+    effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, DEFAULT_AGENT_ID,
 };
+use daemon_proto::TerminalRestoreStatus;
 use crate::git_actions::{
     default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
 };
@@ -3963,9 +3963,10 @@ mod tests {
     use std::process::Command;
 
     use crate::agents::{
-        AgentProviderKind, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionKind,
-        TerminalSessionRef, DEFAULT_AGENT_ID,
+        AgentProviderKind, TerminalLaunchConfig, TerminalSessionKind, TerminalSessionRef,
+        DEFAULT_AGENT_ID,
     };
+    use daemon_proto::TerminalRestoreStatus;
     use crate::open_in::OpenInAppKind;
     use crate::shortcuts::ShortcutSettings;
 

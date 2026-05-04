@@ -6,7 +6,7 @@
 
 use iroh::endpoint::{RecvStream, SendStream};
 
-use crate::protocol::MAX_FRAME_BYTES;
+use daemon_proto::MAX_FRAME_BYTES;
 
 /// Writes one frame to the Iroh send stream.
 pub async fn write_frame(send: &mut SendStream, ty: u8, payload: &[u8]) -> anyhow::Result<()> {

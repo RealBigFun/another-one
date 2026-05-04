@@ -44,8 +44,9 @@ actions!(
 use crate::agents::{
     agent_id_for_provider, agent_output_indicates_missing_session, effective_enabled_agents,
     terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
-    AgentDef, TerminalLaunchConfig, TerminalRestoreStatus, TerminalSessionRef, AGENTS,
+    AgentDef, TerminalLaunchConfig, TerminalSessionRef, AGENTS,
 };
+use daemon_proto::TerminalRestoreStatus;
 use crate::background_ops::{BroadcastOperation, BroadcastOperationEvent};
 use crate::git_workspace::GitWorkspace;
 use crate::layout::*;
@@ -11624,8 +11625,9 @@ mod tests {
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
-        TerminalRestoreStatus, TerminalSessionKind, TerminalSessionRef,
+        TerminalSessionKind, TerminalSessionRef,
     };
+    use daemon_proto::TerminalRestoreStatus;
     use crate::git_actions::ToolbarGitAction;
     use crate::project_store::{
         GitDiffSelection, GitDiffSource, PersistedSectionState, PersistedTerminalTab, Project,
@@ -14318,7 +14320,7 @@ impl AnotherOneApp {
         let mut changed = false;
         for reply in replies {
             match reply {
-                daemon_client::WorkerReply::ProjectList {
+                daemon_proto::WorkerReply::ProjectList {
                     projects: summaries,
                 } => {
                     let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
@@ -14415,7 +14417,7 @@ impl AnotherOneApp {
 /// "task with no live tabs," matching how a freshly-loaded desktop
 /// task looks before its terminal launches.
 fn convert_remote_snapshot(
-    summaries: Vec<daemon_client::ProjectSummary>,
+    summaries: Vec<daemon_proto::ProjectSummary>,
 ) -> (
     Vec<another_one_core::project_store::Project>,
     Vec<another_one_core::project_store::Task>,
@@ -14425,8 +14427,8 @@ fn convert_remote_snapshot(
     let mut tasks = Vec::new();
     for summary in summaries {
         let kind = match summary.kind {
-            daemon_client::ProjectKind::Root => ps::ProjectKind::Root,
-            daemon_client::ProjectKind::Worktree => ps::ProjectKind::Worktree,
+            daemon_proto::ProjectKind::Root => ps::ProjectKind::Root,
+            daemon_proto::ProjectKind::Worktree => ps::ProjectKind::Worktree,
         };
         let project_id = summary.id.clone();
         for task_summary in summary.tasks {

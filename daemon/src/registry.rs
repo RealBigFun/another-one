@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use iroh::EndpointAddr;
 use tokio::sync::broadcast;
 
-use crate::frame::{
+use daemon_proto::{
     ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, BranchCompareFileWire,
     ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView, McpSettingsView,
     OpenInSettingsViewWire, OpenInStateWire, ProjectActionWire, ProjectPagePullRequest,

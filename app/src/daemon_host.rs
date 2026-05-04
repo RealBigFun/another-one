@@ -30,7 +30,7 @@ use std::thread;
 
 use tokio::sync::broadcast;
 
-use daemon::frame::{
+use daemon_proto::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
     AgentSummaryWire, ChangedFileWire, EnabledAgentsViewWire, GitActionScriptsView,
     McpCatalogEntryDto, McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto,

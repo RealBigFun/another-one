@@ -71,7 +71,7 @@ async fn connect_with_pair_token_handshake_succeeds() {
         .expect("recv channel closed before ProjectList arrived");
 
     match reply {
-        daemon_client::WorkerReply::ProjectList { projects } => {
+        daemon_proto::WorkerReply::ProjectList { projects } => {
             assert!(
                 !projects.is_empty(),
                 "sandbox registry should return at least one synthetic project"

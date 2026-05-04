@@ -35,6 +35,8 @@ alacritty_terminal = "0.26.0"
 another-one-core = { path = "../core" }
 anyhow = "1"
 daemon = { path = "../daemon" }
+daemon-proto = { path = "../daemon-proto" }
+daemon-transport = { path = "../daemon-transport" }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui", default-features = false, features = ["wayland", "x11", "font-kit"] }
 hotpath = "0.15"
 libc = "0.2"
