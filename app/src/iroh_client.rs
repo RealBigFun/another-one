@@ -11,10 +11,11 @@
 //! grows beyond a few dozen lines of UI plumbing, the new logic
 //! almost certainly belongs over there.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 pub use daemon_client::{drain_status as drain_dial_status, DialStatus};
+use daemon_transport::{DialTarget, Session as AbstractSession};
 
 /// Worker replies received from the active session, queued for the
 /// next render tick to drain. Right now we only forward
@@ -42,26 +43,37 @@ fn push_worker_reply(reply: daemon_proto::WorkerReply) {
     }
 }
 
-/// Holds the live session for the lifetime of the dial task. We keep
-/// this in a `OnceLock`-style slot rather than threading it through
-/// `AnotherOneApp` because the GPUI render thread isn't async — every
-/// session method is `async`, so the session itself must live on the
-/// tokio runtime that owns the recv loop. UI code drives the session
-/// indirectly via `request_*` helpers below that hop onto the tokio
-/// runtime via `daemon_client`'s internals.
-static ACTIVE_SESSION: OnceLock<Mutex<Option<std::sync::Arc<daemon_client::Session>>>> =
-    OnceLock::new();
+/// Pending session handoff slot. The QR-pair dial task drops the
+/// freshly-dialed `daemon_transport::Session` here; the GPUI render
+/// tick takes it and calls `AnotherOneApp::replace_session`, which
+/// re-spawns the session-events pump on the new session so PTY bytes
+/// start flowing into `session_events_rx`.
+static PENDING_SESSION_HANDOFF: OnceLock<Mutex<Option<Arc<dyn AbstractSession>>>> = OnceLock::new();
 
-fn active_session_slot() -> &'static Mutex<Option<std::sync::Arc<daemon_client::Session>>> {
-    ACTIVE_SESSION.get_or_init(|| Mutex::new(None))
+fn handoff_slot() -> &'static Mutex<Option<Arc<dyn AbstractSession>>> {
+    PENDING_SESSION_HANDOFF.get_or_init(|| Mutex::new(None))
 }
 
-fn store_session(s: daemon_client::Session) -> std::sync::Arc<daemon_client::Session> {
-    let arc = std::sync::Arc::new(s);
-    if let Ok(mut slot) = active_session_slot().lock() {
-        *slot = Some(arc.clone());
+/// Take any pending session handoff. Called by `AnotherOneApp` on the
+/// render tick; if `Some`, the app immediately calls
+/// `replace_session`.
+pub fn take_pending_session() -> Option<Arc<dyn AbstractSession>> {
+    handoff_slot().lock().ok().and_then(|mut s| s.take())
+}
+
+fn store_pending_session(session: Arc<dyn AbstractSession>) {
+    if let Ok(mut slot) = handoff_slot().lock() {
+        *slot = Some(session);
     }
-    arc
+}
+
+/// Live abstract session held for the lifetime of the dial — keeps
+/// the iroh recv loop / events bridge alive past `dial()`'s spawn
+/// thread exiting.
+static ACTIVE_ABSTRACT_SESSION: OnceLock<Mutex<Option<Arc<dyn AbstractSession>>>> = OnceLock::new();
+
+fn abstract_session_slot() -> &'static Mutex<Option<Arc<dyn AbstractSession>>> {
+    ACTIVE_ABSTRACT_SESSION.get_or_init(|| Mutex::new(None))
 }
 
 /// Kick off a dial against the given pairing URL. Returns immediately;
@@ -74,10 +86,6 @@ pub fn dial(pairing_url: String) {
     std::thread::Builder::new()
         .name("iroh-dial-spawner".into())
         .spawn(move || {
-            // `daemon_client::connect` is async; spin a short-lived
-            // current-thread runtime here just to await the future.
-            // The session itself runs on `daemon-client`'s own
-            // multi-thread runtime, which long-outlives this thread.
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -91,40 +99,54 @@ pub fn dial(pairing_url: String) {
                 }
             };
             rt.block_on(async {
-                let session = match daemon_client::connect(&pairing_url).await {
-                    Ok(s) => s,
-                    Err(_) => {
-                        // `connect_inner` already pushed a `DialStatus::Error`.
+                // Route the dial through the abstract transport
+                // factory so mobile and desktop share a single
+                // `Session` shape. The factory's iroh impl
+                // internally reuses `daemon_client::connect()` and
+                // bridges incoming PTY bytes into
+                // `SessionEvent::PtyBytes` — which the renderer's
+                // `session_events_rx` already consumes.
+                let factory = daemon_client::iroh_factory();
+                let session = match factory.dial(DialTarget::PairingUrl(pairing_url)).await {
+                    Ok(s) => Arc::from(s),
+                    Err(err) => {
+                        daemon_client::status::push_status(DialStatus::Error(format!(
+                            "dial: {err}"
+                        )));
                         return;
                     }
                 };
-                let session = store_session(session);
 
-                // Auto-fetch the project tree right after Hello.
-                if let Err(err) = session.list_projects().await {
-                    daemon_client::status::push_status(DialStatus::Error(format!(
-                        "list_projects: {err}"
-                    )));
-                    return;
+                // Hold a strong ref so the iroh recv loop / events
+                // bridge stays alive past this spawn thread exiting.
+                if let Ok(mut slot) = abstract_session_slot().lock() {
+                    *slot = Some(Arc::clone(&session));
                 }
 
-                // Forward every incoming worker reply into the
-                // process-wide queue. Loop runs until the daemon
-                // closes the stream (recv returns `None`).
-                let session_for_loop = session.clone();
-                tokio::spawn(async move {
-                    while let Some(reply) = session_for_loop.next_worker_reply().await {
-                        push_worker_reply(reply);
-                    }
-                });
+                // Hand the session to the GUI render tick — it
+                // calls `AnotherOneApp::replace_session(...)` which
+                // re-spawns the session-events pump.
+                store_pending_session(Arc::clone(&session));
 
-                // Park this task forever — the `Arc<Session>` we just
-                // stored holds the connection open. Without parking,
-                // the current_thread runtime returns and the spawn
-                // thread exits; that's fine because the recv loop
-                // lives on `daemon-client`'s own runtime, but parking
-                // here keeps the spawn thread name visible in tracing
-                // for as long as the session exists.
+                // Auto-fetch the project tree right after Hello so
+                // the sidebar populates without the UI having to
+                // know the daemon protocol. Reply lands in the
+                // legacy worker_reply_queue that
+                // `drain_remote_worker_replies` already drains.
+                match session.call(daemon_proto::Control::ListProjects).await {
+                    Ok(reply) => push_worker_reply(reply),
+                    Err(err) => {
+                        daemon_client::status::push_status(DialStatus::Error(format!(
+                            "list_projects: {err}"
+                        )));
+                        return;
+                    }
+                }
+
+                // Park this task — the `Arc<dyn Session>` we stored
+                // holds the connection open. Parking keeps the
+                // spawn thread name visible in tracing for the
+                // lifetime of the session.
                 loop {
                     tokio::time::sleep(Duration::from_secs(60)).await;
                 }
