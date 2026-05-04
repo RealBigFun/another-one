@@ -219,14 +219,8 @@ fn launch_terminal(
         })
         .map_err(|_| anyhow!("terminal launch receiver dropped"))?;
 
-    // PTY → broadcast only. The renderer subscribes to the
-    // session-side `SessionEvent::PtyBytes` stream; the daemon's
-    // `serve_session_with_attach` AttachTab forwarder pumps bytes
-    // from this same broadcast into `ServerSession::push_data`,
-    // which becomes the events the GUI consumes via
-    // `app::drain_session_events`. Emitting bytes through both
-    // `TerminalLaunchReply::Output` and the session would
-    // double-render — the explicit single source is broadcast.
+    let output_sender = sender.clone();
+    let output_key = key.clone();
     thread::spawn(move || {
         let mut buf = [0_u8; 8192];
         loop {
@@ -235,7 +229,11 @@ fn launch_terminal(
                 Ok(count) => {
                     crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
-                    let _ = broadcast_for_reader.send(bytes);
+                    let _ = broadcast_for_reader.send(bytes.clone());
+                    let _ = output_sender.send(TerminalLaunchReply::Output {
+                        key: output_key.clone(),
+                        bytes,
+                    });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
