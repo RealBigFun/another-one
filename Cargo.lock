@@ -1804,6 +1804,7 @@ dependencies = [
  "anyhow",
  "axum",
  "daemon-proto",
+ "daemon-transport",
  "futures-util",
  "image",
  "iroh",
@@ -1855,6 +1856,7 @@ dependencies = [
  "futures-core",
  "serde",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
