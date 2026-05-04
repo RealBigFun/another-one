@@ -14772,20 +14772,6 @@ impl AnotherOneApp {
     }
 
     /// Drain queued iroh-client dial status events into toasts so the
-    /// Pick up any session handed off by the QR-pair dial task and
-    /// install it as the active `Session`. `replace_session`
-    /// re-spawns the session-events pump so PTY bytes pushed by the
-    /// new session start landing in `session_events_rx`.
-    pub fn drain_pending_session_handoff(&mut self) -> bool {
-        if let Some(session) = crate::iroh_client::take_pending_session() {
-            log::info!("installing freshly-paired session via replace_session");
-            self.replace_session(session);
-            true
-        } else {
-            false
-        }
-    }
-
     /// connection progress is visible to the user without standing up
     /// a separate status panel yet.
     pub fn drain_iroh_dial_status(&mut self, cx: &mut Context<Self>) -> bool {
@@ -14941,7 +14927,6 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_pending_tab_resizes(cx);
                             should_notify |= this.drain_qr_scan_queue(cx);
                             should_notify |= this.drain_iroh_dial_status(cx);
-                            should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_remote_worker_replies(cx);
                             should_notify |= this.drain_updater_events(cx);
                             should_notify |= this.drain_terminal_drag_autoscroll(cx);
