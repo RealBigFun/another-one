@@ -13,6 +13,13 @@ anyhow = "1"
 # Wire types live here. Server and client deserialize the same
 # definitions; no hand-mirrored protocol module to drift.
 daemon-proto = { path = "../daemon-proto" }
+# Abstract Session / TransportFactory trait surface this crate
+# implements via `IrohTransportFactory`. Concrete impl lives here
+# (rather than in a third crate) because the iroh deps are already
+# pulled in for the legacy session API; splitting them later costs
+# nothing once the legacy API retires.
+daemon-transport = { path = "../daemon-transport" }
+futures-core = "0.3"
 # Pinned to the same major as `daemon-sandbox` so the wire format
 # stays in lockstep — every `Control` / `WorkerReply` change must land
 # on both sides at once.

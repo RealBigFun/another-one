@@ -1825,6 +1825,8 @@ dependencies = [
  "anyhow",
  "daemon",
  "daemon-proto",
+ "daemon-transport",
+ "futures-core",
  "iroh",
  "serde",
  "serde_json",
