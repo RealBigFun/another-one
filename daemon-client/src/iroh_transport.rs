@@ -77,7 +77,6 @@ impl TransportFactory for IrohTransportFactory {
                 .map_err(|e| TransportError::Connect(format!("{e:#}")))?;
             let session = IrohSession {
                 inner: Arc::new(legacy),
-                call_lock: AsyncMutex::new(()),
                 attached: Arc::new(AsyncMutex::new(None)),
             };
             Ok(Box::new(session) as Box<dyn AbstractSession>)
@@ -85,15 +84,12 @@ impl TransportFactory for IrohTransportFactory {
     }
 }
 
-/// `Session` impl wrapping the legacy `daemon_client::Session`.
+/// `Session` impl wrapping the legacy `daemon_client::Session`. Now
+/// uses the per-call request-id router on the legacy session, so
+/// concurrent `call`s from separate tasks correlate cleanly instead
+/// of racing the FIFO recv channel.
 struct IrohSession {
     inner: Arc<LegacySession>,
-    /// Serialises [`AbstractSession::call`] across tasks. Today's
-    /// legacy API has no request-id correlation on the client side —
-    /// the recv channel is FIFO. Holding a mutex across send-then-
-    /// await-reply keeps that fragile FIFO assumption honest until the
-    /// typed-client work (`another-one-f4r`) adds a proper router.
-    call_lock: AsyncMutex<()>,
     /// Most recently attached `(section_id, tab_id)`. Used to tag
     /// `SessionEvent::PtyBytes`; see file-level docs on the
     /// single-attach limitation. `Arc` so [`Self::events`] can hand
@@ -108,7 +104,6 @@ impl AbstractSession for IrohSession {
         verb: Control,
     ) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
         Box::pin(async move {
-            let _guard = self.call_lock.lock().await;
             // Track attach state so events() can tag PTY bytes
             // correctly. Single-attach only; matches today's daemon.
             match &verb {
@@ -123,16 +118,17 @@ impl AbstractSession for IrohSession {
                 }
                 _ => {}
             }
-            send_legacy_control(&self.inner, verb).await?;
-            // Verbs that produce no reply (PTY-side `Control::Resize`
-            // and any other fire-and-forget) would block here forever.
-            // The current daemon emits a reply for every Control
-            // variant; if a no-reply verb appears, surface the
-            // mismatch as a typed Encoding error rather than hanging.
+            // Hello is reserved for the dial path — surface the
+            // mismatch instead of routing it through `call`.
+            if let Control::Hello { .. } = verb {
+                return Err(TransportError::Encoding(
+                    "Hello is sent by the dial path, not by call()".into(),
+                ));
+            }
             self.inner
-                .next_worker_reply()
+                .call(verb)
                 .await
-                .ok_or_else(|| TransportError::Closed(Some("recv channel closed".into())))
+                .map_err(|e| TransportError::Other(format!("{e:#}")))
         })
     }
 
@@ -173,42 +169,11 @@ impl AbstractSession for IrohSession {
     }
 }
 
-async fn send_legacy_control(
-    session: &LegacySession,
-    verb: Control,
-) -> Result<(), TransportError> {
-    match verb {
-        Control::Resize { cols, rows } => session.resize(cols, rows).await,
-        Control::ListProjects => session.list_projects().await,
-        Control::AttachTab {
-            section_id,
-            tab_id,
-        } => session.attach_tab(section_id, tab_id).await,
-        Control::DetachTab => session.detach_tab().await,
-        Control::TabResize { cols, rows } => session.tab_resize(cols, rows).await,
-        Control::LaunchTab {
-            section_id,
-            tab_id,
-        } => session.launch_tab(section_id, tab_id).await,
-        // Hello is sent by `connect()` itself; no caller-driven path.
-        Control::Hello { .. } => {
-            return Err(TransportError::Encoding(
-                "Hello is sent by the dial path, not by call()".into(),
-            ));
-        }
-        // Verbs the legacy session has no helper for fall through to
-        // a typed Encoding error. Per-verb helpers can be added
-        // upstream as needed; the abstract surface deliberately
-        // doesn't enumerate every Control variant.
-        other => {
-            return Err(TransportError::Encoding(format!(
-                "iroh transport has no client-side helper for {:?} yet — extend daemon_client::Session",
-                std::mem::discriminant(&other),
-            )));
-        }
-    }
-    .map_err(|e| TransportError::Other(format!("{e:#}")))
-}
+// `send_legacy_control` was the per-verb helper-routing layer used
+// while the legacy session lacked a typed `call`. With request-id
+// correlation in place, `Session::call` handles every variant
+// uniformly — keeping a separate routing table here would only
+// duplicate the verb match.
 
 /// Stream impl that drains the legacy `Session`'s incoming-bytes /
 /// worker-reply channels and translates them into [`SessionEvent`]s.
