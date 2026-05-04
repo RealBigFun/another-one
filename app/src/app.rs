@@ -6091,7 +6091,16 @@ impl AnotherOneApp {
         }
 
         let section_store_key = req.section_id.store_key();
-        let (task, persisted_tab) = self
+        // First try the task-bound path: workspace tabs that live
+        // under a task carry their `cwd` + `target_project_id` on the
+        // task. Fall back to the global `terminal_sections` store for
+        // sections that aren't owned by a task (project pages,
+        // standalone shells) — without this fallback, a `LaunchTab` /
+        // `AttachTab` issued via `Session::call` for a global section
+        // gets rejected even though the desktop sidebar would happily
+        // launch the same tab via the direct `spawn_terminal_launch`
+        // path. See another-one-cwn for the migration this enables.
+        let task_match = self
             .project_store
             .tasks
             .values()
@@ -6104,23 +6113,47 @@ impl AnotherOneApp {
                     .iter()
                     .find(|pt| pt.id == req.tab_id)
                     .map(|pt| (t.clone(), pt.clone()))
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no persisted tab for section {} / tab {}",
-                    section_store_key,
-                    req.tab_id
-                )
-            })?;
+            });
+        let (persisted_tab, cwd) = match task_match {
+            Some((task, persisted_tab)) => {
+                let cwd = task
+                    .cwd
+                    .clone()
+                    .or_else(|| self.project_path(&task.target_project_id));
+                (persisted_tab, cwd)
+            }
+            None => {
+                let section = self
+                    .project_store
+                    .terminal_sections
+                    .get(&section_store_key)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no persisted tab for section {} / tab {}",
+                            section_store_key,
+                            req.tab_id
+                        )
+                    })?;
+                let persisted_tab = section
+                    .tabs
+                    .iter()
+                    .find(|pt| pt.id == req.tab_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no persisted tab for section {} / tab {}",
+                            section_store_key,
+                            req.tab_id
+                        )
+                    })?;
+                (persisted_tab, section.cwd.clone())
+            }
+        };
         let launch_config = persisted_tab
             .launch_config
             .clone()
             .ok_or_else(|| anyhow::anyhow!("persisted tab {} has no launch_config", req.tab_id))?;
         let agent_launch_args = self.agent_launch_args_for_launch_config(&launch_config);
-        let cwd = task
-            .cwd
-            .clone()
-            .or_else(|| self.project_path(&task.target_project_id));
         // Default grid; the attaching viewer will follow up with a
         // resize to its actual viewport. Min-across-viewers logic
         // in `RegistryState::recompute_effective_size` drives the
