@@ -19,7 +19,13 @@ thiserror = "1"
 # In-memory transport uses tokio mpsc/oneshot/Notify to wire the two
 # halves together. Sync-only feature set keeps this crate light;
 # integrators that need a runtime bring their own.
-tokio = { version = "1", features = ["sync", "rt", "macros"] }
+tokio = { version = "1", features = ["sync", "rt", "macros", "net", "io-util"] }
+# UDS transport encodes ControlEnvelope / WorkerReplyEnvelope as JSON
+# over its frame payload. Same wire shape the iroh stack uses, so
+# a UDS daemon is interchangeable with an iroh one at the verb layer.
+serde_json = "1"
+tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tempfile = "3"
