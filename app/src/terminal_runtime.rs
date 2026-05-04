@@ -1199,11 +1199,7 @@ mod tests {
     use alacritty_terminal::term::test::TermSize;
 
     fn term_from_ansi(rows: usize, cols: usize, bytes: &[u8]) -> Term<VoidListener> {
-        let mut term = Term::new(
-            Config::default(),
-            &TermSize::new(cols, rows),
-            VoidListener,
-        );
+        let mut term = Term::new(Config::default(), &TermSize::new(cols, rows), VoidListener);
         let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
         parser.advance(&mut term, bytes);
         term
@@ -1307,9 +1303,7 @@ mod tests {
         let mut term = Term::new(
             Config::default(),
             &TermSize::new(8, 4),
-            Proxy {
-                queue: proxy_queue,
-            },
+            Proxy { queue: proxy_queue },
         );
         let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
         parser.advance(&mut term, b"a\x07b");
@@ -1375,10 +1369,7 @@ mod tests {
 
     #[test]
     fn encode_paste_payload_wraps_with_markers_when_bracketed() {
-        assert_eq!(
-            encode_paste_payload("hi", true),
-            "\u{1b}[200~hi\u{1b}[201~"
-        );
+        assert_eq!(encode_paste_payload("hi", true), "\u{1b}[200~hi\u{1b}[201~");
     }
 
     #[test]

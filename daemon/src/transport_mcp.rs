@@ -174,7 +174,10 @@ fn install_cleanup_hooks(path: PathBuf) {
                 _ = sigint.recv() => "SIGINT",
                 _ = sighup.recv() => "SIGHUP",
             };
-            tracing::info!(signal = signame, "mcp: caught termination signal — unlinking socket");
+            tracing::info!(
+                signal = signame,
+                "mcp: caught termination signal — unlinking socket"
+            );
             unlink_cleanup_path();
             // Exit code 130 is the conventional "script terminated
             // by Ctrl+C" code. Plain 0 would mask whether the

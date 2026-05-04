@@ -10,8 +10,8 @@
 use serde_json::{json, Value};
 
 use crate::mcp::orchestrator::{
-    McpOrchestrator, RunCommandRequest, SelectFocusRequest, SpawnTaskRequest,
-    SpawnTerminalRequest, RUN_COMMAND_TIMEOUT_CEILING_MS,
+    McpOrchestrator, RunCommandRequest, SelectFocusRequest, SpawnTaskRequest, SpawnTerminalRequest,
+    RUN_COMMAND_TIMEOUT_CEILING_MS,
 };
 
 /// Error kinds the dispatcher produces. `server.rs` maps these to

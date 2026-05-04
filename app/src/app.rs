@@ -1962,6 +1962,17 @@ enum TextInputTarget {
     Blocked,
 }
 
+fn open_in_target_path_for_project(
+    project_id: &str,
+    project_path: &std::path::Path,
+    active_git_diff: Option<&crate::project_store::GitDiffSelection>,
+) -> std::path::PathBuf {
+    active_git_diff
+        .filter(|selection| selection.project_id == project_id && !selection.path.is_empty())
+        .map(|selection| project_path.join(&selection.path))
+        .unwrap_or_else(|| project_path.to_path_buf())
+}
+
 impl AnotherOneApp {
     pub(crate) fn focused_settings_git_action_script_kind(
         &self,
@@ -3898,7 +3909,7 @@ impl AnotherOneApp {
         }
     }
 
-    pub(crate) fn open_project_directory_in_app(
+    pub(crate) fn open_project_open_in_target_in_app(
         &mut self,
         project_id: &str,
         app: OpenInAppKind,
@@ -3909,9 +3920,11 @@ impl AnotherOneApp {
             return;
         };
 
-        let project_path = project.path.clone();
+        let active_git_diff = self.workspace_pane.read(cx).active_git_diff.clone();
+        let target_path =
+            open_in_target_path_for_project(project_id, &project.path, active_git_diff.as_ref());
         self.dismiss_titlebar_dropdowns();
-        if let Err(err) = open_path_in_app(&project_path, app) {
+        if let Err(err) = open_path_in_app(&target_path, app) {
             self.show_error_toast(err, cx);
         } else {
             self.project_store
@@ -3920,7 +3933,7 @@ impl AnotherOneApp {
         }
     }
 
-    pub(crate) fn open_active_directory_in_default_app(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn open_active_open_in_target_in_default_app(&mut self, cx: &mut Context<Self>) {
         let Some(project_id) = self.active_open_in_project_id(cx) else {
             return;
         };
@@ -3930,7 +3943,7 @@ impl AnotherOneApp {
             return;
         };
 
-        self.open_project_directory_in_app(&project_id, app, cx);
+        self.open_project_open_in_target_in_app(&project_id, app, cx);
     }
 
     pub(crate) fn show_info_toast(
@@ -11487,15 +11500,15 @@ mod tests {
         encode_terminal_mouse_event, fixed_title_for_project_action,
         global_tab_navigation_targets, has_active_toolbar_git_action, new_tab_seed_agent_id,
         next_global_tab_navigation_target, next_project_navigation_target,
-        next_task_navigation_target, persisted_active_section_key, remove_terminal_runtime_state,
-        resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
-        sidebar_task_navigation_targets, terminal_line_selection_range, terminal_link_at_position,
-        terminal_link_ranges, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, ActiveToolbarGitAction,
-        AnotherOneApp, AppToast, DrainedGitAction, GitActionReply, NavigationDirection,
-        NewTaskShortcutTarget, SectionId, SectionState, TabCloseScope, TerminalCellPosition,
-        TerminalLinkRange, TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers,
-        TerminalSelectionRange, TerminalTab, ToastKind,
+        next_task_navigation_target, open_in_target_path_for_project,
+        persisted_active_section_key, remove_terminal_runtime_state, resolve_new_task_shortcut_target,
+        root_project_navigation_targets, select_active_section, sidebar_task_navigation_targets,
+        terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
+        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
+        terminal_word_selection_range, ActiveToolbarGitAction, AnotherOneApp, AppToast,
+        DrainedGitAction, GitActionReply, NavigationDirection, NewTaskShortcutTarget, SectionId,
+        SectionState, TabCloseScope, TerminalCellPosition, TerminalLinkRange, TerminalMouseAction,
+        TerminalMouseButton, TerminalMouseModifiers, TerminalSelectionRange, TerminalTab, ToastKind,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -11503,8 +11516,9 @@ mod tests {
     };
     use crate::git_actions::ToolbarGitAction;
     use crate::project_store::{
-        PersistedSectionState, PersistedTerminalTab, Project, ProjectAction, ProjectActionIcon,
-        ProjectActionKind, ProjectActionScope, ProjectCheckoutState, ProjectKind, Task, TaskKind,
+        GitDiffSelection, GitDiffSource, PersistedSectionState, PersistedTerminalTab, Project,
+        ProjectAction, ProjectActionIcon, ProjectActionKind, ProjectActionScope,
+        ProjectCheckoutState, ProjectKind, Task, TaskKind,
     };
     use crate::terminal_runtime::{
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalMouseEncoding, TerminalMouseLevel,
@@ -11599,6 +11613,54 @@ mod tests {
             next_tab_id: 1,
             cwd: None,
         }
+    }
+
+    #[test]
+    fn open_in_target_path_uses_active_changed_file_for_same_project() {
+        let project_path = PathBuf::from("/repo");
+        let selection = GitDiffSelection {
+            project_id: "project-a".to_string(),
+            path: "packages/common/package.json".to_string(),
+            original_path: None,
+            source: GitDiffSource::Unstaged,
+            status: 'M',
+            additions: 1,
+            deletions: 0,
+            untracked: false,
+        };
+
+        assert_eq!(
+            open_in_target_path_for_project("project-a", &project_path, Some(&selection)),
+            PathBuf::from("/repo/packages/common/package.json")
+        );
+    }
+
+    #[test]
+    fn open_in_target_path_falls_back_to_project_directory_without_matching_file() {
+        let project_path = PathBuf::from("/repo");
+        let other_project_selection = GitDiffSelection {
+            project_id: "project-b".to_string(),
+            path: "packages/common/package.json".to_string(),
+            original_path: None,
+            source: GitDiffSource::Unstaged,
+            status: 'M',
+            additions: 1,
+            deletions: 0,
+            untracked: false,
+        };
+
+        assert_eq!(
+            open_in_target_path_for_project("project-a", &project_path, None),
+            project_path
+        );
+        assert_eq!(
+            open_in_target_path_for_project(
+                "project-a",
+                &PathBuf::from("/repo"),
+                Some(&other_project_selection),
+            ),
+            PathBuf::from("/repo")
+        );
     }
 
     fn shell_action(name: &str, command: &str) -> ProjectAction {

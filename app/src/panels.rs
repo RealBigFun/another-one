@@ -57,8 +57,8 @@ impl AnotherOneApp {
         let (is_pinned, tab_index, tab_count) = {
             let workspace = self.workspace_pane.read(cx);
             let state = workspace.section_states.get(&menu.section_id);
-            let tab_index = state
-                .and_then(|state| state.tabs.iter().position(|tab| tab.id == menu.tab_id));
+            let tab_index =
+                state.and_then(|state| state.tabs.iter().position(|tab| tab.id == menu.tab_id));
             let is_pinned = state
                 .and_then(|state| tab_index.and_then(|index| state.tabs.get(index)))
                 .is_some_and(|tab| tab.pinned);
@@ -199,10 +199,7 @@ impl AnotherOneApp {
     /// Top-anchored search bar shown over the active terminal pane
     /// when `Cmd-F` is pressed. Non-IME — captures plain ASCII and
     /// Cmd-V paste through `handle_terminal_search_key_down`.
-    pub(crate) fn terminal_search_bar_overlay(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    pub(crate) fn terminal_search_bar_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(state) = self.terminal_search.clone() else {
             return div().id("terminal-search-bar");
         };
@@ -982,12 +979,9 @@ impl WorkspacePane {
                     if *hovered {
                         return;
                     }
-                    let should_clear = this
-                        .terminal_link_hover
-                        .as_ref()
-                        .is_some_and(|h| {
-                            h.section_id == pane_section_id && h.tab_id == pane_tab_id
-                        });
+                    let should_clear = this.terminal_link_hover.as_ref().is_some_and(|h| {
+                        h.section_id == pane_section_id && h.tab_id == pane_tab_id
+                    });
                     if should_clear {
                         this.terminal_link_hover = None;
                         cx.notify();
@@ -1089,112 +1083,102 @@ impl WorkspacePane {
                         });
                     }),
                 )
-                .on_mouse_move(
-                    cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
-                        let forwarded = this
-                            .app
-                            .update(cx, |app, app_cx| {
-                                let action = if ev.dragging() {
-                                    TerminalMouseAction::Drag
-                                } else {
-                                    TerminalMouseAction::Motion
-                                };
-                                let button = if ev.dragging() {
-                                    match ev.pressed_button {
-                                        Some(MouseButton::Left) => TerminalMouseButton::Left,
-                                        Some(MouseButton::Middle) => {
-                                            TerminalMouseButton::Middle
-                                        }
-                                        Some(MouseButton::Right) => TerminalMouseButton::Right,
-                                        _ => TerminalMouseButton::Left,
-                                    }
-                                } else {
-                                    TerminalMouseButton::None
-                                };
-                                if app.forward_terminal_mouse_event(
-                                    &mouse_move_key,
-                                    button,
-                                    action,
-                                    ev.position,
-                                    ev.modifiers,
-                                    window,
-                                ) {
-                                    app_cx.stop_propagation();
-                                    return true;
-                                }
-                                false
-                            })
-                            .unwrap_or(false);
-                        if forwarded {
-                            return;
-                        }
-                        // Mouse mode is off: refresh link-hover state.
-                        // Compute via the app (read-only) and apply
-                        // directly to `this` to avoid the nested-
-                        // update panic of touching WorkspacePane
-                        // through `app.update` while WorkspacePane is
-                        // already locked by the listener.
-                        let next = this
-                            .app
-                            .update(cx, |app, _| {
-                                app.compute_terminal_link_hover(
-                                    &mouse_move_key,
-                                    ev.position,
-                                    window,
-                                )
-                            })
-                            .unwrap_or(None);
-                        if this.terminal_link_hover != next {
-                            this.terminal_link_hover = next;
-                            cx.notify();
-                        }
-                    }),
-                )
-                .on_scroll_wheel(
-                    cx.listener(move |this, ev: &ScrollWheelEvent, window, cx| {
-                        let _ = this.app.update(cx, |app, app_cx| {
-                            let pixel_delta = ev.delta.pixel_delta(px(1.));
-                            let dy = f32::from(pixel_delta.y);
-                            let dx = f32::from(pixel_delta.x);
-                            // Vertical wheel maps to 64 (up) / 65 (down);
-                            // horizontal to 66 (left) / 67 (right) per
-                            // xterm. Pick the dominant axis for a single
-                            // forwarded event — apps that care about both
-                            // axes get them as separate scroll ticks.
-                            let dominant_button = if dy.abs() >= dx.abs() && dy != 0.0 {
-                                Some(if dy > 0.0 {
-                                    TerminalMouseButton::WheelUp
-                                } else {
-                                    TerminalMouseButton::WheelDown
-                                })
-                            } else if dx != 0.0 {
-                                Some(if dx > 0.0 {
-                                    TerminalMouseButton::WheelRight
-                                } else {
-                                    TerminalMouseButton::WheelLeft
-                                })
+                .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
+                    let forwarded = this
+                        .app
+                        .update(cx, |app, app_cx| {
+                            let action = if ev.dragging() {
+                                TerminalMouseAction::Drag
                             } else {
-                                None
+                                TerminalMouseAction::Motion
                             };
-                            if let Some(button) = dominant_button {
-                                if app.forward_terminal_mouse_event(
-                                    &scroll_key,
-                                    button,
-                                    TerminalMouseAction::Press,
-                                    ev.position,
-                                    ev.modifiers,
-                                    window,
-                                ) {
-                                    app_cx.stop_propagation();
-                                    return;
+                            let button = if ev.dragging() {
+                                match ev.pressed_button {
+                                    Some(MouseButton::Left) => TerminalMouseButton::Left,
+                                    Some(MouseButton::Middle) => TerminalMouseButton::Middle,
+                                    Some(MouseButton::Right) => TerminalMouseButton::Right,
+                                    _ => TerminalMouseButton::Left,
                                 }
-                            }
-                            if app.scroll_terminal(&scroll_key, ev.delta, app_cx) {
+                            } else {
+                                TerminalMouseButton::None
+                            };
+                            if app.forward_terminal_mouse_event(
+                                &mouse_move_key,
+                                button,
+                                action,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
                                 app_cx.stop_propagation();
+                                return true;
                             }
-                        });
-                    }),
-                )
+                            false
+                        })
+                        .unwrap_or(false);
+                    if forwarded {
+                        return;
+                    }
+                    // Mouse mode is off: refresh link-hover state.
+                    // Compute via the app (read-only) and apply
+                    // directly to `this` to avoid the nested-
+                    // update panic of touching WorkspacePane
+                    // through `app.update` while WorkspacePane is
+                    // already locked by the listener.
+                    let next = this
+                        .app
+                        .update(cx, |app, _| {
+                            app.compute_terminal_link_hover(&mouse_move_key, ev.position, window)
+                        })
+                        .unwrap_or(None);
+                    if this.terminal_link_hover != next {
+                        this.terminal_link_hover = next;
+                        cx.notify();
+                    }
+                }))
+                .on_scroll_wheel(cx.listener(move |this, ev: &ScrollWheelEvent, window, cx| {
+                    let _ = this.app.update(cx, |app, app_cx| {
+                        let pixel_delta = ev.delta.pixel_delta(px(1.));
+                        let dy = f32::from(pixel_delta.y);
+                        let dx = f32::from(pixel_delta.x);
+                        // Vertical wheel maps to 64 (up) / 65 (down);
+                        // horizontal to 66 (left) / 67 (right) per
+                        // xterm. Pick the dominant axis for a single
+                        // forwarded event — apps that care about both
+                        // axes get them as separate scroll ticks.
+                        let dominant_button = if dy.abs() >= dx.abs() && dy != 0.0 {
+                            Some(if dy > 0.0 {
+                                TerminalMouseButton::WheelUp
+                            } else {
+                                TerminalMouseButton::WheelDown
+                            })
+                        } else if dx != 0.0 {
+                            Some(if dx > 0.0 {
+                                TerminalMouseButton::WheelRight
+                            } else {
+                                TerminalMouseButton::WheelLeft
+                            })
+                        } else {
+                            None
+                        };
+                        if let Some(button) = dominant_button {
+                            if app.forward_terminal_mouse_event(
+                                &scroll_key,
+                                button,
+                                TerminalMouseAction::Press,
+                                ev.position,
+                                ev.modifiers,
+                                window,
+                            ) {
+                                app_cx.stop_propagation();
+                                return;
+                            }
+                        }
+                        if app.scroll_terminal(&scroll_key, ev.delta, app_cx) {
+                            app_cx.stop_propagation();
+                        }
+                    });
+                }))
                 .child(
                     canvas(
                         move |bounds, _, _| bounds,
@@ -1493,11 +1477,7 @@ fn terminal_error_details(error: String, body_col: gpui::Hsla) -> impl IntoEleme
     details
 }
 
-fn terminal_search_button<F>(
-    id: &'static str,
-    label: &'static str,
-    on_click: F,
-) -> impl IntoElement
+fn terminal_search_button<F>(id: &'static str, label: &'static str, on_click: F) -> impl IntoElement
 where
     F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 {

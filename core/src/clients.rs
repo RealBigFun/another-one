@@ -221,10 +221,7 @@ pub enum ClientEvent {
     /// events) faster than a slow consumer drains it; that consumer
     /// will see `try_recv` return `Lagged{skipped}` and should
     /// resync via `read_terminal_output`.
-    Output {
-        tab_id: String,
-        bytes: Vec<u8>,
-    },
+    Output { tab_id: String, bytes: Vec<u8> },
     /// An asynchronous open-task flow started — typically a
     /// worktree creation that's about to clone, branch, and load.
     /// `TaskOpened` (success) or `TaskOpenFailed` (error) follows,
@@ -248,9 +245,7 @@ pub enum ClientEvent {
     /// resync (e.g. re-issue `list_tasks`/`list_tabs`) rather than
     /// silently drift. Synthesized client-side from
     /// `tokio::sync::broadcast::error::TryRecvError::Lagged`.
-    Lagged {
-        skipped: u64,
-    },
+    Lagged { skipped: u64 },
 }
 
 // Note on shape: there is no `DaemonClient` trait here even though
@@ -288,7 +283,9 @@ mod tests {
     fn focus_serde_round_trip() {
         let cases = vec![
             Focus::None,
-            Focus::Project { project_id: "p".into() },
+            Focus::Project {
+                project_id: "p".into(),
+            },
             Focus::Task {
                 project_id: "p".into(),
                 task_id: "t".into(),
@@ -365,7 +362,10 @@ mod tests {
                 .and_then(|o| o.keys().next())
                 .map(String::as_str)
                 .unwrap_or("");
-            assert!(!key.is_empty(), "encoded form not externally tagged: {wire}");
+            assert!(
+                !key.is_empty(),
+                "encoded form not externally tagged: {wire}"
+            );
             // Equality round-trips for every variant.
             let back_wire = serde_json::to_value(&back).expect("re-encode");
             assert_eq!(wire, back_wire);

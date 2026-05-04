@@ -333,9 +333,7 @@ impl McpOrchestrator for DesktopMcpOrchestrator {
         }
         let resp = rx
             .recv_timeout(std::time::Duration::from_secs(30))
-            .map_err(|err| {
-                anyhow::anyhow!("select_focus: render-tick drain timed out: {err}")
-            })?;
+            .map_err(|err| anyhow::anyhow!("select_focus: render-tick drain timed out: {err}"))?;
         resp.map_err(|msg| anyhow::anyhow!(msg))
     }
 

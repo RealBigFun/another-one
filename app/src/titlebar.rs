@@ -680,7 +680,7 @@ impl AnotherOneApp {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                            this.open_active_directory_in_default_app(cx);
+                            this.open_active_open_in_target_in_default_app(cx);
                         }),
                     )
                     .child(
@@ -779,7 +779,7 @@ impl AnotherOneApp {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                            this.open_project_directory_in_app(&project_id_for_open, app, cx);
+                            this.open_project_open_in_target_in_app(&project_id_for_open, app, cx);
                         }),
                     )
                     .child(

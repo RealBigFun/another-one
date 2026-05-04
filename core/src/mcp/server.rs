@@ -110,7 +110,9 @@ pub struct SessionState {
 }
 
 impl SessionState {
-    pub fn new(events_rx: Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>>) -> Self {
+    pub fn new(
+        events_rx: Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>>,
+    ) -> Self {
         Self { events_rx }
     }
 
@@ -438,18 +440,25 @@ mod tests {
         }
     }
     impl McpOrchestrator for BusOrch {
-        fn list_projects(&self) -> Vec<ProjectInfo> { Vec::new() }
-        fn list_tasks(&self) -> Vec<TaskInfo> { Vec::new() }
-        fn list_tabs(&self, _: &str) -> Vec<TabInfo> { Vec::new() }
-        fn get_task_status(&self, _: &str) -> Option<TaskStatus> { None }
-        fn read_terminal_output(&self, _: &str, _: usize) -> Option<TerminalSnapshot> { None }
+        fn list_projects(&self) -> Vec<ProjectInfo> {
+            Vec::new()
+        }
+        fn list_tasks(&self) -> Vec<TaskInfo> {
+            Vec::new()
+        }
+        fn list_tabs(&self, _: &str) -> Vec<TabInfo> {
+            Vec::new()
+        }
+        fn get_task_status(&self, _: &str) -> Option<TaskStatus> {
+            None
+        }
+        fn read_terminal_output(&self, _: &str, _: usize) -> Option<TerminalSnapshot> {
+            None
+        }
         fn spawn_task(&self, _: SpawnTaskRequest) -> anyhow::Result<SpawnTaskResponse> {
             anyhow::bail!("not used in this test")
         }
-        fn spawn_terminal(
-            &self,
-            _: SpawnTerminalRequest,
-        ) -> anyhow::Result<SpawnTerminalResponse> {
+        fn spawn_terminal(&self, _: SpawnTerminalRequest) -> anyhow::Result<SpawnTerminalResponse> {
             // Simulate the daemon firing a TaskOpened on the bus
             // when a tab spawns. Tests assert this reaches the
             // peer subscriber.
@@ -459,13 +468,22 @@ mod tests {
                 section_id: crate::section::SectionId::for_task("p", "main", "task-x"),
                 tab_id: Some("tab-x".into()),
             });
-            Ok(SpawnTerminalResponse { tab_id: "tab-x".into() })
+            Ok(SpawnTerminalResponse {
+                tab_id: "tab-x".into(),
+            })
         }
-        fn send_input(&self, _: &str, _: &[u8]) -> anyhow::Result<()> { Ok(()) }
+        fn send_input(&self, _: &str, _: &[u8]) -> anyhow::Result<()> {
+            Ok(())
+        }
         fn run_command(&self, _: RunCommandRequest) -> anyhow::Result<RunCommandResponse> {
-            Ok(RunCommandResponse { output: Vec::new(), timed_out: false })
+            Ok(RunCommandResponse {
+                output: Vec::new(),
+                timed_out: false,
+            })
         }
-        fn close_tab(&self, _: &str) -> anyhow::Result<()> { Ok(()) }
+        fn close_tab(&self, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
         fn subscribe_events(
             &self,
         ) -> Option<tokio::sync::broadcast::Receiver<crate::clients::ClientEvent>> {
@@ -473,10 +491,7 @@ mod tests {
         }
     }
 
-    fn drive_with(
-        orch: Arc<dyn McpOrchestrator>,
-        script: &str,
-    ) -> String {
+    fn drive_with(orch: Arc<dyn McpOrchestrator>, script: &str) -> String {
         let reader = Cursor::new(script.to_string());
         let mut writer = Vec::new();
         serve(reader, &mut writer, orch).unwrap();
@@ -493,10 +508,16 @@ mod tests {
         let script = String::new()
             + &req(1, "initialize", json!({}))
             + &line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
-            + &req(2, "tools/call",
-                json!({"name":"spawn_terminal","arguments":{"project_id":"p"}}))
-            + &req(3, "tools/call",
-                json!({"name":"poll_events","arguments":{"max_events":10}}));
+            + &req(
+                2,
+                "tools/call",
+                json!({"name":"spawn_terminal","arguments":{"project_id":"p"}}),
+            )
+            + &req(
+                3,
+                "tools/call",
+                json!({"name":"poll_events","arguments":{"max_events":10}}),
+            );
         let out = drive_with(trait_arc, &script);
         // Last response is poll_events. Parse the structuredContent
         // and assert it contains a TaskOpened from the spawn we
@@ -529,10 +550,16 @@ mod tests {
         let script_a = String::new()
             + &req(1, "initialize", json!({}))
             + &line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
-            + &req(2, "tools/call",
-                json!({"name":"spawn_terminal","arguments":{"project_id":"p"}}))
-            + &req(3, "tools/call",
-                json!({"name":"poll_events","arguments":{"max_events":10}}));
+            + &req(
+                2,
+                "tools/call",
+                json!({"name":"spawn_terminal","arguments":{"project_id":"p"}}),
+            )
+            + &req(
+                3,
+                "tools/call",
+                json!({"name":"poll_events","arguments":{"max_events":10}}),
+            );
         let out_a = drive_with(trait_a, &script_a);
         let last_a: Value = serde_json::from_str(out_a.lines().last().unwrap()).unwrap();
         let events_a = last_a
@@ -547,8 +574,11 @@ mod tests {
         let script_b = String::new()
             + &req(1, "initialize", json!({}))
             + &line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
-            + &req(2, "tools/call",
-                json!({"name":"poll_events","arguments":{"max_events":10}}));
+            + &req(
+                2,
+                "tools/call",
+                json!({"name":"poll_events","arguments":{"max_events":10}}),
+            );
         let out_b = drive_with(trait_b, &script_b);
         let last_b: Value = serde_json::from_str(out_b.lines().last().unwrap()).unwrap();
         let events_b = last_b
@@ -597,7 +627,9 @@ mod tests {
                     return Ok(n);
                 }
                 let n = self.poll.len().min(buf.len());
-                if n == 0 { return Ok(0); }
+                if n == 0 {
+                    return Ok(0);
+                }
                 buf[..n].copy_from_slice(&self.poll[..n]);
                 self.poll.drain(..n);
                 Ok(n)
@@ -606,8 +638,11 @@ mod tests {
         let init_script = String::new()
             + &req(1, "initialize", json!({}))
             + &line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
-        let poll_script = req(2, "tools/call",
-            json!({"name":"poll_events","arguments":{"max_events":20}}));
+        let poll_script = req(
+            2,
+            "tools/call",
+            json!({"name":"poll_events","arguments":{"max_events":20}}),
+        );
         let bus_for_push = bus_handle.clone();
         let push_done = Box::new(move || {
             // Fire 6 events into a 4-cap channel; the receiver
@@ -636,14 +671,14 @@ mod tests {
             .unwrap();
         // First entry should be Lagged with skipped >= 1.
         assert!(
-            matches!(
-                events.first().and_then(|e| e.get("Lagged")),
-                Some(_)
-            ),
+            matches!(events.first().and_then(|e| e.get("Lagged")), Some(_)),
             "expected Lagged first; got {events:?}"
         );
         // The Lagged entry carries the skipped count as a u64.
-        let skipped = events[0].pointer("/Lagged/skipped").and_then(|v| v.as_u64()).unwrap();
+        let skipped = events[0]
+            .pointer("/Lagged/skipped")
+            .and_then(|v| v.as_u64())
+            .unwrap();
         assert!(skipped >= 1, "skipped should be at least 1, got {skipped}");
         // Plus we should still see some surviving TabClosed events.
         assert!(
