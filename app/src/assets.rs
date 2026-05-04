@@ -25,8 +25,33 @@ pub fn asset_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Icons that have to render on Android too. Android APKs don't
+/// expose `app/assets/` through the filesystem, so the disk lookup
+/// in `load` returns `NotFound` and `svg()` paints empty. Embedding
+/// the bytes mirrors what `lib.rs` already does for the bundled
+/// Lilex font — small binary cost, zero runtime asset wiring.
+///
+/// Add a path here only when its widget needs to render on every
+/// platform; the rest still resolve via the on-disk asset root.
+const EMBEDDED_ICONS: &[(&str, &[u8])] = &[
+    (
+        "assets/sidebar_toggle.svg",
+        include_bytes!("../assets/sidebar_toggle.svg"),
+    ),
+    (
+        "assets/right_sidebar_toggle.svg",
+        include_bytes!("../assets/right_sidebar_toggle.svg"),
+    ),
+];
+
 impl gpui::AssetSource for ProjectAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if let Some(bytes) = EMBEDDED_ICONS
+            .iter()
+            .find_map(|(p, b)| (*p == path).then_some(*b))
+        {
+            return Ok(Some(Cow::Borrowed(bytes)));
+        }
         let full = self.root.join(path);
         match std::fs::read(&full) {
             Ok(bytes) => Ok(Some(Cow::Owned(bytes))),
