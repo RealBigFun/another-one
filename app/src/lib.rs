@@ -35,6 +35,7 @@ mod project_workflows;
 mod resource_indicator;
 mod resource_usage;
 mod right_sidebar;
+mod session_host;
 mod settings_page;
 mod shortcuts;
 mod terminal_runtime;

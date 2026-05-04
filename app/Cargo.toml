@@ -37,6 +37,8 @@ anyhow = "1"
 daemon = { path = "../daemon" }
 daemon-proto = { path = "../daemon-proto" }
 daemon-transport = { path = "../daemon-transport" }
+futures-core = "0.3"
+futures-util = "0.3"
 # `gpui` is the only cross-platform dep here. The wayland / x11 /
 # font-kit features pull in `fontconfig`, `xkbcommon`, and friends
 # which only build on Linux/desktop — listing them unconditionally

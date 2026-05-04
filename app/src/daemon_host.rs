@@ -1346,10 +1346,24 @@ fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Ve
         .collect()
 }
 
+/// Bundle of handles the daemon-host thread hands back to the GUI.
+/// `endpoint_rx` carries the iroh `EndpointHandle` once the network
+/// endpoint binds (mobile clients dial this via QR pairing). `session`
+/// is the in-process client half of an `in_memory::pair()` whose
+/// server half the daemon-host drives via `serve_session` — every
+/// daemon interaction the GUI makes on desktop flows through this
+/// session so the network-vs-in-process distinction is opaque to
+/// callers (mobile holds an `IrohSession` on the same trait).
+pub(crate) struct DaemonHostHandles {
+    pub(crate) endpoint_rx: mpsc::Receiver<anyhow::Result<EndpointHandle>>,
+    pub(crate) session: Arc<dyn daemon_transport::Session>,
+}
+
 /// Spawn the embedded daemon on a dedicated OS thread with its own
-/// tokio runtime. Returns a receiver the GPUI render tick polls; the
-/// first `try_recv` that yields the handle caches it on
-/// `AnotherOneApp`.
+/// tokio runtime. Returns the in-process `Session` the GUI uses to
+/// reach the embedded daemon plus a receiver the GPUI render tick
+/// polls for the `EndpointHandle`; the first `try_recv` that yields
+/// the handle caches it on `AnotherOneApp`.
 ///
 /// The thread keeps running until the process exits; dropping the
 /// `EndpointHandle` (which happens when `AnotherOneApp` drops) aborts
@@ -1358,19 +1372,32 @@ fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Ve
 pub(crate) fn spawn(
     registry_state: Arc<Mutex<RegistryState>>,
     event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
-) -> mpsc::Receiver<anyhow::Result<EndpointHandle>> {
-    let (tx, rx) = mpsc::channel();
+) -> DaemonHostHandles {
+    let (endpoint_tx, endpoint_rx) = mpsc::channel();
+    // Build the in-memory pair *before* spawning the daemon thread so
+    // we can hand the client half back synchronously. `pair()` itself
+    // needs a tokio context (it `tokio::spawn`s the recv router) — use
+    // the shared session-host runtime which is also what drives every
+    // GUI-issued `session.call(...)`.
+    let (server_session, client_session) = crate::session_host::runtime_handle()
+        .block_on(async { daemon_transport::in_memory::pair("gui:desktop") });
+    let session: Arc<dyn daemon_transport::Session> = Arc::from(client_session);
+    let server_session: Arc<dyn daemon_transport::ServerSession> = Arc::from(server_session);
     thread::Builder::new()
         .name("another-one-daemon".into())
-        .spawn(move || run(registry_state, event_bus, tx))
+        .spawn(move || run(registry_state, event_bus, endpoint_tx, server_session))
         .expect("spawn daemon-host thread");
-    rx
+    DaemonHostHandles {
+        endpoint_rx,
+        session,
+    }
 }
 
 fn run(
     registry_state: Arc<Mutex<RegistryState>>,
     event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
     tx: mpsc::Sender<anyhow::Result<EndpointHandle>>,
+    in_process_server: Arc<dyn daemon_transport::ServerSession>,
 ) {
     // Four workers so a single stuck PTY write (child paused /
     // pipe buffer full) + its `block_in_place` scope don't starve
@@ -1473,6 +1500,21 @@ fn run(
         // cleans up the socket transparently to the user.
         std::future::pending::<()>().await;
         drop(listener);
+    });
+
+    // Drive the in-process Session. The GUI on the same process holds
+    // the matched client half (`session: Arc<dyn Session>` on
+    // `AnotherOneApp`) and issues every daemon-equivalent verb through
+    // it; we accept those verbs here on the daemon's own runtime via
+    // the same `serve_session` dispatcher the iroh accept loop drives
+    // for mobile clients. Nothing about handler logic is in-process
+    // vs over the wire — it's the same dispatch path either way, which
+    // is the whole point of the daemon-transport seam.
+    let in_process_registry = registry.clone();
+    runtime.spawn(async move {
+        if let Err(e) = daemon::dispatch::serve_session(in_process_server, in_process_registry).await {
+            log::warn!("in-process serve_session ended with error: {e}");
+        }
     });
 
     let endpoint_result = runtime.block_on(async {

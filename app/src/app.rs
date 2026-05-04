@@ -1850,6 +1850,21 @@ pub struct AnotherOneApp {
     /// after that, `pair_mobile_overlay` reads from here. Keeping the
     /// handle alive keeps the endpoint alive — drop aborts it.
     pub(crate) daemon_handle: Option<daemon::EndpointHandle>,
+    /// Session used to reach the daemon. On desktop this is the
+    /// client half of an `in_memory::pair()` whose server half the
+    /// embedded daemon's runtime drives via
+    /// `daemon::dispatch::serve_session`. On mobile this starts as a
+    /// `NoSession` placeholder and swaps to an `IrohSession` once the
+    /// QR pair flow lands a successful dial. Every state-mutating GUI
+    /// call that has a `Control` equivalent routes through here, so
+    /// the desktop/mobile/render-vs-network distinction is opaque to
+    /// callers — both platforms run the same code path.
+    ///
+    /// Stored behind a `parking_lot`-style `Mutex` (using `std::sync`
+    /// here for parity with the rest of the app) so the QR pair flow
+    /// can swap the impl in place without `&mut self` plumbing through
+    /// every call site that reads it.
+    pub(crate) session: Arc<Mutex<Arc<dyn daemon_transport::Session>>>,
     /// Collapsed resource tree node ids in the resource usage panel.
     pub(crate) resource_collapsed_nodes: HashSet<String>,
     /// Latest sampled resource usage snapshot.
@@ -1980,6 +1995,26 @@ fn open_in_target_path_for_project(
 }
 
 impl AnotherOneApp {
+    /// Snapshot the current `Session` impl. Cheap (`Arc::clone` under
+    /// a brief mutex lock) so call sites can call this on every
+    /// dispatch without worrying about contention; the lock is only
+    /// held for the duration of the clone.
+    pub(crate) fn session_handle(&self) -> Arc<dyn daemon_transport::Session> {
+        self.session
+            .lock()
+            .expect("session slot poisoned")
+            .clone()
+    }
+
+    /// Replace the current `Session` impl. Used by the QR pair flow
+    /// on mobile to swap the `NoSession` placeholder for a live
+    /// `IrohSession` once `daemon_client::iroh_factory().dial(...)`
+    /// returns.
+    #[allow(dead_code)] // wired up by the mobile pair-completion commit
+    pub(crate) fn replace_session(&self, session: Arc<dyn daemon_transport::Session>) {
+        *self.session.lock().expect("session slot poisoned") = session;
+    }
+
     pub(crate) fn focused_settings_git_action_script_kind(
         &self,
     ) -> Option<SettingsGitActionScriptKind> {
@@ -4186,15 +4221,27 @@ impl AnotherOneApp {
         // the QR-scan flow follow-up.) Skipping the spawn also avoids
         // the `HOME is unset` startup error since `daemon-host`'s
         // config-dir lookup uses `dirs::config_dir()`.
+        // Build the daemon-host thread (desktop) or stand up a
+        // `NoSession` placeholder (mobile, until QR pair lands an
+        // `IrohSession`). The `session` field is the only thing
+        // call sites read — they do not care which platform branch
+        // produced it.
         #[cfg(not(target_os = "android"))]
-        let daemon_handle_rx = Some(crate::daemon_host::spawn(
-            registry_state.clone(),
-            event_bus.clone(),
-        ));
+        let (daemon_handle_rx, initial_session) = {
+            let handles = crate::daemon_host::spawn(registry_state.clone(), event_bus.clone());
+            (Some(handles.endpoint_rx), handles.session)
+        };
         #[cfg(target_os = "android")]
-        let daemon_handle_rx: Option<
-            mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>,
-        > = None;
+        let (daemon_handle_rx, initial_session): (
+            Option<mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>>,
+            Arc<dyn daemon_transport::Session>,
+        ) = (
+            None,
+            Arc::new(crate::session_host::NoSession::new(
+                "mobile session not paired yet — scan the desktop's QR code",
+            )),
+        );
+        let session = Arc::new(Mutex::new(initial_session));
         let left_sidebar_open = store.ui.left_sidebar_open;
         // Broadcast capacity is a per-channel ring buffer size. 64 is
         // well above the realistic backlog for these low-rate worker
@@ -4473,6 +4520,7 @@ impl AnotherOneApp {
             registry_state,
             daemon_handle_rx,
             daemon_handle: None,
+            session,
             resource_collapsed_nodes: HashSet::new(),
             resource_usage: ResourceUsageSnapshot::default(),
             resource_usage_sampler: ResourceUsageSampler::default(),
