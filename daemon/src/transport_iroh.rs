@@ -17,23 +17,24 @@
 //! tab's PTY input.
 
 use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
-use iroh::endpoint::{presets, Connection, Incoming};
+use iroh::endpoint::{presets, Connection, Incoming, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, SecretKey};
-use tokio::sync::{broadcast, mpsc};
-use tokio::task::AbortHandle;
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use tracing::{debug, info, warn};
 
+use crate::dispatch::{serve_session_with_attach, AttachState};
 use crate::frame::{read_frame, write_frame};
 use daemon_proto::{
-    Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope, TY_CONTROL, TY_DATA,
+    Control, ControlEnvelope, WorkerReply, WorkerReplyEnvelope, PUSH_REQUEST_ID, TY_CONTROL,
+    TY_DATA, TY_WORKER_REPLY,
 };
 use crate::registry::{DaemonRegistry, EndpointHandle, PairState};
+use daemon_transport::{
+    RequestId, ServerSession, SessionFuture, TransportError,
+};
 
 use daemon_proto::{ALPN, PROTOCOL_VERSION};
 
@@ -135,33 +136,6 @@ pub async fn run_embedded(
 
 // ---- connection state machine ----------------------------------
 
-/// State of the one-at-a-time PTY attachment on this connection.
-struct Attached {
-    section_id: String,
-    tab_id: String,
-    /// Abort handle for the forwarder task draining the per-tab
-    /// broadcast into this connection's outbound mpsc. Dropped /
-    /// aborted when the client detaches or attaches elsewhere.
-    forwarder: Option<AbortHandle>,
-}
-
-impl Attached {
-    fn abort_forwarder(self) {
-        if let Some(forwarder) = self.forwarder {
-            forwarder.abort();
-        }
-    }
-}
-
-#[derive(Debug)]
-struct OutboundFrame {
-    ty: u8,
-    payload: Vec<u8>,
-    data_generation: Option<u64>,
-}
-
-type OutboundTx = mpsc::Sender<OutboundFrame>;
-
 async fn handle_incoming(
     incoming: Incoming,
     registry: Arc<dyn DaemonRegistry>,
@@ -199,14 +173,16 @@ async fn handle_incoming(
     let result = handle_connection(
         conn,
         registry.clone(),
-        &viewer_id,
+        viewer_id.clone(),
         authz,
         paired_peers_path,
         pair_state,
     )
     .await;
-    // Clear this viewer's size entries so a stale small viewport
-    // doesn't keep the PTY cramped after the session ends.
+    // viewer_disconnected is also called by serve_session on its way
+    // out; calling it again here is a defensive no-op (idempotent for
+    // unknown viewer ids) that catches the pre-Hello / handshake
+    // failure paths where serve_session never ran.
     registry.viewer_disconnected(&viewer_id);
     result
 }
@@ -217,142 +193,335 @@ enum PostAuth {
     AwaitHello,
 }
 
+/// Drive one accepted iroh connection through pairing and then hand
+/// it off to the transport-agnostic dispatcher. Splits the lifecycle
+/// into two phases:
+///
+///   1. **Pre-handshake** (this function, in-line). Read frames until
+///      the peer is authorised (paired-list match or successful
+///      `Control::Hello` TOFU). Bytes that arrive before the Hello
+///      are bounded — control frames must be `Hello`, raw `TY_DATA`
+///      from an unpaired peer is a hard reject.
+///   2. **Post-handshake**. Construct an [`IrohServerSession`] over the
+///      same bidi streams and run [`serve_session_with_attach`] against
+///      it. The dispatcher owns verb routing, attach lifecycle, and
+///      forwarder spawning; this function only sees its return value.
 async fn handle_connection(
     conn: Connection,
     registry: Arc<dyn DaemonRegistry>,
-    viewer_id: &str,
+    viewer_id: String,
     mut authz: PostAuth,
     paired_peers_path: &Path,
     pair_state: Arc<Mutex<PairState>>,
 ) -> anyhow::Result<()> {
-    let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
+    let (send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
 
-    // Outbound mpsc: all producers (worker-reply replies + the PTY
-    // forwarder task) push frames; the writer task owns `send` and
-    // serialises writes.
-    let data_generation = Arc::new(AtomicU64::new(0));
-    let data_generation_for_writer = data_generation.clone();
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundFrame>(64);
-    let writer_task = tokio::spawn(async move {
-        while let Some(frame) = outbound_rx.recv().await {
-            if frame.ty == TY_DATA
-                && frame.data_generation != Some(data_generation_for_writer.load(Ordering::Relaxed))
-            {
-                continue;
-            }
-            if let Err(e) = write_frame(&mut send, frame.ty, &frame.payload).await {
-                debug!(error = %e, "iroh frame write failed");
-                break;
-            }
-        }
-        let _ = send.finish();
-    });
-
-    let mut attached: Option<Attached> = None;
-
-    loop {
+    // Pre-handshake: while authz == AwaitHello, consume control frames
+    // looking for a valid Hello. Anything else (TY_DATA, mid-stream
+    // control verbs) is a hard reject. Once authz flips to
+    // AlreadyPaired we drop out of the loop and run the dispatcher
+    // over an IrohServerSession that owns the streams.
+    while matches!(authz, PostAuth::AwaitHello) {
         match read_frame(&mut recv).await {
-            Ok(Some((TY_DATA, payload))) => {
-                if matches!(authz, PostAuth::AwaitHello) {
-                    warn!(viewer_id, "pre-Hello data from unpaired peer; rejecting");
-                    conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
-                    break;
-                }
-                route_pty_input(registry.as_ref(), attached.as_ref(), &payload);
-                // No attachment → silently drop. Not an error:
-                // clients may type during the race between AttachTab
-                // going out and the first reply coming back.
+            Ok(Some((TY_DATA, _))) => {
+                warn!(viewer_id, "pre-Hello data from unpaired peer; rejecting");
+                conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
+                return Ok(());
             }
             Ok(Some((TY_CONTROL, payload))) => {
-                match serde_json::from_slice::<ControlEnvelope>(&payload) {
-                    Ok(envelope) => {
-                        let ControlEnvelope {
-                            request_id,
-                            control: ctrl,
-                        } = envelope;
-                        // Version-check Hello regardless of pairing state.
-                        // A v0 client that somehow squeaks past the ALPN
-                        // gate — or a v2 client speculatively dialling
-                        // a v1 daemon — must be told why the connection
-                        // is closing, not allowed to drift further into
-                        // the protocol where serde would eventually
-                        // panic on an unknown variant.
-                        if let Control::Hello {
-                            protocol_version, ..
-                        } = &ctrl
-                        {
-                            if *protocol_version != PROTOCOL_VERSION {
-                                warn!(
-                                    viewer_id,
-                                    peer_version = *protocol_version,
-                                    daemon_version = PROTOCOL_VERSION,
-                                    "rejecting peer with incompatible protocol version"
-                                );
-                                conn.close(1u8.into(), CLOSE_REASON_INCOMPATIBLE_VERSION);
-                                break;
-                            }
-                        }
-                        if matches!(authz, PostAuth::AwaitHello) {
-                            match consume_hello(ctrl, viewer_id, &pair_state, paired_peers_path) {
-                                Ok(()) => {
-                                    authz = PostAuth::AlreadyPaired;
-                                    info!(viewer_id, "TOFU pair complete");
-                                    continue;
-                                }
-                                Err(e) => {
-                                    warn!(viewer_id, error = %e, "rejecting unpaired peer");
-                                    conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
-                                    break;
-                                }
-                            }
-                        }
-                        handle_control(
-                            request_id,
-                            ctrl,
-                            &registry,
-                            &outbound_tx,
-                            &data_generation,
-                            &mut attached,
-                            viewer_id,
-                        )
-                        .await
-                        .unwrap_or_else(|e| {
-                            warn!(error = %e, "control dispatch failed");
-                        });
+                let envelope = match serde_json::from_slice::<ControlEnvelope>(&payload) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        warn!(error = %e, "bad iroh control frame during pairing");
+                        continue;
                     }
-                    Err(e) => warn!(error = %e, "bad iroh control frame"),
+                };
+                let ControlEnvelope {
+                    request_id: _,
+                    control: ctrl,
+                } = envelope;
+                if let Control::Hello {
+                    protocol_version, ..
+                } = &ctrl
+                {
+                    if *protocol_version != PROTOCOL_VERSION {
+                        warn!(
+                            viewer_id,
+                            peer_version = *protocol_version,
+                            daemon_version = PROTOCOL_VERSION,
+                            "rejecting peer with incompatible protocol version"
+                        );
+                        conn.close(1u8.into(), CLOSE_REASON_INCOMPATIBLE_VERSION);
+                        return Ok(());
+                    }
+                }
+                match consume_hello(ctrl, &viewer_id, &pair_state, paired_peers_path) {
+                    Ok(()) => {
+                        authz = PostAuth::AlreadyPaired;
+                        info!(viewer_id, "TOFU pair complete");
+                    }
+                    Err(e) => {
+                        warn!(viewer_id, error = %e, "rejecting unpaired peer");
+                        conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
+                        return Ok(());
+                    }
                 }
             }
-            Ok(Some((ty, _))) => warn!(frame_type = ty, "unknown iroh frame type"),
+            Ok(Some((ty, _))) => warn!(frame_type = ty, "unknown iroh frame type during pairing"),
             Ok(None) => {
-                debug!("iroh peer closed send");
-                break;
+                debug!("iroh peer closed send before Hello");
+                return Ok(());
             }
             Err(e) => {
-                warn!(error = %e, "iroh frame read failed");
-                break;
+                warn!(error = %e, "iroh frame read failed during pairing");
+                return Ok(());
             }
         }
     }
 
-    if let Some(att) = attached.take() {
-        if att.forwarder.is_some() {
-            registry.note_tab_output_observed(viewer_id, &att.section_id, &att.tab_id);
-        }
-        att.abort_forwarder();
+    // Already-paired (or just-paired): hand the streams + registry to
+    // the abstract dispatcher. The session owns its own attach state
+    // so its frame loop can route inbound TY_DATA into
+    // `registry.tab_input` based on the live attach key.
+    let attach = Arc::new(AttachState::new());
+    let session = Arc::new(IrohServerSession::new(
+        send,
+        recv,
+        viewer_id.clone(),
+        Arc::clone(&registry),
+        Arc::clone(&attach),
+    )) as Arc<dyn ServerSession>;
+
+    if let Err(e) = serve_session_with_attach(session, registry, attach).await {
+        debug!(viewer_id, error = %e, "iroh session ended with error");
     }
-    drop(outbound_tx);
-    writer_task.abort();
     info!("iroh session ended");
     Ok(())
 }
 
-fn route_pty_input(registry: &dyn DaemonRegistry, attached: Option<&Attached>, payload: &[u8]) {
-    let Some(att) = attached else {
-        return;
-    };
-    registry.tab_input(&att.section_id, &att.tab_id, payload);
+/// Server-side `ServerSession` impl backed by an iroh QUIC bidi
+/// stream. Wraps:
+///
+///   - the bidi `SendStream` + `RecvStream`,
+///   - an outbound mpsc the writer task drains (so the dispatcher's
+///     `reply` / `push_data` calls can come from any task),
+///   - the registry handle (to route inbound `TY_DATA` to
+///     `registry.tab_input` per the live attach key),
+///   - the per-session [`AttachState`] (read-only here — the
+///     dispatcher mutates it on `AttachTab` / `DetachTab`).
+struct IrohServerSession {
+    peer_id: String,
+    /// Recv half plus the registry / attach state we need to route
+    /// inbound `TY_DATA` frames into the registry's tab input. Held
+    /// behind an `AsyncMutex` because `next_call` is called from the
+    /// dispatcher loop which is `&self` only.
+    incoming: AsyncMutex<IncomingHalf>,
+    outbound_tx: mpsc::Sender<OutboundFrame>,
+    /// Writer task handle. Dropped on `close()` so the writer task
+    /// finishes draining its queue.
+    writer_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
+
+struct IncomingHalf {
+    recv: RecvStream,
+    registry: Arc<dyn DaemonRegistry>,
+    attach: Arc<AttachState>,
+}
+
+#[derive(Debug)]
+struct OutboundFrame {
+    ty: u8,
+    payload: Vec<u8>,
+}
+
+impl IrohServerSession {
+    fn new(
+        send: SendStream,
+        recv: RecvStream,
+        peer_id: String,
+        registry: Arc<dyn DaemonRegistry>,
+        attach: Arc<AttachState>,
+    ) -> Self {
+        let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundFrame>(64);
+        let mut send = send;
+        let writer_task = tokio::spawn(async move {
+            while let Some(frame) = outbound_rx.recv().await {
+                if let Err(e) = write_frame(&mut send, frame.ty, &frame.payload).await {
+                    debug!(error = %e, "iroh frame write failed");
+                    break;
+                }
+            }
+            let _ = send.finish();
+        });
+        // We don't retain the iroh `Connection` here. `close()` aborts
+        // the writer task and lets the stream drop emit FIN; concrete
+        // QUIC close-with-reason support belongs in
+        // `handle_connection` (which holds the Connection) and lands
+        // when a caller needs it.
+        Self {
+            peer_id,
+            incoming: AsyncMutex::new(IncomingHalf {
+                recv,
+                registry,
+                attach,
+            }),
+            outbound_tx,
+            writer_task: Mutex::new(Some(writer_task)),
+        }
+    }
+}
+
+impl ServerSession for IrohServerSession {
+    fn peer_id(&self) -> &str {
+        &self.peer_id
+    }
+
+    fn next_call<'a>(
+        &'a self,
+    ) -> SessionFuture<'a, Result<Option<(RequestId, Control)>, TransportError>> {
+        Box::pin(async move {
+            let mut incoming = self.incoming.lock().await;
+            loop {
+                match read_frame(&mut incoming.recv).await {
+                    Ok(Some((TY_DATA, payload))) => {
+                        // Route directly into the registry's tab
+                        // input based on the live attach target. No
+                        // attachment → silently drop (clients may
+                        // type during the AttachTab → first-reply
+                        // race).
+                        if let Some((section_id, tab_id)) = incoming.attach.snapshot_target() {
+                            incoming
+                                .registry
+                                .tab_input(&section_id, &tab_id, &payload);
+                        }
+                    }
+                    Ok(Some((TY_CONTROL, payload))) => {
+                        let envelope: ControlEnvelope = match serde_json::from_slice(&payload) {
+                            Ok(e) => e,
+                            Err(e) => {
+                                warn!(error = %e, "bad iroh control frame");
+                                continue;
+                            }
+                        };
+                        return Ok(Some((
+                            RequestId(envelope.request_id),
+                            envelope.control,
+                        )));
+                    }
+                    Ok(Some((ty, _))) => {
+                        warn!(frame_type = ty, "unknown iroh frame type");
+                    }
+                    Ok(None) => {
+                        debug!("iroh peer closed send");
+                        return Ok(None);
+                    }
+                    Err(e) => {
+                        return Err(TransportError::Other(format!("iroh frame read: {e:#}")));
+                    }
+                }
+            }
+        })
+    }
+
+    fn reply<'a>(
+        &'a self,
+        request_id: RequestId,
+        reply: WorkerReply,
+    ) -> SessionFuture<'a, Result<(), TransportError>> {
+        Box::pin(async move {
+            let envelope = WorkerReplyEnvelope {
+                request_id: request_id.0,
+                reply,
+            };
+            let payload = serde_json::to_vec(&envelope)
+                .map_err(|e| TransportError::Encoding(format!("worker reply: {e}")))?;
+            self.outbound_tx
+                .send(OutboundFrame {
+                    ty: TY_WORKER_REPLY,
+                    payload,
+                })
+                .await
+                .map_err(|_| TransportError::Closed(Some("outbound queue closed".into())))
+        })
+    }
+
+    fn push_data<'a>(
+        &'a self,
+        _section_id: &'a str,
+        _tab_id: &'a str,
+        bytes: &'a [u8],
+    ) -> SessionFuture<'a, Result<(), TransportError>> {
+        // Today's wire is a single TY_DATA fan — bytes for the
+        // (single) currently-attached tab go untagged. The
+        // (section_id, tab_id) plumbing exists for the future
+        // multi-attach world; for now we ignore them on the wire and
+        // rely on the client's attach state to demultiplex.
+        let payload = bytes.to_vec();
+        Box::pin(async move {
+            self.outbound_tx
+                .send(OutboundFrame {
+                    ty: TY_DATA,
+                    payload,
+                })
+                .await
+                .map_err(|_| TransportError::Closed(Some("outbound queue closed".into())))
+        })
+    }
+
+    fn push_reply<'a>(
+        &'a self,
+        reply: WorkerReply,
+    ) -> SessionFuture<'a, Result<(), TransportError>> {
+        Box::pin(async move {
+            let envelope = WorkerReplyEnvelope {
+                request_id: PUSH_REQUEST_ID,
+                reply,
+            };
+            let payload = serde_json::to_vec(&envelope)
+                .map_err(|e| TransportError::Encoding(format!("push reply: {e}")))?;
+            self.outbound_tx
+                .send(OutboundFrame {
+                    ty: TY_WORKER_REPLY,
+                    payload,
+                })
+                .await
+                .map_err(|_| TransportError::Closed(Some("outbound queue closed".into())))
+        })
+    }
+
+    fn close<'a>(
+        &'a self,
+        _reason: Option<&'a [u8]>,
+    ) -> SessionFuture<'a, Result<(), TransportError>> {
+        // Drop the writer task's join handle; the writer task ends
+        // when the outbound channel closes (which happens when the
+        // last sender is dropped — i.e. when this session is dropped
+        // entirely). For an explicit close, abort the writer task so
+        // any queued frames are discarded.
+        let handle = self
+            .writer_task
+            .lock()
+            .expect("writer task lock poisoned")
+            .take();
+        Box::pin(async move {
+            if let Some(handle) = handle {
+                handle.abort();
+            }
+            Ok(())
+        })
+    }
+}
+
+impl Drop for IrohServerSession {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.writer_task.lock() {
+            if let Some(handle) = slot.take() {
+                handle.abort();
+            }
+        }
+    }
+}
+
 
 /// Validate a `Control::Hello` from an unpaired peer. On match, consume
 /// the nonce (so a second reader of the same QR can't re-pair) and
@@ -388,1003 +557,6 @@ fn consume_hello(
     persist_pairing(viewer_id, paired_peers_path)?;
     state.nonce = None;
     Ok(())
-}
-
-async fn handle_control(
-    request_id: u64,
-    ctrl: Control,
-    registry: &Arc<dyn DaemonRegistry>,
-    outbound_tx: &OutboundTx,
-    data_generation: &Arc<AtomicU64>,
-    attached: &mut Option<Attached>,
-    viewer_id: &str,
-) -> anyhow::Result<()> {
-    if !matches!(ctrl, Control::Hello { .. }) {
-        if let Err(message) = registry.health() {
-            send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
-            return Ok(());
-        }
-    }
-
-    let ctrl = match crate::commands::agent_settings::handle(ctrl, registry.as_ref()) {
-        Ok(reply) => {
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-            return Ok(());
-        }
-        Err(ctrl) => ctrl,
-    };
-    let ctrl = match crate::commands::open_in::handle(ctrl, registry.as_ref()) {
-        Ok(reply) => {
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-            return Ok(());
-        }
-        Err(ctrl) => ctrl,
-    };
-
-    match ctrl {
-        Control::Resize { cols, rows } | Control::TabResize { cols, rows } => {
-            if let Some(att) = attached.as_ref() {
-                registry.tab_resize(viewer_id, &att.section_id, &att.tab_id, cols, rows);
-            }
-        }
-        Control::ListProjects => {
-            let projects = registry.list_projects();
-            let wire = WorkerReply::ProjectList { projects };
-            send_worker_reply(outbound_tx, request_id, &wire).await?;
-        }
-        Control::ListProjectActions { project_id } => {
-            let actions = registry.list_project_actions(&project_id);
-            let reply = WorkerReply::ProjectActionsAck { actions };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::SubmitNewTask {
-            project_id,
-            task_name,
-            source_branch,
-            agent_ids,
-            branch_mode_existing,
-            worktree_mode,
-        } => {
-            let outcome = registry
-                .submit_new_task(
-                    project_id,
-                    task_name,
-                    source_branch,
-                    agent_ids,
-                    branch_mode_existing,
-                    worktree_mode,
-                )
-                .await;
-            match outcome {
-                Ok(section_id) => {
-                    let reply = WorkerReply::SubmitNewTaskAck { section_id };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::AddAgentToSection {
-            section_id,
-            agent_id,
-        } => match registry.add_agent_to_section(&section_id, &agent_id) {
-            Ok(tab_id) => {
-                let reply = WorkerReply::AddAgentToSectionAck { tab_id };
-                send_worker_reply(outbound_tx, request_id, &reply).await?;
-            }
-            Err(message) => {
-                let kind = if message.contains("unknown") || message.contains("malformed") {
-                    ErrKind::UnknownId
-                } else {
-                    ErrKind::Internal
-                };
-                send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
-                    .await?;
-            }
-        },
-        Control::ActivateSectionTab { section_id, tab_id } => {
-            match registry.activate_section_tab(&section_id, &tab_id) {
-                Ok(()) => {
-                    send_worker_reply(outbound_tx, request_id, &WorkerReply::ActivateSectionTabAck)
-                        .await?;
-                }
-                Err(message) => {
-                    let kind = if message.contains("unknown") || message.contains("malformed") {
-                        ErrKind::UnknownId
-                    } else {
-                        ErrKind::Internal
-                    };
-                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
-                        .await?;
-                }
-            }
-        }
-        Control::CloseSectionTab { section_id, tab_id } => {
-            match registry.close_section_tab(&section_id, &tab_id) {
-                Ok(active_tab_id) => {
-                    let reply = WorkerReply::CloseSectionTabAck { active_tab_id };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(message) => {
-                    let kind = if message.contains("unknown") || message.contains("malformed") {
-                        ErrKind::UnknownId
-                    } else {
-                        ErrKind::Internal
-                    };
-                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
-                        .await?;
-                }
-            }
-        }
-        Control::ToggleSectionTabPinned { section_id, tab_id } => {
-            match registry.toggle_section_tab_pinned(&section_id, &tab_id) {
-                Ok(pinned) => {
-                    let reply = WorkerReply::ToggleSectionTabPinnedAck { pinned };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(message) => {
-                    let kind = if message.contains("unknown") || message.contains("malformed") {
-                        ErrKind::UnknownId
-                    } else {
-                        ErrKind::Internal
-                    };
-                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
-                        .await?;
-                }
-            }
-        }
-        Control::RunProjectAction {
-            project_id,
-            section_id,
-            action_id,
-        } => {
-            let reply = match registry.run_project_action(&project_id, &section_id, &action_id) {
-                Ok(tab_id) => WorkerReply::RunProjectActionAck { tab_id },
-                Err(message) => WorkerReply::Err {
-                    message,
-                    // `Internal` covers the diverse failure surface
-                    // (unknown ids, malformed section, command
-                    // empty, project store mutex poisoned). We keep
-                    // the wire kind coarse here rather than threading
-                    // a parsed failure type all the way through. UI should
-                    // surface the message verbatim in a toast.
-                    kind: ErrKind::Internal,
-                },
-            };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::SaveProjectAction {
-            project_id,
-            action,
-            save_global_copy,
-        } => match registry.save_project_action(&project_id, action, save_global_copy) {
-            Ok(()) => {
-                let reply = WorkerReply::SaveProjectActionAck;
-                send_worker_reply(outbound_tx, request_id, &reply).await?;
-            }
-            Err(message) => {
-                send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
-            }
-        },
-        Control::DeleteProjectAction {
-            project_id,
-            action_id,
-        } => {
-            let deleted = registry.delete_project_action(&project_id, &action_id);
-            let reply = WorkerReply::DeleteProjectActionAck { deleted };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::AttachTab { section_id, tab_id } => {
-            let same_target = attached
-                .as_ref()
-                .is_some_and(|prev| prev.section_id == section_id && prev.tab_id == tab_id);
-            let generation = if same_target {
-                data_generation.load(Ordering::Relaxed)
-            } else {
-                data_generation
-                    .fetch_add(1, Ordering::Relaxed)
-                    .wrapping_add(1)
-            };
-            // Drop any prior attachment on this connection.
-            if let Some(prev) = attached.take() {
-                if prev.forwarder.is_some() {
-                    registry.note_tab_output_observed(viewer_id, &prev.section_id, &prev.tab_id);
-                }
-                prev.abort_forwarder();
-            }
-            // Clear this viewer's viewport claim from the prior tab
-            // before installing a new one. Without this, switching
-            // attach targets leaves the old tab's `active_viewers`
-            // entry stale until the first TabResize arrives — which
-            // often doesn't fire on cold attach, leaving the old
-            // tab's PTY clamped to this phone's viewport despite
-            // the phone having moved on.
-            if !same_target {
-                registry.viewer_disconnected(viewer_id);
-            }
-
-            let Some(attachment) = registry.attach_tab_with_replay(viewer_id, &section_id, &tab_id)
-            else {
-                debug!(section_id, tab_id, "attach_tab: waiting for live runtime");
-                *attached = Some(Attached {
-                    section_id,
-                    tab_id,
-                    forwarder: None,
-                });
-                return Ok(());
-            };
-
-            let mut rx = attachment.receiver;
-            let replay = attachment.replay;
-            let out = outbound_tx.clone();
-            let forwarder = tokio::spawn(async move {
-                for bytes in replay {
-                    if out
-                        .send(OutboundFrame {
-                            ty: TY_DATA,
-                            payload: bytes,
-                            data_generation: Some(generation),
-                        })
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                loop {
-                    match rx.recv().await {
-                        Ok(bytes) => {
-                            if out
-                                .send(OutboundFrame {
-                                    ty: TY_DATA,
-                                    payload: bytes,
-                                    data_generation: Some(generation),
-                                })
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                        Err(broadcast::error::RecvError::Lagged(n)) => {
-                            // Slow mobile consumer lost `n` chunks.
-                            // Silently resuming from the new tail
-                            // would leave the client's terminal
-                            // state machine stranded — mid-CSI or
-                            // mid-alt-screen, cursor at wrong row —
-                            // because the skipped bytes carried the
-                            // closing escape sequences. There's no
-                            // in-band resync we can perform; the
-                            // only correct recovery is to tear down
-                            // the attachment and let the client
-                            // reconnect, where it'll get a fresh
-                            // scrollback replay + a clean VT state.
-                            warn!(
-                                lagged = n,
-                                "attach forwarder lagged; dropping attachment to force reattach"
-                            );
-                            break;
-                        }
-                    }
-                }
-            });
-
-            *attached = Some(Attached {
-                section_id,
-                tab_id,
-                forwarder: Some(forwarder.abort_handle()),
-            });
-        }
-        Control::DetachTab => {
-            data_generation.fetch_add(1, Ordering::Relaxed);
-            if let Some(prev) = attached.take() {
-                if prev.forwarder.is_some() {
-                    registry.note_tab_output_observed(viewer_id, &prev.section_id, &prev.tab_id);
-                }
-                prev.abort_forwarder();
-            }
-            // A detached viewer has no focused tab, so their
-            // viewport claim is stale — clear it so the PTY
-            // re-aggregates to the remaining viewers' min (or lifts
-            // the clamp entirely if this was the last viewer).
-            // Same semantics as viewer_disconnected on session end,
-            // just without closing the control stream.
-            registry.viewer_disconnected(viewer_id);
-        }
-        Control::WatchProject { project_path: _ } => {
-            // Legacy no-op. Kept in the enum for serde-compat with
-            // any lingering clients; new clients use
-            // ListProjects + AttachTab.
-            debug!("legacy Control::WatchProject ignored");
-        }
-        Control::LaunchTab { section_id, tab_id } => {
-            registry.launch_tab(&section_id, &tab_id);
-        }
-        Control::AddProject { path } => {
-            // `add_project` is async — `prepare_project` runs on a
-            // background thread inside the registry impl. We await
-            // the result here on the per-connection task; the
-            // outbound writer task is a separate task and keeps
-            // pumping any other queued frames in the meantime.
-            match registry.add_project(path).await {
-                Ok(project) => {
-                    let wire = WorkerReply::ProjectAdded { project };
-                    send_worker_reply(outbound_tx, request_id, &wire).await?;
-                }
-                Err(e) => {
-                    let wire = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &wire).await?;
-                }
-            }
-        }
-        Control::RemoveProject { project_id } => match registry.remove_project(&project_id) {
-            Ok(()) => {
-                let wire = WorkerReply::ProjectRemoved { project_id };
-                send_worker_reply(outbound_tx, request_id, &wire).await?;
-            }
-            Err(e) => {
-                let wire = WorkerReply::Err {
-                    message: format!("{e:#}"),
-                    kind: ErrKind::Internal,
-                };
-                send_worker_reply(outbound_tx, request_id, &wire).await?;
-            }
-        },
-        Control::ReadEnabledAgents
-        | Control::ReadAgentSettings
-        | Control::SetAgentEnabled { .. }
-        | Control::SetDefaultAgent { .. }
-        | Control::SetAgentLaunchArgs { .. }
-        | Control::OpenInState
-        | Control::ReadOpenInSettings
-        | Control::SetOpenInAppEnabled { .. }
-        | Control::OpenProjectInApp { .. } => {
-            unreachable!("domain command should be handled before transport dispatch")
-        }
-        Control::Hello { .. } => {
-            // Hello is only meaningful as the *first* control frame
-            // from an unpaired peer — see `consume_hello`. A paired
-            // peer that sends it mid-session is harmless but pointless;
-            // drop it rather than error.
-            debug!("stray Control::Hello from already-paired peer; ignored");
-        }
-        Control::CreateWorktreeTask {
-            project_id,
-            task_name,
-            source_branch,
-            agent_provider,
-        } => {
-            // The registry future may take tens of seconds (worker
-            // thread spawns + git worktree creation + prepare_project).
-            // We `await` it inline rather than detaching so a
-            // `WorkerReply::Err` lands on the same connection if the
-            // worker fails — preserves request_id correlation.
-            let project_id_for_reply = project_id.clone();
-            let result = registry
-                .create_worktree_task(project_id, task_name, source_branch, agent_provider)
-                .await;
-            match result {
-                Ok(task) => {
-                    let reply = WorkerReply::TaskCreated {
-                        project_id: project_id_for_reply,
-                        task,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::StageChangedFile {
-            project_id,
-            path,
-            original_path,
-        } => {
-            // Inline-snapshot ack: the registry's stage helper runs
-            // the git mutation *and* re-reads the post-mutation
-            // changed-files list, so the caller's ack carries the
-            // refreshed Changes pane state in the same round-trip.
-            let outcome = registry
-                .stage_changed_file(&project_id, &path, original_path.as_deref())
-                .await;
-            match outcome {
-                Ok(changed_files) => {
-                    let reply = WorkerReply::StageChangedFileAck { changed_files };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::UnstageChangedFile {
-            project_id,
-            path,
-            original_path,
-        } => {
-            let outcome = registry
-                .unstage_changed_file(&project_id, &path, original_path.as_deref())
-                .await;
-            match outcome {
-                Ok(changed_files) => {
-                    let reply = WorkerReply::UnstageChangedFileAck { changed_files };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::StageAllChanges { project_id } => {
-            let outcome = registry.stage_all_changes(&project_id).await;
-            match outcome {
-                Ok(changed_files) => {
-                    let reply = WorkerReply::StageAllChangesAck { changed_files };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::UnstageAllChanges { project_id } => {
-            let outcome = registry.unstage_all_changes(&project_id).await;
-            match outcome {
-                Ok(changed_files) => {
-                    let reply = WorkerReply::UnstageAllChangesAck { changed_files };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::DiscardChangedFile {
-            project_id,
-            path,
-            untracked,
-            original_path,
-        } => {
-            let outcome = registry
-                .discard_changed_file(&project_id, &path, untracked, original_path.as_deref())
-                .await;
-            match outcome {
-                Ok(changed_files) => {
-                    let reply = WorkerReply::DiscardChangedFileAck { changed_files };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::DiscardAllChanges { project_id, files } => {
-            let outcome = registry.discard_all_changes(&project_id, files).await;
-            match outcome {
-                Ok((changed_files, failures)) => {
-                    let reply = WorkerReply::DiscardAllChangesAck {
-                        changed_files,
-                        failures,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::RunToolbarGitAction {
-            project_id,
-            action_id,
-        } => {
-            let outcome = registry
-                .run_toolbar_git_action(&project_id, &action_id)
-                .await;
-            match outcome {
-                Ok(outcome) => {
-                    let reply = WorkerReply::ToolbarActionOutcomeAck { outcome };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::CreateBranch {
-            project_id,
-            branch_name,
-            use_current_task,
-            migrate_changes,
-        } => {
-            let outcome = registry
-                .create_branch(&project_id, &branch_name, use_current_task, migrate_changes)
-                .await;
-            match outcome {
-                Ok((section_id, projects)) => {
-                    let reply = WorkerReply::CreateBranchAck {
-                        section_id,
-                        projects,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::RenameTask { task_id, new_name } => {
-            let (changed, task) = registry.rename_task(&task_id, &new_name);
-            let reply = WorkerReply::TaskRenamed { changed, task };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::SetTaskPinned { task_id, pinned } => {
-            let (changed, task) = registry.set_task_pinned(&task_id, pinned);
-            let reply = WorkerReply::TaskPinned { changed, task };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::RemoveTask {
-            project_id,
-            task_id,
-        } => {
-            let removed = registry.remove_task(&project_id, &task_id);
-            let reply = WorkerReply::TaskRemoved {
-                project_id,
-                task_id,
-                removed,
-            };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::SlugifyBranchName { name } => {
-            let slug = registry.slugify_branch_name(&name);
-            let reply = WorkerReply::SlugifyBranchNameAck { slug };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::ReadProjectBranches { project_id } => {
-            let branches = registry.read_project_branches(&project_id);
-            let reply = WorkerReply::ProjectBranchesAck { branches };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::PrimaryBranchForProject { project_id } => {
-            let branch = registry.primary_branch_for_project(&project_id);
-            let reply = WorkerReply::PrimaryBranchAck { branch };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::RepoDefaultCommitAction { project_id } => {
-            let action = registry.repo_default_commit_action(&project_id);
-            let reply = WorkerReply::RepoDefaultCommitActionAck { action };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::ReadActiveGitState { project_id } => {
-            let state = registry.read_active_git_state(&project_id);
-            let reply = WorkerReply::ActiveGitStateAck { state };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::ReadChangedFiles { project_id } => {
-            let files = registry.read_changed_files(&project_id);
-            let reply = WorkerReply::ChangedFilesAck { files };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::ReadProjectGithubUrl { project_id } => {
-            let url = registry.read_project_github_url(&project_id);
-            let reply = WorkerReply::ProjectGithubUrlAck { url };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::ReadRecentCommits { project_id, limit } => {
-            match registry.read_recent_commits(&project_id, limit as usize) {
-                Ok(view) => {
-                    let reply = WorkerReply::RecentCommitsAck { view };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(message) => {
-                    send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
-                }
-            }
-        }
-        Control::ReadCommitFileChanges {
-            project_id,
-            commit_id,
-        } => match registry.read_commit_file_changes(&project_id, &commit_id) {
-            Ok(files) => {
-                let reply = WorkerReply::CommitFileChangesAck { files };
-                send_worker_reply(outbound_tx, request_id, &reply).await?;
-            }
-            Err(message) => {
-                send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
-            }
-        },
-        Control::ReadBranchSettings { project_id } => {
-            let settings = registry.read_branch_settings(&project_id);
-            let reply = WorkerReply::BranchSettingsAck { settings };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::SetBranchSetting {
-            project_id,
-            field,
-            branch_name,
-        } => match registry.set_branch_setting(&project_id, &field, branch_name.as_deref()) {
-            Ok(changed) => {
-                let reply = WorkerReply::SetBranchSettingAck { changed };
-                send_worker_reply(outbound_tx, request_id, &reply).await?;
-            }
-            Err(message) => {
-                send_err(outbound_tx, request_id, ErrKind::Internal, message).await?;
-            }
-        },
-        Control::CreateReviewTask {
-            project_id,
-            pull_request_number,
-            head_branch,
-            agent_provider,
-        } => {
-            let outcome = registry
-                .create_review_task(
-                    &project_id,
-                    pull_request_number,
-                    &head_branch,
-                    agent_provider,
-                )
-                .await;
-            match outcome {
-                Ok((section_id, projects)) => {
-                    let reply = WorkerReply::CreateReviewTaskAck {
-                        section_id,
-                        projects,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-                Err(e) => {
-                    let reply = WorkerReply::Err {
-                        message: format!("{e:#}"),
-                        kind: ErrKind::Internal,
-                    };
-                    send_worker_reply(outbound_tx, request_id, &reply).await?;
-                }
-            }
-        }
-        Control::FindPullRequestStatus { project_id } => {
-            // Pure read: route into the registry, marshal Ok(None) /
-            // Ok(Some(_)) into PullRequestStatusAck, and convert any
-            // hard failure into WorkerReply::Err so the channel
-            // stays open for other in-flight requests on this
-            // session.
-            let reply = match registry.find_pull_request_status(&project_id) {
-                Ok(status) => WorkerReply::PullRequestStatusAck { status },
-                Err(message) => WorkerReply::Err {
-                    message,
-                    kind: ErrKind::Internal,
-                },
-            };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::ReadPullRequestChecks { project_id } => {
-            // Same shape as FindPullRequestStatus — Ok(Some/None) →
-            // PullRequestChecksAck, Err → WorkerReply::Err. The
-            // three-state contract is documented on
-            // `DaemonRegistry::read_pull_request_checks`.
-            let reply = match registry.read_pull_request_checks(&project_id) {
-                Ok(checks) => WorkerReply::PullRequestChecksAck { checks },
-                Err(message) => WorkerReply::Err {
-                    message,
-                    kind: ErrKind::Internal,
-                },
-            };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-        Control::FindProjectPullRequests {
-            project_id,
-            filter_index,
-            query,
-        } => {
-            // Same Ok/Err split as the sibling PR readers above.
-            // `Ok(None)` covers unknown-project; gh CLI / auth /
-            // network errors land as WorkerReply::Err.
-            let reply = match registry.find_project_pull_requests(&project_id, filter_index, &query)
-            {
-                Ok(prs) => WorkerReply::ProjectPullRequestsAck { prs },
-                Err(message) => WorkerReply::Err {
-                    message,
-                    kind: ErrKind::Internal,
-                },
-            };
-            send_worker_reply(outbound_tx, request_id, &reply).await?;
-        }
-
-        // ── Settings → Git Actions (`another-one-ojm.8`) ───────────
-        Control::ReadGitActionScripts => {
-            let view = registry.read_git_action_scripts();
-            send_worker_reply(
-                outbound_tx,
-                request_id,
-                &WorkerReply::GitActionScriptsAck { view },
-            )
-            .await?;
-        }
-        Control::SetGitCommitScript { script } => match registry.set_git_commit_script(&script) {
-            Ok(changed) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::SetGitCommitScriptAck { changed },
-                )
-                .await?;
-            }
-            Err(message) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::Err {
-                        message,
-                        kind: ErrKind::Internal,
-                    },
-                )
-                .await?;
-            }
-        },
-        Control::ResetGitCommitScript => match registry.reset_git_commit_script() {
-            Ok(changed) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::ResetGitCommitScriptAck { changed },
-                )
-                .await?;
-            }
-            Err(message) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::Err {
-                        message,
-                        kind: ErrKind::Internal,
-                    },
-                )
-                .await?;
-            }
-        },
-        Control::SetGitPrScript { script } => match registry.set_git_pr_script(&script) {
-            Ok(changed) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::SetGitPrScriptAck { changed },
-                )
-                .await?;
-            }
-            Err(message) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::Err {
-                        message,
-                        kind: ErrKind::Internal,
-                    },
-                )
-                .await?;
-            }
-        },
-        Control::ResetGitPrScript => match registry.reset_git_pr_script() {
-            Ok(changed) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::ResetGitPrScriptAck { changed },
-                )
-                .await?;
-            }
-            Err(message) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::Err {
-                        message,
-                        kind: ErrKind::Internal,
-                    },
-                )
-                .await?;
-            }
-        },
-
-        // ── Settings → Keybindings (`another-one-ojm.8`) ───────────
-        Control::ReadShortcutSettings => {
-            let view = registry.read_shortcut_settings();
-            send_worker_reply(
-                outbound_tx,
-                request_id,
-                &WorkerReply::ShortcutSettingsAck { view },
-            )
-            .await?;
-        }
-        Control::SetShortcutBinding { action_id, binding } => {
-            match registry.set_shortcut_binding(&action_id, &binding) {
-                Ok(()) => {
-                    send_worker_reply(outbound_tx, request_id, &WorkerReply::SetShortcutBindingAck)
-                        .await?;
-                }
-                Err(message) => {
-                    let kind = if message.contains("unknown action id") {
-                        ErrKind::UnknownId
-                    } else {
-                        ErrKind::Internal
-                    };
-                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
-                        .await?;
-                }
-            }
-        }
-        Control::ResetShortcutBinding { action_id } => {
-            match registry.reset_shortcut_binding(&action_id) {
-                Ok(()) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::ResetShortcutBindingAck,
-                    )
-                    .await?;
-                }
-                Err(message) => {
-                    let kind = if message.contains("unknown action id") {
-                        ErrKind::UnknownId
-                    } else {
-                        ErrKind::Internal
-                    };
-                    send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
-                        .await?;
-                }
-            }
-        }
-
-        // ── Settings → MCP (`another-one-ojm.8`) ──────────────────
-        Control::ReadMcpSettings => {
-            let view = registry.read_mcp_settings();
-            send_worker_reply(
-                outbound_tx,
-                request_id,
-                &WorkerReply::McpSettingsAck { view },
-            )
-            .await?;
-        }
-        Control::McpAddFromCatalog { catalog_id } => {
-            match registry.mcp_add_from_catalog(&catalog_id) {
-                Ok(()) => {
-                    send_worker_reply(outbound_tx, request_id, &WorkerReply::McpAddFromCatalogAck)
-                        .await?;
-                }
-                Err(message) => {
-                    send_worker_reply(
-                        outbound_tx,
-                        request_id,
-                        &WorkerReply::Err {
-                            message,
-                            kind: ErrKind::Internal,
-                        },
-                    )
-                    .await?;
-                }
-            }
-        }
-        Control::McpToggle {
-            entry_id,
-            provider_id,
-            enabled,
-        } => match registry.mcp_toggle(&entry_id, &provider_id, enabled) {
-            Ok(()) => {
-                send_worker_reply(outbound_tx, request_id, &WorkerReply::McpToggleAck).await?;
-            }
-            Err(message) => {
-                let kind = if message.contains("unknown provider id") {
-                    ErrKind::UnknownId
-                } else {
-                    ErrKind::Internal
-                };
-                send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
-                    .await?;
-            }
-        },
-        Control::McpRemove { entry_id } => match registry.mcp_remove(&entry_id) {
-            Ok(()) => {
-                send_worker_reply(outbound_tx, request_id, &WorkerReply::McpRemoveAck).await?;
-            }
-            Err(message) => {
-                send_worker_reply(
-                    outbound_tx,
-                    request_id,
-                    &WorkerReply::Err {
-                        message,
-                        kind: ErrKind::Internal,
-                    },
-                )
-                .await?;
-            }
-        },
-    }
-    Ok(())
-}
-
-/// Serialise a [`WorkerReply`] inside a [`WorkerReplyEnvelope`] tagged
-/// with `request_id` and push it to the outbound writer task. Use
-/// [`daemon_proto::PUSH_REQUEST_ID`] (= `0`) for daemon-originated frames
-/// that aren't replying to a specific call (e.g. PTY data — though
-/// data frames bypass this entirely via `TY_DATA`, the same id-0
-/// rule applies if/when we add push variants of `WorkerReply`).
-async fn send_worker_reply(
-    outbound_tx: &OutboundTx,
-    request_id: u64,
-    reply: &WorkerReply,
-) -> anyhow::Result<()> {
-    let envelope = WorkerReplyEnvelope {
-        request_id,
-        reply: reply.clone(),
-    };
-    let payload = serde_json::to_vec(&envelope).context("serialize worker reply")?;
-    outbound_tx
-        .send(OutboundFrame {
-            ty: daemon_proto::TY_WORKER_REPLY,
-            payload,
-            data_generation: None,
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("outbound queue closed before worker reply was sent"))
-}
-
-/// Convenience wrapper around [`send_worker_reply`] for the
-/// `Err`-frame failure mode used by the git-state read verbs in
-/// `another-one-ojm.4`. Verbs that return `Result<_, String>` from
-/// the registry route the `Err` arm through here so the connection
-/// stays open for other in-flight requests on the same session.
-async fn send_err(
-    outbound_tx: &OutboundTx,
-    request_id: u64,
-    kind: ErrKind,
-    message: String,
-) -> anyhow::Result<()> {
-    let reply = WorkerReply::Err { message, kind };
-    send_worker_reply(outbound_tx, request_id, &reply).await
 }
 
 // ---- pairing / identity plumbing -------------------------------
@@ -1629,75 +801,6 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[derive(Default)]
-    struct RecordingRegistry {
-        inputs: Mutex<Vec<(String, String, Vec<u8>)>>,
-    }
-
-    impl DaemonRegistry for RecordingRegistry {
-        fn list_projects(&self) -> Vec<daemon_proto::ProjectSummary> {
-            Vec::new()
-        }
-
-        fn attach_tab(
-            &self,
-            _section_id: &str,
-            _tab_id: &str,
-        ) -> Option<broadcast::Receiver<Vec<u8>>> {
-            None
-        }
-
-        fn tab_input(&self, section_id: &str, tab_id: &str, bytes: &[u8]) {
-            self.inputs.lock().unwrap().push((
-                section_id.to_string(),
-                tab_id.to_string(),
-                bytes.to_vec(),
-            ));
-        }
-
-        fn tab_resize(
-            &self,
-            _viewer_id: &str,
-            _section_id: &str,
-            _tab_id: &str,
-            _cols: u16,
-            _rows: u16,
-        ) {
-        }
-    }
-
-    struct UnhealthyRegistry;
-
-    impl DaemonRegistry for UnhealthyRegistry {
-        fn health(&self) -> Result<(), String> {
-            Err("registry unavailable".to_string())
-        }
-
-        fn list_projects(&self) -> Vec<daemon_proto::ProjectSummary> {
-            panic!("list_projects should not be called when health fails");
-        }
-
-        fn attach_tab(
-            &self,
-            _section_id: &str,
-            _tab_id: &str,
-        ) -> Option<broadcast::Receiver<Vec<u8>>> {
-            None
-        }
-
-        fn tab_input(&self, _section_id: &str, _tab_id: &str, _bytes: &[u8]) {}
-
-        fn tab_resize(
-            &self,
-            _viewer_id: &str,
-            _section_id: &str,
-            _tab_id: &str,
-            _cols: u16,
-            _rows: u16,
-        ) {
-        }
-    }
-
     fn test_pair_state(nonce: &str) -> Arc<Mutex<PairState>> {
         Arc::new(Mutex::new(PairState {
             nonce: Some(nonce.to_string()),
@@ -1705,67 +808,6 @@ mod tests {
             pairing_url: String::new(),
             qr_png_bytes: Vec::new(),
         }))
-    }
-
-    #[test]
-    fn route_pty_input_forwards_terminal_mouse_bytes_unchanged() {
-        let registry = RecordingRegistry::default();
-        let attached = Attached {
-            section_id: "section-1".to_string(),
-            tab_id: "tab-1".to_string(),
-            forwarder: None,
-        };
-        let mouse_bytes = b"\x1b[<0;12;34M\x1b[<0;12;34m".to_vec();
-
-        route_pty_input(&registry, Some(&attached), &mouse_bytes);
-
-        let inputs = registry.inputs.lock().unwrap();
-        assert_eq!(inputs.len(), 1);
-        assert_eq!(inputs[0].0, "section-1");
-        assert_eq!(inputs[0].1, "tab-1");
-        assert_eq!(inputs[0].2, mouse_bytes);
-    }
-
-    #[test]
-    fn route_pty_input_drops_bytes_without_attachment() {
-        let registry = RecordingRegistry::default();
-
-        route_pty_input(&registry, None, b"\x1b[<64;1;1M");
-
-        assert!(registry.inputs.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn handle_control_returns_err_when_registry_health_fails() {
-        let registry: Arc<dyn DaemonRegistry> = Arc::new(UnhealthyRegistry);
-        let (outbound_tx, mut outbound_rx) = mpsc::channel(1);
-        let data_generation = Arc::new(AtomicU64::new(0));
-        let mut attached = None;
-
-        handle_control(
-            42,
-            Control::ListProjects,
-            &registry,
-            &outbound_tx,
-            &data_generation,
-            &mut attached,
-            "viewer-1",
-        )
-        .await
-        .expect("health failure should be encoded as a worker reply");
-
-        let frame = outbound_rx.recv().await.expect("worker reply");
-        assert_eq!(frame.ty, daemon_proto::TY_WORKER_REPLY);
-        let envelope: WorkerReplyEnvelope =
-            serde_json::from_slice(&frame.payload).expect("decode worker reply");
-        assert_eq!(envelope.request_id, 42);
-        match envelope.reply {
-            WorkerReply::Err { message, kind } => {
-                assert_eq!(message, "registry unavailable");
-                assert!(matches!(kind, ErrKind::Internal));
-            }
-            other => panic!("expected WorkerReply::Err, got {other:?}"),
-        }
     }
 
     #[test]
