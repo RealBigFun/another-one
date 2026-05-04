@@ -16,3 +16,10 @@ daemon-proto = { path = "../daemon-proto" }
 futures-core = "0.3"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
+# In-memory transport uses tokio mpsc/oneshot/Notify to wire the two
+# halves together. Sync-only feature set keeps this crate light;
+# integrators that need a runtime bring their own.
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
