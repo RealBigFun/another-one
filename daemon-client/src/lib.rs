@@ -16,16 +16,13 @@
 pub mod frame;
 pub mod iroh_transport;
 pub mod pairing_url;
-pub mod protocol;
 pub mod session;
 pub mod status;
 
+// Wire types live in `daemon-proto`. Callers reach for
+// `daemon_proto::Control` etc. directly — this crate no longer
+// mirrors them.
 pub use iroh_transport::{iroh_factory, pairing_target, socket_target, IrohTransportFactory};
 pub use pairing_url::{parse_pairing_url, PairingUrl};
-pub use protocol::{
-    AgentProvider, Control, ControlEnvelope, ProjectKind, ProjectSummary, TabSummary, TaskSummary,
-    WorkerReply, WorkerReplyEnvelope, ALPN, MAX_FRAME_BYTES, PROTOCOL_VERSION, PUSH_REQUEST_ID,
-    TY_CONTROL, TY_DATA, TY_WORKER_REPLY,
-};
 pub use session::{connect, Session, SessionEvent};
 pub use status::{drain_status, DialStatus};

@@ -187,6 +187,8 @@ dependencies = [
  "cocoa 0.26.0",
  "daemon",
  "daemon-client",
+ "daemon-proto",
+ "daemon-transport",
  "dirs 5.0.1",
  "ed25519-dalek 2.2.0",
  "gpui",

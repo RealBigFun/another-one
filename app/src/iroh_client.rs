@@ -21,22 +21,22 @@ pub use daemon_client::{drain_status as drain_dial_status, DialStatus};
 /// `WorkerReply::ProjectList` (the only variant the phone consumes
 /// today); future variants land here as we wire more of the daemon
 /// surface into the UI.
-static WORKER_REPLY_QUEUE: OnceLock<Mutex<Vec<daemon_client::WorkerReply>>> = OnceLock::new();
+static WORKER_REPLY_QUEUE: OnceLock<Mutex<Vec<daemon_proto::WorkerReply>>> = OnceLock::new();
 
-fn worker_reply_queue() -> &'static Mutex<Vec<daemon_client::WorkerReply>> {
+fn worker_reply_queue() -> &'static Mutex<Vec<daemon_proto::WorkerReply>> {
     WORKER_REPLY_QUEUE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 /// Take all queued worker replies. Called by `AnotherOneApp` on the
 /// render tick; the GPUI side never blocks waiting for replies.
-pub fn drain_worker_replies() -> Vec<daemon_client::WorkerReply> {
+pub fn drain_worker_replies() -> Vec<daemon_proto::WorkerReply> {
     worker_reply_queue()
         .lock()
         .map(|mut q| std::mem::take(&mut *q))
         .unwrap_or_default()
 }
 
-fn push_worker_reply(reply: daemon_client::WorkerReply) {
+fn push_worker_reply(reply: daemon_proto::WorkerReply) {
     if let Ok(mut q) = worker_reply_queue().lock() {
         q.push(reply);
     }

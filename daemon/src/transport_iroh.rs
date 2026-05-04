@@ -29,14 +29,13 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
-use crate::frame::{self, Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope};
+use crate::frame::{read_frame, write_frame};
+use daemon_proto::{
+    Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope, TY_CONTROL, TY_DATA,
+};
 use crate::registry::{DaemonRegistry, EndpointHandle, PairState};
 
-// `ALPN` and `PROTOCOL_VERSION` are canonical in `daemon-proto`.
-// TODO(another-one-eha): drop this re-export — callers should
-// import from `daemon_proto` directly. Kept here so the extraction
-// PR could land without touching every existing import.
-pub use daemon_proto::{ALPN, PROTOCOL_VERSION};
+use daemon_proto::{ALPN, PROTOCOL_VERSION};
 
 /// QUIC close reason emitted to unauthorised peers. Short on purpose:
 /// the CONNECTION_CLOSE frame is observable on the wire, so long
@@ -236,12 +235,12 @@ async fn handle_connection(
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundFrame>(64);
     let writer_task = tokio::spawn(async move {
         while let Some(frame) = outbound_rx.recv().await {
-            if frame.ty == frame::TY_DATA
+            if frame.ty == TY_DATA
                 && frame.data_generation != Some(data_generation_for_writer.load(Ordering::Relaxed))
             {
                 continue;
             }
-            if let Err(e) = frame::write_frame(&mut send, frame.ty, &frame.payload).await {
+            if let Err(e) = write_frame(&mut send, frame.ty, &frame.payload).await {
                 debug!(error = %e, "iroh frame write failed");
                 break;
             }
@@ -252,8 +251,8 @@ async fn handle_connection(
     let mut attached: Option<Attached> = None;
 
     loop {
-        match frame::read_frame(&mut recv).await {
-            Ok(Some((frame::TY_DATA, payload))) => {
+        match read_frame(&mut recv).await {
+            Ok(Some((TY_DATA, payload))) => {
                 if matches!(authz, PostAuth::AwaitHello) {
                     warn!(viewer_id, "pre-Hello data from unpaired peer; rejecting");
                     conn.close(1u8.into(), CLOSE_REASON_UNPAIRED);
@@ -264,7 +263,7 @@ async fn handle_connection(
                 // clients may type during the race between AttachTab
                 // going out and the first reply coming back.
             }
-            Ok(Some((frame::TY_CONTROL, payload))) => {
+            Ok(Some((TY_CONTROL, payload))) => {
                 match serde_json::from_slice::<ControlEnvelope>(&payload) {
                     Ok(envelope) => {
                         let ControlEnvelope {
@@ -627,7 +626,7 @@ async fn handle_control(
                 for bytes in replay {
                     if out
                         .send(OutboundFrame {
-                            ty: frame::TY_DATA,
+                            ty: TY_DATA,
                             payload: bytes,
                             data_generation: Some(generation),
                         })
@@ -642,7 +641,7 @@ async fn handle_control(
                         Ok(bytes) => {
                             if out
                                 .send(OutboundFrame {
-                                    ty: frame::TY_DATA,
+                                    ty: TY_DATA,
                                     payload: bytes,
                                     data_generation: Some(generation),
                                 })
@@ -1161,7 +1160,7 @@ async fn handle_control(
                     request_id,
                     &WorkerReply::Err {
                         message,
-                        kind: crate::frame::ErrKind::Internal,
+                        kind: ErrKind::Internal,
                     },
                 )
                 .await?;
@@ -1182,7 +1181,7 @@ async fn handle_control(
                     request_id,
                     &WorkerReply::Err {
                         message,
-                        kind: crate::frame::ErrKind::Internal,
+                        kind: ErrKind::Internal,
                     },
                 )
                 .await?;
@@ -1203,7 +1202,7 @@ async fn handle_control(
                     request_id,
                     &WorkerReply::Err {
                         message,
-                        kind: crate::frame::ErrKind::Internal,
+                        kind: ErrKind::Internal,
                     },
                 )
                 .await?;
@@ -1224,7 +1223,7 @@ async fn handle_control(
                     request_id,
                     &WorkerReply::Err {
                         message,
-                        kind: crate::frame::ErrKind::Internal,
+                        kind: ErrKind::Internal,
                     },
                 )
                 .await?;
@@ -1249,9 +1248,9 @@ async fn handle_control(
                 }
                 Err(message) => {
                     let kind = if message.contains("unknown action id") {
-                        crate::frame::ErrKind::UnknownId
+                        ErrKind::UnknownId
                     } else {
-                        crate::frame::ErrKind::Internal
+                        ErrKind::Internal
                     };
                     send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
                         .await?;
@@ -1270,9 +1269,9 @@ async fn handle_control(
                 }
                 Err(message) => {
                     let kind = if message.contains("unknown action id") {
-                        crate::frame::ErrKind::UnknownId
+                        ErrKind::UnknownId
                     } else {
-                        crate::frame::ErrKind::Internal
+                        ErrKind::Internal
                     };
                     send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
                         .await?;
@@ -1302,7 +1301,7 @@ async fn handle_control(
                         request_id,
                         &WorkerReply::Err {
                             message,
-                            kind: crate::frame::ErrKind::Internal,
+                            kind: ErrKind::Internal,
                         },
                     )
                     .await?;
@@ -1319,9 +1318,9 @@ async fn handle_control(
             }
             Err(message) => {
                 let kind = if message.contains("unknown provider id") {
-                    crate::frame::ErrKind::UnknownId
+                    ErrKind::UnknownId
                 } else {
-                    crate::frame::ErrKind::Internal
+                    ErrKind::Internal
                 };
                 send_worker_reply(outbound_tx, request_id, &WorkerReply::Err { message, kind })
                     .await?;
@@ -1337,7 +1336,7 @@ async fn handle_control(
                     request_id,
                     &WorkerReply::Err {
                         message,
-                        kind: crate::frame::ErrKind::Internal,
+                        kind: ErrKind::Internal,
                     },
                 )
                 .await?;
@@ -1349,7 +1348,7 @@ async fn handle_control(
 
 /// Serialise a [`WorkerReply`] inside a [`WorkerReplyEnvelope`] tagged
 /// with `request_id` and push it to the outbound writer task. Use
-/// [`frame::PUSH_REQUEST_ID`] (= `0`) for daemon-originated frames
+/// [`daemon_proto::PUSH_REQUEST_ID`] (= `0`) for daemon-originated frames
 /// that aren't replying to a specific call (e.g. PTY data — though
 /// data frames bypass this entirely via `TY_DATA`, the same id-0
 /// rule applies if/when we add push variants of `WorkerReply`).
@@ -1365,7 +1364,7 @@ async fn send_worker_reply(
     let payload = serde_json::to_vec(&envelope).context("serialize worker reply")?;
     outbound_tx
         .send(OutboundFrame {
-            ty: frame::TY_WORKER_REPLY,
+            ty: daemon_proto::TY_WORKER_REPLY,
             payload,
             data_generation: None,
         })
@@ -1595,7 +1594,7 @@ mod tests {
     }
 
     impl DaemonRegistry for RecordingRegistry {
-        fn list_projects(&self) -> Vec<crate::frame::ProjectSummary> {
+        fn list_projects(&self) -> Vec<daemon_proto::ProjectSummary> {
             Vec::new()
         }
 
@@ -1633,7 +1632,7 @@ mod tests {
             Err("registry unavailable".to_string())
         }
 
-        fn list_projects(&self) -> Vec<crate::frame::ProjectSummary> {
+        fn list_projects(&self) -> Vec<daemon_proto::ProjectSummary> {
             panic!("list_projects should not be called when health fails");
         }
 
@@ -1715,7 +1714,7 @@ mod tests {
         .expect("health failure should be encoded as a worker reply");
 
         let frame = outbound_rx.recv().await.expect("worker reply");
-        assert_eq!(frame.ty, crate::frame::TY_WORKER_REPLY);
+        assert_eq!(frame.ty, daemon_proto::TY_WORKER_REPLY);
         let envelope: WorkerReplyEnvelope =
             serde_json::from_slice(&frame.payload).expect("decode worker reply");
         assert_eq!(envelope.request_id, 42);

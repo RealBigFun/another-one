@@ -18,10 +18,13 @@
 
 use anyhow::Context;
 
-// TODO(another-one-eha): drop this re-export. Daemon-internal call
-// sites should import wire types directly from `daemon_proto`; the
-// glob is here only so the extraction PR could land in one piece.
-pub use daemon_proto::*;
+// Frame IO only — wire types live in `daemon-proto`. Callers import
+// `Control`, `WorkerReply`, the envelopes, the `TY_*` constants,
+// `MAX_FRAME_BYTES`, and `PUSH_REQUEST_ID` directly from
+// `daemon_proto`. This module owns just the read/write helpers and
+// the iroh stream adapters because they pull tokio + iroh + anyhow
+// and have no business in a wire-types crate.
+use daemon_proto::MAX_FRAME_BYTES;
 
 /// Reads one frame from an Iroh `RecvStream`. Returns `None` when the
 /// peer has cleanly closed the send side.

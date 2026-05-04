@@ -77,11 +77,8 @@ pub enum TerminalSessionKind {
     PiSession,
 }
 
-// Wire enum lives in `daemon-proto`. Re-exported here so the
-// extraction PR could land without touching every importer.
-// TODO(another-one-eha): drop this re-export — have core callers
-// reach directly for `daemon_proto::TerminalRestoreStatus`.
-pub use daemon_proto::TerminalRestoreStatus;
+// `TerminalRestoreStatus` lives in `daemon-proto` — import directly
+// from there. No re-export here.
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct TerminalSessionRef {

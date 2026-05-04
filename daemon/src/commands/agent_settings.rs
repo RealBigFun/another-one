@@ -1,4 +1,4 @@
-use crate::frame::{Control, ErrKind, WorkerReply};
+use daemon_proto::{Control, ErrKind, WorkerReply};
 use crate::registry::DaemonRegistry;
 
 pub(crate) fn handle(ctrl: Control, registry: &dyn DaemonRegistry) -> Result<WorkerReply, Control> {

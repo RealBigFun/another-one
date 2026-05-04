@@ -18,6 +18,12 @@ use iroh::{Endpoint, EndpointAddr, EndpointId};
 #[path = "../frame.rs"]
 mod frame;
 
+// Wire types live in `daemon-proto` post-extraction; the included
+// `frame` module is IO helpers + transport adapters only.
+use daemon_proto::{
+    Control, ControlEnvelope, WorkerReplyEnvelope, TY_CONTROL, TY_DATA, TY_WORKER_REPLY,
+};
+
 const ALPN: &[u8] = b"anotherone/pty/1";
 
 /// Reads `/tmp/daemon-sandbox.ticket` (written by the daemon on startup)
@@ -95,14 +101,14 @@ async fn main() -> anyhow::Result<()> {
 
     // Send a resize control frame first (type 1, JSON payload) so the
     // daemon's PTY is appropriately sized before anything else.
-    let resize = serde_json::to_vec(&frame::ControlEnvelope {
+    let resize = serde_json::to_vec(&ControlEnvelope {
         request_id: next_id(),
-        control: frame::Control::Resize {
+        control: Control::Resize {
             cols: 100,
             rows: 30,
         },
     })?;
-    frame::write_frame(&mut send, frame::TY_CONTROL, &resize)
+    frame::write_frame(&mut send, TY_CONTROL, &resize)
         .await
         .context("write resize control")?;
     eprintln!("[client] sent resize 100x30");
@@ -116,13 +122,13 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::current_dir().ok())
         .map(|p| p.to_string_lossy().into_owned());
     if let Some(project_path) = project_path {
-        let hello = serde_json::to_vec(&frame::ControlEnvelope {
+        let hello = serde_json::to_vec(&ControlEnvelope {
             request_id: next_id(),
-            control: frame::Control::WatchProject {
+            control: Control::WatchProject {
                 project_path: project_path.clone(),
             },
         })?;
-        frame::write_frame(&mut send, frame::TY_CONTROL, &hello)
+        frame::write_frame(&mut send, TY_CONTROL, &hello)
             .await
             .context("write watch_project control")?;
         eprintln!("[client] sent watch_project {project_path}");
@@ -132,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
 
     frame::write_frame(
         &mut send,
-        frame::TY_DATA,
+        TY_DATA,
         b"echo HELLO_FROM_IROH_$((7*6))\n",
     )
     .await
@@ -145,13 +151,13 @@ async fn main() -> anyhow::Result<()> {
     loop {
         tokio::select! {
             read = frame::read_frame(&mut recv) => match read {
-                Ok(Some((frame::TY_DATA, payload))) => {
+                Ok(Some((TY_DATA, payload))) => {
                     total += payload.len();
                     let text = String::from_utf8_lossy(&payload);
                     eprintln!("[server→client {}B] {:?}", payload.len(), text);
                 }
-                Ok(Some((frame::TY_WORKER_REPLY, payload))) => {
-                    match serde_json::from_slice::<frame::WorkerReplyEnvelope>(&payload) {
+                Ok(Some((TY_WORKER_REPLY, payload))) => {
+                    match serde_json::from_slice::<WorkerReplyEnvelope>(&payload) {
                         Ok(envelope) => eprintln!(
                             "[server→client worker_reply request_id={}] {:?}",
                             envelope.request_id, envelope.reply
