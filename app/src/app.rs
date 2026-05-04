@@ -14395,115 +14395,124 @@ impl AnotherOneApp {
     /// Phone-style top bar shown above the active narrow pane. Three slots:
     /// a back chevron when there's nav history (otherwise a hamburger that
     /// opens settings), a centered title, and a contextual right action.
-    fn phone_header(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    /// Top action row for the narrow Projects view: a Pair-mobile
+    /// chip and a Settings chip prepended above the project tree.
+    /// These are the affordances that lived in the global phone
+    /// header before; with no shared chrome they live inline at the
+    /// top of the view that owns them.
+    fn narrow_home_actions(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let chrome = theme::chrome_bg(window);
-        let title: String = match &self.mobile_view {
-            MobileView::Home => "Projects".to_string(),
-            MobileView::Project(project_id) => self
-                .project_store
-                .projects
-                .iter()
-                .find(|p| &p.id == project_id)
-                .map(|p| p.name.clone())
-                .unwrap_or_else(|| project_id.clone()),
-            MobileView::ChangedFiles => "Changed files".to_string(),
-        };
-        // Header buttons fall back to text glyphs when the SVG asset
-        // load fails (currently always on Android — assets aren't
-        // bundled into the APK yet). Text labels guarantee the tap
-        // targets are visible while we wire up the real
-        // AssetManager-backed loader.
-        let has_back = !self.mobile_nav_stack.is_empty();
-        let leading: AnyElement = if has_back {
-            div()
-                .id("mobile-back")
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(44.))
-                .h(px(PHONE_HEADER_H))
-                .cursor_pointer()
-                .text_size(rems(20. / 16.))
-                .text_color(gpui::white().opacity(0.92))
-                .child(SharedString::from("‹"))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, _window, cx| {
-                        this.mobile_back(cx);
-                        cx.stop_propagation();
-                    }),
-                )
-                .into_any_element()
-        } else {
-            // Hamburger → opens settings.
-            div()
-                .id("mobile-menu")
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(44.))
-                .h(px(PHONE_HEADER_H))
-                .cursor_pointer()
-                .text_size(rems(18. / 16.))
-                .text_color(gpui::white().opacity(0.92))
-                .child(SharedString::from("≡"))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, _window, cx| {
-                        this.settings_open = true;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                )
-                .into_any_element()
-        };
-        // Trailing slot. On Home → scan-to-pair affordance.
-        let trailing: AnyElement = match self.mobile_view {
-            MobileView::Home => div()
-                .id("mobile-scan-qr-header")
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(64.))
-                .h(px(28.))
-                .mx(px(8.))
-                .px(px(10.))
-                .rounded(px(6.))
-                .bg(hsla(215. / 360., 0.55, 0.45, 1.0))
-                .cursor_pointer()
-                .text_size(rems(12. / 16.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(gpui::white())
-                .child(SharedString::from("Scan"))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
-                        this.start_qr_scan(cx);
-                        cx.stop_propagation();
-                    }),
-                )
-                .into_any_element(),
-            MobileView::Project(_) => div()
-                .id("mobile-changed-files")
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(44.))
-                .h(px(PHONE_HEADER_H))
-                .text_size(rems(14. / 16.))
-                .text_color(gpui::white().opacity(0.92))
-                .cursor_pointer()
-                .child(SharedString::from("Δ"))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, _window, cx| {
-                        this.mobile_push(MobileView::ChangedFiles, cx);
-                        cx.stop_propagation();
-                    }),
-                )
-                .into_any_element(),
-            MobileView::ChangedFiles => div().w(px(44.)).h(px(PHONE_HEADER_H)).into_any_element(),
-        };
+        let pair = div()
+            .id("mobile-home-pair")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(28.))
+            .px(px(12.))
+            .rounded(px(6.))
+            .bg(hsla(215. / 360., 0.55, 0.45, 1.0))
+            .cursor_pointer()
+            .text_size(rems(12. / 16.))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(gpui::white())
+            .child(SharedString::from("Scan"))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.start_qr_scan(cx);
+                    cx.stop_propagation();
+                }),
+            );
+        let settings = div()
+            .id("mobile-home-settings")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(28.))
+            .px(px(12.))
+            .rounded(px(6.))
+            .cursor_pointer()
+            .text_size(rems(13. / 16.))
+            .text_color(gpui::white().opacity(0.92))
+            .child(SharedString::from("⚙ Settings"))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.settings_open = true;
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            );
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(8.))
+            .h(px(PHONE_HEADER_H))
+            .px(px(10.))
+            .flex_shrink_0()
+            .bg(chrome)
+            .child(pair)
+            .child(settings)
+            .into_any_element()
+    }
+
+    /// Narrow workspace strip: `‹  task name  Δ` rendered as the
+    /// first child of the workspace body. `‹` pops back to Projects;
+    /// `Δ` pushes Changed Files. No global header — this is part of
+    /// the workspace view's own content.
+    fn narrow_workspace_strip(
+        &self,
+        project_id: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let chrome = theme::chrome_bg(window);
+        let title: String = self
+            .project_store
+            .projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| project_id.to_string());
+        // Reuse the desktop sidebar-toggle SVGs so the gutter icons
+        // are visually identical across desktop chrome and the
+        // narrow workspace strip.
+        let back = div()
+            .id("mobile-workspace-back")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(44.))
+            .h(px(PHONE_HEADER_H))
+            .cursor_pointer()
+            .child(Self::sidebar_toggle_svg(window))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _window, cx| {
+                    this.mobile_back(cx);
+                    cx.stop_propagation();
+                }),
+            );
+        let diffs = div()
+            .id("mobile-workspace-diffs")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(44.))
+            .h(px(PHONE_HEADER_H))
+            .cursor_pointer()
+            .child(Self::right_sidebar_toggle_svg(
+                window,
+            ))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _window, cx| {
+                    this.mobile_push(MobileView::ChangedFiles, cx);
+                    cx.stop_propagation();
+                }),
+            );
         div()
             .flex()
             .flex_row()
@@ -14511,7 +14520,7 @@ impl AnotherOneApp {
             .h(px(PHONE_HEADER_H))
             .flex_shrink_0()
             .bg(chrome)
-            .child(leading)
+            .child(back)
             .child(
                 div()
                     .flex_1()
@@ -14521,7 +14530,49 @@ impl AnotherOneApp {
                     .text_color(gpui::white().opacity(0.92))
                     .child(SharedString::from(title)),
             )
-            .child(trailing)
+            .child(diffs)
+            .into_any_element()
+    }
+
+    /// Narrow Changed Files strip: `‹  Changed files`. `‹` pops back
+    /// to the workspace.
+    fn narrow_changed_files_strip(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let chrome = theme::chrome_bg(window);
+        let back = div()
+            .id("mobile-changed-files-back")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(44.))
+            .h(px(PHONE_HEADER_H))
+            .cursor_pointer()
+            .child(Self::sidebar_toggle_svg(window))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _window, cx| {
+                    this.mobile_back(cx);
+                    cx.stop_propagation();
+                }),
+            );
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .h(px(PHONE_HEADER_H))
+            .flex_shrink_0()
+            .bg(chrome)
+            .child(back)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_size(rems(15. / 16.))
+                    .text_color(gpui::white().opacity(0.92))
+                    .child(SharedString::from("Changed files")),
+            )
+            // Right-side spacer keeps the title visually centered.
+            .child(div().w(px(44.)).h(px(PHONE_HEADER_H)))
             .into_any_element()
     }
 
@@ -14537,22 +14588,35 @@ impl AnotherOneApp {
     ) -> AppInputHost {
         let supports_custom_chrome =
             crate::platform::CurrentPlatform::supports_custom_chrome(window);
-        let header = self.phone_header(window, cx);
+        // Each `MobileView` owns its own minimal top strip — no
+        // shared phone header. Projects view exposes the
+        // settings + pair-mobile entry points inline; the workspace
+        // view prepends a `‹ task-name Δ` strip whose `‹` returns to
+        // Projects and `Δ` jumps to Changed Files; Changed Files
+        // prepends a `‹ Changed files` strip.
         let body: AnyElement = match self.mobile_view.clone() {
-            // Home is the same `sidebar_content` desktop renders in
-            // its left column — full-bleed on phone with no extra
-            // chrome. The "scan to pair" affordance lives in the
-            // phone header instead, so the projects panel itself
-            // stays identical to desktop's; once daemon data is
-            // flowing, the body shows the daemon's project tree, not
-            // a separate "remote" view.
             MobileView::Home => div()
+                .flex()
+                .flex_col()
                 .size_full()
                 .overflow_hidden()
+                .child(self.narrow_home_actions(window, cx))
                 .child(self.sidebar_content(window, cx))
                 .into_any_element(),
-            MobileView::Project(_) => self.workspace_pane.clone().into_any_element(),
-            MobileView::ChangedFiles => self.changed_files_panel(window, cx).into_any_element(),
+            MobileView::Project(project_id) => div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(self.narrow_workspace_strip(&project_id, window, cx))
+                .child(self.workspace_pane.clone())
+                .into_any_element(),
+            MobileView::ChangedFiles => div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(self.narrow_changed_files_strip(window, cx))
+                .child(self.changed_files_panel(window, cx))
+                .into_any_element(),
         };
         let body = div()
             .flex_1()
@@ -14588,7 +14652,6 @@ impl AnotherOneApp {
                 .on_action(cx.listener(Self::handle_terminal_search_close))
                 .on_action(cx.listener(Self::handle_terminal_search_next))
                 .on_action(cx.listener(Self::handle_terminal_search_prev))
-                .child(header)
                 .child(body)
                 .child(self.new_task_modal_overlay(cx))
                 .child(self.create_branch_modal_overlay(cx))
@@ -14935,20 +14998,29 @@ impl Render for AnotherOneApp {
             );
         }
 
+        // ── Per-tick state reconciliation, regardless of breakpoint ──
+        // Both wide and narrow renders need these. Keeping them above
+        // the narrow/wide fork is the single-source-of-truth invariant
+        // the whole responsive layout rests on: behaviour stays
+        // identical when the same window resizes across the
+        // breakpoint, and there's no mobile/desktop drift.
+        // `clamp_layout` already early-returns under narrow, and
+        // `ensure_active_terminal_runtime` / `sync_workspace_layout`
+        // are layout-agnostic by design.
+        self.clamp_layout(window);
+        self.sync_workspace_layout(cx);
+        self.ensure_active_terminal_runtime(window, cx);
+        self.request_active_project_github_link_lookup(cx);
+
         // ── Narrow (phone) layout ───────────────────────────────
-        // Single-pane master/detail stack. Same builder functions as the
-        // wide path — only the parent container and visibility logic
-        // differ. Branch lives between the settings overlay and the
-        // wide-only `clamp_layout` so the desktop path is untouched.
+        // Single-pane master/detail stack. Same builder functions as
+        // the wide path — only the parent container and visibility
+        // logic differ.
         if self.is_narrow(window) {
             return self.render_narrow(window, cx, view);
         }
 
         // ── Normal main layout ──────────────────────────────────
-        self.clamp_layout(window);
-        self.sync_workspace_layout(cx);
-        self.ensure_active_terminal_runtime(window, cx);
-        self.request_active_project_github_link_lookup(cx);
         let sw = self.sidebar_w;
         let rw = self.right_w;
         let open = self.sidebar_is_open();

@@ -1819,6 +1819,16 @@ impl AnotherOneApp {
                     });
                     this.prefetch_section_pull_request_and_checks(&sid, &project_path);
                     this.mark_git_refresh_stale();
+                    // On phone, tapping a task should jump straight
+                    // into the workspace full-screen — same end state
+                    // as tapping the project row, just with that
+                    // task's terminal active. No-op on desktop.
+                    if this.is_narrow(window) {
+                        this.mobile_push(
+                            MobileView::Project(left_click_project_id.clone()),
+                            cx,
+                        );
+                    }
                 }),
             )
             .on_mouse_down(
