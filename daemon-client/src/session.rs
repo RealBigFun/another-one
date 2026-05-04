@@ -14,12 +14,14 @@
 //! omitted — every dial uses an ephemeral [`SecretKey::generate`].
 //! Persistence is a follow-up.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::Context;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use std::sync::Mutex as StdMutex;
 
 use iroh::dns::DnsResolver;
 use iroh::endpoint::presets;
@@ -88,6 +90,15 @@ pub struct Session {
     /// `connect`) used 1 — keeping the counter monotonic-from-1
     /// across the session avoids a "did Hello succeed?" ambiguity.
     next_request_id: AtomicU64,
+    /// Pending [`Session::call`] awaiters keyed by their assigned
+    /// `request_id`. The recv loop matches incoming
+    /// `WorkerReplyEnvelope.request_id` against this map and routes
+    /// the reply to the awaiting oneshot. Replies whose `request_id`
+    /// has no entry (push frames with `request_id == 0`, or replies
+    /// whose caller already gave up) fall through to the legacy
+    /// FIFO `worker_replies_rx` channel so today's polling consumers
+    /// keep working unchanged.
+    pending_calls: Arc<StdMutex<HashMap<u64, oneshot::Sender<WorkerReply>>>>,
 }
 
 /// Dial a daemon's iroh endpoint by pairing URL. The URL carries the
@@ -275,6 +286,9 @@ async fn connect_inner_impl(pairing_url: String) -> anyhow::Result<Session> {
     let (worker_replies_tx, worker_replies_rx) = mpsc::channel::<WorkerReply>(64);
     let (close_tx, mut close_rx) = oneshot::channel::<()>();
     let conn_for_close = conn.clone();
+    let pending_calls: Arc<StdMutex<HashMap<u64, oneshot::Sender<WorkerReply>>>> =
+        Arc::new(StdMutex::new(HashMap::new()));
+    let pending_calls_recv = Arc::clone(&pending_calls);
     tokio_rt().spawn(async move {
         loop {
             tokio::select! {
@@ -307,24 +321,46 @@ async fn connect_inner_impl(pairing_url: String) -> anyhow::Result<Session> {
                                     .and_then(|k| k.as_str())
                                     .unwrap_or("<missing>")
                                     .to_string();
-                                match serde_json::from_value::<WorkerReplyEnvelope>(value)
-                                    .map(|env| env.reply)
-                                {
-                                    Ok(reply) => {
-                                        // try_send, not send().await — this
-                                        // recv task also drives the PTY
-                                        // stream which *does* want
-                                        // backpressure; we can't let a
-                                        // stuck worker_replies consumer
-                                        // stall PTY bytes.
-                                        use tokio::sync::mpsc::error::TrySendError;
-                                        match worker_replies_tx.try_send(reply) {
-                                            Ok(()) => {}
-                                            Err(TrySendError::Full(_)) => {
-                                                tracing::debug!("worker_replies channel full; dropping frame");
-                                            }
-                                            Err(TrySendError::Closed(_)) => {
-                                                tracing::debug!("worker_replies channel closed; dropping frame");
+                                match serde_json::from_value::<WorkerReplyEnvelope>(value) {
+                                    Ok(envelope) => {
+                                        // First try to route by
+                                        // request_id to a pending
+                                        // `Session::call` oneshot. If
+                                        // there's no awaiter (push
+                                        // frame with id 0, or a
+                                        // legacy `send_control` caller
+                                        // that polls
+                                        // `next_worker_reply`),
+                                        // fall through to the FIFO.
+                                        let routed = {
+                                            let mut pending =
+                                                pending_calls_recv.lock().expect("pending_calls poisoned");
+                                            pending.remove(&envelope.request_id)
+                                        };
+                                        if let Some(sender) = routed {
+                                            // Discard send-error: the
+                                            // caller dropped the
+                                            // receiver before the
+                                            // reply arrived. That's
+                                            // legal (caller awaited
+                                            // with timeout, etc.).
+                                            let _ = sender.send(envelope.reply);
+                                        } else {
+                                            // try_send, not send().await — this
+                                            // recv task also drives the PTY
+                                            // stream which *does* want
+                                            // backpressure; we can't let a
+                                            // stuck worker_replies consumer
+                                            // stall PTY bytes.
+                                            use tokio::sync::mpsc::error::TrySendError;
+                                            match worker_replies_tx.try_send(envelope.reply) {
+                                                Ok(()) => {}
+                                                Err(TrySendError::Full(_)) => {
+                                                    tracing::debug!("worker_replies channel full; dropping frame");
+                                                }
+                                                Err(TrySendError::Closed(_)) => {
+                                                    tracing::debug!("worker_replies channel closed; dropping frame");
+                                                }
                                             }
                                         }
                                     }
@@ -367,6 +403,7 @@ async fn connect_inner_impl(pairing_url: String) -> anyhow::Result<Session> {
         worker_replies_rx: Mutex::new(Some(worker_replies_rx)),
         closer: Mutex::new(Some(close_tx)),
         next_request_id: AtomicU64::new(2),
+        pending_calls,
     })
 }
 
@@ -465,10 +502,52 @@ impl Session {
         }
     }
 
+    /// Issue a verb and await its matching reply. The daemon's reply
+    /// is correlated against the assigned `request_id`, so concurrent
+    /// `call`s from separate tasks no longer race the FIFO recv
+    /// channel — each gets exactly the reply for its own verb.
+    ///
+    /// Replies the daemon emits as `WorkerReply::Err { kind, message }`
+    /// are returned as-is (this is the typed daemon-side error path);
+    /// transport-level failures (closed connection, encode error) come
+    /// back as `Err`.
+    pub async fn call(&self, control: Control) -> anyhow::Result<WorkerReply> {
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel::<WorkerReply>();
+        {
+            let mut pending = self
+                .pending_calls
+                .lock()
+                .expect("pending_calls poisoned");
+            pending.insert(request_id, tx);
+        }
+        let envelope = daemon_proto::ControlEnvelope {
+            request_id,
+            control,
+        };
+        let payload = serde_json::to_vec(&envelope).context("encode control envelope")?;
+        if let Err(e) = self.send_frame(TY_CONTROL, payload).await {
+            // Best-effort cleanup: drop the registration so the recv
+            // loop's lookup doesn't waste time on an abandoned id.
+            let mut pending = self
+                .pending_calls
+                .lock()
+                .expect("pending_calls poisoned");
+            pending.remove(&request_id);
+            return Err(e);
+        }
+        rx.await
+            .map_err(|_| anyhow::anyhow!("session closed before reply arrived"))
+    }
+
     /// Wrap a `Control` in the daemon's required `ControlEnvelope`
     /// (carrying a freshly-allocated `request_id`) and queue it on the
     /// outbound writer task. Every per-method helper above goes
     /// through here so they all stay envelope-compliant.
+    ///
+    /// Legacy fire-and-forget path kept for callers that drain replies
+    /// via `next_worker_reply` rather than awaiting a typed `call`.
+    /// New call sites should use [`Session::call`] instead.
     async fn send_control(&self, control: Control) -> anyhow::Result<()> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let envelope = daemon_proto::ControlEnvelope {
