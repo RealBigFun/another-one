@@ -37,7 +37,18 @@ anyhow = "1"
 daemon = { path = "../daemon" }
 daemon-proto = { path = "../daemon-proto" }
 daemon-transport = { path = "../daemon-transport" }
-gpui = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui", default-features = false, features = ["wayland", "x11", "font-kit"] }
+# `gpui` is the only cross-platform dep here. The wayland / x11 /
+# font-kit features pull in `fontconfig`, `xkbcommon`, and friends
+# which only build on Linux/desktop — listing them unconditionally
+# breaks the Android cross-compile (yeslogic-fontconfig-sys's build
+# script panics asking for PKG_CONFIG_SYSROOT_DIR). Gate the dep by
+# target and split features.
+#
+# Note Cargo unifies features across target-cfg dep entries, so a
+# single `gpui` dep with all features in `[dependencies]` would still
+# turn on wayland/x11/font-kit when building for android. Listing
+# `gpui` separately under each target-cfg block keeps the feature
+# sets disjoint per target.
 hotpath = "0.15"
 libc = "0.2"
 portable-pty = "0.9.0"
@@ -92,6 +103,10 @@ objc = "0.2"
 # return value falls through to `unreachable!()`.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui_platform", features = ["wayland", "x11", "font-kit"] }
+# Desktop gpui with the linux-shaped features. `font-kit` pulls in
+# `fontconfig`, `wayland`/`x11` pull in their respective system
+# clients — fine on desktop, broken on android cross-compile.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui", default-features = false, features = ["wayland", "x11", "font-kit"] }
 
 # Android: NativeActivity-driven GPUI shell. `gpui-mobile` implements
 # `gpui::Platform` for android (Vulkan/wgpu) and ios (Metal/wgpu) on
@@ -99,6 +114,9 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5688167d
 # provides the `android_main` entry called by NativeActivity once the
 # `.so` is loaded; `android_logger` routes `log::*` records to logcat.
 [target.'cfg(target_os = "android")'.dependencies]
+# Android gpui WITHOUT desktop features. gpui-mobile's android
+# platform impl supplies the windowing + font path on its own.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "5688167d224b5eca54875d49afb8bfd73a07915a", package = "gpui", default-features = false }
 gpui-mobile = { git = "https://github.com/itsbalamurali/gpui-mobile", branch = "main" }
 android-activity = { version = "0.6", features = ["native-activity"] }
 android_logger = "0.15"
