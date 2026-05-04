@@ -244,9 +244,86 @@ pub trait Session: Send + Sync {
 // Transport — server side
 // ──────────────────────────────────────────────────────────────────
 
+/// Stable identifier the server side uses to correlate a reply back
+/// to the call that produced it. Mirrors the `request_id` field on
+/// `daemon_proto::ControlEnvelope` but is opaque to handlers — the
+/// transport assigns and tracks ids; handlers route by this newtype.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct RequestId(pub u64);
+
+/// One end of a duplex session from the **server** side. Mirror image
+/// of [`Session`] — the server receives verbs and sends replies, while
+/// also pushing raw bytes to the peer for PTY-attached channels.
+///
+/// Why a separate trait rather than reusing [`Session`]: the call /
+/// reply directionality is reversed. A [`Session::call`] *issues* a
+/// verb and awaits a reply; a [`ServerSession::next_call`] *receives*
+/// a verb and the handler later issues [`ServerSession::reply`] with
+/// the matching `RequestId`. Squeezing both into one trait would
+/// force callers to ignore half the methods on every site, which is
+/// the exact "generally usable interface" anti-pattern this layer
+/// exists to avoid.
+pub trait ServerSession: Send + Sync {
+    /// Identifier this transport assigned to the connecting peer.
+    /// Stable for the life of the session. Concrete transports pick
+    /// the natural shape (iroh: hex EndpointId; UDS: pid+uid; in-
+    /// memory: caller-supplied label). Handlers use it for logging,
+    /// per-peer state, and authorisation lookups.
+    fn peer_id(&self) -> &str;
+
+    /// Block until the next inbound call arrives. Returns the
+    /// `RequestId` (so the handler can [`reply`](Self::reply) later)
+    /// alongside the verb. `Ok(None)` signals the peer cleanly closed
+    /// the call channel — no further calls will arrive but
+    /// [`push_data`](Self::push_data) may still be valid until the
+    /// session itself closes.
+    fn next_call<'a>(
+        &'a self,
+    ) -> SessionFuture<'a, Result<Option<(RequestId, Control)>, TransportError>>;
+
+    /// Send a reply to a call previously yielded by
+    /// [`next_call`](Self::next_call). The transport correlates the
+    /// reply to the originating call by `RequestId`. Sending a reply
+    /// for an unknown id is a transport-level error — handlers
+    /// should only reply to ids they received.
+    fn reply<'a>(
+        &'a self,
+        request_id: RequestId,
+        reply: WorkerReply,
+    ) -> SessionFuture<'a, Result<(), TransportError>>;
+
+    /// Push raw payload bytes to the peer for an attached channel
+    /// (PTY output for an attached tab). Mirror of
+    /// [`Session::push_data`] from the server's perspective. No
+    /// reply; backpressure is the transport's problem.
+    fn push_data<'a>(
+        &'a self,
+        section_id: &'a str,
+        tab_id: &'a str,
+        bytes: &'a [u8],
+    ) -> SessionFuture<'a, Result<(), TransportError>>;
+
+    /// Push an unsolicited [`WorkerReply`] (the daemon-initiated
+    /// broadcast variant — `request_id == PUSH_REQUEST_ID` on the
+    /// wire). Used for future verbs like project-list-changed.
+    fn push_reply<'a>(
+        &'a self,
+        reply: WorkerReply,
+    ) -> SessionFuture<'a, Result<(), TransportError>>;
+
+    /// Close the session with an optional reason byte string the
+    /// transport surfaces to the peer (concrete transports translate
+    /// it into the natural primitive — QUIC close reason, UDS
+    /// shutdown, etc.). Idempotent.
+    fn close<'a>(
+        &'a self,
+        reason: Option<&'a [u8]>,
+    ) -> SessionFuture<'a, Result<(), TransportError>>;
+}
+
 /// The server-side surface. Daemon embedders construct a `Transport`
 /// (today: `IrohTransport::bind(...)`) and yield it to
-/// `daemon::run_endpoint`, which pulls [`Session`]s off it and
+/// `daemon::run_endpoint`, which pulls [`ServerSession`]s off it and
 /// dispatches verbs via the registry.
 ///
 /// `accept` returns `None` when the transport has been shut down
@@ -260,7 +337,9 @@ pub trait Transport: Send {
     /// accept loop owns the listening socket / endpoint). Concurrent
     /// accept makes no sense at this layer — the transport hands off
     /// each session for the daemon to drive on its own task.
-    fn accept(&mut self) -> SessionFuture<'_, Result<Option<Box<dyn Session>>, TransportError>>;
+    fn accept(
+        &mut self,
+    ) -> SessionFuture<'_, Result<Option<Box<dyn ServerSession>>, TransportError>>;
 }
 
 // ──────────────────────────────────────────────────────────────────
