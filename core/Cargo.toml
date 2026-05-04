@@ -28,6 +28,7 @@ leakscope = []
 [dependencies]
 alacritty_terminal = "0.26.0"
 anyhow = "1"
+daemon-proto = { path = "../daemon-proto" }
 dirs = "5"
 hotpath = "0.15"
 portable-pty = "0.9.0"

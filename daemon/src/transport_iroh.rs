@@ -32,24 +32,11 @@ use tracing::{debug, info, warn};
 use crate::frame::{self, Control, ControlEnvelope, ErrKind, WorkerReply, WorkerReplyEnvelope};
 use crate::registry::{DaemonRegistry, EndpointHandle, PairState};
 
-/// ALPN advertised by the daemon. Version-suffixed so future protocol
-/// breaks can be versioned cleanly (`/1`, `/2`, …).
-///
-/// `/1` introduced:
-///   - `Control::Hello { protocol_version }` — explicit in-band
-///     version field so a peer that bypasses ALPN (e.g. via a proxy
-///     that strips it) is still rejected with a deterministic close
-///     reason rather than blowing up on the first unknown variant.
-///   - `request_id` correlation on every Control / WorkerReply
-///     envelope.
-///   - `WorkerReply::Err { request_id, kind, message }` for
-///     uniform per-request failure reporting.
-pub const ALPN: &[u8] = b"anotherone/pty/1";
-
-/// In-band protocol version carried in `Control::Hello`. Bumped in
-/// lockstep with the ALPN suffix; mismatches close the connection
-/// with [`CLOSE_REASON_INCOMPATIBLE_VERSION`].
-pub const PROTOCOL_VERSION: u32 = 1;
+// `ALPN` and `PROTOCOL_VERSION` are canonical in `daemon-proto`.
+// TODO(another-one-eha): drop this re-export — callers should
+// import from `daemon_proto` directly. Kept here so the extraction
+// PR could land without touching every existing import.
+pub use daemon_proto::{ALPN, PROTOCOL_VERSION};
 
 /// QUIC close reason emitted to unauthorised peers. Short on purpose:
 /// the CONNECTION_CLOSE frame is observable on the wire, so long

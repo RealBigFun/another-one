@@ -1,0 +1,13 @@
+[package]
+name = "daemon-proto"
+version = "0.1.0"
+edition = "2021"
+description = "Wire-protocol types shared between the AnotherOne daemon and its clients. Server and client deserialize the same code path so additions land in one place instead of two."
+publish = false
+
+[lib]
+name = "daemon_proto"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

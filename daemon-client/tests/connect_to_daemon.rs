@@ -77,6 +77,7 @@ async fn connect_with_pair_token_handshake_succeeds() {
                 "sandbox registry should return at least one synthetic project"
             );
         }
+        other => panic!("expected ProjectList, got {other:?}"),
     }
 
     drop(session);
