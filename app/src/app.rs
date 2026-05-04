@@ -1865,6 +1865,23 @@ pub struct AnotherOneApp {
     /// can swap the impl in place without `&mut self` plumbing through
     /// every call site that reads it.
     pub(crate) session: Arc<Mutex<Arc<dyn daemon_transport::Session>>>,
+    /// Process-wide queue receiving events from `session.events()`.
+    /// A pump task spawned on the session-host runtime forwards each
+    /// `SessionEvent` here; the GPUI render tick drains via
+    /// `drain_session_events`. PTY bytes flow this way on every
+    /// platform — desktop's in-memory pair pushes them through the
+    /// same path mobile's `IrohSession` does.
+    ///
+    /// `None` between session swaps (briefly, in `replace_session`)
+    /// when the prior pump's receiver has been dropped and the new
+    /// pump hasn't been wired yet.
+    pub(crate) session_events_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<daemon_transport::SessionEvent>>,
+    /// Stable tx side of the session-events fan-in. Cloned by
+    /// `replace_session` to spawn a fresh pump on the new session
+    /// without touching the receiver (which the render thread owns).
+    pub(crate) session_events_tx:
+        tokio::sync::mpsc::UnboundedSender<daemon_transport::SessionEvent>,
     /// Collapsed resource tree node ids in the resource usage panel.
     pub(crate) resource_collapsed_nodes: HashSet<String>,
     /// Latest sampled resource usage snapshot.
@@ -2010,10 +2027,17 @@ impl AnotherOneApp {
     /// Replace the current `Session` impl. Used by the QR pair flow
     /// on mobile to swap the `NoSession` placeholder for a live
     /// `IrohSession` once `daemon_client::iroh_factory().dial(...)`
-    /// returns.
+    /// returns. Re-spawns the session-events pump on the new session
+    /// so PTY bytes (and other server pushes) keep flowing into the
+    /// shared `session_events_rx`.
     #[allow(dead_code)] // wired up by the mobile pair-completion commit
     pub(crate) fn replace_session(&self, session: Arc<dyn daemon_transport::Session>) {
+        let events = session.events();
         *self.session.lock().expect("session slot poisoned") = session;
+        let tx = self.session_events_tx.clone();
+        crate::session_host::spawn_event_pump(events, move |event| {
+            let _ = tx.send(event);
+        });
     }
 
     pub(crate) fn focused_settings_git_action_script_kind(
@@ -4242,6 +4266,20 @@ impl AnotherOneApp {
                 "mobile session not paired yet — scan the desktop's QR code",
             )),
         );
+        // Spawn the event pump on the initial session BEFORE moving
+        // it into the Mutex, so the pump's stream subscription
+        // doesn't have to take the lock. PTY bytes (and any future
+        // push frames) flow through `session_events_rx`, drained on
+        // the render tick by `drain_session_events`.
+        let (session_events_tx, session_events_rx) =
+            tokio::sync::mpsc::unbounded_channel::<daemon_transport::SessionEvent>();
+        {
+            let tx = session_events_tx.clone();
+            crate::session_host::spawn_event_pump(initial_session.events(), move |event| {
+                let _ = tx.send(event);
+            });
+        }
+        let session_events_rx = Some(session_events_rx);
         let session = Arc::new(Mutex::new(initial_session));
         let left_sidebar_open = store.ui.left_sidebar_open;
         // Broadcast capacity is a per-channel ring buffer size. 64 is
@@ -4522,6 +4560,8 @@ impl AnotherOneApp {
             daemon_handle_rx,
             daemon_handle: None,
             session,
+            session_events_rx,
+            session_events_tx,
             resource_collapsed_nodes: HashSet::new(),
             resource_usage: ResourceUsageSnapshot::default(),
             resource_usage_sampler: ResourceUsageSampler::default(),
@@ -5186,6 +5226,98 @@ impl AnotherOneApp {
         );
     }
 
+    /// Drain `SessionEvent`s the session pump pushed onto
+    /// `session_events_rx`. PTY bytes flow through here on every
+    /// platform — desktop's in-memory pair pushes them through the
+    /// same path mobile's iroh session does, so the renderer never
+    /// has to know which transport produced them.
+    ///
+    /// Mirrors the work the legacy `TerminalLaunchReply::Output` arm
+    /// did (append to the recent-output ring, apply to the live VT,
+    /// mark for snapshot rebuild, mirror to MCP, retry the
+    /// claude-restore probe when the runtime hasn't materialised
+    /// yet) but keyed by the wire `(section_id, tab_id)` strings the
+    /// session emits rather than the local `TerminalRuntimeKey`.
+    fn drain_session_events(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut updated = false;
+        let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
+        loop {
+            let event = match self.session_events_rx.as_mut() {
+                Some(rx) => match rx.try_recv() {
+                    Ok(event) => event,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        // Unreachable in practice: `session_events_tx`
+                        // is held as a struct field for the lifetime
+                        // of the app, so the channel can't fully
+                        // disconnect. Treat as transient and break.
+                        log::warn!("session events channel unexpectedly disconnected");
+                        break;
+                    }
+                },
+                None => break,
+            };
+            match event {
+                daemon_transport::SessionEvent::PtyBytes {
+                    section_id,
+                    tab_id,
+                    bytes,
+                } => {
+                    let Some(section_id) = SectionId::from_store_key(&section_id) else {
+                        log::warn!("session event PtyBytes with malformed section_id");
+                        continue;
+                    };
+                    let key = TerminalRuntimeKey { section_id, tab_id };
+                    crate::leakscope::note_drain_output(bytes.len());
+                    self.append_terminal_recent_output(&key, &bytes);
+                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                        let terminal_update = runtime.apply_output(&bytes);
+                        output_dirty_keys.insert(key.clone());
+                        if terminal_update.bell {
+                            self.terminal_bell_at.insert(key.clone(), Instant::now());
+                        }
+                        self.update_terminal_tab(&key, cx, |tab| {
+                            apply_terminal_title_update(tab, &terminal_update);
+                        });
+                        self.emit_client_event(ClientEvent::Output {
+                            tab_id: key.tab_id.clone(),
+                            bytes: bytes.clone(),
+                        });
+                        updated = true;
+                    } else if self.maybe_retry_claude_restore(&key, cx) {
+                        updated = true;
+                    }
+                }
+                daemon_transport::SessionEvent::Push(reply) => {
+                    log::debug!(
+                        "session pushed unsolicited reply: {:?}",
+                        std::mem::discriminant(&reply)
+                    );
+                }
+                daemon_transport::SessionEvent::Lagged { skipped } => {
+                    log::warn!("session events lagged — skipped {skipped} events");
+                }
+                daemon_transport::SessionEvent::Closed { reason } => {
+                    log::info!("session events stream closed (reason: {reason:?})");
+                    // Don't drop the receiver — the next
+                    // `replace_session` will spawn a fresh pump that
+                    // resumes pushing into the same channel.
+                    break;
+                }
+            }
+        }
+        if !output_dirty_keys.is_empty() {
+            for key in output_dirty_keys {
+                if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                    let snap = runtime.snapshot();
+                    self.terminal_surface_snapshots.insert(key.clone(), snap);
+                }
+            }
+            updated = true;
+        }
+        updated
+    }
+
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
         crate::leakscope::note_drain_call();
         let mut updated = false;
@@ -5197,7 +5329,13 @@ impl AnotherOneApp {
         // that got output, drain the whole queue, then rebuild snapshots
         // once at the end. At 60 Hz drain frequency this caps snapshot
         // work at 60 rebuilds/sec even under sustained output storms.
-        let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
+        //
+        // After the events-bridge cutover, PTY-byte rendering moved
+        // off this channel onto `drain_session_events`. The set is
+        // retained here so a future reply variant that lands surface
+        // updates back through this drain (e.g. snapshot-on-Launched)
+        // can rejoin the once-per-tick rebuild path without churn.
+        let output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
 
         loop {
             match self.terminal_launch_receiver.try_recv() {
@@ -5233,30 +5371,14 @@ impl AnotherOneApp {
                     });
                     updated = true;
                 }
-                Ok(TerminalLaunchReply::Output { key, bytes }) => {
-                    crate::leakscope::note_drain_output(bytes.len());
-                    self.append_terminal_recent_output(&key, &bytes);
-                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                        let terminal_update = runtime.apply_output(&bytes);
-                        output_dirty_keys.insert(key.clone());
-                        if terminal_update.bell {
-                            self.terminal_bell_at.insert(key.clone(), Instant::now());
-                        }
-                        self.update_terminal_tab(&key, cx, |tab| {
-                            apply_terminal_title_update(tab, &terminal_update);
-                        });
-                        // Mirror the chunk to MCP subscribers. Each
-                        // session has its own broadcast::Receiver so
-                        // a slow consumer doesn't stall the daemon's
-                        // own output processing.
-                        self.emit_client_event(ClientEvent::Output {
-                            tab_id: key.tab_id.clone(),
-                            bytes: bytes.clone(),
-                        });
-                        updated = true;
-                    } else if self.maybe_retry_claude_restore(&key, cx) {
-                        updated = true;
-                    }
+                Ok(TerminalLaunchReply::Output { .. }) => {
+                    // PTY-byte rendering moved off this channel onto
+                    // `drain_session_events` — desktop and mobile
+                    // share one byte-input path. The cold-launch PTY
+                    // reader (`core/src/terminal_launch.rs`) no
+                    // longer emits this variant; the no-op arm keeps
+                    // the match exhaustive in case a future
+                    // warm-launch hand-off still routes through here.
                 }
                 Ok(TerminalLaunchReply::SessionDiscovered { key, session }) => {
                     let section_id = key.section_id.clone();
@@ -14678,6 +14800,12 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_project_pull_request_lookup(cx);
                             should_notify |= this.drain_project_page_pull_requests(cx);
                             should_notify |= this.drain_project_check_runs_lookup(cx);
+                            // Session events drive PTY-byte rendering
+                            // — drain ahead of the legacy
+                            // launch-reply queues so newly-arrived
+                            // bytes are applied before any focus or
+                            // restore-status reaction this tick.
+                            should_notify |= this.drain_session_events(cx);
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;
