@@ -6277,6 +6277,64 @@ impl AnotherOneApp {
         })
     }
 
+    /// Apply a `UiAction` to desktop-only ephemeral state. Single
+    /// match site for everything that the GUI's GPUI Action handlers
+    /// also flip — opening / closing overlays, zoom, focus moves,
+    /// etc. MCP routes here too via `drain_pending_ui_actions`, so
+    /// the same code path runs whether a button click or an MCP tool
+    /// call triggered the action.
+    ///
+    /// New `UiAction` variants land here alongside the GUI handler
+    /// that constructs them. Add to `another_one_core::mcp::orchestrator::UiAction`
+    /// (so MCP can name it on the wire), match here, then refactor
+    /// the legacy GUI handler to construct the `UiAction` and call
+    /// this method.
+    pub(crate) fn dispatch_ui_action(
+        &mut self,
+        action: another_one_core::mcp::orchestrator::UiAction,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        use another_one_core::mcp::orchestrator::UiAction;
+        match action {
+            UiAction::OpenPairMobile => {
+                if !self.pair_mobile_modal_open {
+                    self.pair_mobile_modal_open = true;
+                    self.pair_mobile_reset_pending = false;
+                    cx.notify();
+                }
+                Ok(())
+            }
+            UiAction::ClosePairMobile => {
+                if self.pair_mobile_modal_open {
+                    self.pair_mobile_modal_open = false;
+                    cx.notify();
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Drain MCP-routed `UiAction` requests onto the GPUI thread.
+    /// Same render-tick pattern as `drain_pending_select_focus` etc.
+    pub(crate) fn drain_pending_ui_actions(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending: Vec<crate::daemon_host::PendingUiAction> = {
+            let Ok(mut state) = self.registry_state.lock() else {
+                return false;
+            };
+            if state.pending_ui_actions.is_empty() {
+                return false;
+            }
+            std::mem::take(&mut state.pending_ui_actions)
+        };
+        let mut changed = false;
+        for req in pending {
+            let result = self.dispatch_ui_action(req.action, cx);
+            let _ = req.responder.send(result);
+            changed = true;
+        }
+        changed
+    }
+
     pub(crate) fn drain_pending_select_focus(&mut self, cx: &mut Context<Self>) -> bool {
         let pending: Vec<crate::daemon_host::PendingSelectFocus> = {
             let Ok(mut state) = self.registry_state.lock() else {
@@ -14516,6 +14574,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_pending_spawn_terminals(cx);
                             should_notify |= this.drain_pending_close_tabs(cx);
                             should_notify |= this.drain_pending_select_focus(cx);
+                            should_notify |= this.drain_pending_ui_actions(cx);
                             // Observe GUI-driven focus changes after
                             // the spawn/close/select drains so any
                             // event WE just produced isn't double-

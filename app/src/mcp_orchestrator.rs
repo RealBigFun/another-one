@@ -309,6 +309,34 @@ impl McpOrchestrator for DesktopMcpOrchestrator {
         Some(self.event_bus.subscribe())
     }
 
+    fn dispatch_ui_action(
+        &self,
+        action: another_one_core::mcp::orchestrator::UiAction,
+    ) -> anyhow::Result<()> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        {
+            let arc = self
+                .inner
+                .upgrade()
+                .ok_or_else(|| anyhow::anyhow!("desktop registry has been dropped"))?;
+            let mut state = arc
+                .lock()
+                .map_err(|_| anyhow::anyhow!("registry mutex poisoned"))?;
+            state
+                .pending_ui_actions
+                .push(crate::daemon_host::PendingUiAction {
+                    action,
+                    responder: tx,
+                });
+        }
+        let resp = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|err| {
+                anyhow::anyhow!("dispatch_ui_action: render-tick drain timed out: {err}")
+            })?;
+        resp.map_err(|msg| anyhow::anyhow!(msg))
+    }
+
     fn select_focus(
         &self,
         req: another_one_core::mcp::orchestrator::SelectFocusRequest,

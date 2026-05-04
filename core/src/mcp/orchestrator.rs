@@ -167,6 +167,25 @@ pub struct SelectFocusRequest {
     pub for_client: Option<crate::clients::ClientId>,
 }
 
+/// Desktop-only ephemera the GUI can dispatch (overlays, focus
+/// moves, zoom, panel toggles). These don't traverse the daemon —
+/// they flip `AnotherOneApp` state that has no remote analogue —
+/// but exposing them through the same dispatcher means MCP can
+/// drive the GUI's transient state too. New variants land alongside
+/// new GUI affordances; the desktop's `dispatch_ui_action` impl is
+/// the single match site.
+///
+/// See `docs/architecture/gui-mcp-unification.md` (under
+/// `another-one-g9j`) for the broader pattern this fits into.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UiAction {
+    /// Show the pair-mobile QR overlay. No-op if already open.
+    OpenPairMobile,
+    /// Hide the pair-mobile overlay. No-op if already closed.
+    ClosePairMobile,
+}
+
 /// The trait the MCP server dispatches against. Implementations
 /// own whatever bridge is needed to reach the live app state
 /// (today: `RegistryState` lookups for reads, pending-queue
@@ -207,6 +226,16 @@ pub trait McpOrchestrator: Send + Sync {
     /// GUI client `gui:desktop`).
     fn select_focus(&self, _req: SelectFocusRequest) -> anyhow::Result<()> {
         anyhow::bail!("select_focus is not implemented by this orchestrator")
+    }
+
+    /// Dispatch a desktop-only ephemeral action — overlay open/close,
+    /// focus moves, zoom, etc. The default impl returns `Err` so
+    /// non-desktop orchestrators (in-process MCP test harnesses, the
+    /// future remote orchestrator) don't need to know about UI state
+    /// at all. Desktop overrides with a real handler that updates
+    /// `AnotherOneApp` flags via the GPUI render-tick drain pattern.
+    fn dispatch_ui_action(&self, _action: UiAction) -> anyhow::Result<()> {
+        anyhow::bail!("dispatch_ui_action is not implemented by this orchestrator")
     }
 
     /// Subscribe a per-session `broadcast::Receiver` to the
