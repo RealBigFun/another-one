@@ -117,6 +117,11 @@ pub(crate) struct RegistryState {
     pub(crate) pending_close_tabs: Vec<PendingCloseTab>,
     /// Select-focus asks routed in from the daemon (MCP).
     pub(crate) pending_select_focus: Vec<PendingSelectFocus>,
+    /// UiAction dispatches routed in from the daemon (MCP). Drained
+    /// on the GPUI render tick onto `AnotherOneApp::dispatch_ui_action`.
+    /// Same shape as `pending_select_focus` — sync responder so the
+    /// blocking MCP caller observes the result inline.
+    pub(crate) pending_ui_actions: Vec<PendingUiAction>,
     /// Keys currently mid-spawn. Populated when either path
     /// (daemon-queued mobile LaunchTab **or** desktop sidebar click)
     /// kicks off a `spawn_terminal_launch`; cleared on
@@ -139,6 +144,7 @@ impl RegistryState {
             pending_spawn_terminals: Vec::new(),
             pending_close_tabs: Vec::new(),
             pending_select_focus: Vec::new(),
+            pending_ui_actions: Vec::new(),
             in_flight_launches: HashSet::new(),
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
@@ -194,6 +200,15 @@ pub(crate) struct TabResizeRequest {
     pub key: TerminalRuntimeKey,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// MCP `dispatch_ui_action` ask — desktop-only ephemera the GUI
+/// can also dispatch (overlay open/close, zoom, focus, etc.). The
+/// drain calls `AnotherOneApp::dispatch_ui_action` on the GPUI
+/// thread.
+pub(crate) struct PendingUiAction {
+    pub action: another_one_core::mcp::orchestrator::UiAction,
+    pub responder: std::sync::mpsc::SyncSender<Result<(), String>>,
 }
 
 /// MCP `select_focus` ask — moves a client's focus, optionally on

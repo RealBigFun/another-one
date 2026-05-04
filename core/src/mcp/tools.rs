@@ -176,6 +176,29 @@ pub fn tool_manifest() -> Value {
                 "required": ["focus"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "dispatch_ui_action",
+            "description":
+                "Dispatch a desktop-only UI action (overlay open/close, focus, zoom, \
+                 panel toggle). These don't traverse the daemon — they flip transient \
+                 GUI state — but exposing them through MCP means harnesses can drive \
+                 the human's screen the same way a button click would. Today's actions: \
+                 `open_pair_mobile` (show the QR overlay) and `close_pair_mobile`. New \
+                 actions land alongside new GUI affordances.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "object",
+                        "description":
+                            "One of {kind: \"open_pair_mobile\"} or \
+                             {kind: \"close_pair_mobile\"}."
+                    }
+                },
+                "required": ["action"],
+                "additionalProperties": false
+            }
         }
     ])
 }
@@ -285,6 +308,19 @@ pub fn call(
             let req: SelectFocusRequest = parse_args(args)?;
             orchestrator
                 .select_focus(req)
+                .map(|_| json!({ "ok": true }))
+                .map_err(ToolError::Execution)
+        }
+        "dispatch_ui_action" => {
+            let action_value = args
+                .get("action")
+                .ok_or_else(|| ToolError::InvalidArgs("missing action".into()))?
+                .clone();
+            let action: crate::mcp::orchestrator::UiAction =
+                serde_json::from_value(action_value)
+                    .map_err(|e| ToolError::InvalidArgs(format!("action: {e}")))?;
+            orchestrator
+                .dispatch_ui_action(action)
                 .map(|_| json!({ "ok": true }))
                 .map_err(ToolError::Execution)
         }
