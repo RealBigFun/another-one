@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub(crate) mod commands;
+pub mod dispatch;
 pub mod frame;
 pub mod registry;
 pub mod transport_iroh;
