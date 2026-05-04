@@ -1844,6 +1844,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "daemon-transport"
+version = "0.1.0"
+dependencies = [
+ "daemon-proto",
+ "futures-core",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
