@@ -246,13 +246,11 @@ impl AnotherOneApp {
         for project_id in project_ids.iter() {
             self.dispatch_remove_project(project_id.clone());
         }
-        // Optimistic local removal so the sidebar reflows immediately;
-        // the daemon's authoritative `RemoveProject` reply absorbs
-        // through drain_remote_worker_replies on the next broadcast
-        // tick.
-        for project_id in project_ids.iter() {
-            self.project_store.remove_project(project_id);
-        }
+        // No local mutation — daemon broadcast drives the sidebar
+        // refresh. The `clear_removed_project_references` /
+        // `fallback_section` calls below operate on the current
+        // (still-pre-removal) snapshot for fallback intent; the
+        // active-section adjustment runs once the projection lands.
         self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
         let fallback_section =
             project_workflows::fallback_section_after_project_removal(&self.project_store);
@@ -418,14 +416,14 @@ impl AnotherOneApp {
     }
 
     fn set_sidebar_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
-        // Optimistic local update so the pin glyph flips before the
-        // round-trip — desktop renders the latest authoritative state
-        // when the daemon's broadcast push hits drain_remote_worker_replies.
-        let changed = self.project_store.set_task_pinned(task_id, pinned);
-        if changed {
-            self.dispatch_set_task_pinned(task_id.to_string(), pinned);
-        }
-        changed
+        // Dispatch-only — broadcast push drives the local view via
+        // drain_remote_worker_replies → absorb_projection. Returning
+        // `pinned` reflects the *intent*; the rendered pin glyph
+        // updates when the projection lands one render tick later.
+        // No local project_store write — desktop and mobile must
+        // behave identically as clients of the daemon.
+        self.dispatch_set_task_pinned(task_id.to_string(), pinned);
+        true
     }
 
     fn open_sidebar_task_menu(
@@ -528,14 +526,10 @@ impl AnotherOneApp {
         preferred_project_id: &str,
         cx: &mut Context<Self>,
     ) {
-        // Optimistic local removal so the sidebar reflows
-        // immediately; the daemon's RemoveTask reply absorbs through
-        // the broadcast push that follows.
-        if self
-            .project_store
-            .remove_task(project_id, task_id)
-            .is_none()
-        {
+        // Sanity-check the task exists before firing the verb — a
+        // tap on a stale row should toast, not silently dispatch.
+        // Read-only check on the current projection.
+        if self.project_store.task(task_id).is_none() {
             self.show_error_toast("Could not find the selected task.", cx);
             return;
         }
@@ -675,10 +669,8 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> String {
         if let Some(task_id) = confirm.task_id.as_deref() {
-            // Optimistic local removal; daemon RemoveTask reply
-            // absorbs through the broadcast push that follows.
-            self.project_store
-                .remove_task(&confirm.root_project_id, task_id);
+            // Dispatch-only — broadcast push removes the task from
+            // the local view via absorb_projection.
             self.dispatch_remove_task(confirm.root_project_id.clone(), task_id.to_string());
             self.workspace_pane.update(cx, |workspace, cx| {
                 workspace.remove_task_sections(task_id, cx);
@@ -1130,11 +1122,8 @@ impl AnotherOneApp {
         };
 
         if final_name != rename.original_name {
-            // Optimistic local rename; daemon's RenameTask reply
-            // absorbs through the broadcast push that follows.
-            if self.project_store.rename_task(&rename.row_id, &final_name) {
-                self.dispatch_rename_task(rename.row_id.clone(), final_name);
-            }
+            // Dispatch-only — broadcast push installs the new name.
+            self.dispatch_rename_task(rename.row_id.clone(), final_name);
         }
 
         cx.notify();

@@ -56,7 +56,7 @@ use crate::platform::PlatformServices;
 use crate::project_store::{
     ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
     ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchSettingField,
-    ProjectGitState, ProjectStore, RepoBranchRecord, RepoDefaultCommitAction, Task, TaskKind,
+    ProjectGitState, ProjectStore, RepoBranchRecord, Task, TaskKind,
     TaskWorktreeBranchMode,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
@@ -3758,17 +3758,6 @@ impl AnotherOneApp {
         branch_name: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        // Optimistic local update so dropdown closes immediately;
-        // daemon's SetBranchSetting reply absorbs through the
-        // broadcast push.
-        let update = match field {
-            ProjectBranchSettingField::DefaultBranch => self
-                .project_store
-                .update_default_branch(project_id, branch_name.clone()),
-            ProjectBranchSettingField::DefaultTargetBranch => self
-                .project_store
-                .update_default_target_branch(project_id, branch_name.clone()),
-        };
         let field_id = match field {
             ProjectBranchSettingField::DefaultBranch => "default-branch",
             ProjectBranchSettingField::DefaultTargetBranch => "default-target-branch",
@@ -3789,48 +3778,39 @@ impl AnotherOneApp {
                 }
             },
         );
-
-        match update {
-            Ok(changed) => {
-                self.project_page_config_dropdown = None;
-                self.project_page_config_panel_targeted = false;
-                if !changed {
-                    cx.notify();
-                    return;
-                }
-
-                self.clear_branch_sidebar_states_for_project_group(project_id);
-                self.mark_git_refresh_stale();
-
-                match (field, branch_name.as_deref()) {
-                    (ProjectBranchSettingField::DefaultBranch, Some(branch_name)) => {
-                        self.show_success_toast(
-                            format!("Default branch set to {}.", branch_name),
-                            cx,
-                        );
-                    }
-                    (ProjectBranchSettingField::DefaultBranch, None) => {
-                        self.show_success_toast(
-                            "Default branch cleared. New tasks will use automatic branch detection.",
-                            cx,
-                        );
-                    }
-                    (ProjectBranchSettingField::DefaultTargetBranch, Some(branch_name)) => {
-                        self.show_success_toast(
-                            format!("Default target branch set to {}.", branch_name),
-                            cx,
-                        );
-                    }
-                    (ProjectBranchSettingField::DefaultTargetBranch, None) => {
-                        self.show_success_toast("Default target branch cleared.", cx);
-                    }
-                }
-                cx.notify();
+        // Dispatch is fire-and-forget; the daemon validates and
+        // applies. UI feedback is optimistic — close the dropdown
+        // and toast success. If the daemon rejects (e.g. unknown
+        // branch name), the broadcast push leaves state unchanged
+        // so the dropdown's selected value will revert on the next
+        // re-render. Validation errors that used to surface
+        // synchronously now surface as "no visible state change" —
+        // good enough for now; a typed reply ack would be cleaner.
+        self.project_page_config_dropdown = None;
+        self.project_page_config_panel_targeted = false;
+        self.clear_branch_sidebar_states_for_project_group(project_id);
+        self.mark_git_refresh_stale();
+        match (field, branch_name.as_deref()) {
+            (ProjectBranchSettingField::DefaultBranch, Some(branch_name)) => {
+                self.show_success_toast(format!("Default branch set to {}.", branch_name), cx);
             }
-            Err(error) => {
-                self.show_error_toast(error, cx);
+            (ProjectBranchSettingField::DefaultBranch, None) => {
+                self.show_success_toast(
+                    "Default branch cleared. New tasks will use automatic branch detection.",
+                    cx,
+                );
+            }
+            (ProjectBranchSettingField::DefaultTargetBranch, Some(branch_name)) => {
+                self.show_success_toast(
+                    format!("Default target branch set to {}.", branch_name),
+                    cx,
+                );
+            }
+            (ProjectBranchSettingField::DefaultTargetBranch, None) => {
+                self.show_success_toast("Default target branch cleared.", cx);
             }
         }
+        cx.notify();
     }
 
     pub(crate) fn set_right_sidebar_mode(
@@ -3979,11 +3959,8 @@ impl AnotherOneApp {
     pub(crate) fn set_sidebar_git_metadata_visible(
         &mut self,
         visible: bool,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
-        // Optimistic local update so the toggle flips immediately;
-        // daemon's reply absorbs through the broadcast push.
-        self.project_store.set_sidebar_git_metadata_visible(visible);
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
@@ -3994,7 +3971,6 @@ impl AnotherOneApp {
                 }
             },
         );
-        cx.notify();
     }
 
     pub(crate) fn set_agent_enabled(
@@ -4003,24 +3979,16 @@ impl AnotherOneApp {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
-        // Optimistic local update so prewarm sync sees the new
-        // enabled-set immediately; the daemon's reply absorbs through
-        // the broadcast push.
-        if self.project_store.set_agent_enabled(agent_id, enabled) {
-            self.dispatch_set_agent_enabled(agent_id.to_string(), enabled);
-            self.sync_new_task_modal_prewarm(cx);
-            self.sync_add_agent_modal_prewarm(cx);
-            cx.notify();
-        }
+        // Dispatch-only — broadcast push will install the new
+        // enabled-set; the prewarm sync re-runs on every render
+        // tick (after the projection lands) so it picks up the
+        // change without needing a synchronous local mutation here.
+        self.dispatch_set_agent_enabled(agent_id.to_string(), enabled);
+        cx.notify();
     }
 
-    pub(crate) fn set_default_agent(&mut self, agent_id: &str, cx: &mut Context<Self>) {
-        if self.project_store.set_default_agent(agent_id) {
-            self.dispatch_set_default_agent(agent_id.to_string());
-            self.sync_new_task_modal_prewarm(cx);
-            self.sync_add_agent_modal_prewarm(cx);
-            cx.notify();
-        }
+    pub(crate) fn set_default_agent(&mut self, agent_id: &str, _cx: &mut Context<Self>) {
+        self.dispatch_set_default_agent(agent_id.to_string());
     }
 
     pub(crate) fn open_project_open_in_target_in_app(
@@ -4753,11 +4721,6 @@ impl AnotherOneApp {
     }
 
     fn set_last_active_section_key(&mut self, section_key: Option<String>) {
-        // Optimistic local update so UI reads (sidebar focus
-        // highlight, etc.) see it immediately; the daemon's reply
-        // absorbs through the broadcast push.
-        self.project_store
-            .set_last_active_section_key(section_key.clone());
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
@@ -4773,16 +4736,6 @@ impl AnotherOneApp {
     }
 
     fn persist_section_state(&mut self, section_id: &SectionId, persisted: PersistedSectionState) {
-        // Optimistic local update so the local terminal panel sees
-        // its persisted state immediately; the daemon's reply
-        // absorbs through the broadcast push.
-        if let Some(task_id) = section_id.task_id.as_deref() {
-            self.project_store
-                .update_task_tabs(task_id, &persisted);
-        } else {
-            self.project_store
-                .set_terminal_section(section_id.store_key(), persisted.clone());
-        }
         let store_key = section_id.store_key();
         let Ok(value) = serde_json::to_value(&persisted) else {
             log::warn!("persist_section_state: failed to serialise PersistedSectionState");
@@ -9522,14 +9475,6 @@ impl AnotherOneApp {
 
         let new_section = SectionId::for_task(&section.project_id, &success.branch_name, &task_id);
         self.move_active_task_section(&section, &new_section, cx);
-        // Optimistic local update so the active section's title /
-        // branch label refresh immediately; daemon's reply absorbs
-        // through the broadcast push.
-        let _ = self.project_store.update_task_branch(
-            &task_id,
-            &section.project_id,
-            &success.branch_name,
-        );
         self.dispatch_update_task_branch(
             task_id.clone(),
             section.project_id.clone(),
@@ -10035,21 +9980,12 @@ impl AnotherOneApp {
         let start_message = match &action {
             crate::git_actions::ToolbarGitAction::Commit => {
                 if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
-                    // Optimistic local pin so the dropdown's primary
-                    // button flips immediately; daemon broadcast
-                    // absorbs the authoritative state.
-                    self.project_store
-                        .set_repo_default_commit_action(repo_id.clone(), RepoDefaultCommitAction::Commit);
                     self.dispatch_set_repo_default_commit_action(repo_id, "commit".to_string());
                 }
                 "Generating an AI commit message for staged changes..."
             }
             crate::git_actions::ToolbarGitAction::CommitAndPush => {
                 if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
-                    self.project_store.set_repo_default_commit_action(
-                        repo_id.clone(),
-                        RepoDefaultCommitAction::CommitAndPush,
-                    );
                     self.dispatch_set_repo_default_commit_action(
                         repo_id,
                         "commit-and-push".to_string(),
