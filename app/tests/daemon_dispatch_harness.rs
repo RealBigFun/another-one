@@ -205,3 +205,518 @@ fn _force_imports() {
     fn _take<S: Stream + Send>(_: S) {}
     let _: Option<DialTarget> = None;
 }
+
+// =====================================================================
+// mod mutators — one test per mutating Control verb. Each test seeds a
+// fresh harness, drains the initial-projection push, fires the verb,
+// then drains the post-mutation push and asserts a specific projection
+// delta. A verb that bypasses `with_store_mut` and skips the broadcast
+// would fail this layer — exactly what surfaces the gaps the audit
+// flagged for the unification refactor.
+// =====================================================================
+
+mod mutators {
+    use super::*;
+
+    /// Spin up a harness, drain the initial-projection push, return
+    /// the harness ready to dispatch a single verb under test.
+    async fn fresh_harness_after_initial_push() -> Harness {
+        let (projects, tasks) = seed_one_project_one_task();
+        let mut harness = Harness::new_seeded(projects, tasks).await;
+        let _ = harness
+            .expect_push(Duration::from_millis(250))
+            .await
+            .expect("initial projection push");
+        harness
+    }
+
+    /// Fire `verb`, await its reply (so the dispatcher has finished
+    /// the mutation), then drain the broadcast push that follows.
+    async fn call_then_drain_push(harness: &mut Harness, verb: Control) -> WorkerReply {
+        harness
+            .client
+            .call(verb)
+            .await
+            .expect("call returned daemon error");
+        harness
+            .expect_push(Duration::from_millis(250))
+            .await
+            .expect("post-mutation push within 250ms")
+    }
+
+    /// Convenience: extract `ProjectList` payload or panic.
+    fn unwrap_projection(
+        reply: WorkerReply,
+    ) -> (Vec<daemon_proto::ProjectSummary>, daemon_proto::UiSnapshot) {
+        match reply {
+            WorkerReply::ProjectList { projects, ui } => (projects, ui),
+            other => panic!("expected ProjectList push, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_sidebar_git_metadata_visible_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetSidebarGitMetadataVisible { visible: true },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        assert!(ui.show_sidebar_git_metadata);
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_shortcut_binding_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetShortcutBinding {
+                action_id: "next-tab".into(),
+                binding: "ctrl-shift-]".into(),
+            },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        let shortcuts = ui
+            .shortcuts
+            .as_ref()
+            .expect("shortcuts present in projection");
+        let mapping = shortcuts
+            .as_object()
+            .expect("shortcuts is JSON object");
+        assert!(
+            mapping
+                .iter()
+                .any(|(_, v)| v.as_str() == Some("ctrl-shift-]")),
+            "expected ctrl-shift-] binding somewhere in {mapping:?}"
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn reset_shortcut_binding_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::ResetShortcutBinding {
+                action_id: "next-tab".into(),
+            },
+        )
+        .await;
+        let _ = unwrap_projection(reply);
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_git_commit_script_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetGitCommitScript {
+                script: "test-commit-script".into(),
+            },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        assert_eq!(
+            ui.git_commit_generation_script.as_deref(),
+            Some("test-commit-script")
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn reset_git_commit_script_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let _ = call_then_drain_push(
+            &mut harness,
+            Control::SetGitCommitScript {
+                script: "preset".into(),
+            },
+        )
+        .await;
+        let reply =
+            call_then_drain_push(&mut harness, Control::ResetGitCommitScript).await;
+        let (_, ui) = unwrap_projection(reply);
+        assert!(
+            ui.git_commit_generation_script
+                .as_deref()
+                .map(str::is_empty)
+                .unwrap_or(true),
+            "post-reset script should be empty/absent, got {:?}",
+            ui.git_commit_generation_script
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_git_pr_script_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetGitPrScript {
+                script: "test-pr-script".into(),
+            },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        assert_eq!(
+            ui.git_pr_generation_script.as_deref(),
+            Some("test-pr-script")
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn reset_git_pr_script_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let _ = call_then_drain_push(
+            &mut harness,
+            Control::SetGitPrScript {
+                script: "preset".into(),
+            },
+        )
+        .await;
+        let reply =
+            call_then_drain_push(&mut harness, Control::ResetGitPrScript).await;
+        let (_, ui) = unwrap_projection(reply);
+        assert!(
+            ui.git_pr_generation_script
+                .as_deref()
+                .map(str::is_empty)
+                .unwrap_or(true),
+            "post-reset script should be empty/absent, got {:?}",
+            ui.git_pr_generation_script
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_agent_enabled_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetAgentEnabled {
+                agent_id: "claude-code".into(),
+                enabled: false,
+            },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        // After explicit disable the daemon stores an allowlist with
+        // claude-code excluded; check the wire's `enabled_agents`
+        // doesn't contain the disabled id.
+        let enabled = ui.enabled_agents.unwrap_or_default();
+        assert!(
+            !enabled.iter().any(|id| id == "claude-code"),
+            "claude-code should be missing after disable: {enabled:?}"
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_default_agent_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetDefaultAgent {
+                agent_id: "codex".into(),
+            },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        assert_eq!(ui.default_agent_id.as_deref(), Some("codex"));
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_agent_launch_args_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetAgentLaunchArgs {
+                agent_id: "claude-code".into(),
+                args: vec!["--headless".into(), "--no-color".into()],
+            },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        let overrides = ui
+            .agent_launch_args_overrides
+            .as_ref()
+            .expect("agent_launch_args_overrides present");
+        let map = overrides
+            .as_object()
+            .expect("agent_launch_args_overrides is JSON object");
+        let entry = map
+            .get("claude-code")
+            .and_then(|v| v.as_array())
+            .expect("claude-code arg list present");
+        assert_eq!(entry.len(), 2);
+        assert_eq!(entry[0].as_str(), Some("--headless"));
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_git_commit_llm_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        // GitActionLlmSettings serializes as an object with an
+        // optional "anthropic" or "openai" choice; we just round-trip
+        // an empty object and verify the wire doesn't drop it.
+        let settings = serde_json::json!({});
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetGitCommitLlm { settings },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        // Wire field always present once set; existence is enough.
+        assert!(ui.git_commit_generation_llm.is_some());
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_git_pr_llm_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let settings = serde_json::json!({});
+        let reply =
+            call_then_drain_push(&mut harness, Control::SetGitPrLlm { settings }).await;
+        let (_, ui) = unwrap_projection(reply);
+        assert!(ui.git_pr_generation_llm.is_some());
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn remove_project_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::RemoveProject {
+                project_id: "p1".into(),
+            },
+        )
+        .await;
+        let (projects, _) = unwrap_projection(reply);
+        assert!(
+            projects.iter().all(|p| p.id != "p1"),
+            "p1 should be gone, got {projects:?}"
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_task_pinned_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetTaskPinned {
+                task_id: "t1".into(),
+                pinned: true,
+            },
+        )
+        .await;
+        let (projects, ui) = unwrap_projection(reply);
+        assert!(
+            ui.pinned_task_ids.iter().any(|(_, t)| t == "t1"),
+            "t1 should be in pinned_task_ids: {:?}",
+            ui.pinned_task_ids
+        );
+        let task = projects[0]
+            .tasks
+            .iter()
+            .find(|t| t.id == "t1")
+            .expect("t1 present");
+        assert!(task.pinned);
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn rename_task_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::RenameTask {
+                task_id: "t1".into(),
+                new_name: "renamed".into(),
+            },
+        )
+        .await;
+        let (projects, _) = unwrap_projection(reply);
+        let task = projects[0]
+            .tasks
+            .iter()
+            .find(|t| t.id == "t1")
+            .expect("t1 present");
+        assert_eq!(task.name, "renamed");
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn remove_task_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::RemoveTask {
+                project_id: "p1".into(),
+                task_id: "t1".into(),
+            },
+        )
+        .await;
+        let (projects, _) = unwrap_projection(reply);
+        assert!(projects[0].tasks.is_empty(), "t1 should be removed");
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn persist_section_state_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let persisted = serde_json::json!({
+            "active_tab_id": "tab-a",
+            "next_tab_id": 1,
+            "cwd": null,
+            "tabs": [{
+                "id": "tab-a",
+                "title": "Tab A",
+                "pinned": false,
+                "fixed_title": null,
+                "provider": null,
+                "launch_config": null,
+                "restore_status": "ready",
+                "failure_message": null,
+                "failure_details": null,
+            }]
+        });
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::PersistSectionState {
+                section_id: "p1::main::t1".into(),
+                persisted,
+            },
+        )
+        .await;
+        let (projects, _) = unwrap_projection(reply);
+        let task = &projects[0].tasks[0];
+        assert_eq!(task.active_tab_id, "tab-a");
+        assert_eq!(task.tabs.len(), 1);
+        assert_eq!(task.tabs[0].id, "tab-a");
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_last_active_section_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetLastActiveSection {
+                section_id: Some("p1::main::t1".into()),
+            },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        assert_eq!(
+            ui.last_active_section_id.as_deref(),
+            Some("p1::main::t1")
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_repo_default_commit_action_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        // No assertion on UI yet — the verb writes
+        // `repo_default_commit_actions` but UiSnapshot doesn't carry
+        // that field on the wire today. Verify the broadcast fires
+        // (push arrives within 250ms) so a missing daemon route
+        // would fail; richer assertion lands when the wire grows the
+        // field.
+        let _ = call_then_drain_push(
+            &mut harness,
+            Control::SetRepoDefaultCommitAction {
+                repo_id: "p1".into(),
+                action: "commit-and-push".into(),
+            },
+        )
+        .await;
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn update_task_branch_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::UpdateTaskBranch {
+                task_id: "t1".into(),
+                target_project_id: "p1".into(),
+                branch_name: "feature".into(),
+            },
+        )
+        .await;
+        let (projects, _) = unwrap_projection(reply);
+        let task = projects[0]
+            .tasks
+            .iter()
+            .find(|t| t.id == "t1")
+            .expect("t1 present");
+        assert_eq!(task.branch_name, "feature");
+        // `section_id` regenerates from the new branch name.
+        assert!(
+            task.section_id.contains("feature"),
+            "section_id should encode new branch: {}",
+            task.section_id
+        );
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn set_expanded_repos_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetExpandedRepos {
+                expanded_repo_ids: vec!["p1".into()],
+            },
+        )
+        .await;
+        let (_, ui) = unwrap_projection(reply);
+        assert!(
+            ui.expanded_repo_ids.iter().any(|r| r == "p1"),
+            "p1 should be in expanded_repo_ids: {:?}",
+            ui.expanded_repo_ids
+        );
+        harness.shutdown();
+    }
+
+    // SetBranchSetting needs a real git repo at the project's path
+    // (the daemon resolves branches via git), so seed a tempdir
+    // initialised as a bare repo on the fly. Skip the real git init
+    // — the verb just persists the override into the project's
+    // branch_settings, which is what the wire mirrors.
+    #[tokio::test]
+    async fn set_branch_setting_emits_push() {
+        let mut harness = fresh_harness_after_initial_push().await;
+        let reply = call_then_drain_push(
+            &mut harness,
+            Control::SetBranchSetting {
+                project_id: "p1".into(),
+                field: "default-branch".into(),
+                branch_name: Some("main".into()),
+            },
+        )
+        .await;
+        let (projects, _) = unwrap_projection(reply);
+        let p = &projects[0];
+        let bs = p
+            .branch_settings
+            .as_ref()
+            .expect("branch_settings present in projection");
+        let map = bs.as_object().expect("branch_settings is JSON object");
+        // `core::ProjectBranchSettings` serializes overrides under a
+        // map keyed by field id; existence is enough — the daemon
+        // round-trip wrote *something*.
+        assert!(!map.is_empty(), "branch_settings should be non-empty");
+        harness.shutdown();
+    }
+}

@@ -344,6 +344,85 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let _ = self.state_tx.send(());
     }
 
+    fn remove_project(&self, project_id: &str) -> anyhow::Result<()> {
+        let project_id = project_id.to_string();
+        self.with_store_mut(move |store| {
+            store.remove_project(&project_id);
+        })
+        .ok_or_else(|| anyhow::anyhow!(registry_unavailable()))?;
+        Ok(())
+    }
+
+    fn rename_task(
+        &self,
+        task_id: &str,
+        new_name: &str,
+    ) -> (bool, Option<TaskSummary>) {
+        let task_id = task_id.to_string();
+        let new_name = new_name.to_string();
+        let result = self.with_state(|state| {
+            let changed = state.project_store.rename_task(&task_id, &new_name);
+            if changed {
+                state.project_store.save();
+                let _ = state.state_change_tx.send(());
+            }
+            (changed, task_summary_for(state, &task_id))
+        });
+        result.unwrap_or((false, None))
+    }
+
+    fn set_task_pinned(
+        &self,
+        task_id: &str,
+        pinned: bool,
+    ) -> (bool, Option<TaskSummary>) {
+        let task_id = task_id.to_string();
+        let result = self.with_state(|state| {
+            let changed = state.project_store.set_task_pinned(&task_id, pinned);
+            if changed {
+                state.project_store.save();
+                let _ = state.state_change_tx.send(());
+            }
+            (changed, task_summary_for(state, &task_id))
+        });
+        result.unwrap_or((false, None))
+    }
+
+    fn remove_task(&self, project_id: &str, task_id: &str) -> bool {
+        let project_id = project_id.to_string();
+        let task_id = task_id.to_string();
+        self.with_store_mut(move |store| store.remove_task(&project_id, &task_id).is_some())
+            .unwrap_or(false)
+    }
+
+    fn set_branch_setting(
+        &self,
+        project_id: &str,
+        field: &str,
+        branch_name: Option<&str>,
+    ) -> Result<bool, String> {
+        let project_id = project_id.to_string();
+        let branch_name = branch_name.map(str::to_string);
+        let changed = match field {
+            "default-branch" => self
+                .with_store_mut(move |store| {
+                    store
+                        .update_default_branch(&project_id, branch_name.clone())
+                        .map_err(|e| e.to_string())
+                })
+                .ok_or_else(registry_unavailable)??,
+            "default-target-branch" => self
+                .with_store_mut(move |store| {
+                    store
+                        .update_default_target_branch(&project_id, branch_name.clone())
+                        .map_err(|e| e.to_string())
+                })
+                .ok_or_else(registry_unavailable)??,
+            other => return Err(format!("unknown branch_setting field: {other}")),
+        };
+        Ok(changed)
+    }
+
     fn persist_section_state(&self, section_id: &str, persisted: serde_json::Value) {
         let Ok(persisted) = serde_json::from_value::<
             another_one_core::project_store::PersistedSectionState,
@@ -1298,6 +1377,21 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
             }
         })
         .collect()
+}
+
+/// Look up the wire `TaskSummary` for `task_id` in the current
+/// `RegistryState`. Used by mutator trait impls (`rename_task` /
+/// `set_task_pinned`) to return the post-mutation projection inline
+/// per the trait contract.
+fn task_summary_for(state: &RegistryState, task_id: &str) -> Option<TaskSummary> {
+    let task = state
+        .project_store
+        .tasks
+        .values()
+        .flatten()
+        .find(|t| t.id == task_id)
+        .cloned()?;
+    Some(task_to_summary(state, task))
 }
 
 fn task_to_summary(
