@@ -1572,6 +1572,116 @@ impl ProjectStore {
         self.rebuild_runtime_views();
     }
 
+    /// Single absorb path both clients consume to install a daemon
+    /// projection. Replaces the lossy
+    /// `convert_remote_snapshot` + `set_remote_snapshot` pair —
+    /// pulls every wire field straight into the canonical core
+    /// store (decoding opaque JSON fields like
+    /// `TerminalLaunchConfig` / `ProjectCheckoutState` /
+    /// `ProjectBranchSettings` / `Vec<ProjectAction>` / `TaskKind`
+    /// via `serde_json::from_value`), then layers `UiSnapshot` on
+    /// top via `absorb_ui_snapshot`. The result is byte-equivalent
+    /// state on every client that consumed the same projection.
+    pub fn absorb_projection(
+        &mut self,
+        summaries: Vec<daemon_proto::ProjectSummary>,
+        ui: daemon_proto::UiSnapshot,
+    ) {
+        let mut projects = Vec::with_capacity(summaries.len());
+        let mut tasks = Vec::new();
+        for summary in summaries {
+            let project_id = summary.id.clone();
+            let kind: ProjectKind = summary.kind.into();
+            for task_summary in summary.tasks {
+                let tabs = task_summary
+                    .tabs
+                    .into_iter()
+                    .map(|tab_summary| PersistedTerminalTab {
+                        id: tab_summary.id,
+                        title: tab_summary.title,
+                        pinned: tab_summary.pinned,
+                        fixed_title: tab_summary.fixed_title,
+                        launch_config: tab_summary
+                            .launch_config
+                            .as_ref()
+                            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                        provider: tab_summary
+                            .provider
+                            .and_then(crate::agents::agent_provider_kind_from_wire),
+                        restore_status: tab_summary.restore_status,
+                        failure_message: tab_summary.failure_message,
+                        failure_details: tab_summary.failure_details,
+                    })
+                    .collect::<Vec<_>>();
+                let next_tab_id = if task_summary.next_tab_id > 0 {
+                    task_summary.next_tab_id
+                } else {
+                    tabs.len()
+                };
+                let cwd = task_summary.cwd.map(std::path::PathBuf::from);
+                let target_project_id = if task_summary.target_project_id.is_empty() {
+                    project_id.clone()
+                } else {
+                    task_summary.target_project_id
+                };
+                let root_project_id = if task_summary.root_project_id.is_empty() {
+                    project_id.clone()
+                } else {
+                    task_summary.root_project_id
+                };
+                let kind = task_summary
+                    .kind
+                    .as_ref()
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or(TaskKind::Direct);
+                tasks.push(Task {
+                    id: task_summary.id,
+                    name: task_summary.name,
+                    kind,
+                    root_project_id,
+                    target_project_id,
+                    branch_name: task_summary.branch_name,
+                    section_id: task_summary.section_id,
+                    worktree_project_id: task_summary.worktree_project_id,
+                    tabs,
+                    active_tab_id: task_summary.active_tab_id,
+                    next_tab_id,
+                    cwd,
+                });
+            }
+            let repo_id = if summary.repo_id.is_empty() {
+                project_id.clone()
+            } else {
+                summary.repo_id
+            };
+            let checkout = summary
+                .checkout
+                .as_ref()
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let branch_settings = summary
+                .branch_settings
+                .as_ref()
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let actions = serde_json::from_value(summary.actions).unwrap_or_default();
+            projects.push(Project {
+                id: project_id,
+                repo_id,
+                name: summary.name,
+                path: std::path::PathBuf::from(summary.path),
+                kind,
+                checkout,
+                branch_settings,
+                actions,
+                worktree_name: summary.worktree_name,
+                repo_common_dir: None,
+            });
+        }
+        self.set_remote_snapshot(projects, tasks);
+        self.absorb_ui_snapshot(ui);
+    }
+
     pub fn set_left_sidebar_open(&mut self, is_open: bool) {
         if self.ui.left_sidebar_open == is_open {
             return;

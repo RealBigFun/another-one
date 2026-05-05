@@ -15163,31 +15163,22 @@ impl AnotherOneApp {
                     projects: summaries,
                     ui,
                 } => {
-                    log::debug!(
-                        "daemon ProjectList ui: pinned={} expanded={} last_active={:?}",
+                    let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
+                    log::info!(
+                        "daemon ProjectList: {} project(s), {} task(s) total, ui pinned={} expanded={} last_active={:?}",
+                        summaries.len(),
+                        task_total,
                         ui.pinned_task_ids.len(),
                         ui.expanded_repo_ids.len(),
                         ui.last_active_section_id
                     );
-                    self.project_store.absorb_ui_snapshot(ui);
-                    let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
+                    // Single absorb path — both clients call this same
+                    // method on the same wire types. No more parallel
+                    // convert_remote_snapshot / set_remote_snapshot
+                    // pair; no more lossy fabrication of defaults.
+                    self.project_store.absorb_projection(summaries, ui);
                     log::info!(
-                        "daemon ProjectList: {} project(s), {} task(s) total",
-                        summaries.len(),
-                        task_total
-                    );
-                    for p in &summaries {
-                        log::info!("  project {} ({}) — {} tasks", p.id, p.name, p.tasks.len());
-                    }
-                    let (projects, tasks) = convert_remote_snapshot(summaries);
-                    log::info!(
-                        "converted: {} core projects, {} core tasks",
-                        projects.len(),
-                        tasks.len()
-                    );
-                    self.project_store.set_remote_snapshot(projects, tasks);
-                    log::info!(
-                        "post-snapshot: store has {} projects and tasks for {} root projects",
+                        "post-absorb: store has {} projects and tasks for {} root projects",
                         self.project_store.projects.len(),
                         self.project_store.tasks.len()
                     );
@@ -15255,141 +15246,6 @@ impl AnotherOneApp {
     }
 }
 
-/// Convert a daemon `WorkerReply::ProjectList` payload (wire types
-/// living in `daemon_client`) into the same `core::project_store`
-/// types the desktop uses, so the same sidebar renderer is the only
-/// renderer. The daemon's wire format doesn't carry repo grouping or
-/// tab state — we synthesize one repo per project (`repo_id == id`)
-/// and skip tab metadata, which the existing renderer treats as
-/// "task with no live tabs," matching how a freshly-loaded desktop
-/// task looks before its terminal launches.
-fn convert_remote_snapshot(
-    summaries: Vec<daemon_proto::ProjectSummary>,
-) -> (
-    Vec<another_one_core::project_store::Project>,
-    Vec<another_one_core::project_store::Task>,
-) {
-    use another_one_core::project_store as ps;
-    let mut projects = Vec::with_capacity(summaries.len());
-    let mut tasks = Vec::new();
-    for summary in summaries {
-        let kind = match summary.kind {
-            daemon_proto::ProjectKind::Root => ps::ProjectKind::Root,
-            daemon_proto::ProjectKind::Worktree => ps::ProjectKind::Worktree,
-        };
-        let project_id = summary.id.clone();
-        for task_summary in summary.tasks {
-            // Mirror the daemon's tab list onto the phone's local
-            // store so when the user taps a task we activate the
-            // existing tab id (which the daemon will recognise on
-            // AttachTab) instead of fabricating a fresh UUID. The
-            // wire `TabSummary` doesn't carry launch_config — that's
-            // owned by the daemon — so the phone's persisted-tab
-            // copies just record id/title/provider/etc. for display.
-            let tabs = task_summary
-                .tabs
-                .into_iter()
-                .map(|tab_summary| ps::PersistedTerminalTab {
-                    id: tab_summary.id,
-                    title: tab_summary.title,
-                    pinned: tab_summary.pinned,
-                    fixed_title: tab_summary.fixed_title,
-                    launch_config: tab_summary
-                        .launch_config
-                        .as_ref()
-                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
-                    // `core::agents::agent_provider_kind_from_wire`
-                    // handles the bijection (Shell → None — a tab
-                    // launched without an agent provider set). The
-                    // orphan rule forbids a `From` impl, hence the
-                    // free function.
-                    provider: tab_summary
-                        .provider
-                        .and_then(another_one_core::agents::agent_provider_kind_from_wire),
-                    restore_status: tab_summary.restore_status,
-                    failure_message: tab_summary.failure_message,
-                    failure_details: tab_summary.failure_details,
-                })
-                .collect::<Vec<_>>();
-            // Prefer the daemon's authoritative `next_tab_id` so a
-            // mobile-side fresh-tab UUID stays compatible with the
-            // counter the desktop persists. Fall back to tabs.len()
-            // for older daemons that didn't carry the field.
-            let next_tab_id = if task_summary.next_tab_id > 0 {
-                task_summary.next_tab_id
-            } else {
-                tabs.len()
-            };
-            let cwd = task_summary.cwd.map(std::path::PathBuf::from);
-            let target_project_id = if task_summary.target_project_id.is_empty() {
-                project_id.clone()
-            } else {
-                task_summary.target_project_id
-            };
-            let root_project_id = if task_summary.root_project_id.is_empty() {
-                project_id.clone()
-            } else {
-                task_summary.root_project_id
-            };
-            // Wire's `kind` is opaque JSON. Older daemons send None;
-            // newer daemons send the serialised TaskKind. Default to
-            // Direct on missing/parse-failure so older peers still
-            // interop.
-            let kind = task_summary
-                .kind
-                .as_ref()
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or(ps::TaskKind::Direct);
-            tasks.push(ps::Task {
-                id: task_summary.id,
-                name: task_summary.name,
-                kind,
-                root_project_id,
-                target_project_id,
-                branch_name: task_summary.branch_name,
-                section_id: task_summary.section_id,
-                worktree_project_id: task_summary.worktree_project_id,
-                tabs,
-                active_tab_id: task_summary.active_tab_id,
-                next_tab_id,
-                cwd,
-            });
-        }
-        let repo_id = if summary.repo_id.is_empty() {
-            project_id.clone()
-        } else {
-            summary.repo_id
-        };
-        // Decode the opaque-JSON wire fields back into core types.
-        // None / parse-failure → default, so older daemons paired
-        // with newer clients still interop without an
-        // ":incompatible-version" close.
-        let checkout = summary
-            .checkout
-            .as_ref()
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        let branch_settings = summary
-            .branch_settings
-            .as_ref()
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        let actions = serde_json::from_value(summary.actions).unwrap_or_default();
-        projects.push(ps::Project {
-            id: project_id,
-            repo_id,
-            name: summary.name,
-            path: std::path::PathBuf::from(summary.path),
-            kind,
-            checkout,
-            branch_settings,
-            actions,
-            worktree_name: summary.worktree_name,
-            repo_common_dir: None,
-        });
-    }
-    (projects, tasks)
-}
 
 fn short_id(id: &str) -> String {
     if id.len() > 12 {
