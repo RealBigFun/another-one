@@ -5118,11 +5118,11 @@ impl AnotherOneApp {
         if let Some(mut runtime) = taken_runtime {
             self.terminal_manager.pending_launches.remove(&key);
             self.terminal_manager.errors.remove(&key);
-            self.register_tab_with_registry(
-                &key,
-                runtime.output_broadcast(),
-                runtime.writer_handle(),
-            );
+            if let (Some(broadcast), Some(writer)) =
+                (runtime.output_broadcast(), runtime.writer_handle())
+            {
+                self.register_tab_with_registry(&key, broadcast, writer);
+            }
             self.terminal_surface_snapshots
                 .insert(key.clone(), runtime.snapshot());
             self.live_terminal_runtimes.insert(key.clone(), runtime);
@@ -5158,12 +5158,18 @@ impl AnotherOneApp {
             // a smaller viewport, the PTY + local grid both follow
             // the phone's size so lines wrap consistently.
             use crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID;
+            #[cfg(target_os = "android")]
+            let mut focus_changed = false;
             if let Ok(mut state) = self.registry_state.lock() {
                 // Switching focused tabs on desktop: drop the prior
                 // tab's desktop-local entry (same semantics as a
                 // mobile detach/reattach).
                 if let Some(old_key) = state.viewer_focus.get(DESKTOP_LOCAL_VIEWER_ID).cloned() {
                     if old_key != request.key {
+                        #[cfg(target_os = "android")]
+                        {
+                            focus_changed = true;
+                        }
                         if let Some(map) = state.active_viewers.get_mut(&old_key) {
                             map.remove(DESKTOP_LOCAL_VIEWER_ID);
                             if map.is_empty() {
@@ -5172,6 +5178,11 @@ impl AnotherOneApp {
                             }
                         }
                         state.recompute_effective_size(&old_key);
+                    }
+                } else {
+                    #[cfg(target_os = "android")]
+                    {
+                        focus_changed = true;
                     }
                 }
                 state
@@ -5186,6 +5197,27 @@ impl AnotherOneApp {
                     .viewer_focus
                     .insert(DESKTOP_LOCAL_VIEWER_ID.to_string(), request.key.clone());
                 state.recompute_effective_size(&request.key);
+            }
+            #[cfg(target_os = "android")]
+            if focus_changed {
+                // Re-key the session attach to the focused tab so
+                // the daemon's forwarder pushes bytes for *this* key
+                // into our `SessionEvent::PtyBytes` stream.
+                let session = self.session_handle();
+                let section_id = request.key.section_id.store_key();
+                let tab_id = request.key.tab_id.clone();
+                crate::session_host::dispatch_fire_and_forget(
+                    session,
+                    daemon_proto::Control::AttachTab {
+                        section_id,
+                        tab_id,
+                    },
+                    |result| {
+                        if let Err(err) = result {
+                            log::warn!("focus-change AttachTab failed: {err}");
+                        }
+                    },
+                );
             }
             return;
         }
@@ -5216,6 +5248,53 @@ impl AnotherOneApp {
         self.update_terminal_tab(&request.key, cx, |tab| {
             tab.restore_status = TerminalRestoreStatus::Launching;
         });
+
+        #[cfg(target_os = "android")]
+        {
+            // Mobile: don't spawn a phone-local PTY. Stand up a
+            // viewer-only runtime that renders bytes pushed via
+            // `SessionEvent::PtyBytes`, then ask the daemon to
+            // launch + attach the real PTY on the desktop side.
+            let mut runtime = LiveTerminalRuntime::from_remote(request.size);
+            self.terminal_surface_snapshots
+                .insert(request.key.clone(), runtime.snapshot());
+            self.live_terminal_runtimes
+                .insert(request.key.clone(), runtime);
+            self.update_terminal_tab(&request.key, cx, |tab| {
+                tab.restore_status = TerminalRestoreStatus::Ready;
+            });
+
+            let session = self.session_handle();
+            let section_id = request.key.section_id.store_key();
+            let tab_id = request.key.tab_id.clone();
+            crate::session_host::dispatch_fire_and_forget(
+                session.clone(),
+                daemon_proto::Control::LaunchTab {
+                    section_id: section_id.clone(),
+                    tab_id: tab_id.clone(),
+                },
+                |result| {
+                    if let Err(err) = result {
+                        log::warn!("session LaunchTab failed: {err}");
+                    }
+                },
+            );
+            crate::session_host::dispatch_fire_and_forget(
+                session,
+                daemon_proto::Control::AttachTab {
+                    section_id,
+                    tab_id,
+                },
+                |result| {
+                    if let Err(err) = result {
+                        log::warn!("session AttachTab failed: {err}");
+                    }
+                },
+            );
+            return;
+        }
+
+        #[cfg(not(target_os = "android"))]
         spawn_terminal_launch(
             self.terminal_launch_sender.clone(),
             request.key,
@@ -5363,11 +5442,11 @@ impl AnotherOneApp {
                     // Tee the PTY into the embedded daemon's registry
                     // so a mobile `AttachTab` subscriber sees the same
                     // bytes the desktop renders.
-                    self.register_tab_with_registry(
-                        &key,
-                        runtime.output_broadcast(),
-                        runtime.writer_handle(),
-                    );
+                    if let (Some(broadcast), Some(writer)) =
+                        (runtime.output_broadcast(), runtime.writer_handle())
+                    {
+                        self.register_tab_with_registry(&key, broadcast, writer);
+                    }
                     self.terminal_surface_snapshots
                         .insert(key.clone(), runtime.snapshot());
                     self.live_terminal_runtimes.insert(key.clone(), runtime);
@@ -5549,11 +5628,11 @@ impl AnotherOneApp {
                         self.terminal_manager.pending_launches.remove(&key);
                         self.clear_terminal_recent_output(&key);
                         self.terminal_manager.errors.remove(&key);
-                        self.register_tab_with_registry(
-                            &key,
-                            runtime.output_broadcast(),
-                            runtime.writer_handle(),
-                        );
+                        if let (Some(broadcast), Some(writer)) =
+                            (runtime.output_broadcast(), runtime.writer_handle())
+                        {
+                            self.register_tab_with_registry(&key, broadcast, writer);
+                        }
                         self.terminal_surface_snapshots
                             .insert(key.clone(), runtime.snapshot());
                         self.live_terminal_runtimes.insert(key.clone(), runtime);
@@ -6729,6 +6808,22 @@ impl AnotherOneApp {
         let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
             return false;
         };
+        // Viewer-only runtimes have no local PTY; route input over
+        // `Session::push_data` instead so the daemon's writer feeds
+        // the real shell.
+        if !runtime.has_local_pty() {
+            let session = self.session_handle();
+            let section_id = key.section_id.store_key();
+            let tab_id = key.tab_id.clone();
+            let payload = bytes.to_vec();
+            crate::session_host::runtime_handle().spawn(async move {
+                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
+                    log::warn!("session push_data failed: {err}");
+                }
+            });
+            self.last_terminal_activity = Instant::now();
+            return true;
+        }
         let wrote = runtime.write_input(bytes).is_ok();
         if wrote {
             self.last_terminal_activity = Instant::now();
