@@ -3758,6 +3758,9 @@ impl AnotherOneApp {
         branch_name: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        // Optimistic local update so dropdown closes immediately;
+        // daemon's SetBranchSetting reply absorbs through the
+        // broadcast push.
         let update = match field {
             ProjectBranchSettingField::DefaultBranch => self
                 .project_store
@@ -3766,6 +3769,26 @@ impl AnotherOneApp {
                 .project_store
                 .update_default_target_branch(project_id, branch_name.clone()),
         };
+        let field_id = match field {
+            ProjectBranchSettingField::DefaultBranch => "default-branch",
+            ProjectBranchSettingField::DefaultTargetBranch => "default-target-branch",
+        };
+        let session = self.session_handle();
+        let project_id_owned = project_id.to_string();
+        let branch_clone = branch_name.clone();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetBranchSetting {
+                project_id: project_id_owned,
+                field: field_id.to_string(),
+                branch_name: branch_clone,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetBranchSetting failed: {err}");
+                }
+            },
+        );
 
         match update {
             Ok(changed) => {
