@@ -321,16 +321,17 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn list_projects(&self) -> Vec<ProjectSummary> {
-        self.with_state(|state| {
-            // Project/task data lives in the same store as main
-            // (`.../another-one/projects.json`). Refresh here so
-            // daemon clients never read a stale GPUI snapshot after
-            // project/task mutations; live PTY running state is still
-            // layered from this registry's broadcast maps below.
-            state.project_store = ProjectStore::load();
-            project_summaries(state)
-        })
-        .unwrap_or_default()
+        // Read straight from the in-memory store. Every desktop
+        // direct-mutation reaches `RegistryState.project_store` via
+        // `commit_local_mutation` → `sync_registry_project_store`,
+        // and every daemon-side mutation flows through
+        // `with_store_mut` (also writes here). The legacy
+        // `ProjectStore::load()` reload-from-disk on every
+        // ListProjects was a workaround for the GUI mutating without
+        // syncing; obsolete now that all paths funnel through one of
+        // those two helpers.
+        self.with_state(|state| project_summaries(state))
+            .unwrap_or_default()
     }
 
     fn subscribe_state_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
