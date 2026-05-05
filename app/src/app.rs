@@ -6306,6 +6306,23 @@ impl AnotherOneApp {
         }
     }
 
+    /// Persist + sync after a direct GUI mutation. Replaces the
+    /// scattered `self.project_store.save();
+    /// self.sync_registry_project_store();` pattern with a single
+    /// call so no callsite forgets the second half (which leaves
+    /// mobile clients seeing stale state until something else
+    /// triggers a sync).
+    ///
+    /// Use this for any direct `self.project_store.<mutator>` write
+    /// site that hasn't yet been migrated to a `Control::*` verb;
+    /// migrated sites flow through `dispatch_fire_and_forget` →
+    /// daemon → `with_store_mut` → save+broadcast and don't need
+    /// this.
+    pub(crate) fn commit_local_mutation(&self) {
+        self.project_store.save();
+        self.sync_registry_project_store();
+    }
+
     /// Poll the daemon-host thread for the `EndpointHandle`. Called
     /// on the render tick until it resolves — after that,
     /// `daemon_handle_rx` is `None` and this is a no-op.
@@ -9218,7 +9235,7 @@ impl AnotherOneApp {
             next_tab_id: 0,
             cwd: None,
         });
-        self.project_store.save();
+        self.commit_local_mutation();
 
         if let Some(project) = self.project_store.project(&target_project_id) {
             self.expanded_projects.insert(project.repo_id.clone());
@@ -9447,6 +9464,7 @@ impl AnotherOneApp {
             );
             return;
         }
+        self.commit_local_mutation();
 
         let Some(project) = self.project_store.project(&prepared.project.id).cloned() else {
             self.show_error_toast(
@@ -9475,7 +9493,7 @@ impl AnotherOneApp {
             cx,
         );
         self.create_branch_modal = None;
-        self.project_store.save();
+        self.commit_local_mutation();
         self.show_success_toast(
             format!("Created branch {} in a new worktree.", success.branch_name),
             cx,
@@ -10383,6 +10401,7 @@ impl AnotherOneApp {
                             );
                             return true;
                         }
+                        self.commit_local_mutation();
 
                         let Some(project) =
                             self.project_store.project(&prepared.project.id).cloned()
@@ -10470,7 +10489,7 @@ impl AnotherOneApp {
                         if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
                             self.new_task_modal = None;
                         }
-                        self.project_store.save();
+                        self.commit_local_mutation();
                         self.show_success_toast(
                             format!(
                                 "Created worktree task {} on {}.",
@@ -10564,6 +10583,7 @@ impl AnotherOneApp {
                         let project_id = project.project.id.clone();
                         let added = self.project_store.insert_prepared_project(project.clone());
                         if added {
+                            self.commit_local_mutation();
                             self.workspace_pane.update(cx, |workspace, cx| {
                                 workspace.activate_project_page(project_id.clone(), cx);
                             });
