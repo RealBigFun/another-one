@@ -253,6 +253,7 @@ async fn dispatch_call(
         // ── Read verbs ───────────────────────────────────────────────
         Control::ListProjects => Some(WorkerReply::ProjectList {
             projects: registry.list_projects(),
+            ui: registry.ui_snapshot(),
         }),
         Control::ListProjectActions { project_id } => Some(WorkerReply::ProjectActionsAck {
             actions: registry.list_project_actions(&project_id),

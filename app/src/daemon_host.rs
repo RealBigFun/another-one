@@ -285,6 +285,23 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         .unwrap_or_default()
     }
 
+    fn ui_snapshot(&self) -> daemon_proto::UiSnapshot {
+        self.with_state(|state| {
+            let ui = &state.project_store.ui;
+            daemon_proto::UiSnapshot {
+                expanded_repo_ids: ui.expanded_repo_ids.iter().cloned().collect(),
+                pinned_task_ids: ui
+                    .pinned_task_ids
+                    .iter()
+                    .map(|id| (String::new(), id.clone()))
+                    .collect(),
+                last_active_section_id: ui.last_active_section_id.clone(),
+                left_sidebar_open: ui.left_sidebar_open,
+            }
+        })
+        .unwrap_or_default()
+    }
+
     fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>> {
         let key = key_from_wire(section_id, tab_id)?;
         self.with_state(|state| state.broadcasts.get(&key).map(|tx| tx.subscribe()))
@@ -1104,6 +1121,8 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                 kind: map_project_kind(project.kind),
                 current_branch: project.checkout.current_branch.clone(),
                 tasks,
+                repo_id: project.repo_id.clone(),
+                worktree_name: project.worktree_name.clone(),
             }
         })
         .collect()
@@ -1117,6 +1136,11 @@ fn task_to_summary(
     let section_key = task.section_id.clone();
     let parsed_section = SectionId::from_store_key(&section_key);
     let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
+    let cwd = task
+        .cwd
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
+    let next_tab_id = task.next_tab_id;
     let tabs = task
         .tabs
         .into_iter()
@@ -1139,6 +1163,9 @@ fn task_to_summary(
                 restore_status: tab.restore_status,
                 failure_message: tab.failure_message,
                 failure_details: tab.failure_details,
+                launch_config: tab.launch_config.as_ref().and_then(|cfg| {
+                    serde_json::to_value(cfg).ok()
+                }),
             }
         })
         .collect();
@@ -1162,6 +1189,8 @@ fn task_to_summary(
         lines_added,
         lines_removed,
         target_project_id: task.target_project_id,
+        cwd,
+        next_tab_id,
     }
 }
 

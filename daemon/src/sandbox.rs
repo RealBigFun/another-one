@@ -99,13 +99,18 @@ impl DaemonRegistry for SandboxRegistry {
                     restore_status: daemon_proto::TerminalRestoreStatus::Ready,
                     failure_message: None,
                     failure_details: None,
+                    launch_config: None,
                 }],
                 pinned: false,
                 last_commit_relative: String::new(),
                 lines_added: 0,
                 lines_removed: 0,
                 target_project_id: SANDBOX_PROJECT_ID.to_string(),
+                cwd: None,
+                next_tab_id: 1,
             }],
+            repo_id: SANDBOX_PROJECT_ID.to_string(),
+            worktree_name: None,
         }]
     }
 

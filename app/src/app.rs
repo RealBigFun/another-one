@@ -14842,7 +14842,15 @@ impl AnotherOneApp {
             match reply {
                 daemon_proto::WorkerReply::ProjectList {
                     projects: summaries,
+                    ui,
                 } => {
+                    log::debug!(
+                        "daemon ProjectList ui: pinned={} expanded={} last_active={:?}",
+                        ui.pinned_task_ids.len(),
+                        ui.expanded_repo_ids.len(),
+                        ui.last_active_section_id
+                    );
+                    let _ = ui; // wired into UiState in a follow-up commit
                     let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
                     log::info!(
                         "daemon ProjectList: {} project(s), {} task(s) total",
@@ -14967,6 +14975,10 @@ fn convert_remote_snapshot(
                     title: tab_summary.title,
                     pinned: tab_summary.pinned,
                     fixed_title: tab_summary.fixed_title,
+                    launch_config: tab_summary
+                        .launch_config
+                        .as_ref()
+                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
                     provider: tab_summary.provider.and_then(|p| match p {
                         daemon_proto::AgentProvider::ClaudeCode => {
                             Some(another_one_core::agents::AgentProviderKind::ClaudeCode)
@@ -14999,38 +15011,56 @@ fn convert_remote_snapshot(
                         // it represents a tab launched without an agent.
                         daemon_proto::AgentProvider::Shell => None,
                     }),
-                    launch_config: None,
                     restore_status: tab_summary.restore_status,
                     failure_message: tab_summary.failure_message,
                     failure_details: tab_summary.failure_details,
                 })
                 .collect::<Vec<_>>();
-            let next_tab_id = tabs.len();
+            // Prefer the daemon's authoritative `next_tab_id` so a
+            // mobile-side fresh-tab UUID stays compatible with the
+            // counter the desktop persists. Fall back to tabs.len()
+            // for older daemons that didn't carry the field.
+            let next_tab_id = if task_summary.next_tab_id > 0 {
+                task_summary.next_tab_id
+            } else {
+                tabs.len()
+            };
+            let cwd = task_summary.cwd.map(std::path::PathBuf::from);
+            let target_project_id = if task_summary.target_project_id.is_empty() {
+                project_id.clone()
+            } else {
+                task_summary.target_project_id
+            };
             tasks.push(ps::Task {
                 id: task_summary.id,
                 name: task_summary.name,
                 kind: ps::TaskKind::Direct,
                 root_project_id: project_id.clone(),
-                target_project_id: project_id.clone(),
+                target_project_id,
                 branch_name: task_summary.branch_name,
                 section_id: task_summary.section_id,
                 worktree_project_id: None,
                 tabs,
                 active_tab_id: task_summary.active_tab_id,
                 next_tab_id,
-                cwd: None,
+                cwd,
             });
         }
+        let repo_id = if summary.repo_id.is_empty() {
+            project_id.clone()
+        } else {
+            summary.repo_id
+        };
         projects.push(ps::Project {
-            id: project_id.clone(),
-            repo_id: project_id,
+            id: project_id,
+            repo_id,
             name: summary.name,
             path: std::path::PathBuf::from(summary.path),
             kind,
             checkout: ps::ProjectCheckoutState::default(),
             branch_settings: ps::ProjectBranchSettings::default(),
             actions: Vec::new(),
-            worktree_name: None,
+            worktree_name: summary.worktree_name,
             repo_common_dir: None,
         });
     }

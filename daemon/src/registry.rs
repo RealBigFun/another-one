@@ -187,6 +187,16 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// calls this on every `Control::ListProjects`, so cheap.
     fn list_projects(&self) -> Vec<ProjectSummary>;
 
+    /// Snapshot of the daemon's per-user UI state — pinned tasks,
+    /// expanded sidebar repos, last focused section, etc. Bundled
+    /// alongside `list_projects()` in the `WorkerReply::ProjectList`
+    /// reply so both clients render the same state. Default impl
+    /// returns an empty snapshot for registries that don't track UI
+    /// state (e.g. the sandbox binary).
+    fn ui_snapshot(&self) -> daemon_proto::UiSnapshot {
+        daemon_proto::UiSnapshot::default()
+    }
+
     /// Subscribe to the live PTY byte stream for `(section_id,
     /// tab_id)`. Returns `None` if the tab isn't currently running
     /// (e.g., closed or never launched). Multiple subscribers share

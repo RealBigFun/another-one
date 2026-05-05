@@ -672,7 +672,13 @@ pub enum WorkerReply {
     /// emitted as their own entries rather than nested children
     /// (the mobile UI can still group them by `repo_id` if it
     /// wants a tree rendering later).
-    ProjectList { projects: Vec<ProjectSummary> },
+    ProjectList {
+        projects: Vec<ProjectSummary>,
+        /// Per-user UI state — wire-additive on existing daemons
+        /// (defaults to `UiSnapshot::default()` when missing).
+        #[serde(default)]
+        ui: UiSnapshot,
+    },
     /// Response to [`Control::AddProject`] on success. Carries the
     /// inline snapshot of the freshly-inserted project so the
     /// issuing client can splice it into its tree without a
@@ -1135,6 +1141,37 @@ pub struct ProjectSummary {
     /// `checkout.current_branch`; may be `None` if never read.
     pub current_branch: Option<String>,
     pub tasks: Vec<TaskSummary>,
+    /// Repo grouping id mirroring `core::project_store::Project::repo_id`
+    /// — same-repo worktrees share this. Wire-additive; older daemons
+    /// leave it empty and clients fall back to grouping by `id`.
+    #[serde(default)]
+    pub repo_id: String,
+    /// `core::project_store::Project::worktree_name`. Wire-additive.
+    #[serde(default)]
+    pub worktree_name: Option<String>,
+}
+
+/// Per-user UI state mirrored from `core::project_store::UiState`.
+/// Wire-additive on `WorkerReply::ProjectList` so both clients render
+/// the same expand/pin/focus state from the daemon's projection
+/// instead of each maintaining their own.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UiSnapshot {
+    /// Repo IDs the user has expanded in the projects sidebar.
+    #[serde(default)]
+    pub expanded_repo_ids: Vec<String>,
+    /// `(project_id, task_id)` of tasks pinned to the top of the
+    /// sidebar.
+    #[serde(default)]
+    pub pinned_task_ids: Vec<(String, String)>,
+    /// Last section the user focused — used to restore focus on
+    /// reconnect.
+    #[serde(default)]
+    pub last_active_section_id: Option<String>,
+    /// Whether the desktop's left sidebar is open. Mobile uses this
+    /// hint to start in the right mobile-view nav state on reconnect.
+    #[serde(default)]
+    pub left_sidebar_open: bool,
 }
 
 /// Lossy wire projection of `core::project_store::Task`. Contains
@@ -1184,6 +1221,17 @@ pub struct TaskSummary {
     /// callers fall back to the root project id.
     #[serde(default)]
     pub target_project_id: String,
+    /// Working directory the daemon will use when spawning a tab
+    /// under this task. Mirrors `core::project_store::Task::cwd`.
+    /// String form for wire neutrality (paths cross platforms).
+    /// Wire-additive, `None` means "fall back to the project root".
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// `core::project_store::Task.next_tab_id` mirrored so a client
+    /// reasoning about future tab IDs (or sorting tabs by creation
+    /// order) doesn't have to recompute. Wire-additive.
+    #[serde(default)]
+    pub next_tab_id: usize,
 }
 
 /// Lossy wire projection of
@@ -1216,6 +1264,15 @@ pub struct TabSummary {
     /// available.
     #[serde(default)]
     pub failure_details: Option<String>,
+    /// Opaque JSON-serialised `core::agents::TerminalLaunchConfig`.
+    /// Daemon-proto keeps this opaque so the persisted-tab schema can
+    /// evolve in `core` without requiring a `daemon-proto` bump.
+    /// Clients deserialize via `serde_json::from_value` into the
+    /// canonical core type. `None` for tabs that were never
+    /// configured (legacy persisted tabs from before the field
+    /// existed).
+    #[serde(default)]
+    pub launch_config: Option<serde_json::Value>,
 }
 
 /// Mirror of `core::project_store::ProjectKind`. Wire-serialised as
