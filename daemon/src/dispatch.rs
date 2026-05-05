@@ -38,7 +38,7 @@ use daemon_proto::{Control, ErrKind, WorkerReply};
 use daemon_transport::{ServerSession, TransportError};
 use tokio::sync::broadcast;
 use tokio::task::AbortHandle;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::registry::DaemonRegistry;
 
@@ -146,6 +146,11 @@ pub async fn serve_session_with_attach(
     {
         let projects = registry.list_projects();
         let ui = registry.ui_snapshot();
+        info!(
+            viewer_id,
+            project_count = projects.len(),
+            "serve_session: pushing initial ProjectList"
+        );
         let reply = WorkerReply::ProjectList { projects, ui };
         if let Err(e) = session.push_reply(reply).await {
             return Err(e);

@@ -198,6 +198,74 @@ async fn mutation_broadcast_reaches_session_events() {
     harness.shutdown();
 }
 
+/// Regression: a worktree task references its worktree-kind project via
+/// `target_project_id`. If the wire projection filters out worktree
+/// projects, the client's `absorb_projection` → `sanitize` path drops
+/// the task because no projects_by_id entry matches `target_project_id`.
+/// Symptom: desktop creates a worktree task; on the next absorb tick the
+/// task disappears, and a later save() persists the wiped store to disk.
+#[tokio::test]
+async fn worktree_task_survives_projection_round_trip() {
+    use another_one_core::project_store::{ProjectKind, TaskKind};
+    let root = Project {
+        id: "root".into(),
+        repo_id: "repo1".into(),
+        name: "root".into(),
+        path: std::path::PathBuf::from("/tmp/root"),
+        kind: ProjectKind::Root,
+        checkout: Default::default(),
+        branch_settings: Default::default(),
+        actions: Vec::new(),
+        worktree_name: None,
+        repo_common_dir: None,
+    };
+    let worktree = Project {
+        id: "wt1".into(),
+        repo_id: "repo1".into(),
+        name: "root".into(),
+        path: std::path::PathBuf::from("/tmp/root-wt"),
+        kind: ProjectKind::Worktree,
+        checkout: Default::default(),
+        branch_settings: Default::default(),
+        actions: Vec::new(),
+        worktree_name: Some("root-wt".into()),
+        repo_common_dir: None,
+    };
+    let task = Task {
+        id: "wt-task".into(),
+        name: "wt task".into(),
+        kind: TaskKind::Worktree,
+        root_project_id: "root".into(),
+        target_project_id: "wt1".into(),
+        branch_name: "feat/wt".into(),
+        section_id: "wt1::feat/wt::wt-task".into(),
+        worktree_project_id: Some("wt1".into()),
+        tabs: Vec::new(),
+        active_tab_id: String::new(),
+        next_tab_id: 0,
+        cwd: None,
+    };
+    let mut harness = Harness::new_seeded(vec![root, worktree], vec![task]).await;
+    let push = harness
+        .expect_push(Duration::from_millis(250))
+        .await
+        .expect("initial push");
+    let WorkerReply::ProjectList { projects, .. } = push else {
+        panic!("expected ProjectList");
+    };
+    let target_present = projects.iter().any(|p| p.id == "wt1");
+    assert!(
+        target_present,
+        "worktree project must appear in projection so absorb/sanitize keeps the task"
+    );
+    let task_present = projects
+        .iter()
+        .flat_map(|p| p.tasks.iter())
+        .any(|t| t.id == "wt-task" && t.target_project_id == "wt1");
+    assert!(task_present, "worktree task missing from projection");
+    harness.shutdown();
+}
+
 // Silence unused-import warnings while the harness is being filled
 // out — `Stream`/`DialTarget` come into use in commits 4–5.
 #[allow(dead_code)]

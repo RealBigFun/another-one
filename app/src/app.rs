@@ -5460,7 +5460,7 @@ impl AnotherOneApp {
                     // events stream instead.
                     match reply {
                         daemon_proto::WorkerReply::ProjectList { projects, ui } => {
-                            log::debug!(
+                            log::info!(
                                 "drain_session_events: absorbed projection ({} projects, ui pinned={} expanded={})",
                                 projects.len(),
                                 ui.pinned_task_ids.len(),

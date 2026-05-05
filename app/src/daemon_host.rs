@@ -1348,12 +1348,16 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
     store
         .projects
         .iter()
-        // Mobile drawer mirrors the desktop sidebar's *root* project
-        // list — worktree-kind projects are nested under their root
-        // (via `task.worktree_project_id`) and should never appear at
-        // the top level. Filter them out here.
-        .filter(|project| matches!(project.kind, CoreProjectKind::Root))
+        // Include both Root and Worktree projects: tasks reference
+        // worktree projects via `target_project_id`, and the
+        // client-side `absorb_projection` → `sanitize` drops any task
+        // whose target project isn't in the projection. The sidebar
+        // UI filters to Root entries on its own; the wire format
+        // carries the full graph.
         .map(|project| {
+            // Tasks are keyed by root_project_id, so worktree summaries
+            // naturally carry an empty task list — the task lives on
+            // its root.
             let tasks = store
                 .tasks
                 .get(&project.id)
