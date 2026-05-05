@@ -7,6 +7,44 @@
 //! (the UDS transport layer in `daemon-sandbox` already does
 //! this).
 //!
+//! ## Broadcast audit (per the unification plan)
+//!
+//! The `Control::*` dispatch surface persists+broadcasts via
+//! `DesktopTerminalRegistry::with_store_mut`. MCP doesn't go through
+//! `with_store_mut` — its mutating calls enqueue onto
+//! `RegistryState.pending_*` queues, and the GPUI render tick drains
+//! those queues into `client_open_task` / `client_open_tab` /
+//! `client_close_tab` / `dispatch_ui_action`. Each drain handler
+//! ends with `self.sync_registry_project_store()` (`app.rs:6674`,
+//! `:6757`, `:6914`), which fires the same `state_change_tx`
+//! broadcast as `with_store_mut`. So MCP-driven changes reach mobile
+//! clients via the same push pump.
+//!
+//! Per-method audit:
+//!
+//! | method                | writes store? | broadcasts? | verdict |
+//! | --------------------- | ------------- | ----------- | ------- |
+//! | `list_projects`       | no            | n/a         | OK      |
+//! | `list_tasks`          | no            | n/a         | OK      |
+//! | `list_tabs`           | no            | n/a         | OK      |
+//! | `get_task_status`     | no            | n/a         | OK      |
+//! | `read_terminal_output`| no            | n/a         | OK      |
+//! | `spawn_task`          | TODO          | TODO        | not-yet-wired (returns error) |
+//! | `spawn_terminal`      | yes (via render tick) | yes (`sync_registry_project_store` at end of `fulfill_spawn_terminal` → `client_open_task`/`client_open_tab`) | OK |
+//! | `send_input`          | no — PTY only | n/a         | OK      |
+//! | `run_command`         | TODO          | TODO        | not-yet-wired (returns error) |
+//! | `close_tab`           | yes (via render tick) | yes (`sync_registry_project_store` in `client_close_tab`) | OK |
+//! | `select_focus`        | no — desktop-ephemera focus only | n/a | OK (mobile doesn't render desktop focus) |
+//! | `dispatch_ui_action`  | no — overlay/zoom flags only | n/a | OK |
+//! | `subscribe_events`    | no — read-only event stream | n/a | OK |
+//!
+//! No MCP write path bypasses the broadcast today. If a future MCP
+//! tool mutates `project_store` outside the existing
+//! `client_open_*` / `client_close_*` / `with_store_mut` paths, it
+//! must call `sync_registry_project_store` (or fire
+//! `state.state_change_tx.send(())`) post-persist or mobile clients
+//! won't see the change.
+//!
 //! ## What's wired today (Phase B + partial C)
 //!
 //! **Read tools**: all of them (`list_projects`, `list_tasks`,
