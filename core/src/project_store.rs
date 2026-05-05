@@ -1492,6 +1492,57 @@ impl ProjectStore {
     /// sidebar render path picks the data up unchanged. Does **not**
     /// `save()` to disk; the daemon is the source of truth, the local
     /// cache stays ephemeral.
+    /// Absorb the user-state half of a daemon projection. Decodes
+    /// the opaque-JSON fields back into their canonical core types
+    /// (None / parse failure → keep current value rather than reset
+    /// to default, so a temporarily-malformed wire frame doesn't
+    /// wipe a known-good UI state). Mirrors the field set populated
+    /// by `daemon_host::DesktopTerminalRegistry::ui_snapshot`.
+    pub fn absorb_ui_snapshot(&mut self, snapshot: daemon_proto::UiSnapshot) {
+        self.ui.expanded_repo_ids = snapshot.expanded_repo_ids.into_iter().collect();
+        self.ui.pinned_task_ids = snapshot
+            .pinned_task_ids
+            .into_iter()
+            .map(|(_project_id, task_id)| task_id)
+            .collect();
+        self.ui.last_active_section_id = snapshot.last_active_section_id;
+        self.ui.left_sidebar_open = snapshot.left_sidebar_open;
+        self.ui.show_sidebar_git_metadata = snapshot.show_sidebar_git_metadata;
+        if let Some(value) = snapshot.shortcuts {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.shortcuts = parsed;
+            }
+        }
+        if let Some(value) = snapshot.agent_launch_args_overrides {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.agent_launch_args = parsed;
+            }
+        }
+        self.ui.default_agent_id = snapshot.default_agent_id;
+        self.ui.enabled_agents = snapshot.enabled_agents.map(|v| v.into_iter().collect());
+        if let Some(value) = snapshot.open_in_apps {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.enabled_open_in_apps = Some(parsed);
+            }
+        }
+        self.ui.preferred_open_in_app = snapshot
+            .preferred_open_in_app
+            .as_deref()
+            .and_then(crate::open_in::OpenInAppKind::from_id);
+        self.ui.git_commit_generation_script = snapshot.git_commit_generation_script;
+        self.ui.git_pr_generation_script = snapshot.git_pr_generation_script;
+        if let Some(value) = snapshot.git_commit_generation_llm {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.git_commit_generation_llm = parsed;
+            }
+        }
+        if let Some(value) = snapshot.git_pr_generation_llm {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.git_pr_generation_llm = parsed;
+            }
+        }
+    }
+
     pub fn set_remote_snapshot(&mut self, projects: Vec<Project>, tasks: Vec<Task>) {
         self.repos = projects
             .iter()

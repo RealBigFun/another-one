@@ -328,6 +328,26 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                     .collect(),
                 last_active_section_id: ui.last_active_section_id.clone(),
                 left_sidebar_open: ui.left_sidebar_open,
+                show_sidebar_git_metadata: ui.show_sidebar_git_metadata,
+                shortcuts: serde_json::to_value(&ui.shortcuts).ok(),
+                agent_launch_args_overrides: serde_json::to_value(&ui.agent_launch_args).ok(),
+                default_agent_id: ui.default_agent_id.clone(),
+                enabled_agents: ui
+                    .enabled_agents
+                    .as_ref()
+                    .map(|set| set.iter().cloned().collect()),
+                open_in_apps: ui
+                    .enabled_open_in_apps
+                    .as_ref()
+                    .and_then(|s| serde_json::to_value(s).ok()),
+                preferred_open_in_app: ui
+                    .preferred_open_in_app
+                    .as_ref()
+                    .map(|kind| kind.id().to_string()),
+                git_commit_generation_script: ui.git_commit_generation_script.clone(),
+                git_pr_generation_script: ui.git_pr_generation_script.clone(),
+                git_commit_generation_llm: serde_json::to_value(&ui.git_commit_generation_llm).ok(),
+                git_pr_generation_llm: serde_json::to_value(&ui.git_pr_generation_llm).ok(),
             }
         })
         .unwrap_or_default()
@@ -1154,6 +1174,9 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                 tasks,
                 repo_id: project.repo_id.clone(),
                 worktree_name: project.worktree_name.clone(),
+                checkout: serde_json::to_value(&project.checkout).ok(),
+                branch_settings: serde_json::to_value(&project.branch_settings).ok(),
+                actions: serde_json::to_value(&project.actions).unwrap_or_default(),
             }
         })
         .collect()
@@ -1172,6 +1195,9 @@ fn task_to_summary(
         .as_ref()
         .map(|p| p.to_string_lossy().into_owned());
     let next_tab_id = task.next_tab_id;
+    let kind_value = serde_json::to_value(&task.kind).ok();
+    let root_project_id = task.root_project_id.clone();
+    let worktree_project_id = task.worktree_project_id.clone();
     let tabs = task
         .tabs
         .into_iter()
@@ -1222,6 +1248,9 @@ fn task_to_summary(
         target_project_id: task.target_project_id,
         cwd,
         next_tab_id,
+        root_project_id,
+        kind: kind_value,
+        worktree_project_id,
     }
 }
 

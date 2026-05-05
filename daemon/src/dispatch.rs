@@ -995,9 +995,8 @@ mod tests {
                     id: "p1".into(),
                     name: "p1".into(),
                     path: "/tmp/p1".into(),
-                    kind: daemon_proto::ProjectKind::Root,
                     current_branch: Some("main".into()),
-                    tasks: vec![],
+                    ..Default::default()
                 }]),
                 slugified: Mutex::new(None),
             }
@@ -1046,7 +1045,7 @@ mod tests {
 
         let reply = client.call(Control::ListProjects).await.expect("call");
         match reply {
-            WorkerReply::ProjectList { projects } => {
+            WorkerReply::ProjectList { projects, .. } => {
                 assert_eq!(projects.len(), 1);
                 assert_eq!(projects[0].id, "p1");
             }

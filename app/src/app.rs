@@ -14913,7 +14913,7 @@ impl AnotherOneApp {
                         ui.expanded_repo_ids.len(),
                         ui.last_active_section_id
                     );
-                    let _ = ui; // wired into UiState in a follow-up commit
+                    self.project_store.absorb_ui_snapshot(ui);
                     let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
                     log::info!(
                         "daemon ProjectList: {} project(s), {} task(s) total",
@@ -15070,15 +15070,29 @@ fn convert_remote_snapshot(
             } else {
                 task_summary.target_project_id
             };
+            let root_project_id = if task_summary.root_project_id.is_empty() {
+                project_id.clone()
+            } else {
+                task_summary.root_project_id
+            };
+            // Wire's `kind` is opaque JSON. Older daemons send None;
+            // newer daemons send the serialised TaskKind. Default to
+            // Direct on missing/parse-failure so older peers still
+            // interop.
+            let kind = task_summary
+                .kind
+                .as_ref()
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or(ps::TaskKind::Direct);
             tasks.push(ps::Task {
                 id: task_summary.id,
                 name: task_summary.name,
-                kind: ps::TaskKind::Direct,
-                root_project_id: project_id.clone(),
+                kind,
+                root_project_id,
                 target_project_id,
                 branch_name: task_summary.branch_name,
                 section_id: task_summary.section_id,
-                worktree_project_id: None,
+                worktree_project_id: task_summary.worktree_project_id,
                 tabs,
                 active_tab_id: task_summary.active_tab_id,
                 next_tab_id,
@@ -15090,15 +15104,30 @@ fn convert_remote_snapshot(
         } else {
             summary.repo_id
         };
+        // Decode the opaque-JSON wire fields back into core types.
+        // None / parse-failure → default, so older daemons paired
+        // with newer clients still interop without an
+        // ":incompatible-version" close.
+        let checkout = summary
+            .checkout
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        let branch_settings = summary
+            .branch_settings
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        let actions = serde_json::from_value(summary.actions).unwrap_or_default();
         projects.push(ps::Project {
             id: project_id,
             repo_id,
             name: summary.name,
             path: std::path::PathBuf::from(summary.path),
             kind,
-            checkout: ps::ProjectCheckoutState::default(),
-            branch_settings: ps::ProjectBranchSettings::default(),
-            actions: Vec::new(),
+            checkout,
+            branch_settings,
+            actions,
             worktree_name: summary.worktree_name,
             repo_common_dir: None,
         });

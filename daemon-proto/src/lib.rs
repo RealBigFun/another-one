@@ -1149,6 +1149,24 @@ pub struct ProjectSummary {
     /// `core::project_store::Project::worktree_name`. Wire-additive.
     #[serde(default)]
     pub worktree_name: Option<String>,
+    /// Opaque JSON-serialised `core::project_store::ProjectCheckoutState`.
+    /// Daemon-proto keeps this opaque so the project schema can
+    /// evolve in `core` without forcing a `daemon-proto` bump for
+    /// every checkout-state extension. Clients deserialize via
+    /// `serde_json::from_value`. `None` for older daemons that
+    /// didn't carry the field.
+    #[serde(default)]
+    pub checkout: Option<serde_json::Value>,
+    /// Opaque JSON-serialised `core::project_store::ProjectBranchSettings`.
+    /// Same opaque-pass-through pattern as `checkout`.
+    #[serde(default)]
+    pub branch_settings: Option<serde_json::Value>,
+    /// Opaque JSON-serialised `Vec<core::project_store::ProjectAction>`.
+    /// Per-project custom actions defined by the user. Carried
+    /// opaquely so daemon-proto doesn't need wire mirrors for
+    /// `ProjectActionIcon` / `ProjectActionScope` / etc.
+    #[serde(default)]
+    pub actions: serde_json::Value,
 }
 
 /// Per-user UI state mirrored from `core::project_store::UiState`.
@@ -1172,6 +1190,55 @@ pub struct UiSnapshot {
     /// hint to start in the right mobile-view nav state on reconnect.
     #[serde(default)]
     pub left_sidebar_open: bool,
+    /// Whether the sidebar shows per-task git metadata (lines added
+    /// / removed, last commit relative). Mirrors
+    /// `core::project_store::UiState::show_sidebar_git_metadata`.
+    /// Wire-additive.
+    #[serde(default)]
+    pub show_sidebar_git_metadata: bool,
+    /// Opaque JSON-serialised `HashMap<ShortcutAction, ShortcutBinding>`
+    /// from `UiState::shortcuts`. Daemon-proto stays free of the
+    /// shortcut enum/binding shapes by passing them through.
+    #[serde(default)]
+    pub shortcuts: Option<serde_json::Value>,
+    /// Opaque JSON-serialised `HashMap<String, AgentLaunchArgs>` from
+    /// `UiState::agent_launch_args_overrides`.
+    #[serde(default)]
+    pub agent_launch_args_overrides: Option<serde_json::Value>,
+    /// `UiState::default_agent_id`. Wire-additive.
+    #[serde(default)]
+    pub default_agent_id: Option<String>,
+    /// `UiState::enabled_agents` — the user-configured allowlist of
+    /// agent ids. `None` means "all agents enabled" (the default);
+    /// `Some(set)` is the explicit allowlist. Carried as a Vec on
+    /// the wire for stable JSON ordering.
+    #[serde(default)]
+    pub enabled_agents: Option<Vec<String>>,
+    /// Opaque JSON-serialised
+    /// `HashMap<OpenInAppKind, OpenInAppKindState>` from
+    /// `UiState::open_in_apps`.
+    #[serde(default)]
+    pub open_in_apps: Option<serde_json::Value>,
+    /// `UiState::preferred_open_in_app`. Carried as the kind's id
+    /// string ("cursor", "zed", …); `None` when no preference set.
+    #[serde(default)]
+    pub preferred_open_in_app: Option<String>,
+    /// `UiState::git_commit_generation_script`. Wire-additive.
+    #[serde(default)]
+    pub git_commit_generation_script: Option<String>,
+    /// `UiState::git_pr_generation_script`. Wire-additive.
+    #[serde(default)]
+    pub git_pr_generation_script: Option<String>,
+    /// Opaque JSON-serialised
+    /// `Option<core::settings::AgentSettingsLlm>` for the git-commit
+    /// generation LLM. Daemon-proto carries it opaquely so we don't
+    /// need a wire mirror for `AgentSettingsLlm`.
+    #[serde(default)]
+    pub git_commit_generation_llm: Option<serde_json::Value>,
+    /// Opaque JSON-serialised same shape as `git_commit_generation_llm`
+    /// but for the PR-generation flow.
+    #[serde(default)]
+    pub git_pr_generation_llm: Option<serde_json::Value>,
 }
 
 /// Lossy wire projection of `core::project_store::Task`. Contains
@@ -1232,6 +1299,22 @@ pub struct TaskSummary {
     /// order) doesn't have to recompute. Wire-additive.
     #[serde(default)]
     pub next_tab_id: usize,
+    /// `core::project_store::Task::root_project_id`. The id of the
+    /// task's owning *root* project (worktree tasks point at the
+    /// worktree's own `Project` entry via `target_project_id`; this
+    /// stays at the root). Wire-additive.
+    #[serde(default)]
+    pub root_project_id: String,
+    /// Opaque JSON-serialised `core::project_store::TaskKind`. Carried
+    /// opaquely so daemon-proto stays free of `TaskKind`'s nested
+    /// shape (Direct vs. Worktree variants with payload).
+    #[serde(default)]
+    pub kind: Option<serde_json::Value>,
+    /// `core::project_store::Task::worktree_project_id` — the id of
+    /// the worktree-kind project this task uses, if it's a worktree
+    /// task. `None` for direct tasks. Wire-additive.
+    #[serde(default)]
+    pub worktree_project_id: Option<String>,
 }
 
 /// Lossy wire projection of
