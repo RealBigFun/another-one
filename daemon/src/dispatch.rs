@@ -224,7 +224,7 @@ async fn dispatch_call(
                 attach_arc,
                 viewer_id,
             );
-            None
+            Some(WorkerReply::Empty)
         }
         Control::DetachTab => {
             if let Some((s, t, had_fwd)) = attach.detach() {
@@ -237,17 +237,17 @@ async fn dispatch_call(
             // re-aggregates to the remaining viewers' min (or lifts
             // the clamp entirely if this was the last viewer).
             registry.viewer_disconnected(viewer_id);
-            None
+            Some(WorkerReply::Empty)
         }
         Control::Resize { cols, rows } | Control::TabResize { cols, rows } => {
             if let Some((section_id, tab_id)) = attach.snapshot_target() {
                 registry.tab_resize(viewer_id, &section_id, &tab_id, cols, rows);
             }
-            None
+            Some(WorkerReply::Empty)
         }
         Control::LaunchTab { section_id, tab_id } => {
             registry.launch_tab(&section_id, &tab_id);
-            None
+            Some(WorkerReply::Empty)
         }
 
         // ── Read verbs ───────────────────────────────────────────────

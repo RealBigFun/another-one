@@ -659,6 +659,14 @@ pub enum Control {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkerReply {
+    /// Generic "the daemon handled it, but there's nothing payload-
+    /// worthy to return". Used for fire-and-forget verbs whose
+    /// effects are observable elsewhere (e.g. `AttachTab` — bytes
+    /// flow on the events stream; `LaunchTab` — runtime appears in
+    /// the registry; `DetachTab`/`Resize`/`TabResize` — state
+    /// updates the next pull observes). Lets clients await
+    /// `Session::call` instead of leaking a pending_calls entry.
+    Empty,
     /// Response to [`Control::ListProjects`]. Order matches the
     /// desktop sidebar's `project_order`; worktrees of a root are
     /// emitted as their own entries rather than nested children

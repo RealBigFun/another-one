@@ -5279,18 +5279,30 @@ impl AnotherOneApp {
                     }
                 },
             );
-            crate::session_host::dispatch_fire_and_forget(
-                session,
-                daemon_proto::Control::AttachTab {
-                    section_id,
-                    tab_id,
-                },
-                |result| {
-                    if let Err(err) = result {
-                        log::warn!("session AttachTab failed: {err}");
+            // Daemon's handle_attach returns without installing a
+            // forwarder if it arrives before the desktop's render
+            // tick has spawned the PTY (the registry says "no live
+            // runtime yet"). Re-fire AttachTab a few times with
+            // backoff so the forwarder lands once the broadcast is
+            // registered. The daemon ack's each AttachTab with
+            // WorkerReply::Empty so .await resolves cleanly.
+            crate::session_host::runtime_handle().spawn(async move {
+                for delay_ms in [0_u64, 200, 500, 1000, 2000] {
+                    if delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                     }
-                },
-            );
+                    if let Err(err) = session
+                        .call(daemon_proto::Control::AttachTab {
+                            section_id: section_id.clone(),
+                            tab_id: tab_id.clone(),
+                        })
+                        .await
+                    {
+                        log::warn!("session AttachTab failed: {err}");
+                        return;
+                    }
+                }
+            });
             return;
         }
 
