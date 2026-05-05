@@ -939,7 +939,7 @@ pub enum WorkerReply {
 /// Wire mirror of the active git-state view and the underlying
 /// `core::project_store::ProjectGitState`. Carries the metadata the
 /// titlebar's idle-primary-action selection needs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
     pub ahead_count: u32,
@@ -995,7 +995,7 @@ pub struct RecentCommitsWire {
 /// Wire mirror of one changed-file row. Carries
 /// the raw `git status` chars + diff counts; UI maps them to glyphs
 /// per the desktop's existing `changed_file_status_*` tables.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChangedFileWire {
     pub path: String,
     pub original_path: Option<String>,
@@ -1129,7 +1129,7 @@ pub enum ErrKind {
 /// nested `tasks` + `tabs` so one `ListProjects` response tells the
 /// mobile UI everything it needs to render its home drawer + each
 /// project's task list without follow-up round-trips.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectSummary {
     pub id: String,
     pub name: String,
@@ -1177,7 +1177,7 @@ pub struct UiSnapshot {
 /// Lossy wire projection of `core::project_store::Task`. Contains
 /// enough for the mobile task page to render the tab strip and
 /// request an attach; no live PTY state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskSummary {
     pub id: String,
     pub name: String,
@@ -1236,7 +1236,7 @@ pub struct TaskSummary {
 
 /// Lossy wire projection of
 /// `core::project_store::PersistedTerminalTab`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TabSummary {
     pub id: String,
     pub title: String,
@@ -1277,9 +1277,10 @@ pub struct TabSummary {
 
 /// Mirror of `core::project_store::ProjectKind`. Wire-serialised as
 /// lowercase strings: `"root"` / `"worktree"`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectKind {
+    #[default]
     Root,
     Worktree,
 }
@@ -1288,7 +1289,7 @@ pub enum ProjectKind {
 /// snake_case: `"claude_code"` / `"codex"` / `"cursor_agent"` etc.
 /// `Shell` is the catch-all for tabs launched without an agent
 /// provider set (plain PTY).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentProvider {
     ClaudeCode,
@@ -1300,6 +1301,10 @@ pub enum AgentProvider {
     Amp,
     RovoDev,
     Forge,
+    /// Catch-all for tabs launched without an agent provider set.
+    /// `Default` lands here so `..Default::default()` on test
+    /// fixtures yields a benign "plain shell" tab.
+    #[default]
     Shell,
 }
 
@@ -1326,7 +1331,7 @@ pub struct OpenInAppWire {
 /// icon and `enabled_apps` for the chevron dropdown. Actual app
 /// launch stays host-local on the daemon (see `openProjectInApp`'s
 /// docstring in `connection.dart`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OpenInStateWire {
     /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
     /// declares them.
