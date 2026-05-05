@@ -1225,25 +1225,16 @@ fn task_to_summary(
     }
 }
 
+// Trivial wrappers retained as call-site readability sugar around
+// the bidirectional `From` impls in `core::project_store` /
+// `core::agents`. Inlining the `.into()` at each site is fine; this
+// is just a one-liner and the indirection is free at codegen time.
 fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {
-    match kind {
-        CoreProjectKind::Root => ProjectKind::Root,
-        CoreProjectKind::Worktree => ProjectKind::Worktree,
-    }
+    kind.into()
 }
 
 fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
-    match kind {
-        AgentProviderKind::ClaudeCode => AgentProvider::ClaudeCode,
-        AgentProviderKind::CursorAgent => AgentProvider::CursorAgent,
-        AgentProviderKind::Codex => AgentProvider::Codex,
-        AgentProviderKind::Pi => AgentProvider::Pi,
-        AgentProviderKind::Gemini => AgentProvider::Gemini,
-        AgentProviderKind::OpenCode => AgentProvider::OpenCode,
-        AgentProviderKind::Amp => AgentProvider::Amp,
-        AgentProviderKind::RovoDev => AgentProvider::RovoDev,
-        AgentProviderKind::Forge => AgentProvider::Forge,
-    }
+    kind.into()
 }
 
 fn agent_summary_wire(agent: &another_one_core::agents::AgentDef) -> AgentSummaryWire {

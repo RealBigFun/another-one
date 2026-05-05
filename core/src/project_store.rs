@@ -58,6 +58,27 @@ pub enum ProjectKind {
     Worktree,
 }
 
+// Wire / on-disk format differ (PascalCase on disk via Default
+// serde, lowercase on the wire); two enums stay so we don't have
+// to rewrite persisted project.json's. Conversion is bijective.
+impl From<ProjectKind> for daemon_proto::ProjectKind {
+    fn from(kind: ProjectKind) -> Self {
+        match kind {
+            ProjectKind::Root => daemon_proto::ProjectKind::Root,
+            ProjectKind::Worktree => daemon_proto::ProjectKind::Worktree,
+        }
+    }
+}
+
+impl From<daemon_proto::ProjectKind> for ProjectKind {
+    fn from(kind: daemon_proto::ProjectKind) -> Self {
+        match kind {
+            daemon_proto::ProjectKind::Root => ProjectKind::Root,
+            daemon_proto::ProjectKind::Worktree => ProjectKind::Worktree,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectCheckoutState {
     #[serde(default)]

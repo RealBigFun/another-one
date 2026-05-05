@@ -15042,38 +15042,14 @@ fn convert_remote_snapshot(
                         .launch_config
                         .as_ref()
                         .and_then(|v| serde_json::from_value(v.clone()).ok()),
-                    provider: tab_summary.provider.and_then(|p| match p {
-                        daemon_proto::AgentProvider::ClaudeCode => {
-                            Some(another_one_core::agents::AgentProviderKind::ClaudeCode)
-                        }
-                        daemon_proto::AgentProvider::CursorAgent => {
-                            Some(another_one_core::agents::AgentProviderKind::CursorAgent)
-                        }
-                        daemon_proto::AgentProvider::Codex => {
-                            Some(another_one_core::agents::AgentProviderKind::Codex)
-                        }
-                        daemon_proto::AgentProvider::Pi => {
-                            Some(another_one_core::agents::AgentProviderKind::Pi)
-                        }
-                        daemon_proto::AgentProvider::Gemini => {
-                            Some(another_one_core::agents::AgentProviderKind::Gemini)
-                        }
-                        daemon_proto::AgentProvider::OpenCode => {
-                            Some(another_one_core::agents::AgentProviderKind::OpenCode)
-                        }
-                        daemon_proto::AgentProvider::Amp => {
-                            Some(another_one_core::agents::AgentProviderKind::Amp)
-                        }
-                        daemon_proto::AgentProvider::RovoDev => {
-                            Some(another_one_core::agents::AgentProviderKind::RovoDev)
-                        }
-                        daemon_proto::AgentProvider::Forge => {
-                            Some(another_one_core::agents::AgentProviderKind::Forge)
-                        }
-                        // `Shell` has no AgentProviderKind equivalent —
-                        // it represents a tab launched without an agent.
-                        daemon_proto::AgentProvider::Shell => None,
-                    }),
+                    // `core::agents::agent_provider_kind_from_wire`
+                    // handles the bijection (Shell → None — a tab
+                    // launched without an agent provider set). The
+                    // orphan rule forbids a `From` impl, hence the
+                    // free function.
+                    provider: tab_summary
+                        .provider
+                        .and_then(another_one_core::agents::agent_provider_kind_from_wire),
                     restore_status: tab_summary.restore_status,
                     failure_message: tab_summary.failure_message,
                     failure_details: tab_summary.failure_details,

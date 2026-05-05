@@ -41,6 +41,53 @@ pub enum AgentProviderKind {
     Forge,
 }
 
+// `daemon_proto::AgentProvider` mirrors the same set of variants but
+// uses snake_case wire serialization (vs. the kebab-case
+// `AgentProviderKind` uses for on-disk persistence). The two enums
+// stay separate so we don't accidentally rewrite every persisted
+// project.json on a deploy; conversion is bijective except for
+// `AgentProvider::Shell`, which represents "tab launched without an
+// agent provider set" and has no `AgentProviderKind` counterpart
+// (callers receive `None` on that arm).
+impl From<AgentProviderKind> for daemon_proto::AgentProvider {
+    fn from(kind: AgentProviderKind) -> Self {
+        match kind {
+            AgentProviderKind::ClaudeCode => daemon_proto::AgentProvider::ClaudeCode,
+            AgentProviderKind::CursorAgent => daemon_proto::AgentProvider::CursorAgent,
+            AgentProviderKind::Codex => daemon_proto::AgentProvider::Codex,
+            AgentProviderKind::Pi => daemon_proto::AgentProvider::Pi,
+            AgentProviderKind::Gemini => daemon_proto::AgentProvider::Gemini,
+            AgentProviderKind::OpenCode => daemon_proto::AgentProvider::OpenCode,
+            AgentProviderKind::Amp => daemon_proto::AgentProvider::Amp,
+            AgentProviderKind::RovoDev => daemon_proto::AgentProvider::RovoDev,
+            AgentProviderKind::Forge => daemon_proto::AgentProvider::Forge,
+        }
+    }
+}
+
+/// Inverse of `From<AgentProviderKind> for daemon_proto::AgentProvider`.
+/// Free function rather than `From<wire> for Option<core>` because
+/// the orphan rule forbids that impl (both types are foreign to
+/// this crate). Shell has no core-side equivalent so we return
+/// `None` on that arm — `AgentProviderKind` models "no agent" by
+/// being `Option`-wrapped at every call site.
+pub fn agent_provider_kind_from_wire(
+    provider: daemon_proto::AgentProvider,
+) -> Option<AgentProviderKind> {
+    match provider {
+        daemon_proto::AgentProvider::ClaudeCode => Some(AgentProviderKind::ClaudeCode),
+        daemon_proto::AgentProvider::CursorAgent => Some(AgentProviderKind::CursorAgent),
+        daemon_proto::AgentProvider::Codex => Some(AgentProviderKind::Codex),
+        daemon_proto::AgentProvider::Pi => Some(AgentProviderKind::Pi),
+        daemon_proto::AgentProvider::Gemini => Some(AgentProviderKind::Gemini),
+        daemon_proto::AgentProvider::OpenCode => Some(AgentProviderKind::OpenCode),
+        daemon_proto::AgentProvider::Amp => Some(AgentProviderKind::Amp),
+        daemon_proto::AgentProvider::RovoDev => Some(AgentProviderKind::RovoDev),
+        daemon_proto::AgentProvider::Forge => Some(AgentProviderKind::Forge),
+        daemon_proto::AgentProvider::Shell => None,
+    }
+}
+
 #[cfg(test)]
 pub(crate) const ALL_PROVIDERS: &[AgentProviderKind] = &[
     AgentProviderKind::ClaudeCode,
